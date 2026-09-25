@@ -24,9 +24,9 @@ window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
 shell = window.add_rect(background=(0xFF, 0xFB, 0xFE, 0xFF), width=400, height=150)
 
 label = window.add_text(
-    content="Reading this doesn't do anything.", background=(0, 0, 0, 0), width=320, height=20
+    content="Reading this doesn't do anything.", foreground=(0x1D, 0x1B, 0x20, 0xFF), width=320, height=20
 )
-link = window.add_link(text="But clicking this does.", width=320)
+link = window.add_link(content="But clicking this does.", width=320)
 
 shell.add_child(label)
 shell.add_child(link)

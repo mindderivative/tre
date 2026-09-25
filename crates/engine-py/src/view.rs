@@ -237,11 +237,12 @@ pub(crate) fn resolve_theme_input(
 /// `resolve_theme_input` above.
 fn resolve_stylesheet_input(
     py: Python<'_>,
+    method: &str,
     path: Option<&str>,
     spec: Option<&Py<PyAny>>,
 ) -> PyResult<Option<Stylesheet>> {
     require_at_most_one_content_source(
-        "View",
+        method,
         &[
             ("stylesheet=", path.is_some()),
             ("stylesheet_spec=", spec.is_some()),
@@ -385,11 +386,11 @@ fn resolve_theme_layers(
 /// real type-mismatch error instead of silently accepting whatever
 /// value happened to be a `Bool`. Every other property (numeric --
 /// `opacity`/`corner_radius`/`elevation`/`rotation`/`check_progress`/
-/// `thumb_position`/`select_progress`/`toggle_progress` -- and
+/// `value`/`select_progress`/`toggle_progress` -- and
 /// composite -- `background`/`transform`/`shape`) forwards to `animate
 /// ()`, which already knows how to validate/extract whatever Python
 /// value shape each one needs; a bound `Value::Str` is parsed as a
-/// color only for `property == "background"` (the same real hex/CSS-
+/// color only for `background`/`foreground`/`border_color` (the same real hex/CSS-
 /// named parser `engine_spec::build::resolve_color` already uses for
 /// *static* YAML colors -- MD3 theme-role token strings are explicitly
 /// out of scope here, since this function's own `throwaway_node` below
@@ -422,6 +423,16 @@ fn apply_binding_value(
             )));
         };
         return temp_node.set_checked(*checked, py);
+    }
+    // M90: `Switch`/`RadioButton` state -- `selected`, MD3's own term
+    // for both (`Checkbox` keeps `checked`, above).
+    if property == "selected" {
+        let engine_spec::Value::Bool(selected) = value else {
+            return Err(PyValueError::new_err(format!(
+                "widget property {property:?} expects a boolean binding, got {value:?}"
+            )));
+        };
+        return temp_node.set_selected(*selected, py);
     }
     // M15 Phase 3 (§16.7): the same real, direct dispatch the `checked`
     // branch above already established -- `text` is the one other
@@ -482,7 +493,9 @@ fn apply_binding_value(
         // why MD3 theme-role tokens aren't handled here. M48: `border_
         // color` gets the identical treatment -- same `(u8,u8,u8,u8)`
         // shape `Node::animate`'s own new `"border_color"` arm expects.
-        engine_spec::Value::Str(s) if matches!(property, "background" | "border_color") => {
+        engine_spec::Value::Str(s)
+            if matches!(property, "background" | "foreground" | "border_color") =>
+        {
             let rgba = parse_background_color(s).map_err(|e| {
                 PyValueError::new_err(format!("binding for property {property:?} resolved to {e}"))
             })?;
@@ -638,6 +651,8 @@ impl TwoWayCallback {
         );
         let value: Bound<'_, PyAny> = if self.property == "checked" {
             temp_node.get_checked()?.into_bound_py_any(py)?
+        } else if self.property == "selected" {
+            temp_node.get_selected()?.into_bound_py_any(py)?
         } else if self.property == "text" {
             // M15 Phase 3 (§16.7): the same real read-back split
             // `checked` already established -- `text` isn't an
@@ -906,13 +921,11 @@ pub struct View {
     /// comment).
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) reconciler: Reconciler,
-    bindings: Vec<(String, String, String)>, // (widget_id, property, raw "{{ expr }}")
-    declared_handlers: Vec<(String, String, String)>, // (widget_id, event, method_name)
-    /// M14 Phase 3 (§16.7): `(widget_id, property)` for every widget
-    /// with a real `two_way:` name -- see `WidgetSpec.two_way`'s own
-    /// doc comment for why this is a separate field, not folded into
-    /// `bindings` above.
-    two_way: Vec<(String, String)>,
+    /// M91 (issue #8): what `_attach` wired up, kept so every live update
+    /// can re-apply it -- see `Attachment`. Bindings, handlers, and
+    /// two-way entries are collected from the reconciler's *current*
+    /// spec at attach time, not frozen at construction.
+    attachment: RefCell<Option<Attachment>>,
     /// Mirrors `PyWindow`'s own `handlers` (M4 Phase 1 step 3, re-keyed
     /// by `(NodeId, EventKind)` at M4 Phase 6) -- shared with every
     /// `Node` this `View` hands out via `node()`, so `set_on_click`/
@@ -1002,6 +1015,104 @@ impl View {
                 width: AvailableSpace::Definite(width as f32),
                 height: AvailableSpace::Definite(height as f32),
             }
+        }
+    }
+}
+
+/// M91 (issue #8): what one `View._attach` call wired up. Kept on the
+/// `View` so a live update (`set_theme`, `set_stylesheet`, `reconcile`,
+/// `poll_reload`) can re-apply every binding afterward -- `patch_node`
+/// only restores a node's *static* spec, which used to leave bound
+/// fields showing their placeholder until the bound `Signal` next
+/// changed.
+struct Attachment {
+    viewmodel: Py<PyAny>,
+    /// `(signal, callback)` pairs to `_unsubscribe` on detach.
+    subscriptions: Vec<(Py<PyAny>, Py<PyAny>)>,
+    /// Handler entries this attachment registered, with the exact
+    /// callable it stored. Detach removes an entry only if it still holds
+    /// that same object, so a handler the app registered imperatively on
+    /// the same node and event afterward survives.
+    handlers: Vec<((NodeId, EventKind), Py<PyAny>)>,
+}
+
+impl View {
+    /// Wires `viewmodel` against the reconciler's *current* spec -- not a
+    /// list collected at construction, so bindings and handlers a later
+    /// update added (or removed) are picked up.
+    fn attach(&self, py: Python<'_>, viewmodel: Py<PyAny>) -> PyResult<()> {
+        let spec = self.reconciler.spec();
+        let mut bindings = Vec::new();
+        collect_bindings(spec, &mut bindings);
+        let mut declared_handlers = Vec::new();
+        collect_handlers(spec, &mut declared_handlers);
+        let mut two_way = Vec::new();
+        collect_two_way(spec, &mut two_way);
+
+        let before: HashMap<(NodeId, EventKind), usize> = self
+            .handlers
+            .borrow()
+            .iter()
+            .map(|(key, (callable, _))| (*key, callable.as_ptr() as usize))
+            .collect();
+        let subscriptions = attach_bindings_and_handlers(
+            &self.tree,
+            &self.handlers,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            |widget_id| self.reconciler.id_of(widget_id),
+            &declared_handlers,
+            &bindings,
+            &two_way,
+            py,
+            viewmodel.clone_ref(py),
+        )?;
+        let handlers = self
+            .handlers
+            .borrow()
+            .iter()
+            .filter(|(key, (callable, _))| before.get(key) != Some(&(callable.as_ptr() as usize)))
+            .map(|(key, (callable, _))| (*key, callable.clone_ref(py)))
+            .collect();
+        *self.attachment.borrow_mut() = Some(Attachment {
+            viewmodel,
+            subscriptions,
+            handlers,
+        });
+        Ok(())
+    }
+
+    /// Undoes the current attachment, if any: unsubscribes every binding
+    /// callback and removes the handler entries it registered. Returns the
+    /// `ViewModel` so `reattach` can wire it up again.
+    fn detach(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let Some(attachment) = self.attachment.borrow_mut().take() else {
+            return Ok(None);
+        };
+        for (signal, callback) in &attachment.subscriptions {
+            signal.bind(py).call_method1("_unsubscribe", (callback,))?;
+        }
+        let mut map = self.handlers.borrow_mut();
+        for (key, callable) in &attachment.handlers {
+            if map
+                .get(key)
+                .is_some_and(|(current, _)| current.is(callable))
+            {
+                map.remove(key);
+            }
+        }
+        Ok(Some(attachment.viewmodel))
+    }
+
+    /// M91 (issue #8): re-applies the attached `ViewModel` after a live
+    /// update -- every bound node gets its live value back, bindings the
+    /// update added start working, and callbacks for nodes it removed stop
+    /// firing. A no-op before `_attach`.
+    fn reattach(&self, py: Python<'_>) -> PyResult<()> {
+        match self.detach(py)? {
+            Some(viewmodel) => self.attach(py, viewmodel),
+            None => Ok(()),
         }
     }
 }
@@ -1134,7 +1245,7 @@ impl View {
         let base_dir = std::path::Path::new(&path).parent();
 
         let stylesheet =
-            resolve_stylesheet_input(py, stylesheet.as_deref(), stylesheet_spec.as_ref())?;
+            resolve_stylesheet_input(py, "View", stylesheet.as_deref(), stylesheet_spec.as_ref())?;
 
         let default_theme_spec = resolve_theme_input(
             py,
@@ -1214,13 +1325,6 @@ impl View {
             .map_err(|e| PyValueError::new_err(e.to_string()))?
         };
 
-        let mut bindings = Vec::new();
-        collect_bindings(reconciler.spec(), &mut bindings);
-        let mut declared_handlers = Vec::new();
-        collect_handlers(reconciler.spec(), &mut declared_handlers);
-        let mut two_way = Vec::new();
-        collect_two_way(reconciler.spec(), &mut two_way);
-
         // M19 Phase 1 (§16.4): a real, additive capability -- `View`
         // worked fine without it before this phase, so a failure here
         // (an unusual filesystem with no real inotify-equivalent) is
@@ -1251,9 +1355,7 @@ impl View {
         Ok(Self {
             tree: Rc::new(RefCell::new(tree)),
             reconciler,
-            bindings,
-            declared_handlers,
-            two_way,
+            attachment: RefCell::new(None),
             handlers: Rc::new(RefCell::new(HashMap::new())),
             context_menus: Rc::new(RefCell::new(HashMap::new())),
             theme: Rc::new(RefCell::new(ThemeState::default())),
@@ -1411,6 +1513,8 @@ impl View {
                 base_dir,
             )
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        drop(tree);
+        Python::attach(|py| self.reattach(py))?;
         Ok(true)
     }
 
@@ -1492,7 +1596,8 @@ impl View {
                 )
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
         }
-        Ok(())
+        drop(tree);
+        self.reattach(py)
     }
 
     /// M51: live re-theme -- re-resolves *every* node's `PaintProperties`
@@ -1513,10 +1618,9 @@ impl View {
     /// to change the seed re-passes the same `default_theme`/
     /// `custom_theme` path it already has in hand.
     ///
-    /// `{{ }}` bindings are not re-applied by this call -- `patch_node`
-    /// (inside `retheme`) only recomputes the *static* cascade, the
-    /// identical real behavior a content-only `poll_reload()` already
-    /// has today, not a new interaction this method introduces.
+    /// M91 (issue #8): `patch_node` (inside `retheme`) only recomputes the
+    /// *static* cascade, so every `{{ }}` binding is re-applied afterward
+    /// (`reattach`) -- a bound field keeps showing its live value.
     ///
     /// M86: `default_theme_spec`/`custom_theme_spec` -- the dict forms
     /// of `default_theme`/`custom_theme`, same as on `View(...)`.
@@ -1562,7 +1666,44 @@ impl View {
         self.default_theme = Some(default_theme_sheet);
         self.custom_theme = custom_theme_sheet;
         self.scheme = scheme;
-        Ok(())
+        self.reattach(py)
+    }
+
+    /// M91 (issue #8): replaces this `View`'s stylesheet and re-resolves
+    /// every node in place (`Reconciler::retheme`, as `set_theme` does),
+    /// keeping `NodeId`s, focus, and in-flight animations -- then re-applies
+    /// the attached `ViewModel`'s bindings. `stylesheet_spec` (a dict) and
+    /// `stylesheet` (a YAML file path) are mutually exclusive, as on
+    /// `View(...)`; passing neither clears the stylesheet, the same "each
+    /// call is a complete, fresh selection" rule `set_theme` follows.
+    #[pyo3(signature = (stylesheet_spec=None, stylesheet=None))]
+    fn set_stylesheet(
+        &mut self,
+        py: Python<'_>,
+        stylesheet_spec: Option<Py<PyAny>>,
+        stylesheet: Option<String>,
+    ) -> PyResult<()> {
+        let sheet = resolve_stylesheet_input(
+            py,
+            "View.set_stylesheet",
+            stylesheet.as_deref(),
+            stylesheet_spec.as_ref(),
+        )?;
+        let base_dir = std::path::Path::new(&self.path).parent();
+        let mut tree = self.tree.borrow_mut();
+        self.reconciler
+            .retheme(
+                &mut tree,
+                self.default_theme.as_ref(),
+                self.custom_theme.as_ref(),
+                sheet.as_ref(),
+                self.scheme.as_ref(),
+                base_dir,
+            )
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        drop(tree);
+        self.stylesheet = sheet;
+        self.reattach(py)
     }
 
     /// §16.2's real inversion point. Validates every declared handler
@@ -1596,21 +1737,16 @@ impl View {
     /// can't coexist with anything), the same real reasoning `Window`'s
     /// own `click`/`hover`/`right_click` (`window_input.rs`) already
     /// use `&self` for.
+    ///
+    /// M91 (issue #8): no longer discards what it wires up. The
+    /// `ViewModel`, its binding subscriptions, and the handler entries it
+    /// registered are kept as this `View`'s `Attachment`, so every live
+    /// update can re-apply them (`reattach`). A second `_attach` replaces
+    /// the first cleanly -- it unsubscribes the old callbacks instead of
+    /// stacking duplicates that would each fire on every `Signal` write.
     fn _attach(&self, py: Python<'_>, viewmodel: Py<PyAny>) -> PyResult<()> {
-        attach_bindings_and_handlers(
-            &self.tree,
-            &self.handlers,
-            &self.context_menus,
-            &self.theme,
-            &self.completions,
-            |widget_id| self.reconciler.id_of(widget_id),
-            &self.declared_handlers,
-            &self.bindings,
-            &self.two_way,
-            py,
-            viewmodel,
-        )?;
-        Ok(())
+        self.detach(py)?;
+        self.attach(py, viewmodel)
     }
 
     /// M4 Phase 4 (§16.2): the same no-live-window-needed proof pattern
@@ -2203,7 +2339,7 @@ mod tests {
     fn stylesheet_path_and_spec_together_is_a_clear_error() {
         Python::attach(|py| {
             let dict = py.eval(c"{'styles': []}", None, None).unwrap().unbind();
-            let err = resolve_stylesheet_input(py, Some("unused.yaml"), Some(&dict))
+            let err = resolve_stylesheet_input(py, "View", Some("unused.yaml"), Some(&dict))
                 .expect_err("both given must fail");
             assert!(err.to_string().contains("stylesheet_spec="));
         });

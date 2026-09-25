@@ -4,7 +4,7 @@
 # real Phase 2 pipeline (steps 1-4), not just that it parses.
 id: card
 kind: Container
-style: {flex_direction: Horizontal, padding: 16, gap: 12, width: 300, height: 100}
+style: {flex_direction: horizontal, padding: 16, gap: 12, width: 300, height: 100}
 children:
   - id: swatch
     kind: Rect
@@ -12,4 +12,4 @@ children:
   - id: label
     kind: Text
     text: {content: "tre v2", font_family: Roboto, font_size: 20}
-    style: {width: 160, height: 30, background: white}
+    style: {width: 160, height: 30, foreground: white}

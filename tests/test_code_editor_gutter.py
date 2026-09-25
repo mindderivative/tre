@@ -22,7 +22,7 @@ def _editor_and_gutter(window: Window, content: str = "") -> tuple[Node, Node]:
     )
     gutter = window.add_text(
         content="",
-        background=(0, 0, 0, 0xFF),
+        foreground=(0, 0, 0, 0xFF),
         width=32,
         height=200,
         font_family="Roboto",

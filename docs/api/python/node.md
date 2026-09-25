@@ -19,11 +19,17 @@ node.animate("opacity", 0.0, duration_ms=300, on_complete=lambda: print("faded")
 | `"opacity"` | `float` (0.0–1.0) | every node |
 | `"corner_radius"` | `float` | every node |
 | `"elevation"` | `float` | every node |
-| `"background"` | `(r, g, b, a)` int tuple | every node |
+| `"background"` | `(r, g, b, a)` int tuple | every node with a fill — not `Text`/`Link`/`Icon`/`LoadingIndicator` |
+| `"foreground"` | `(r, g, b, a)` int tuple | `Text`, `Link`, `Icon`, `LoadingIndicator` — the glyph/text color |
+| `"border_color"` | `(r, g, b, a)` int tuple | every node |
+| `"border_width"` | `float` | every node |
 | `"transform"` | `(translate_x, translate_y, scale)` float tuple | every node |
 | `"shape"` | `list[(x, y)]` float tuples | every node — morphs to the closed polygon these vertices describe |
 | `"check_progress"` | `float` (0.0–1.0) | `Checkbox` only |
-| `"thumb_position"` | `float` (0.0–1.0) | `Slider` only |
+| `"select_progress"` | `float` (0.0–1.0) | `RadioButton` only |
+| `"toggle_progress"` | `float` (0.0–1.0) | `Switch` only |
+| `"rotation"` | `float` (degrees) | `Icon` only |
+| `"value"` | `float` (0.0–1.0) | `Slider`, `LinearProgress`, `CircularProgress` |
 
 Raises `ValueError` for an unknown property name, or `TypeError` if `to`
 doesn't match the property's expected shape. `on_complete`, when given,
@@ -37,9 +43,12 @@ a node created via `View` (no render loop to drain it through).
 
 Reads a numeric property's current (possibly still-animating) value.
 Supports `"opacity"`, `"corner_radius"`, `"elevation"`,
-`"check_progress"` (`Checkbox` only), `"thumb_position"` (`Slider`
-only). Raises `ValueError` for an unknown/inapplicable property.
-`"background"` isn't readable this way (it isn't a single `float`).
+`"border_width"`, `"check_progress"` (`Checkbox`), `"select_progress"`
+(`RadioButton`), `"toggle_progress"` (`Switch`), and `"value"`
+(`Slider`, `LinearProgress`, `CircularProgress`). Raises `ValueError`
+for an unknown/inapplicable property. Colors (`"background"`,
+`"foreground"`, `"border_color"`) aren't readable this way — they aren't
+a single `float`.
 
 ## `set_layout`
 
@@ -52,7 +61,7 @@ immediately, not eased — layout fields aren't animatable the way
 paint properties are.
 
 ```python
-node.set_layout(width=200, flex_direction="Vertical", gap=8)
+node.set_layout(width=200, flex_direction="vertical", gap=8)
 ```
 
 `align_items`/`justify_content`/`flex_direction` take the same string
@@ -224,8 +233,7 @@ would land inside a folded range snaps forward past its marker instead.
 
 | Method | Notes |
 | --- | --- |
-| `set_selected(selected)` / `get_selected() -> bool` | `RadioButton` only |
-| `set_on(on)` / `get_on() -> bool` | `Switch` only |
+| `set_selected(selected)` / `get_selected() -> bool` | `RadioButton` and `Switch` |
 
 Each raises `ValueError` on any other kind. (`Checkbox` uses
 [`set_checked`/`get_checked`](#checkbox-specific).)

@@ -25,7 +25,7 @@ window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
 default_indicator = window.add_loading_indicator(x=40.0, y=40.0)
 small_indicator = window.add_loading_indicator(size=24.0, x=140.0, y=52.0)
 custom_color_indicator = window.add_loading_indicator(
-    size=64.0, color=(0xB0, 0x00, 0x20, 0xFF), x=220.0, y=20.0
+    size=64.0, foreground=(0xB0, 0x00, 0x20, 0xFF), x=220.0, y=20.0
 )
 
 assert default_indicator is not None

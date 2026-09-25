@@ -85,7 +85,7 @@ def test_an_interactive_add_dialog_call_after_a_resize_still_works():
 
     dialog = window.add_dialog(
         headline="Resized",
-        text="does this dialog build correctly after a real resize?",
+        supporting_text="does this dialog build correctly after a real resize?",
         width=300,
         height=200,
     )

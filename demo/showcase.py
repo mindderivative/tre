@@ -133,7 +133,7 @@ def make_label_fn(window, screen):
     """
 
     def label(text, x, y, width=160, height=18, font_size=13):
-        node = window.add_text(text, background=LABEL_COLOR, width=width, height=height, x=x, y=y, font_size=font_size)
+        node = window.add_text(text, foreground=LABEL_COLOR, width=width, height=height, x=x, y=y, font_size=font_size)
         screen.add_child(node)
         return node
 
@@ -182,7 +182,7 @@ def build_gallery_screen(window):
     label("Icon", 16, 352)
     icons = []
     for i, name in enumerate(ICON_NAMES):
-        icon = window.add_icon(name=name, color=(0xE0, 0xE0, 0xE0, 0xFF), size=28, x=16 + i * 32, y=376)
+        icon = window.add_icon(name=name, foreground=(0xE0, 0xE0, 0xE0, 0xFF), size=28, x=16 + i * 32, y=376)
         screen.add_child(icon)
         icons.append(icon)
 
@@ -543,7 +543,7 @@ def build_nav_button(window, y, text):
     # every click, since `add_text`'s own node has no handler of its
     # own. Kept near the button's own top edge instead, deliberately
     # clear of its real geometric center.
-    label = window.add_text(text, background=(0xEE, 0xEE, 0xEE, 0xFF), width=NAV_WIDTH - 40, height=14, x=8, y=4, font_size=12)
+    label = window.add_text(text, foreground=(0xEE, 0xEE, 0xEE, 0xFF), width=NAV_WIDTH - 40, height=14, x=8, y=4, font_size=12)
     btn.add_child(label)
     return btn
 
@@ -644,9 +644,9 @@ def verify_gallery_screen(window):
             # dispatched arrow-key nudge (`Tree::dispatch_slider_key`'s
             # own mechanism manually ticks immediately, unlike
             # `animate()`).
-            before = refs["slider"].get("thumb_position")
+            before = refs["slider"].get("value")
             window.press_key("right")
-            after = refs["slider"].get("thumb_position")
+            after = refs["slider"].get("value")
             assert after > before, "a real ArrowRight nudge must move a focused Slider"
             print(f"Slider: thumb_position {before} -> {after}")
     print(f"Gallery: keyboard Tab reaches all {len(interactive_order)} interactive controls, in order")

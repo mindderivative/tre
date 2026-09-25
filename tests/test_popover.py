@@ -12,14 +12,14 @@ from tre import Node, Window
 
 def test_add_popover_returns_a_node():
     window = Window(width=400, height=300)
-    popover = window.add_popover(subhead="Storage", text="You have used 12 GB of 15 GB.", width=240, height=100)
+    popover = window.add_popover(subhead="Storage", supporting_text="You have used 12 GB of 15 GB.", width=240, height=100)
     assert isinstance(popover, Node)
 
 
 def test_a_themed_popover_does_not_raise():
     window = Window(width=400, height=300)
     window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
-    popover = window.add_popover(subhead="Storage", text="You have used 12 GB of 15 GB.", width=240, height=100)
+    popover = window.add_popover(subhead="Storage", supporting_text="You have used 12 GB of 15 GB.", width=240, height=100)
     assert isinstance(popover, Node)
 
 
@@ -31,7 +31,7 @@ def test_popover_can_be_opened_and_closed_via_open_menu():
     """
     window = Window(width=400, height=300)
     anchor = window.add_rect(background=(0, 0, 0, 255), width=100, height=40)
-    popover = window.add_popover(subhead="Storage", text="You have used 12 GB of 15 GB.", width=240, height=100)
+    popover = window.add_popover(subhead="Storage", supporting_text="You have used 12 GB of 15 GB.", width=240, height=100)
 
     window.open_menu(anchor, popover)  # must not raise
     window.open_menu(anchor, popover)  # a real, safe no-op -- already open
@@ -41,7 +41,7 @@ def test_popover_can_be_opened_and_closed_via_open_menu():
 def test_a_reopened_popover_after_closing_does_not_raise():
     window = Window(width=400, height=300)
     anchor = window.add_rect(background=(0, 0, 0, 255), width=100, height=40)
-    popover = window.add_popover(subhead="Storage", text="You have used 12 GB of 15 GB.", width=240, height=100)
+    popover = window.add_popover(subhead="Storage", supporting_text="You have used 12 GB of 15 GB.", width=240, height=100)
 
     window.open_menu(anchor, popover)
     window.close_menu(popover)
@@ -63,7 +63,7 @@ def test_a_popover_dismisses_on_a_real_outside_click_like_menu_does():
     clicks = []
     background.set_on_click(lambda: clicks.append("clicked"))
 
-    popover = window.add_popover(subhead="Storage", text="You have used 12 GB of 15 GB.", width=240, height=100)
+    popover = window.add_popover(subhead="Storage", supporting_text="You have used 12 GB of 15 GB.", width=240, height=100)
     window.open_menu(anchor, popover)
 
     # A point on the background, outside both the anchor and the

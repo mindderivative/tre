@@ -52,6 +52,20 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M88 — Fix `test_terminal.py`'s CI Failure: No Display, Not Timing (corrects M83) | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.2` Release: PR #7 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M89 — MkDocs Completeness Pass + "Working with Files" Section for Pure-`tre` Users | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
+| M90 — Consistent Property Naming Across the Imperative and Declarative APIs (breaking) | `██████████` 100% | ✅ Complete — all 4 phases done (2026-09-25) |
+| M91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8) | `██████████` 100% | ✅ Complete — both phases done (2026-09-25) — closes issue #8 |
+| M92 — Animatable `Icon` Color | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
+| M93 — Target API Spec and Naming Convention | `░░░░░░░░░░` 0% | ⬜ Approved, next after the v0.3.3 release (2026-09-25) |
+| M94 — Input and Accessibility Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M96 — Layer and Overlay Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M99 — Remove MD3 Components, Kinds, and Theming | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M100 — Apply the Naming Convention | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M101 — Consolidation and Size Pass | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M102 — Docs, Examples, and Tests Rewrite | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M103 — Release | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 
 **Just closed:** M80 — a 4-lens multi-agent review (Performance/Architecture/Security/Modernization) of the full `0.3.1` diff (M71-M79) plus a lighter full-project pass, each raw finding adversarially re-verified against the real current source before being trusted. Security found nothing real. 8 findings confirmed real across the other 3 lenses; 5 fixed directly this milestone, 3 left open for explicit user input (real design/scope decisions, not mechanical).
 
@@ -59,9 +73,10 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 **Left open, real design/scope decisions, not mechanical:** (a) the `spec`/`source` mutual-exclusion validation is now duplicated near-verbatim between `View::new` and `View::reconcile` -- unifying it cleanly is a small API design call (the two call sites' second requirement genuinely differs: `path` required vs. `source`-or-`spec` required), not a safe mechanical extraction. (b) the Tier 2 JSON parsing functions (`parse_view_json` et al., M76) have zero consumers anywhere in the workspace -- real, premature public-surface growth on a stability-contract-adjacent crate, against this same codebase's own repeatedly-stated "real, confirmed need, not manufactured ahead of one" precedent; needs a real decision (wire up a consumer, or hold the surface back) not a code change. (c) `spec=` construction exists on `View` (M78) but not on `View.instantiate`/`Component.instantiate` for embedded components -- a real, deliberately-scoped Tier 1 boundary per the M78 commit's own framing, not an oversight, but worth a standing note so it isn't mistaken for complete parity (noted here).
 
-**Up next:** all 3 of M80's deferred items were resolved in M81; M82 added a decode-free image-ingestion primitive; M83 fixed a real, pre-existing, CI-observed `test_terminal.py` flake unrelated to this branch's own work, found blocking a clean CI signal on [PR #5](https://github.com/mindderivative/tre/pull/5). Both open `tre` issues from Tesserae's own scoping work (#2, #3) remain resolved. **`v0.3.1` is released** (see this file's own "`v0.3.1` Released" section) -- Tesserae-side work is now unblocked and underway on the `0.3.2` branch. M84 added declarative support for 7 real primitives Tesserae's own scoping (its own M26) identified as needed for its widget-fragment catalog; Tesserae's own M27/M28 (fragments + macro-layer `repeat:` construct) both landed on Tesserae's own side afterward. M85 brought `tre`'s own MkDocs up to date with M71-M84's real API growth, user-directed after the user asked whether the docs already reflected it and confirmed they did not. **M86 is complete:** `*_spec=` dict kwargs for themes and stylesheets, and `tre.register_font(bytes)` for fonts -- every concern `tre` ingests now has a data-shaped entry point, so a framework (Tesserae) can own all file handling and hand `tre` data only. Tesserae's consuming half is its own M29. **M87 is complete:** `App.thread_handle()` returns a thread-safe `LoopHandle` whose `call_soon(fn)` runs `fn` on a running `App`'s event-loop thread ([issue #6](https://github.com/mindderivative/tre/issues/6)), so a background file watcher can drive hot reload inside `App.run()`. M88 fixed the CI failure blocking the `v0.3.2` release PR ([#7](https://github.com/mindderivative/tre/pull/7)), correcting M83's diagnosis. **`v0.3.2` is released** (see this file's own "`v0.3.2` Released" section). M89 then brought MkDocs fully up to date, with file-based usage in its own "Working with Files" guide page. Nothing further is scoped.
+**Up next:** all 3 of M80's deferred items were resolved in M81; M82 added a decode-free image-ingestion primitive; M83 fixed a real, pre-existing, CI-observed `test_terminal.py` flake unrelated to this branch's own work, found blocking a clean CI signal on [PR #5](https://github.com/mindderivative/tre/pull/5). Both open `tre` issues from Tesserae's own scoping work (#2, #3) remain resolved. **`v0.3.1` is released** (see this file's own "`v0.3.1` Released" section) -- Tesserae-side work is now unblocked and underway on the `0.3.2` branch. M84 added declarative support for 7 real primitives Tesserae's own scoping (its own M26) identified as needed for its widget-fragment catalog; Tesserae's own M27/M28 (fragments + macro-layer `repeat:` construct) both landed on Tesserae's own side afterward. M85 brought `tre`'s own MkDocs up to date with M71-M84's real API growth, user-directed after the user asked whether the docs already reflected it and confirmed they did not. **M86 is complete:** `*_spec=` dict kwargs for themes and stylesheets, and `tre.register_font(bytes)` for fonts -- every concern `tre` ingests now has a data-shaped entry point, so a framework (Tesserae) can own all file handling and hand `tre` data only. Tesserae's consuming half is its own M29. **M87 is complete:** `App.thread_handle()` returns a thread-safe `LoopHandle` whose `call_soon(fn)` runs `fn` on a running `App`'s event-loop thread ([issue #6](https://github.com/mindderivative/tre/issues/6)), so a background file watcher can drive hot reload inside `App.run()`. M88 fixed the CI failure blocking the `v0.3.2` release PR ([#7](https://github.com/mindderivative/tre/pull/7)), correcting M83's diagnosis. **`v0.3.2` is released** (see this file's own "`v0.3.2` Released" section). M89 then brought MkDocs fully up to date, with file-based usage in its own "Working with Files" guide page. **Branch `0.3.3` is open and pushed. M90, M91 ([issue #8](https://github.com/mindderivative/tre/issues/8), closed), and M92 (animatable `Icon` color) are complete.** **Approved next: the M93–M103 program** making `tre` a minimal building-block engine -- the declarative layer, MD3 components, and MD3 theming move to the framework; see the "Program" section. Previously scoped: a breaking rename of every inconsistently named property found by a scripted audit. `0.4.0` is reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)), per the user.
 
 **Known gaps:**
+- `View.set_theme`/`set_stylesheet` don't re-resolve an embedded `Component`'s static styles -- a component has its own reconciler, which the view's `retheme` doesn't walk. Its bindings are unaffected (M91 checked this by running it). Pre-existing, not introduced by M91.
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
 - `window_factory.rs`'s own ~35 non-text-creating factories were never in scope for M63's own typography-role migration at all (they build `Rect`/`Icon`/`Checkbox`/etc., not `Text`/`Link`) — not a gap in the migration itself, just its real, stated boundary.
 - 6 of the 15 real MD3 type-scale roles (`display_large`/`medium`/`small`, `headline_large`/`medium`, `title_medium`) have no consumer anywhere in this codebase yet — real, un-scoped future candidates whenever a new component needs one, not evidence of an incomplete catalog.
@@ -1080,6 +1095,333 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 4: real doc bugs found by running every new snippet rather than trusting prose -- `components.md` said `add_switch` uses `set_checked`/`get_checked` (it raises; the real accessors are `set_on`/`get_on`); the declarative guide said `kind: Image` may omit its `image:` block (it's required -- only `src:` is optional); the schema example's `Text` widget had no `style.background` (required -- it errors); `node.md` called `push_frame` video-only (it works on any `Image` node); `get_text` omitted `Link`/`Terminal` — ✅
 - Step 5: stale facts corrected -- "67 milestones" -> 88, "56 factories" -> 60, `v0.3.0` wheel names -> `v0.3.2`, `engine-spec`/`engine-render`/`engine-platform` crate descriptions (format-agnostic schema, font registry, `EventLoopWaker`), a class count removed rather than kept drifting — ✅
 - Step 6: verification — ✅ (`mkdocs build --strict` clean with no anchor notices; all 85 Python code blocks parse; every snippet in the rewritten declarative and theming pages executed against the installed `tre` 0.3.2)
+
+---
+
+## Branch: `0.3.3` — Release Prep
+
+**Status: 🚧 In progress (2026-09-25).** Same workflow as `0.3.1`/`0.3.2`: work accumulates on `0.3.3`, merges back into `main` when ready, then gets tagged. User's versioning call: "We won't move to 0.4.0 until vello_hybrid fix/clone feature is put into place" -- so M90's breaking rename ships as `0.3.3`, and `0.4.0` stays reserved for [issue #4](https://github.com/mindderivative/tre/issues/4).
+
+- Branch `0.3.3` created off `main` at `cb9eea2` (post-`v0.3.2`, post-M89) — ✅
+- `Cargo.toml`/`pyproject.toml` bumped 0.3.2 → 0.3.3; `Cargo.lock` updated via `cargo check` — ✅
+- `PLAN.md`/`LOG.md` reset for this branch — ✅
+
+---
+
+## Milestone 90 — Consistent Property Naming Across the Imperative and Declarative APIs (breaking)
+
+**Status: ✅ Complete (2026-09-25).** User: "I thought we changed the text color from background to foreground and fixed all the off named properties?" -- they hadn't been. The 2026-09-23 naming rule (`background` = a real fill, `foreground` = glyph/text color) was adopted for **Tesserae's wrapper API only**, and Tesserae applied it in just two wrappers (`icon`, `loading_indicator`); `tre` was never changed beyond M70's `Row`/`Column` rename. User then: "Scope M90 on a new 0.3.3 branch."
+
+**Audit method:** scripted, not from memory -- every parameter of all 60 `Window.add_*` factories aggregated by name, every `Node` accessor, and every field of `WidgetSpec`/`TextSpec`/`StyleSpec`/`ImageSpec`/`IconSpec`, then each suspicious name checked against its docstring or Rust source for what it actually does.
+
+**Findings, each with the recommended fix:**
+
+| # | Concept | Today | Recommended |
+|---|---|---|---|
+| A | Glyph/text color | `background` on `add_text` and on declarative `style.background` for `Text`/`Link`/`Icon`/`LoadingIndicator`; `color` on `add_icon`/`add_loading_indicator` | `foreground` everywhere, imperative and `style.foreground`; `style.background` on those kinds becomes a clear error pointing at `foreground` |
+| B | Toolbar color style | `add_toolbar(color="standard"\|"vibrant")` -- not a color at all | `vibrant: bool = False` |
+| C | Selection state | `add_checkbox(checked=)`, `add_switch(on=)`, `add_radio_button(selected=)`; `Node.set_on`/`get_on`, `set_selected`/`get_selected`, `set_checked`/`get_checked`; declarative `checked:` for all three; `on` is also a YAML 1.1 boolean literal (Tesserae M27 hit this) | MD3's own terms: `checked` for `Checkbox`, `selected` for `Switch` and `RadioButton` -- `add_switch(selected=)`, `Node.set_selected`/`get_selected` on `Switch` (dropping `set_on`/`get_on`), declarative `selected:` for `Switch`/`RadioButton`, binding property names to match |
+| D | Slider value | `add_slider(value=)` and declarative `value:`, but `Node.get`/`animate`/`bindings:` call it `thumb_position` | `value` everywhere |
+| E | Orientation | `add_divider(vertical=bool)`, `add_scroll_view(horizontal=bool)`, `add_toolbar(orientation="horizontal"\|"vertical")` | `orientation="horizontal"\|"vertical"` on all three |
+| F | Enum string casing | Imperative lowercase (`fit="cover"`, `variant="filled"`, `layout="hero"`), declarative and `Node.set_layout` PascalCase (`fit: Cover`, `flex_direction: Horizontal`, `align_items: FlexStart`), tokens and roles lowercase snake (`small`, `level_2`, `body_large`) | lowercase `snake_case` everywhere (`fit: cover`, `flex_direction: horizontal`, `align_items: flex_start`) |
+| G | Text-string params | `content` on `add_text`/`add_text_field`/`add_code_editor` and declarative `text.content`, but `add_link(text=)`; MD3 supporting text is `supporting_text` on `add_list_item` but `text` on `add_dialog`/`add_popover` | `add_link(content=)`; `add_dialog`/`add_popover(supporting_text=)`. `text` stays on `add_snackbar`/`add_tooltip`/`add_status_bar`, where it's the only string |
+| H | Typography role | `add_text(typography_role=)` vs declarative `text.role` | `typography_role` in both -- a bare `role` collides with MD3 color roles and accessibility roles |
+
+**Checked and deliberately left alone:** `add_slider(background=)` paints the thumb -- a real fill, so it follows the rule, just documented more precisely; `label`/`title`/`headline`/`subhead` are distinct MD3 anatomy names, not synonyms; `size` vs `width`/`height` reflects genuinely square vs rectangular components; `initial_position` on `add_splitter` is a divider position, not a value.
+
+**Confirmed (2026-09-25):** user: "Go with A-H as recommended."
+
+**Found while implementing, beyond A-H:**
+- **A cascade bug since M59.** `cascade.rs`'s `merge()` never copied `margin`, `flex_grow`, `flex_shrink`, `flex_basis`, `align_items`, or `justify_content` -- M59 added them to `StyleSpec` but not to `merge()`, so a stylesheet or theme rule setting them was silently dropped; only inline `style:` reached the tree. Proven with a failing regression test first ("margin dropped by the cascade"), then fixed. `merge()` now destructures `StyleSpec` exhaustively, so a future field can't be missed silently.
+- **Nine examples drew invisible text** -- the naming bug in action. Six example views gave `Text` widgets `background: "#FFFFFF00"` (fully transparent) or white on a white container, and three Python examples passed `add_text(..., background=(0, 0, 0, 0))`, each reading it as a fill when it was the text color. They passed because examples check text content, never pixels. All now use a visible on-surface color.
+- **`Node.set_layout` already used lowercase enum values** while the declarative schema used PascalCase, so the docs' claim that the two share one vocabulary was false before F -- and true after it.
+
+### Phase 1 — Renames in `engine-spec` and `engine-py` ✅
+- Step 1: declarative schema -- `style.foreground` (A), `selected:` for `Switch`/`RadioButton` (C), `typography_role` in `text:` (H), lowercase `snake_case` enum values via `serde(rename_all)` (F); `build.rs` reads the new fields — ✅ (`a5bed0a`; `SpecError::InvalidColor` now names the real field instead of always saying `style.background`)
+- Step 2: imperative factories -- the parameter renames in A, B, C, E, G, H across `window_factory.rs`; the `Node` accessor and property renames in C and D (`node.rs`, `view.rs` binding dispatch) — ✅ (renamed parameters bind their old local name at the top of each body, leaving long factory bodies untouched; `add_toolbar`'s `vibrant` flows into its retheme hook as a real `bool`; new `parse_orientation` shared by `add_divider`/`add_scroll_view`; `Slider` joins the progress indicators' existing `"value"` arm; `Node.set_on`/`get_on` removed, `set_selected`/`get_selected` cover `Switch`; a `"foreground"` property on the four glyph kinds)
+- Step 3: migration errors -- an old name gets a clear error naming its replacement (e.g. "`Switch` has no field `checked`; use `selected`", "`style.background` on `Text` is not a fill; use `foreground`") rather than only a generic unknown-field message — ✅ (declarative: `NotAFill` and `WrongStateField`, and serde's own enum error lists the new lowercase values; imperative: pyo3's `TypeError` names any removed keyword, `Node.animate("background")` on a glyph kind points at `foreground`, and `"thumb_position"` reports it was renamed to `"value"`)
+- Step 4: `_core.pyi` stubs updated; `mypy --strict` on the stub clean — ✅
+
+### Phase 2 — Tests, Examples, Demo ✅
+- Step 1: Rust and pytest suites updated to the new names, plus a test per rename proving the old name fails with its migration hint — ✅ (new `tests/test_naming_0_3_3.py`, 30 cases; 5 new `engine-spec` tests; old names rewritten in 37 Python files by a call-aware rewriter that renames keywords only inside the matching call; pytest 954 passed, 2 skipped; `cargo test --workspace` 545 passed, 0 failed)
+- Step 2: all 89 examples, `demo/showcase.py`, and every example YAML file updated; each run clean — ✅ (all 89 examples plus `demo/showcase.py`; new `tools/migrate_views_0_3_3.py` rewrites view/stylesheet YAML per widget block, since `background` → `foreground` and `checked` → `selected` depend on the widget's kind)
+
+### Phase 3 — Docs ✅
+- Step 1: MkDocs updated to the new names throughout, including fixing the theming guide's `add_text(..., background=(0, 0, 0, 0))` example, which renders invisible text today — ✅ (plus pre-existing doc bugs found on the way: `node.md`'s `set_layout` example passed `flex_direction="Vertical"`, which `set_layout` has never accepted; its `animate`/`get` property tables were missing `border_color`, `border_width`, `select_progress`, `toggle_progress`, and `rotation`; `window.md`'s `add_text` signature was missing `typography_role`/`line_height`; stale `_core.pyi` docstrings and one `ARCHITECTURE.md` example also updated)
+- Step 2: a "Migrating to 0.3.3" page with the full old → new table; `mkdocs build --strict` clean and the API-coverage audit at zero — ✅ (`docs/migrating-0.3.3.md`, linked from the nav and overview: the old/new table, the migration script, what each old name now does, and the behavior changes -- stylesheet layout fields now applying, and the invisible-text trap; every rewritten snippet executed against the new build)
+
+### Phase 4 — Verification + Tesserae Handoff ✅
+- Step 1: full standing chain -- `cargo check`/`clippy -D warnings`/`fmt --check`/`cargo test --workspace --release`/`maturin develop --release`/`pytest tests/`/all examples/`demo/showcase.py`, plus the suite with `DISPLAY` unset to match CI — ✅ (`cargo test --workspace --release` 47 suites, 545 passed, 0 failed; pytest 954 passed, 2 skipped; with `DISPLAY`/`WAYLAND_*` unset 945 passed, 11 skipped, 0 failed; all 89 examples plus `demo/showcase.py` clean; `clippy -D warnings`/`fmt --check` clean)
+- Step 2: send the Tesserae session the migration table -- its wrappers, component fragments, and tests all use today's names, and its `foreground` translation layer mostly disappears — ✅ (sent directly with the migration script and the stylesheet-layout behavior change; the Tesserae session had already flagged that each WIP `maturin develop` here changes what its local tests see, since its venv loads `tre` from this source tree, and is verifying against its `v0.3.2` CI pin until `0.3.3` ships)
+
+---
+
+## Milestone 91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8)
+
+**Status: ✅ Complete (2026-09-25) — closes [issue #8](https://github.com/mindderivative/tre/issues/8).** [`tre` issue #8](https://github.com/mindderivative/tre/issues/8), filed from the Tesserae side while scoping its theming milestone. User: "scope issue #8 as M91." Queued after M90, whose renames (`selected`, `value`, `foreground`) M91's binding code must already use.
+
+**Part 1 — bound values are lost on live updates.** Confirmed by reading the source, not just the issue's reproduction: `View._attach` evaluates each `{{ }}` binding once, subscribes a `BindingCallback` to every `Signal` it read, and then **discards** the returned subscription list (`attach_bindings_and_handlers`, `engine-py/src/view.rs:681`; `View::_attach` keeps nothing). `retheme` and `reconcile_spec` rebuild a patched node's paint from its *static* spec (`patch_node`), and the `View` has no record of which bindings exist or which `ViewModel` they read from, so nothing can re-apply them. The node shows its static placeholder until its `Signal` next changes. Affects `set_theme`, `reconcile(spec=/json=/source=)`, and `poll_reload`.
+
+**Part 2 — no way to change a stylesheet after construction.** The stylesheet is set only in `View(stylesheet=/stylesheet_spec=)`; `set_theme`/`reconcile` reuse the stored one, and nothing replaces it. A framework hot-reloading a stylesheet file must rebuild the whole `View`, losing `NodeId`s, focus, and in-flight animations.
+
+**Design:**
+- **Keep the attachment.** `View` stores what `_attach` produced -- the `ViewModel` plus its `(signal, callback)` subscriptions -- the same list `Component::_attach` already keeps for `Component.remove()`.
+- **Re-attach after every update.** A shared internal step runs at the end of `set_theme`, `reconcile`, `poll_reload` (when it reconciled something), and the new `set_stylesheet`: unsubscribe every old callback (the `Signal._unsubscribe` path `Component.remove()` uses), re-collect bindings/handlers/two-way entries from the reconciler's *current* spec, and run `attach_bindings_and_handlers` again against the stored `ViewModel`. Every bound node gets its live value back, and the stale callbacks for removed or replaced nodes go away rather than firing into a missing `NodeId`.
+- **A documented limitation disappears as a side effect.** Today the docs say bindings/handlers added by a reload aren't picked up until `_attach` is called again. Re-collecting from the current spec picks them up automatically.
+- **`View.set_stylesheet(stylesheet_spec=None, stylesheet=None)`** -- the same mutually exclusive path/`*_spec` pair as `View(...)`, resolved through M86's `resolve_stylesheet_input`; both omitted clears the stylesheet (matching `set_theme`'s "each call is a complete, fresh selection"). Stores the new stylesheet, then runs `Reconciler::retheme` exactly as `set_theme` does, then re-attaches.
+- **Before `_attach`,** a `View` has no `ViewModel` and nothing to re-apply -- updates behave exactly as today.
+
+### Phase 1 — Stored Attachment, Re-attach, `set_stylesheet` ✅
+- Step 1: `View` stores the `ViewModel` and subscriptions from `_attach`; a second `_attach` call replaces the first cleanly (unsubscribing it) rather than stacking duplicate callbacks — ✅ (an `Attachment` in a `RefCell`, since `_attach` stays `&self` for re-entrancy from handlers; `View`'s construction-time `bindings`/`declared_handlers`/`two_way` lists removed -- attach now collects from the reconciler's current spec every time)
+- Step 2: shared re-attach step, called at the end of `set_theme`/`reconcile`/`poll_reload`; a reload that introduces an invalid binding raises `ValueError` naming it, same as `_attach` does — ✅ (the attachment also records the handler entries it registered, by object identity, so detach removes a handler a reload dropped without touching one the app registered imperatively on the same node)
+- Step 3: `View.set_stylesheet(stylesheet_spec=None, stylesheet=None)`, re-resolving every node in place via `retheme`, then re-attaching — ✅ (`resolve_stylesheet_input` now takes the calling method's name, so its both-given error says `View.set_stylesheet`)
+- Step 4: check whether embedded `Component`s (their own reconciler and attachment) are touched by `View.set_theme`/`set_stylesheet` at all; fix or document what is found rather than assuming — ✅ (checked by running it: an embedded component's bindings are unaffected by the view's updates -- its nodes aren't in the view's spec and it keeps its own attachment. The converse is a pre-existing gap, recorded under Known gaps: `View.set_theme`/`set_stylesheet` don't re-resolve a component's static styles, since it has its own reconciler)
+- Step 5: tests -- the issue's reproduction as a regression test (bound text survives `set_theme`, and survives a `reconcile` that edits the bound node's style or static content); a binding added by a reconcile takes effect; a removed bound node's callback no longer fires; `set_stylesheet` restyles in place with `NodeId`s preserved; a `Signal` write after re-attach updates exactly once, not once per stale callback — ✅ (19 cases in new `tests/test_live_bindings.py`, including the issue's reproduction verbatim, `poll_reload`, a view shown in a `Window`, and handler add/remove; one pre-existing `test_theme.py` test had pinned the old revert-to-static behavior -- the bug itself -- and now asserts the bound value survives; pytest 973 passed, 2 skipped, and 964 passed, 0 failed with no display)
+
+### Phase 2 — Docs, Verification, Issue ✅
+- Step 1: MkDocs -- `set_stylesheet` in the `View` reference; the "bindings are not re-resolved" caveats removed from `view.md`, `declarative-views.md`, and `working-with-files.md`; `mkdocs build --strict` clean — ✅ (`view.md` gains `set_stylesheet`; caveats rewritten in `view.md`, `declarative-views.md`, `working-with-files.md`, and the `_core.pyi` `set_theme` docstring, plus a new `set_stylesheet` stub; the migration page lists the behavior change, including that re-applying a `checked`/`text` binding fires `Change`, so a declared `on_change` runs once per update -- verified by running it; API-coverage audit at zero)
+- Step 2: full standing chain, including the suite with `DISPLAY` unset to match CI — ✅ (`cargo test --workspace --release` 47 suites, 545 passed, 0 failed; pytest 973 passed, 2 skipped; 964 passed, 0 failed with no display; all 89 examples plus `demo/showcase.py` clean; `clippy -D warnings`/`fmt --check` clean)
+- Step 3: tell the Tesserae session (its M29 hot reload and M30 theming both benefit), and comment on and close issue #8 once the user approves — ✅ (Tesserae told; user: "Push, close issue #8, then start M92" -- `0.3.3` pushed to `origin/0.3.3`, issue #8 closed as completed with an implementation comment)
+
+---
+
+## Milestone 92 — Animatable `Icon` Color
+
+**Status: ✅ Complete (2026-09-25).** User: "Push, close issue #8, then start M92." User: "Scope the Icon color can't be animated issue, then start M91." M90 added a `"foreground"` property for the four glyph kinds; on `Text`/`Link`/`LoadingIndicator` it animates (their color lives in `PaintProperties.background`, an `Animated<Color>`), but an `Icon` keeps its color in `IconState.tint`, a plain `Color` (`engine-core/src/node.rs:1161`), so `Node.animate("foreground", ...)` on an icon can only set it instantly. Recorded as a known gap in M90; this closes it.
+
+**Scope, from direct source reads:**
+- **`engine-core`:** `IconState.tint` becomes `Animated<Color>`; `IconState::new` keeps its `(path, tint: Color)` signature and wraps it, so its 27 call sites (24 in `window_factory.rs`, one each in `tree.rs` tests, `engine-spec`'s `build.rs`, and `engine-render`'s `icon_paint.rs` test) don't change. `Tree::tick_all` ticks it right beside the existing `state.rotation` tick for `NodeKind::Icon` (`tree.rs:2215`) -- the same central-ticking path every other `Animated` field uses, which also keeps the frame loop awake while it runs.
+- **`engine-render`:** the one read (`lib.rs:1026`) becomes `state.tint.current`.
+- **`engine-py`:** `Node.animate("foreground")` on an `Icon` goes through the same `animate_field` as the other three glyph kinds, with `on_complete` support; the 20 `state.tint = color` writes in `window_factory.rs`'s retheme hooks become `state.tint = Animated::new(color)`, matching how those hooks already snap `paint.background` (a re-theme snaps; it doesn't ease).
+- **Out of scope:** the other plain color fields inside component state structs (checkbox mark, switch tints, and the like) -- nothing asks to animate them, and each would be its own change.
+
+### Phase 1 — `Animated<Color>` Tint, Tick, Render, Python ✅
+- Step 1: `IconState.tint` as `Animated<Color>`, ticked in `tick_all` beside `rotation`; render reads `.current`; retheme hooks snap with `Animated::new` — ✅ (the tick runs `rotation` and `tint` both unconditionally rather than short-circuiting, so one animation can't stall the other; all 20 retheme-hook writes wrapped; the only other `.tint` reads in the workspace turned out to be `InteractionState.tint`, unrelated)
+- Step 2: `Node.animate("foreground", ...)` on an `Icon` eases, with `on_complete` firing once — ✅ (the same `animate_field` path as `Text`/`Link`/`LoadingIndicator`, so `on_complete` registers identically)
+- Step 3: tests -- a Rust tick test proving the tint interpolates between two colors mid-animation and settles at the target; the M90 known-gap note and `node.md`'s "set instantly on an Icon" wording removed; full standing chain — ✅ (new `engine-core` test drives a black-to-red tint through the real `tick_all`: strictly between at 100 ms, exactly red at 400 ms, then idle; the migration page's "isn't animated" bullet and the known gap removed; `cargo test --workspace --release` 47 suites, 546 passed, 0 failed; pytest 973 passed, 2 skipped; 964 passed, 0 failed with no display; all 89 examples plus `demo/showcase.py` clean; `mkdocs build --strict` clean)
+
+---
+
+## Program: `tre` as a Minimal Building-Block Engine (M93–M103) — Approved
+
+**Status: 🚧 Approved (2026-09-25).** User: "Approved, release 0.3.3 and start M93." All eleven decisions answered by the user; D10 changed from the recommendation. User: "I want TRE to drop the declarative option entirely. I also want TRE to drop the MD3 components while keeping all primitives used to create the MD3 components. I also want the MD3 specific theme to be decided and created on the framework side while TRE provides all of the functions/hooks to make that possible. I want TRE to provide the building blocks while the framework has the freedom to build what it wants ... TRE needs to be small and efficient. No duplicate code, no unnecessary functions ... TRE naming conventions need to be normalized and easy to understand. When a developer uses TRE to make a framework they should know what a function, property, handler, animation, etc. is at a glance." Then: "Scope out all sequentially, then update the build tracker and once I approve the overall plan we will get started on this."
+
+**Inventory this plan is built from (read from source 2026-09-25, not estimated):**
+- ~51k lines of Rust across 6 crates. Declarative layer: `engine-spec` (5.6k) plus `engine-py`'s `view.rs`/`component.rs` (~2.9k). MD3: `engine-md3` (1.6k: HCT color, shape and type scales, curated icons, container transform) plus most of `window_factory.rs` (10.9k, 62 `add_*` factories).
+- Public Python surface: 7 classes -- `Window` has 106 methods (60 `add_*` factories, 12 overlay open/close methods, 7 docking methods, 13 synthetic-input and clipboard methods), `Node` has 34, plus `View` (10), `Component` (3), `Theme` (5), `CanvasContext` (5), `App` (3), `LoopHandle` (1), and pure-Python `Signal`/`Computed`/`Effect`/`ViewModel`/`batch`/`untrack`.
+- 21 `NodeKind`s. True building blocks: `Rect`, `Container`, `Text`, `TextField`, `Image`, `Icon`, `Canvas`, `ScrollView`, `VirtualList`, `Terminal`. MD3 widgets with engine-side behavior: `Checkbox`, `RadioButton`, `Switch`, `Slider`, `LinearProgress`, `CircularProgress`, `LoadingIndicator`, `TimePickerDial`, `Carousel`, `Splitter`, `Link`.
+- MD3-specific visuals inside the engine itself: the interaction state layer and ripple (`engine-core/interaction.rs`, rendered in `engine-render`), MD3 `elevation` shadow levels, the MD3 Expressive shape library behind `PaintProperties.shape` (`shape_morph.rs`), and 6 of 7 `MotionCurve`s (MD3's Standard/Emphasized families).
+
+**The ordering constraint.** The MD3 widget kinds can't be deleted first: a framework can't rebuild them today. Only six events reach Python (click, hover enter/exit, change, focus enter/exit) -- there are no pointer down/move/up with coordinates, no pointer capture for drags, no key events -- and accessibility roles are assigned by the engine per built-in kind, with no way for a framework to set its own. So the sequence is: design the target API, add the missing building blocks, let Tesserae migrate onto them, then delete, then rename, then rewrite the docs.
+
+**Decisions for the user, each with a recommendation (settled at approval):**
+- D1 `Terminal` -- keep as a primitive; a PTY-backed VT100 emulator can't be built efficiently in Python. **Confirmed by the user (2026-09-25): "Keep as a primitive."**
+- D2 `TextField` -- keep as the text-input primitive, including multiline, syntax spans, folding, and whitespace glyphs; `add_code_editor` goes, since it's `TextField` configured. **Confirmed by the user (2026-09-25): "As recommended."**
+- D3 `Rect` and `Container` -- merge into one box node with an optional fill: two kinds for one concept is exactly the duplication the goal rules out. **Confirmed by the user (2026-09-25): "As recommended."**
+- D4 `Icon` -- generalize to a vector `Path` node (any path data, fill and stroke, animatable); the curated icon set moves to the framework. **Confirmed by the user (2026-09-25): "As recommended."**
+- D5 Reactivity -- `Signal`/`Computed`/`Effect`/`ViewModel`/`batch`/`untrack` move to Tesserae; they exist to serve declarative binding. **Confirmed by the user (2026-09-25): "As recommended."**
+- D6 File conveniences -- remove `add_image(path)`, the `image` crate, and the "Working with Files" docs page; the framework decodes. Keep `add_image_from_bytes` and `push_frame`. **Confirmed by the user (2026-09-25): "As recommended."**
+- D7 Theming hooks -- `tre` keeps no theme concept at all; the framework sets colors on nodes and re-applies them on a theme change. Alternative if bulk re-theming proves slow: named color variables a node can reference, updated in one call -- to be decided in M93 against a measured cost, not assumed. **Confirmed by the user (2026-09-25): "As recommended."**
+- D8 Ripple and state layer -- remove from the engine; the framework builds them from primitives (M95 guarantees the primitives suffice). **Confirmed by the user (2026-09-25): "As recommended."**
+- D9 Synthetic input for headless tests (`click`, `hover`, `press_key`, `type_text`, ...) -- keep, but normalized into one consistent testing surface. **Confirmed by the user (2026-09-25): "As recommended."**
+- D10 Docking -- **changed by the user (2026-09-25): "Keep as bare bones, just the functionality for the framework to build off of."** Docking stays in `tre` as a minimal mechanism -- the docking model, panel drag and drop, and drop-target resolution -- with its presentation (tab strips, handle and highlight styling) and the `build_shell` app-shell composition moving to the framework. M93 defines the bare-bones surface; M99 reduces docking to it.
+- D11 Versioning -- existing policy keeps `0.4.0` reserved for the `vello_hybrid` fork. Recommended: release the additive building blocks (M93–M96) as `0.3.4` so Tesserae can migrate against a published version while the old API still exists, then the removals and renames (M98–M102) as `0.3.5`. Flagged because this is the largest break in the project's history; the user may prefer to spend a minor version on it. **Confirmed by the user (2026-09-25): "As recommended."**
+
+**Prerequisite: release `v0.3.3` (M90–M92) first.** Tesserae's own 0.3.3 migration comes before any of this program, and its M31 (theme and stylesheet hot reload) depends on M91's fix for issue #8.
+
+**Stays in `tre`, stated explicitly:** flex layout (`taffy`), text shaping and fonts, clipping, opacity, transforms, the animation engine, rendering, the event loop and `App.thread_handle()`, accessibility, clipboard, and the node tree with cheap, stable `Node` handles.
+
+**Tesserae's capability needs (sent 2026-09-25 at the user's request, answering "what's missing"), checked against the source:**
+
+| Need | Today | Where the plan covers it |
+|---|---|---|
+| The `{{ }}` binding evaluator (`binding.rs`, the safe non-`eval` whitelist) | Missing from the first draft's move list | M98 -- listed as moving to Tesserae |
+| Reorder and move children (a keyed reconciler needs it) | Gap: `Tree` only has `add_child`, which appends | M96 Phase 2 |
+| Show any kept-alive subtree in a window, keeping its `NodeId`s, handlers, and focus | `Window.show_view` only accepts a `View` | M96 Phase 2 |
+| Set and read every style and layout property on an existing node | Mostly there: `Node.set_layout` covers layout; paint is set through `animate(..., duration_ms=0)`; `Node.get` reads numbers but not colors | M93 names one set API; M96 Phase 2 adds color readback |
+| Batch updates, deferring layout and paint until the end | Gap | M96 Phase 2 |
+| OS light/dark switch and window resize, delivered to Python | Gap: the OS switch is consumed internally by `Theme` | M94 Phase 1 |
+| Focus and blur events, Tab order | Already exists: `set_on_focus_enter`/`set_on_focus_exit`, `is_focused`, Tab order | Covered; whether explicit ordering is needed is decided in M93 |
+| Flex layout stays | Implied | Stated above |
+| Text measurement, for content-sized widgets | Gap | M96 Phase 2 |
+| Stable, cheap `Node` handles | Already the case | Covered |
+| Clip, z-order, and opacity for overlays | Clip and opacity exist | z-order in M96 Phase 1 |
+
+| Milestone | Delivers | Kind |
+|---|---|---|
+| M93 | Target API spec and naming convention | Design, approval gate |
+| M94 | Input and accessibility building blocks | Additive |
+| M95 | Paint and animation building blocks | Additive |
+| M96 | Layer, structure, and update building blocks | Additive |
+| M97 | Tesserae migration gate | Cross-repo gate |
+| M98 | Remove the declarative layer | Removal |
+| M99 | Remove MD3 components, kinds, and theming | Removal |
+| M100 | Apply the naming convention | Rename |
+| M101 | Consolidation and size pass | Cleanup |
+| M102 | Docs, examples, and tests rewrite | Docs |
+| M103 | Release | Release |
+
+---
+
+## Milestone 93 — Target API Spec and Naming Convention
+
+**Status: ⬜ Proposed.** Design only, no code. Every later milestone implements this spec, so names are decided once, here, instead of renamed twice.
+
+### Phase 1 — Inventory and Classification ⬜
+- Step 1: classify every public name -- all 7 classes' methods, the 60 factories, all 21 node kinds, every `PaintProperties` field, every event, every animatable property, every motion curve -- as keep, replace-with-primitive, move-to-framework, or remove, with a one-line reason each — ⬜
+- Step 2: for each MD3 widget kind, list the exact primitives a framework needs to rebuild it, so M94–M96 add exactly those and nothing speculative; define the bare-bones docking surface per D10 — ⬜
+- Step 3: map every capability Tesserae uses today, and every need in its capability list above, to a named primitive in the target API -- none left unaccounted for — ⬜
+
+### Phase 2 — Naming Convention ⬜
+- Step 1: a written convention -- verbs for methods (`add_`, `set_`, `get_`, `remove_`), `on_` for events, nouns for properties, units in names where ambiguous, boolean naming, lowercase snake_case enum strings, one name per concept -- with the M90 rules folded in — ⬜
+- Step 2: apply it to every surviving name, producing the final target API and an old-to-new migration table — ⬜
+
+### Phase 3 — Spec Review ⬜
+- Step 1: publish the spec as a docs design page and hand it to the Tesserae session for feedback — ⬜
+- Step 2: user approval of the spec; nothing in M94 onward starts before this — ⬜
+
+---
+
+## Milestone 94 — Input and Accessibility Building Blocks
+
+**Status: ⬜ Proposed.** Additive -- nothing removed yet. These are the pieces a framework needs to build interactive widgets itself.
+
+### Phase 1 — Pointer and Keyboard Events ⬜
+- Step 1: pointer down, move, and up events to Python, with node-local and window coordinates, button, and modifiers; wheel events — ⬜
+- Step 2: pointer capture, so a drag keeps reporting to the node that started it after the pointer leaves it -- what sliders, splitters, and framework-built drag interactions need — ⬜
+- Step 3: key down and key up events with key and modifiers, alongside text input, to the focused node — ⬜
+- Step 4: a defined propagation model -- whether events bubble to ancestors, and how a handler stops them -- decided in M93 and implemented here — ⬜
+- Step 5: window-level events to Python -- resize, and the OS light/dark switch, which `tre` stops handling itself once theming moves out — ⬜
+
+### Phase 2 — Accessibility and Focus ⬜
+- Step 1: set a node's accessibility role, label, value, and checked or selected state, and its available actions, so framework-built widgets are as accessible as today's built-in ones — ⬜
+- Step 2: make any node focusable and part of the Tab order explicitly, independent of its kind; set the pointer cursor shape — ⬜
+
+### Phase 3 — Verification ⬜
+- Step 1: tests for every new event and setter, plus a proof widget -- a working slider built only from these primitives in a test, behaving like today's built-in one — ⬜
+
+---
+
+## Milestone 95 — Paint and Animation Building Blocks
+
+**Status: ⬜ Proposed.** Additive. Generic replacements for the MD3-specific visuals inside the engine.
+
+### Phase 1 — Vector Paths ⬜
+- Step 1: a `Path` node -- path data, fill and stroke color and width, all animatable -- generalizing `Icon` per D4 — ⬜
+- Step 2: animatable stroke trim (start and end fractions), the primitive behind circular and linear progress indicators — ⬜
+- Step 3: path morphing between two arbitrary paths, generalizing the MD3 shape library's morph so any shape set works — ⬜
+
+### Phase 2 — Shadows and Easing ⬜
+- Step 1: a generic shadow -- offset, blur, spread, color -- replacing MD3 `elevation` levels — ⬜
+- Step 2: generic easing -- linear, cubic bezier with four control values, and spring if M93 shows a need -- replacing the MD3 named curves, which the framework recreates as bezier values — ⬜
+
+### Phase 3 — Verification ⬜
+- Step 1: pixel tests for paths, trim, morph, and shadows; a proof ripple built from primitives in a test, matching today's built-in one visually — ⬜
+
+---
+
+## Milestone 96 — Layer, Structure, and Update Building Blocks
+
+**Status: ⬜ Proposed.** Additive. One generic layer mechanism replacing the six component-specific open/close pairs, plus the tree and update operations a framework-side reconciler needs to be correct and fast (Tesserae's needs 1–4).
+
+### Phase 1 — Layers ⬜
+- Step 1: show and hide any node as an overlay layer, with position anchoring, z-order, modal input blocking, and an outside-click and Escape dismissal event -- the one mechanism dialogs, menus, snackbars, side sheets, drawers, tooltips, and context menus reduce to — ⬜
+- Step 2: tests, including a proof modal dialog and an anchored menu built from primitives — ⬜
+
+### Phase 2 — Structure and Updates ⬜
+- Step 1: insert a child at an index and move an existing child, keeping its `NodeId`, handlers, focus, and running animations -- what a keyed reconciler needs — ⬜
+- Step 2: show any kept-alive subtree as a window's content, replacing `Window.show_view`'s `View`-only form — ⬜
+- Step 3: a batch update scope that defers layout and paint until it ends, so re-theming or reconciling from Python doesn't cost a layout per property; measured against unbatched updates rather than assumed — ⬜
+- Step 4: color readback and text measurement -- a string's size under given text properties -- for content-sized widgets — ⬜
+- Step 5: tests, including a proof keyed-list reorder that preserves node identity — ⬜
+
+---
+
+## Milestone 97 — Tesserae Migration Gate
+
+**Status: ⬜ Proposed.** A cross-repo gate: nothing is removed from `tre` until Tesserae no longer uses it. The Tesserae-side work is tracked in Tesserae's own `BUILD_TRACKER.md`.
+
+### Phase 1 — Release the Additive Surface ⬜
+- Step 1: release M93–M96 as `0.3.4` per D11, with the old API still present, so Tesserae migrates against a published version — ⬜
+
+### Phase 2 — Tesserae Migrates ⬜
+- Step 1: hand Tesserae the spec and a per-feature migration guide -- its own reactivity per D5, its own declarative layer and reconciler, its own MD3 theme with HCT color, its own widgets on the new primitives — ⬜
+- Step 2: Tesserae confirms it no longer calls anything M98–M99 removes, verified by running its suite with those names stubbed out rather than taken on trust — ⬜
+
+---
+
+## Milestone 98 — Remove the Declarative Layer
+
+**Status: ⬜ Proposed.** Starts only after M97's gate.
+
+### Phase 1 — Removal ⬜
+- Step 1: delete the `engine-spec` crate, `View`, `Component`, and their `engine-py` code, including the `{{ }}` binding evaluator (`binding.rs`), which moves to Tesserae; the reactivity layer per D5; `tools/migrate_views_0_3_3.py` — ⬜
+- Step 2: remove the dependencies only they used -- `serde_yaml_ng`, `pythonize`, the file watcher -- and their tests, examples, and docs pages — ⬜
+- Step 3: full standing chain — ⬜
+
+---
+
+## Milestone 99 — Remove MD3 Components, Kinds, and Theming
+
+**Status: ⬜ Proposed.** Starts only after M97's gate.
+
+### Phase 1 — Factories and Theming ⬜
+- Step 1: delete the MD3 composition factories, `build_shell`, container transform, the `Theme` class, `set_theme`, and the retheme hooks — ⬜
+- Step 2: reduce docking to the bare-bones mechanism M93 defines per D10 -- the docking model, panel drag and drop, and drop-target resolution stay; tab-strip, handle, and highlight presentation move to the framework — ⬜
+- Step 3: delete the `engine-md3` crate; its color science, scales, and icon data are handed to Tesserae first — ⬜
+
+### Phase 2 — Engine-Side MD3 Behavior ⬜
+- Step 1: delete the MD3 widget kinds -- `Checkbox`, `RadioButton`, `Switch`, `Slider`, the three progress indicators, `LoadingIndicator`, `TimePickerDial`, `Carousel`, `Splitter`, `Link` -- with their dispatch, ticking, painting, and accessibility code in `engine-core` and `engine-render` — ⬜
+- Step 2: delete the interaction state layer and ripple per D8, the MD3 elevation levels, the MD3 shape library, and the MD3 named motion curves, now replaced by M95's generic primitives — ⬜
+- Step 3: file conveniences per D6; full standing chain — ⬜
+
+---
+
+## Milestone 100 — Apply the Naming Convention
+
+**Status: ⬜ Proposed.** Renames only the survivors, so nothing is renamed and then deleted.
+
+### Phase 1 — Renames ⬜
+- Step 1: rename every surviving Rust-facing Python name to M93's final API, with a clear error naming the replacement where an old name remains a plausible mistake — ⬜
+- Step 2: normalize the headless-testing surface per D9 — ⬜
+- Step 3: the M93 migration table becomes a published migration page; full standing chain — ⬜
+
+---
+
+## Milestone 101 — Consolidation and Size Pass
+
+**Status: ⬜ Proposed.** The "no duplicate code" goal, measured rather than asserted.
+
+### Phase 1 — Dead Code and Duplication ⬜
+- Step 1: remove code paths and helpers left unreachable by M98–M100, and fold duplicated logic -- in particular `tree.rs`, which carries per-kind branches for kinds that no longer exist — ⬜
+- Step 2: prune unused Cargo dependencies and features — ⬜
+
+### Phase 2 — Measurement ⬜
+- Step 1: record before and after figures -- lines of Rust, public API count, wheel size, build time -- and rerun the frame-budget benchmark to confirm no performance regression — ⬜
+
+---
+
+## Milestone 102 — Docs, Examples, and Tests Rewrite
+
+**Status: ⬜ Proposed.**
+
+### Phase 1 — Docs ⬜
+- Step 1: rewrite the MkDocs site around the building blocks -- nodes and layout, painting, animation, events and input, text, accessibility, layers, threading -- plus a "building a widget from primitives" guide that walks through a complete widget — ⬜
+- Step 2: README and ARCHITECTURE.md rewritten to match; `mkdocs build --strict` and the API-coverage audit clean — ⬜
+
+### Phase 2 — Examples and Tests ⬜
+- Step 1: replace the MD3-component examples with a smaller set, each demonstrating one building block, plus the proof widgets from M94–M96 — ⬜
+- Step 2: prune tests of removed features; every surviving public API keeps coverage; `demo/showcase.py` rebuilt on primitives or retired — ⬜
+
+---
+
+## Milestone 103 — Release
+
+**Status: ⬜ Proposed.**
+
+### Phase 1 — Release ⬜
+- Step 1: PR to `main`, CI green on all three platforms, merge, re-verify, release note, annotated tag, as with `v0.3.2` — ⬜
+- Step 2: Tesserae moves its CI pin to the release — ⬜
 
 ---
 

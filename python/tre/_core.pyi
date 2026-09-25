@@ -250,12 +250,9 @@ class Node:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
         ...
     def set_selected(self, selected: bool) -> None:
-        """`RadioButton`-only -- raises `ValueError` for any other
-        kind.
+        """`RadioButton`/`Switch`-only (M90: `Switch` joined, replacing
+        `set_on`) -- raises `ValueError` for any other kind.
         """
-        ...
-    def set_on(self, on: bool) -> None:
-        """`Switch`-only -- raises `ValueError` for any other kind."""
         ...
     def set_text(self, content: str) -> None:
         """`TextField`/`Text`-only -- raises `ValueError` for any other
@@ -275,12 +272,9 @@ class Node:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
         ...
     def get_selected(self) -> bool:
-        """`RadioButton`-only -- raises `ValueError` for any other
-        kind.
+        """`RadioButton`/`Switch`-only (M90: `Switch` joined, replacing
+        `get_on`) -- raises `ValueError` for any other kind.
         """
-        ...
-    def get_on(self) -> bool:
-        """`Switch`-only -- raises `ValueError` for any other kind."""
         ...
     def get_text(self) -> str:
         """`TextField`/`Text`/`Terminal`-only -- raises `ValueError` for
@@ -539,7 +533,7 @@ class Window:
     def add_text(
         self,
         content: str,
-        background: Color,
+        foreground: Color,
         width: float,
         height: float,
         typography_role: str | None = None,
@@ -550,8 +544,8 @@ class Window:
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
-        """A plain label -- `background` is repurposed as the glyph
-        color (no visible box of its own). `typography_role` is a real
+        """A plain label -- `foreground` is its text color (a label has
+        no fill of its own; M90 renamed this from `background`). `typography_role` is a real
         MD3 type-scale role name (e.g. `"body_large"`); it supplies
         `font_family`/`font_weight`/`font_size`/`line_height` as
         defaults, each of which may still be individually overridden.
@@ -777,7 +771,7 @@ class Window:
     def add_loading_indicator(
         self,
         size: float = 48.0,
-        color: Color | None = None,
+        foreground: Color | None = None,
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
@@ -787,7 +781,7 @@ class Window:
         looping the instant it's constructed and never stops. `size`
         is a single square dimension, the same real convention `add_
         circular_progress`'s own `size` param already establishes.
-        `color` defaults to the current theme's own real `primary`
+        `foreground` defaults to the current theme's own real `primary`
         role (or a fixed baseline before `Window.set_theme`). **Real,
         honest v1 simplification:** this is a real, recognizable
         subset of MD3 Expressive's own actual seven-shape sequence,
@@ -837,15 +831,15 @@ class Window:
     def add_divider(
         self,
         length: float,
-        vertical: bool = False,
+        orientation: str = "horizontal",
         x: float | None = None,
         y: float | None = None,
         border_color: Color | None = None,
         border_width: float | None = None,
     ) -> Node:
         """A real MD3 1dp divider line -- `length` wide and 1dp tall
-        when horizontal (the default), or the reverse when
-        `vertical=True`.
+        when `orientation="horizontal"` (the default), or the reverse
+        when `orientation="vertical"`.
         """
         ...
     def add_tooltip(
@@ -869,7 +863,7 @@ class Window:
     def add_dialog(
         self,
         headline: str,
-        text: str,
+        supporting_text: str,
         width: float,
         height: float,
         border_color: Color | None = None,
@@ -1054,7 +1048,7 @@ class Window:
         self,
         variant: str = "docked",
         orientation: str | None = None,
-        color: str | None = None,
+        vibrant: bool = False,
         width: float | None = None,
         height: float | None = None,
         x: float | None = None,
@@ -1068,8 +1062,8 @@ class Window:
         elevation). `orientation` (`"horizontal"`/`"vertical"`) only
         applies to a floating toolbar -- a docked toolbar is always
         horizontal and raises `ValueError` if asked for vertical.
-        `color` is `"standard"` (`surface_container` fill) or
-        `"vibrant"` (`primary_container` fill). A real "container with
+        `vibrant=False` uses a `surface_container` fill, `vibrant=True`
+        a `primary_container` fill. A real "container with
         configurable slots" per MD3's own anatomy: populate the
         returned node with any already-built node (a `Button`, `Icon
         Button`, `TextField`, etc.) via the existing, generic
@@ -1318,7 +1312,7 @@ class Window:
     def add_popover(
         self,
         subhead: str,
-        text: str,
+        supporting_text: str,
         width: float,
         height: float,
         border_color: Color | None = None,
@@ -1336,7 +1330,7 @@ class Window:
         ...
     def add_link(
         self,
-        text: str,
+        content: str,
         width: float,
         x: float | None = None,
         y: float | None = None,
@@ -1426,7 +1420,7 @@ class Window:
         self,
         width: float = 52.0,
         height: float = 32.0,
-        on: bool = False,
+        selected: bool = False,
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
@@ -1446,7 +1440,7 @@ class Window:
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
-        """`value` is the initial `thumb_position`, clamped `0.0..=1.0`."""
+        """`value` is the initial position, clamped `0.0..=1.0`; read and animate it as the `"value"` property."""
         ...
     def add_image(
         self,
@@ -1545,7 +1539,7 @@ class Window:
     def add_icon(
         self,
         name: str,
-        color: Color,
+        foreground: Color,
         size: float,
         x: float | None = None,
         y: float | None = None,
@@ -1675,7 +1669,7 @@ class Window:
         self,
         width: float,
         height: float,
-        horizontal: bool = False,
+        orientation: str = "vertical",
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
@@ -1683,8 +1677,8 @@ class Window:
         Returns an empty container -- compose your own real content in
         via `Node.add_child` (it needs a real, explicit size on the
         scroll axis matching its own true content extent, same as
-        every other `add_*` factory's own children). `horizontal=False`
-        (the default) scrolls vertically; `True` scrolls horizontally
+        every other `add_*` factory's own children). `orientation`
+        is the scroll axis: `"vertical"` (the default) or `"horizontal"`
         -- never both at once. Real wheel scrolling and `Window.scroll`
         both already work with no further setup, and so does a real
         mouse drag on the scrollbar thumb the engine now paints and
@@ -2099,6 +2093,19 @@ class View:
         if none is given.
         """
         ...
+    def set_stylesheet(
+        self,
+        stylesheet_spec: object | None = None,
+        stylesheet: str | None = None,
+    ) -> None:
+        """M91 (issue #8): replaces this view's stylesheet and
+        re-resolves every node in place, like `set_theme` -- `NodeId`s,
+        focus, and in-flight animations are preserved, and the attached
+        ViewModel's bindings are re-applied afterward. `stylesheet_spec`
+        (a dict) and `stylesheet` (a YAML file path) are mutually
+        exclusive; passing neither clears the stylesheet.
+        """
+        ...
     def set_theme(
         self,
         default_theme: str | None = None,
@@ -2129,11 +2136,8 @@ class View:
         previous call used." A `poll_reload()` called after this
         continues resolving against the theme this call installed.
 
-        Real, named limit, not silently glossed over: only the static
-        style cascade is recomputed -- a `{{ }}` binding's own
-        currently-applied value is not re-run, so a bound field reverts
-        to its spec's own static value (same as any content-only
-        `poll_reload` already does today). `View` has no imperative
+        M91 (issue #8): the attached ViewModel's bindings are re-applied
+        afterward, so a bound field keeps its live value. `View` has no imperative
         factories, so `Window.set_theme`'s own `components:` shape/
         elevation section has nothing to apply to here.
         """

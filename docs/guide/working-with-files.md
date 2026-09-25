@@ -71,7 +71,7 @@ inline one once loaded:
 ```yaml
 id: root
 kind: Container
-style: {flex_direction: Vertical, width: 240, height: 120, gap: 8, padding: 8}
+style: {flex_direction: vertical, width: 240, height: 120, gap: 8, padding: 8}
 children:
   - id: header
     kind: Rect
@@ -104,7 +104,7 @@ In a view:
 ```yaml
 - id: logo
   kind: Image
-  image: {src: logo.png, fit: Contain}
+  image: {src: logo.png, fit: contain}
   style: {width: 120, height: 60}
 ```
 
@@ -181,9 +181,9 @@ if view.poll_reload():
 An unchanged widget (same `id`, same `kind`) keeps its runtime identity,
 preserving focus, scroll position, and in-flight animations. The
 stylesheet and theme the view was built with are reused on every reload.
-**`bindings:`/`handlers:`/`two_way:` are not re-resolved** — if a reload
-adds a new binding or handler, call `_attach` again (construct a fresh
-`ViewModel`, or call `view._attach(vm)`).
+After every update the attached `ViewModel` is re-applied against the
+new spec: bound fields keep their live values, bindings and handlers the
+update added start working, and ones it removed stop.
 
 A `View` built with `spec=`/`json=` and no `path=` has no watcher, so
 `poll_reload()` always returns `False` — use

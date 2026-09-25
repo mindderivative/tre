@@ -27,7 +27,7 @@ def test_a_purely_programmatic_view_builds_with_no_path_or_source():
     spec = {
         "id": "root",
         "kind": "Container",
-        "style": {"flex_direction": "Horizontal", "width": 200, "height": 100},
+        "style": {"flex_direction": "horizontal", "width": 200, "height": 100},
         "children": [
             {
                 "id": "swatch",

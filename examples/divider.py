@@ -12,7 +12,7 @@ from tre import App, Window
 window = Window(width=200, height=100, title="tre v2 -- divider")
 
 window.add_divider(length=168, x=16, y=40)
-window.add_divider(length=68, vertical=True, x=100, y=16)
+window.add_divider(length=68, orientation="vertical", x=100, y=16)
 
 window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
 

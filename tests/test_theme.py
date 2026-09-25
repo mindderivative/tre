@@ -579,7 +579,7 @@ def test_dialog_override_does_not_raise(tmp_path):
     window = window_with_components(
         tmp_path, "  card: {corner_radius: 99}\n  dialog: {corner_radius: 10, elevation: 6}\n"
     )
-    window.add_dialog(headline="hi", text="body", width=280.0, height=180.0)
+    window.add_dialog(headline="hi", supporting_text="body", width=280.0, height=180.0)
 
 
 def test_snackbar_corner_radius_and_elevation_override(tmp_path):
@@ -593,7 +593,7 @@ def test_popover_has_its_own_key_distinct_from_card(tmp_path):
     window = window_with_components(
         tmp_path, "  card: {corner_radius: 99}\n  popover: {corner_radius: 8, elevation: 5}\n"
     )
-    node = window.add_popover(subhead="hi", text="body", width=280.0, height=140.0)
+    node = window.add_popover(subhead="hi", supporting_text="body", width=280.0, height=140.0)
     assert node.get("corner_radius") == pytest.approx(8.0)
     assert node.get("elevation") == pytest.approx(5.0)
 
@@ -697,11 +697,11 @@ def test_unthemed_containers_and_surfaces_preserve_every_real_default_value(tmp_
     assert window.add_tooltip(text="hi", width=100.0).get("corner_radius") == pytest.approx(4.0)
     # add_dialog returns the scrim, not the themed panel -- see
     # test_dialog_override_does_not_raise's own doc comment above.
-    window.add_dialog(headline="hi", text="body", width=280.0, height=180.0)
+    window.add_dialog(headline="hi", supporting_text="body", width=280.0, height=180.0)
     snackbar, _a, _c = window.add_snackbar(text="hi", width=300.0)
     assert snackbar.get("corner_radius") == pytest.approx(4.0)
     assert snackbar.get("elevation") == pytest.approx(3.0)
-    popover = window.add_popover(subhead="hi", text="body", width=280.0, height=140.0)
+    popover = window.add_popover(subhead="hi", supporting_text="body", width=280.0, height=140.0)
     assert popover.get("corner_radius") == pytest.approx(12.0)
     search_bar, _f, _l, _t = window.add_search_bar(placeholder="hi", width=300.0)
     assert search_bar.get("corner_radius") == pytest.approx(28.0)
@@ -946,17 +946,12 @@ def test_view_set_theme_survives_a_later_poll_reload(tmp_path):
     assert node.get("corner_radius") == pytest.approx(16.0)
 
 
-def test_view_set_theme_a_bound_property_reverts_to_its_static_value_sanely(tmp_path):
-    # Real, verified finding, not assumed: `patch_node` only recomputes
-    # the *static* style cascade -- the identical, pre-existing behavior
-    # any content-only `poll_reload()` already has today, not a new
-    # interaction `set_theme` introduces. A bound field's last-applied
-    # value does NOT survive a retheme -- it reverts to the node's own
-    # static spec value (here `opacity: 1.0`), same as a real content
-    # hot-reload would produce. This is the milestone's own named scope
-    # limit (bindings are not re-applied by `set_theme`), proven here as
-    # "reverts sanely to a real value," not "crashes" or "goes stale
-    # garbage."
+def test_view_set_theme_keeps_a_bound_propertys_live_value(tmp_path):
+    # M91 (issue #8) changed this contract. `patch_node` still recomputes
+    # only the *static* style cascade, but `set_theme` now re-applies the
+    # attached ViewModel's bindings afterward -- before M91 this test
+    # asserted the bound opacity reverted to the static 1.0, which was
+    # exactly the bug the issue reported.
     view_path = write_yaml(
         tmp_path,
         "view.yaml",
@@ -980,9 +975,8 @@ def test_view_set_theme_a_bound_property_reverts_to_its_static_value_sanely(tmp_
     view.set_theme(custom_theme=custom_theme_path)
 
     assert node.get("corner_radius") == pytest.approx(5.0), "the new theme layer applied"
-    assert node.get("opacity") == pytest.approx(1.0), (
-        "retheme recomputes only the static cascade -- the bound value reverts "
-        "to the spec's own static opacity, exactly like a content hot-reload would"
+    assert node.get("opacity") == pytest.approx(0.4), (
+        "set_theme re-applies bindings, so the bound value survives the retheme"
     )
 
 
@@ -1091,13 +1085,13 @@ def test_window_set_theme_recomputes_an_already_built_tooltips_corner_radius_liv
 
 def test_window_set_theme_a_second_call_does_not_raise_for_an_already_built_dialog(tmp_path):
     window = Window(width=400, height=400)
-    window.add_dialog(headline="hi", text="body", width=280.0, height=180.0)
+    window.add_dialog(headline="hi", supporting_text="body", width=280.0, height=180.0)
     retheme(window, tmp_path, "t.yaml", "  dialog: {corner_radius: 10, elevation: 6}\n")
 
 
 def test_window_set_theme_recomputes_an_already_built_popovers_shape_live(tmp_path):
     window = Window(width=400, height=400)
-    node = window.add_popover(subhead="hi", text="body", width=280.0, height=140.0)
+    node = window.add_popover(subhead="hi", supporting_text="body", width=280.0, height=140.0)
     retheme(window, tmp_path, "t.yaml", "  popover: {corner_radius: 8, elevation: 5}\n")
     assert node.get("corner_radius") == pytest.approx(8.0)
     assert node.get("elevation") == pytest.approx(5.0)
@@ -1174,7 +1168,7 @@ def test_window_set_theme_a_second_call_does_not_raise_for_every_remaining_color
     window = Window(width=400, height=400)
     window.add_divider(length=100.0)
     window.add_status_bar(text="hi")
-    window.add_link(text="hi", width=100.0)
+    window.add_link(content="hi", width=100.0)
     window.add_accordion_header(title="hi", expanded=False, width=200.0)
     window.add_tree_node(title="hi", depth=0, expanded=False, leaf=False, width=200.0)
     window.add_list_item(headline="hi", width=280.0)

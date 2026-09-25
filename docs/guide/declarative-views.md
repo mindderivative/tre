@@ -20,13 +20,13 @@ from tre import View
 view = View(spec={
     "id": "root",
     "kind": "Container",
-    "style": {"flex_direction": "Horizontal", "padding": 12, "gap": 8},
+    "style": {"flex_direction": "horizontal", "padding": 12, "gap": 8},
     "children": [
         {"id": "swatch", "kind": "Rect",
          "style": {"width": 40, "height": 40, "background": "#6750A4"}},
         {"id": "label", "kind": "Text",
-         "text": {"content": "Hello", "role": "body_large"},
-         "style": {"background": "#1D1B20"}},
+         "text": {"content": "Hello", "typography_role": "body_large"},
+         "style": {"foreground": "#1D1B20"}},
     ],
 })
 node = view.node("label")  # look up a widget by its author-assigned id
@@ -57,7 +57,7 @@ same structure.
 ```yaml
 id: root
 kind: Container
-style: {flex_direction: Horizontal, padding: 12, gap: 8}
+style: {flex_direction: horizontal, padding: 12, gap: 8}
 children:
   - id: swatch
     kind: Rect
@@ -65,7 +65,7 @@ children:
   - id: label
     kind: Text
     text: {content: "Hello", font_family: Roboto, font_size: 16}
-    style: {background: "#1D1B20"}   # a Text's background is its text color
+    style: {foreground: "#1D1B20"}
 ```
 
 Every widget has:
@@ -83,14 +83,15 @@ Every widget has:
 | Field | Type |
 | --- | --- |
 | `width`, `height` | number |
-| `flex_direction` | `Horizontal` or `Vertical` |
+| `flex_direction` | `horizontal` or `vertical` |
 | `padding`, `margin` | number, **or** a per-side object `{top, right, bottom, left}` (each defaults to `0`) |
 | `gap` | number |
 | `flex_grow`, `flex_shrink` | number |
 | `flex_basis` | number (a pixel length, not a percentage) |
-| `align_items` | `Start`, `End`, `FlexStart`, `FlexEnd`, `Center`, `Baseline`, `Stretch` |
-| `justify_content` | `Start`, `End`, `FlexStart`, `FlexEnd`, `Center`, `Stretch`, `SpaceBetween`, `SpaceAround`, `SpaceEvenly` |
-| `background` | a hex (`"#6750A4"`, `"#6750A4FF"`) or CSS named color string, or (with a theme) an MD3 role name — see below |
+| `align_items` | `start`, `end`, `flex_start`, `flex_end`, `center`, `baseline`, `stretch` |
+| `justify_content` | `start`, `end`, `flex_start`, `flex_end`, `center`, `stretch`, `space_between`, `space_around`, `space_evenly` |
+| `background` | a fill: a hex (`"#6750A4"`, `"#6750A4FF"`) or CSS named color string, or (with a theme) an MD3 role name — see below |
+| `foreground` | the glyph/text color of `Text`, `Link`, `Icon`, and `LoadingIndicator`, which have no fill — same string forms as `background` |
 | `corner_radius` | number, **or** a named shape token: `none`, `extra_small`, `small`, `medium`, `large`, `extra_large` |
 | `elevation` | number, **or** a named elevation token: `level_0` through `level_5` |
 | `opacity` | number |
@@ -112,21 +113,21 @@ Kind-specific blocks:
 
 - `kind: Text`, `kind: TextField`, or `kind: Link` — a required `text:`
   block: `{content, font_family, font_weight: 400.0, font_size}` (or
-  `role:`, an MD3 typography role name like `body_large`, supplying
+  `typography_role:`, an MD3 type-scale role name like `body_large`, supplying
   `font_family`/`font_weight`/`font_size`/`line_height` as defaults —
   any of those fields, if also given, override just that one field on
   top of the role's own default)
-- `kind: Checkbox` or `kind: RadioButton` — an optional top-level
-  `checked: true` (`RadioButton`'s own initial `selected` state)
+- `kind: Checkbox` — an optional top-level `checked: true`
+- `kind: Switch` or `kind: RadioButton` — an optional top-level
+  `selected: true`, MD3's own term for both. (`checked:` on either, or
+  `selected:` on a `Checkbox`, is an error naming the right field.)
 - `kind: Slider`, `kind: CircularProgress`, or `kind: LinearProgress` —
   an optional top-level `value: 0.5` (the two progress indicators'
   own initial progress fraction, `0.0`–`1.0`)
-- `kind: Switch` — an optional top-level `checked: true` (its own
-  initial `on` state)
 - `kind: TimePickerDial` — optional top-level `hour: 0`/`minute: 0`
   (a 24-hour value and `0`–`59` respectively)
 - `kind: Image` — a required `image:` block: `{fit: Fill}` (`fit` is
-  one of `Cover`, `Contain`, `Fill`; `image: {}` takes the default).
+  one of `cover`, `contain`, `fill`; `image: {}` takes the default).
   With no `src:` in it, the node starts as a blank, fully transparent
   placeholder; supply pixels with `view.node(id).push_frame(rgba,
   width, height)` — decoded RGBA8 data your application produced.
@@ -134,13 +135,16 @@ Kind-specific blocks:
   [Working with Files](working-with-files.md#images-from-files).)
 - `kind: Icon` — a required `icon:` block: `{name}`, `name` an icon
   name from `tre`'s own curated set (the same vocabulary
-  `Window.add_icon` uses imperatively). The glyph's color reuses
-  `style.background`, the same "background means paint color" contract
-  `kind: Text` has.
-- `kind: LoadingIndicator` — no kind-specific block; `style.width`/
-  `height` size it and `style.background` is its glyph tint (again,
-  "background means paint color", not a fill behind content), both
+  `Window.add_icon` uses imperatively). Its color is `style.foreground`,
   required.
+- `kind: LoadingIndicator` — no kind-specific block; `style.width`/
+  `height` size it and `style.foreground` is its color, all required.
+
+`Text`, `Link`, `Icon`, and `LoadingIndicator` paint only a glyph or
+text, so their color is `style.foreground` and they have no fill. A
+`style.background` written on one of them is an error naming
+`foreground`; one that reaches them only through a selector-less
+stylesheet rule meant for every widget is ignored.
 
 `RadioButton`/`Switch`/`CircularProgress`/`LinearProgress`/
 `TimePickerDial` take no `style.background` at all — their visuals live
@@ -219,14 +223,14 @@ from tre import Signal, View, ViewModel
 view = View(spec={
     "id": "root",
     "kind": "Container",
-    "style": {"flex_direction": "Vertical", "width": 240, "height": 120, "gap": 8, "padding": 8},
+    "style": {"flex_direction": "vertical", "width": 240, "height": 120, "gap": 8, "padding": 8},
     "children": [
         {"id": "agree", "kind": "Checkbox",
          "style": {"width": 24, "height": 24, "background": "#6750A4"},
          "bindings": {"checked": "{{ agreed.get() }}"}, "two_way": "checked"},
         {"id": "volume", "kind": "Slider",
          "style": {"width": 200, "height": 32, "background": "#03DAC6"},
-         "bindings": {"thumb_position": "{{ level.get() }}"}, "two_way": "thumb_position"},
+         "bindings": {"value": "{{ level.get() }}"}, "two_way": "value"},
         {"id": "username", "kind": "TextField",
          "text": {"content": "", "font_family": "Roboto", "font_size": 16},
          "style": {"width": 200, "height": 32, "background": "#EEEEEE"},
@@ -296,9 +300,9 @@ An unchanged widget (same `id`, same `kind`) keeps its runtime identity,
 preserving focus, scroll position, and in-flight animations. There's no
 "did anything change" check to skip — the call itself is the change
 signal. Exactly one content argument is required; `ValueError`
-otherwise. **`bindings:`/`handlers:`/`two_way:` are not re-resolved** —
-if an update adds a new binding or handler, call `_attach` again
-(construct a fresh `ViewModel`, or call `view._attach(vm)`).
+otherwise. After every update the attached `ViewModel` is re-applied against the
+new spec: bound fields keep their live values, bindings and handlers the
+update added start working, and ones it removed stop.
 
 ### Updating from another thread
 
@@ -327,9 +331,15 @@ own spec against the new theme layers, in place — `NodeId`s, children,
 and focus are preserved, and a widget's own inline `style:` still wins
 over any theme layer. Each call is a complete, fresh theme selection —
 omitting the theme arguments resets to no override, not "keep whatever
-the previous call used." Only the static style cascade is recomputed; a
-`{{ }}` binding's currently-applied value isn't re-run (it reverts to
-its spec's static value until the binding next fires).
+the previous call used." Bindings are re-applied afterward, so a bound
+field keeps its live value.
+
+`view.set_stylesheet(stylesheet_spec=...)` replaces the stylesheet the
+same way — every node re-resolved in place, bindings re-applied. Pass
+nothing to clear it.
+
+Re-applying a `checked` or `text` binding fires `Change`, as the initial
+`_attach` does, so a declared `on_change` handler runs once per update.
 
 ## Testing without a live window
 

@@ -50,7 +50,7 @@ assert cleared["value"], "the trailing clear icon must reach its own registered 
 # before it ever reached the icon's own handler.
 view = window.add_search_view(width=400, height=160)
 for label in ["Recent: hello world", "Recent: search demo", "Recent: tre v2"]:
-    row = window.add_text(content=label, background=(0, 0, 0, 0), width=360, height=20)
+    row = window.add_text(content=label, foreground=(0x1D, 0x1B, 0x20, 0xFF), width=360, height=20)
     view.add_child(row)
 
 window.open_menu(bar, view)

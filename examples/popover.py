@@ -23,7 +23,7 @@ window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
 trigger = window.add_icon_button(icon="settings", variant="standard", size=40)
 popover = window.add_popover(
     subhead="Storage",
-    text="You have used 12 GB of your 15 GB plan.",
+    supporting_text="You have used 12 GB of your 15 GB plan.",
     width=240,
     height=100,
 )

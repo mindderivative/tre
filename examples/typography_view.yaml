@@ -1,20 +1,20 @@
 id: root
 kind: Container
-style: {flex_direction: Vertical, width: 360, height: 300, gap: 8, padding: 16, background: "#FFFFFF"}
+style: {flex_direction: vertical, width: 360, height: 300, gap: 8, padding: 16, background: "#FFFFFF"}
 children:
   - id: heading
     kind: Text
-    text: {content: "Section heading", role: headline_small}
-    style: {width: 328, height: 32, background: "#FFFFFF"}
+    text: {content: "Section heading", typography_role: headline_small}
+    style: {width: 328, height: 32, foreground: "#1D1B20"}
   - id: body
     kind: Text
-    text: {content: "The quick brown fox jumps over the lazy dog and keeps running.", role: body_large}
-    style: {width: 200, height: 90, background: "#FFFFFF"}
+    text: {content: "The quick brown fox jumps over the lazy dog and keeps running.", typography_role: body_large}
+    style: {width: 200, height: 90, foreground: "#1D1B20"}
   - id: loose_body
     kind: Text
-    text: {content: "The quick brown fox jumps over the lazy dog and keeps running.", role: body_large, line_height: 3.0}
-    style: {width: 200, height: 140, background: "#FFFFFF"}
+    text: {content: "The quick brown fox jumps over the lazy dog and keeps running.", typography_role: body_large, line_height: 3.0}
+    style: {width: 200, height: 140, foreground: "#1D1B20"}
   - id: overridden_label
     kind: Text
-    text: {content: "label_large, but font_size overridden to 20", role: label_large, font_size: 20}
-    style: {width: 328, height: 24, background: "#FFFFFF"}
+    text: {content: "label_large, but font_size overridden to 20", typography_role: label_large, font_size: 20}
+    style: {width: 328, height: 24, foreground: "#1D1B20"}

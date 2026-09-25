@@ -106,6 +106,7 @@ impl Node {
     ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
         let now = Instant::now();
+        renamed_property(property)?;
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
@@ -129,9 +130,41 @@ impl Node {
                 animate_field(&mut node.paint.elevation, value, duration, now, handle);
             }
             "background" => {
+                if is_glyph_kind(&node.kind) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "{kind} has no fill, so 'background' doesn't apply -- its glyph/text color \
+                         is 'foreground'"
+                    )));
+                }
                 let value = extract_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                 animate_field(&mut node.paint.background, value, duration, now, handle);
+            }
+            // M90: the glyph/text color of `Text`/`Link`/`Icon`/
+            // `LoadingIndicator`. `Text`/`Link`/`LoadingIndicator` store
+            // it in `paint.background`; an `Icon` in `IconState.tint`
+            // (`Animated` since M92). Both ease the same way.
+            "foreground" => {
+                let value = extract_color(&to, property)?;
+                match &mut node.kind {
+                    NodeKind::Icon(state) => {
+                        let handle =
+                            on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                        animate_field(&mut state.tint, value, duration, now, handle);
+                    }
+                    NodeKind::Text(_) | NodeKind::Link(_) | NodeKind::LoadingIndicator(_) => {
+                        let handle =
+                            on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                        animate_field(&mut node.paint.background, value, duration, now, handle);
+                    }
+                    _ => {
+                        return Err(EngineError::UnknownProperty {
+                            kind,
+                            property: property.to_string(),
+                        }
+                        .into());
+                    }
+                }
             }
             // M48 (§5, §7): `border_color`/`border_width` are real
             // `PaintProperties` fields since M30 Phase 1 but were never
@@ -211,20 +244,6 @@ impl Node {
             // distinct from the real drag path (`Tree::set_slider_
             // position`, driven entirely inside `engine-core`'s own
             // dispatch, never through here).
-            "thumb_position" => match &mut node.kind {
-                NodeKind::Slider(state) => {
-                    let value = extract_f64(&to, property)?;
-                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.thumb_position, value, duration, now, handle);
-                }
-                _ => {
-                    return Err(EngineError::UnknownProperty {
-                        kind,
-                        property: property.to_string(),
-                    }
-                    .into());
-                }
-            },
             // M30 Phase 2 Step 1 (§8): `check_progress`'s own real
             // arm, mirrored for `RadioButton`.
             "select_progress" => match &mut node.kind {
@@ -278,9 +297,15 @@ impl Node {
                     .into());
                 }
             },
-            // M30 Phase 3 Step 2 (§8): `thumb_position`'s own real
-            // arm, mirrored for both real progress indicators.
+            // M30 Phase 3 Step 2 (§8): the progress indicators' own
+            // arm. M90: `Slider` joins it -- a slider's position was
+            // `thumb_position` here but `value` everywhere else.
             "value" => match &mut node.kind {
+                NodeKind::Slider(state) => {
+                    let value = extract_f64(&to, property)?;
+                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                    animate_field(&mut state.thumb_position, value, duration, now, handle);
+                }
                 NodeKind::LinearProgress(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
@@ -317,6 +342,7 @@ impl Node {
     /// `background` isn't included: it isn't a single `f64`, and
     /// nothing yet needs to read it back.
     pub(crate) fn get(&self, property: &str) -> PyResult<f64> {
+        renamed_property(property)?;
         let tree = self.tree.borrow();
         let node = tree.get(self.id).expect(
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
@@ -333,14 +359,6 @@ impl Node {
             "border_width" => Ok(node.paint.border_width.current),
             "check_progress" => match &node.kind {
                 NodeKind::Checkbox(state) => Ok(state.check_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "thumb_position" => match &node.kind {
-                NodeKind::Slider(state) => Ok(state.thumb_position.current),
                 _ => Err(EngineError::UnknownProperty {
                     kind,
                     property: property.to_string(),
@@ -364,6 +382,7 @@ impl Node {
                 .into()),
             },
             "value" => match &node.kind {
+                NodeKind::Slider(state) => Ok(state.thumb_position.current),
                 NodeKind::LinearProgress(state) => Ok(state.value.current),
                 NodeKind::CircularProgress(state) => Ok(state.value.current),
                 _ => Err(EngineError::UnknownProperty {
@@ -825,9 +844,16 @@ impl Node {
         );
         let kind = kind_name(&node.kind);
         match &mut node.kind {
-            NodeKind::RadioButton(state) => {
-                let old_selected = state.selected;
-                state.selected = selected;
+            NodeKind::RadioButton(_) | NodeKind::Switch(_) => {
+                // M90: `Switch` shares `selected` with `RadioButton` (MD3's
+                // own term for both); its state struct still calls it `on`.
+                let old_selected = match &mut node.kind {
+                    NodeKind::RadioButton(state) => {
+                        std::mem::replace(&mut state.selected, selected)
+                    }
+                    NodeKind::Switch(state) => std::mem::replace(&mut state.on, selected),
+                    _ => unreachable!(),
+                };
                 drop(tree);
                 let id = self.id;
                 let ctx = NodeContext {
@@ -857,46 +883,6 @@ impl Node {
             _ => Err(EngineError::UnknownProperty {
                 kind,
                 property: "selected".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// M30 Phase 2 Step 2 (§8, §16.7): `set_checked`/`set_selected`'s
-    /// own real shape, mirrored a third time for `Switch`.
-    pub(crate) fn set_on(&self, on: bool, py: Python<'_>) -> PyResult<()> {
-        let mut tree = self.tree.borrow_mut();
-        let node = tree.get_mut(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        let kind = kind_name(&node.kind);
-        match &mut node.kind {
-            NodeKind::Switch(state) => {
-                let old_on = state.on;
-                state.on = on;
-                drop(tree);
-                let id = self.id;
-                let ctx = NodeContext {
-                    tree: &self.tree,
-                    handlers: &self.handlers,
-                    context_menus: &self.context_menus,
-                    theme: &self.theme,
-                    completions: &self.completions,
-                };
-                call_handler(&self.handlers, id, EventKind::Change, py, |py| {
-                    Event::change(
-                        py,
-                        id,
-                        &ctx,
-                        Some(old_on.into_pyobject(py)?.to_owned().unbind().into_any()),
-                        Some(on.into_pyobject(py)?.to_owned().unbind().into_any()),
-                    )
-                });
-                Ok(())
-            }
-            _ => Err(EngineError::UnknownProperty {
-                kind,
-                property: "on".to_string(),
             }
             .into()),
         }
@@ -1070,26 +1056,10 @@ impl Node {
         );
         match &node.kind {
             NodeKind::RadioButton(state) => Ok(state.selected),
-            _ => Err(EngineError::UnknownProperty {
-                kind: kind_name(&node.kind),
-                property: "selected".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// M30 Phase 2 Step 2 (§5, §16.7): `get_checked`/`get_selected`'s
-    /// own real shape, mirrored a third time for `Switch`.
-    pub(crate) fn get_on(&self) -> PyResult<bool> {
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        match &node.kind {
             NodeKind::Switch(state) => Ok(state.on),
             _ => Err(EngineError::UnknownProperty {
                 kind: kind_name(&node.kind),
-                property: "on".to_string(),
+                property: "selected".to_string(),
             }
             .into()),
         }
@@ -1529,6 +1499,27 @@ fn animate_field<T: engine_core::Interpolate + Clone>(
 /// `"vertical"`, not taffy's own `"row"`/`"column"` -- see `set_layout`'s
 /// own doc comment for the real reasoning (the identical vocabulary
 /// fix M70 already made to the declarative `FlexDirectionSpec` layer).
+/// M90: a property name renamed in 0.3.3 fails naming its replacement,
+/// rather than as a generic unknown property.
+fn renamed_property(property: &str) -> PyResult<()> {
+    let replacement = match property {
+        "thumb_position" => "value",
+        _ => return Ok(()),
+    };
+    Err(pyo3::exceptions::PyValueError::new_err(format!(
+        "{property:?} was renamed to {replacement:?} in tre 0.3.3"
+    )))
+}
+
+/// M90: kinds whose paint color is their glyph or text -- they take
+/// `foreground`, and have no fill for `background` to describe.
+fn is_glyph_kind(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Text(_) | NodeKind::Link(_) | NodeKind::Icon(_) | NodeKind::LoadingIndicator(_)
+    )
+}
+
 fn parse_flex_direction(value: &str) -> PyResult<FlexDirection> {
     match value {
         "horizontal" => Ok(FlexDirection::Row),

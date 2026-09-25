@@ -45,7 +45,7 @@ def test_a_card_accepts_arbitrary_child_content():
     """
     window = Window(width=300, height=300)
     card = window.add_card(width=200, height=120)
-    label = window.add_text(content="Title", background=(0, 0, 0, 255), width=180, height=24)
+    label = window.add_text(content="Title", foreground=(0, 0, 0, 255), width=180, height=24)
     card.add_child(label)  # must not raise
 
 

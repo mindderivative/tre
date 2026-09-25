@@ -19,7 +19,7 @@ def test_add_scroll_view_returns_a_node():
 
 def test_a_horizontal_scroll_view_does_not_raise():
     window = Window(width=800, height=600)
-    view = window.add_scroll_view(width=200, height=100, horizontal=True)
+    view = window.add_scroll_view(width=200, height=100, orientation="horizontal")
     assert isinstance(view, Node)
 
 
@@ -67,7 +67,7 @@ def test_a_real_click_after_scrolling_the_content_into_view_reaches_the_right_no
 
 def test_scroll_with_delta_x_does_not_raise_on_a_horizontal_scroll_view():
     window = Window(width=800, height=600)
-    view = window.add_scroll_view(width=100, height=50, horizontal=True)
+    view = window.add_scroll_view(width=100, height=50, orientation="horizontal")
     content = window.add_rect(background=(0, 255, 0, 255), width=1000, height=50)
     view.add_child(content)
     window.scroll(view, 0.0, delta_x=500.0)

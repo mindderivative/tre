@@ -157,7 +157,7 @@ literal font values:
 
 ```python
 heading = window.add_text(
-    "Settings", background=(0, 0, 0, 0), width=300, height=32,
+    "Settings", foreground=(0x1D, 0x1B, 0x20, 0xFF), width=300, height=32,
     typography_role="headline_small",
 )
 ```
@@ -165,12 +165,12 @@ heading = window.add_text(
 ```python
 # in a view spec
 {"id": "heading", "kind": "Text",
- "text": {"content": "Settings", "role": "headline_small"},
- "style": {"background": "on_surface"}}  # a Text's background is its text color
+ "text": {"content": "Settings", "typography_role": "headline_small"},
+ "style": {"foreground": "on_surface"}}
 ```
 
 Any of `font_family`/`font_weight`/`font_size`/`line_height` given
-*alongside* `role`/`typography_role` overrides just that one field on
+*alongside* `typography_role` overrides just that one field on
 top of the role's default — the same per-field-override shape a theme's
 `typography` section (below) uses. An unrecognized role name is a clear
 error, never a silent fallback.

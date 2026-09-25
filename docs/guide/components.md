@@ -71,15 +71,15 @@ box.animate("check_progress", 1.0, duration_ms=150)
 
 ```python
 slider = window.add_slider(background=(0x03, 0xDA, 0xC6, 0xFF), width=200, height=32, value=0.3)
-slider.set_on_change(lambda: print("new value:", slider.get("thumb_position")))
+slider.set_on_change(lambda: print("new value:", slider.get("value")))
 ```
 
-- `value` seeds `thumb_position`, clamped to `0.0..=1.0`. Drag-to-set is
+- `value` seeds the position, clamped to `0.0..=1.0`. Drag-to-set is
   entirely built into the engine's own input dispatch — no Python wiring
   needed for that half. Arrow-key increments work once the slider has
   keyboard focus (it opts into `Role::Slider` + `Action::Focus` at
   construction, so it's Tab-reachable from the start).
-- `node.animate("thumb_position", value, duration_ms)` for an
+- `node.animate("value", value, duration_ms)` for an
   app-triggered eased move (e.g. a keyboard nudge), distinct from the
   drag path above. `node.set_on_change(...)` fires when a drag genuinely
   ends.
@@ -87,7 +87,7 @@ slider.set_on_change(lambda: print("new value:", slider.get("thumb_position")))
 | Factory | Signature | Notes |
 |---|---|---|
 | `add_radio_button` | `size=20.0, selected=false` | Single-select affordance — grouping/exclusivity is the app's own concern, same as `pyCopper`'s precedent. Read/write with `node.get_selected()`/`set_selected()`. |
-| `add_switch` | `width=52.0, height=32.0, on=false` | Read/write with `node.get_on()`/`set_on()` (not `Checkbox`'s `checked` accessors). |
+| `add_switch` | `width=52.0, height=32.0, selected=false` | Read/write with `node.get_selected()`/`set_selected()`, the same accessors `RadioButton` uses (`Checkbox` uses `checked`). |
 | `add_spin_box` | `value, x=None, y=None` | Numeric stepper; no `width`/`height` — sized from its own content. |
 
 ## Text Fields, Code Editor & Terminal
@@ -162,7 +162,7 @@ term = window.add_terminal(shell="/bin/bash", cols=80, rows=24, background=(0x00
 |---|---|---|
 | `add_circular_progress` | `size=48.0, value=0.0` | `value` in `0.0..=1.0`; animate it directly with `node.animate("value", ...)`. |
 | `add_linear_progress` | `width, height=4.0, value=0.0` | Same `value` contract as circular. |
-| `add_loading_indicator` | `size=48.0, color=None` | MD3's newer indeterminate spinner shape; `color` falls back to the theme's primary. |
+| `add_loading_indicator` | `size=48.0, foreground=None` | MD3's newer indeterminate spinner shape; `foreground` falls back to the theme's primary. |
 
 ## Navigation & Shell Composition
 
@@ -176,7 +176,7 @@ pieces as much as they are components — see
 | `add_tabs` | `labels, icons=None, selected=None, width=None` | A real MD3 tab row with an animated active-indicator. |
 | `add_navigation_rail` | `labels, icons, selected=None` | The compact, icon-first side rail. |
 | `add_navigation_drawer` | `labels, icons, selected=None, modal=false, width=..., height=None` | `modal=True` opens/closes via `Window.open_navigation_drawer`/`close_navigation_drawer` as a real dismissable overlay; non-modal is a permanent layout child. |
-| `add_toolbar` | `variant="docked", orientation=None, color=None, width=None, height=None` | A floating or docked action-icon bar. |
+| `add_toolbar` | `variant="docked", orientation=None, vibrant=false, width=None, height=None` | A floating or docked action-icon bar. |
 | `add_top_app_bar` | `title, leading_icon=None, trailing_icons=None, width=None` | The window's own top title bar. |
 | `add_status_bar` | `text, width=None` | A window-bottom status strip, typically passed to `build_shell(status_bar=...)`. |
 | `add_pagination` | `page_count, current=0` | Returns `(previous, pages, next)` — one `Node` per page (1-indexed labels) plus prev/next controls. Which page is current is app-owned state; the app re-selects on click. `ValueError` for `page_count=0` or an out-of-range `current`. |
@@ -199,11 +199,11 @@ window.close_dialog(dialog)
 
 | Factory | Open / Close | Notes |
 |---|---|---|
-| `add_dialog` | `open_dialog(dialog)` / `close_dialog(dialog)` | `headline, text, width, height`. Modal by default. |
+| `add_dialog` | `open_dialog(dialog)` / `close_dialog(dialog)` | `headline, supporting_text, width, height`. Modal by default. |
 | `add_snackbar` | `open_snackbar(snackbar)` / `close_snackbar(snackbar)` | `text, width, action_label=None, closable=false`. Non-modal, auto-dismiss is the app's own timer. |
 | `add_side_sheet` | `open_side_sheet(sheet)` / `close_side_sheet(sheet)` | `width=..., height=None, modal=false`. |
 | `build_menu` | `open_menu(anchor, menu)` / `close_menu(menu)` | `items: list[Node], width` — a panel of `add_menu_item(...)` rows; anchored below `anchor`. `add_tooltip`'s, `add_popover`'s, and `add_search_view`'s own panels reuse this identical `open_menu`/`close_menu` pair rather than getting dedicated ones. |
-| `add_popover` | `open_menu(anchor, popover)` / `close_menu(popover)` | `subhead, text, width, height` — MD3's rich-tooltip anatomy (a subhead plus supporting text). Unlike `add_tooltip`, it stays open until dismissed. |
+| `add_popover` | `open_menu(anchor, popover)` / `close_menu(popover)` | `subhead, supporting_text, width, height` — MD3's rich-tooltip anatomy (a subhead plus supporting text). Unlike `add_tooltip`, it stays open until dismissed. |
 | `add_navigation_drawer(modal=True)` | `open_navigation_drawer(drawer)` / `close_navigation_drawer(drawer)` | See the Navigation table above. |
 
 `add_menu_item(label, icon=None, submenu=false, width=200.0)` builds one
@@ -220,8 +220,8 @@ on click — no automatic nesting).
 | `add_list_item` | `headline, leading_icon=None, trailing_icon=None, supporting_text=None, width=360.0` | One real MD3 list row. |
 | `add_chip` | `label, width, variant="assist", icon=None, selected=false, removable=false` | `variant` one of `"assist"`/`"filter"`/`"input"`/`"suggestion"`. |
 | `add_badge` | `label=None, width=None` | No `height` — square (a dot) when `label=None`, a pill sized to `width` otherwise; caller positions it over another node's corner via `x`/`y`, same contract as `add_rect`. |
-| `add_divider` | `length, vertical=false` | A single hairline. |
-| `add_link` | `text, width` | Styled, clickable text — `set_on_click` for navigation. |
+| `add_divider` | `length, orientation="horizontal"` | A single hairline; `orientation="vertical"` for a vertical one. |
+| `add_link` | `content, width` | Styled, clickable text — `set_on_click` for navigation. |
 | `add_accordion_header` | `title, expanded=false, width=360.0` | Pairs with app-managed content shown/hidden on click. |
 | `add_tree_node` | `title, depth=0, expanded=false, leaf=false, width=360.0` | `depth` drives indentation; the app owns real tree structure/recursion. |
 
@@ -266,7 +266,7 @@ picture = window.add_image_from_bytes(rgba, 64, 64, width=200, height=120, fit="
   see [Working with Files → Images from files](working-with-files.md#images-from-files).
 
 ```python
-icon = window.add_icon("settings", color=(0x1C, 0x1B, 0x1F, 0xFF), size=24)
+icon = window.add_icon("settings", foreground=(0x1C, 0x1B, 0x1F, 0xFF), size=24)
 ```
 
 - One square `size` (Material Symbols icons are uniformly square by

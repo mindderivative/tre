@@ -1,6 +1,6 @@
 id: root
 kind: Container
-style: {flex_direction: Vertical, width: 300, height: 200, gap: 12, padding: 16}
+style: {flex_direction: vertical, width: 300, height: 200, gap: 12, padding: 16}
 children:
   - id: hex_swatch
     kind: Rect

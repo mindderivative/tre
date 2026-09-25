@@ -1,6 +1,6 @@
 id: root
 kind: Container
-style: {flex_direction: Vertical, width: 240, height: 120, gap: 8, padding: 8}
+style: {flex_direction: vertical, width: 240, height: 120, gap: 8, padding: 8}
 children:
   - id: agree
     kind: Checkbox
@@ -10,8 +10,8 @@ children:
   - id: volume
     kind: Slider
     style: {width: 200, height: 32, background: "#03DAC6"}
-    bindings: {thumb_position: "{{ level.get() }}"}
-    two_way: thumb_position
+    bindings: {value: "{{ level.get() }}"}
+    two_way: value
   - id: username
     kind: TextField
     text: {content: "", font_family: Roboto, font_size: 16}

@@ -148,7 +148,53 @@ pub fn resolve_style_layered(
     resolved
 }
 
+/// Overlays every field `overlay` sets onto `base`. M90: destructures
+/// `StyleSpec` exhaustively, so adding a field without handling it here
+/// is a compile error -- M59 added six layout fields that this function
+/// silently never copied, dropping them from every stylesheet and theme
+/// rule.
 fn merge(base: &mut StyleSpec, overlay: &StyleSpec) {
+    let StyleSpec {
+        width: _,
+        height: _,
+        flex_direction: _,
+        padding: _,
+        margin: _,
+        gap: _,
+        flex_grow: _,
+        flex_shrink: _,
+        flex_basis: _,
+        align_items: _,
+        justify_content: _,
+        background: _,
+        foreground: _,
+        corner_radius: _,
+        opacity: _,
+        border_width: _,
+        border_color: _,
+        elevation: _,
+    } = overlay;
+    if overlay.margin.is_some() {
+        base.margin = overlay.margin;
+    }
+    if overlay.flex_grow.is_some() {
+        base.flex_grow = overlay.flex_grow;
+    }
+    if overlay.flex_shrink.is_some() {
+        base.flex_shrink = overlay.flex_shrink;
+    }
+    if overlay.flex_basis.is_some() {
+        base.flex_basis = overlay.flex_basis;
+    }
+    if overlay.align_items.is_some() {
+        base.align_items = overlay.align_items;
+    }
+    if overlay.justify_content.is_some() {
+        base.justify_content = overlay.justify_content;
+    }
+    if overlay.foreground.is_some() {
+        base.foreground.clone_from(&overlay.foreground);
+    }
     if overlay.width.is_some() {
         base.width = overlay.width;
     }
@@ -196,7 +242,8 @@ mod tests {
             classes: classes.iter().map(|s| s.to_string()).collect(),
             style: StyleSpec::default(),
             text: None,
-            checked: false,
+            checked: None,
+            selected: None,
             value: 0.0,
             hour: 0,
             minute: 0,
@@ -391,5 +438,38 @@ mod tests {
         w.style.opacity = Some(0.42);
         let resolved = resolve_style_layered(&w, None, None, None);
         assert_eq!(resolved.opacity, Some(0.42));
+    }
+
+    /// M90: every `StyleSpec` field must survive the cascade, not just
+    /// the ones that existed when `merge` was first written. M59 added
+    /// `margin`/`flex_grow`/`flex_shrink`/`flex_basis`/`align_items`/
+    /// `justify_content` to the schema but never to `merge`, so a
+    /// stylesheet or theme rule setting them was silently dropped --
+    /// only inline `style:` reached the tree.
+    #[test]
+    fn every_layout_field_set_by_a_stylesheet_survives_the_cascade() {
+        let sheet = parse_stylesheet(
+            "styles:\n  - kind: Rect\n    style: {margin: 4, flex_grow: 1, flex_shrink: 0, \
+             flex_basis: 20, align_items: center, justify_content: space_between}\n",
+        )
+        .unwrap();
+        let resolved = resolve_style_layered(
+            &widget("w", NodeKindSpec::Rect, &[]),
+            None,
+            None,
+            Some(&sheet),
+        );
+        assert!(resolved.margin.is_some(), "margin dropped by the cascade");
+        assert_eq!(resolved.flex_grow, Some(1.0));
+        assert_eq!(resolved.flex_shrink, Some(0.0));
+        assert_eq!(resolved.flex_basis, Some(20.0));
+        assert!(
+            resolved.align_items.is_some(),
+            "align_items dropped by the cascade"
+        );
+        assert!(
+            resolved.justify_content.is_some(),
+            "justify_content dropped by the cascade"
+        );
     }
 }

@@ -8,18 +8,18 @@ thing, confirmed via grep before this milestone started), and no way to
 reference a role like "this is a headline" by name at all.
 
 `typography_view.yaml` shows the declarative surface:
-- `heading`: `role: headline_small` -- one of the 15 real MD3 type-scale
+- `heading`: `typography_role: headline_small` -- one of the 15 real MD3 type-scale
   roles (`engine_md3::typography`), resolved to its own real family/
   weight/size/line-height with zero literal numbers written by the
   author.
-- `body` / `loose_body`: the identical real content and `role:
+- `body` / `loose_body`: the identical real content and `typography_role:
   body_large`, but `loose_body` also sets `line_height: 3.0` -- a real,
   visible difference in how far apart the wrapped lines sit, proving
   `line_height` is real capability (M62 Phase 1), not inert stored data
   -- see `crates/engine-render/src/text.rs`'s own `a_larger_line_height_
   genuinely_widens_the_real_per_line_advance` for the exact geometry
   proof, at the Rust layer.
-- `overridden_label`: `role: label_large` with `font_size: 20` also
+- `overridden_label`: `typography_role: label_large` with `font_size: 20` also
   given -- proves a literal field overrides just that one field on top
   of the role's own real default, the rest (weight, in this case) still
   coming from `label_large` itself.
@@ -64,10 +64,10 @@ window = Window.from_view(view, width=360, height=340, title="Typography")
 
 # Imperative parity: add_text(typography_role=...) resolves through the
 # identical engine_md3::type_style_named lookup the declarative text:
-# {role: ...} block above does.
+# {typography_role: ...} block above does.
 label = window.add_text(
     content="Imperative label_large",
-    background=(0x1C, 0x1B, 0x1F, 0xFF),
+    foreground=(0x1C, 0x1B, 0x1F, 0xFF),
     width=328,
     height=24,
     typography_role="label_large",
