@@ -21,3 +21,12 @@ homepage = "https://github.com/mindderivative/tre"
 # that was quietly false). Set this once a real dependency's own
 # `rust-version` gives something to actually check against, then add the
 # enforcing `msrv` CI job in the same commit -- not before.
+
+# Debug builds grew `target/debug` to 462 GB (full debug info in every test
+# and example binary, plus the incremental cache). Line tables keep file and
+# line numbers in backtraces and panics without the full variable-level
+# info, and no incremental cache means a full recompile of each changed
+# crate instead of a cache that grows without bound.
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
