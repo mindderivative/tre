@@ -67,6 +67,19 @@ def add_state_layer(window, node, tint):
 `e.x`/`e.y` are local to the node whose listener runs, and `clip_children`
 clips to the node's own rounded box, as the legacy layer was.
 
+## Click handlers and the keyboard
+
+`set_on_click` does more than register a handler: it offers the node a click
+action, which makes it focusable — a Tab stop — and lets Enter and Space
+activate it, delivering the click. A `View`'s `on_click:` goes through
+`set_on_click`, so every declaratively clickable node was keyboard-reachable.
+`node.on("click", ...)` registers the handler only.
+
+Rebuilt: `node.set(focusable=True)` beside `node.on("click", ...)` — a
+focusable node is a Tab stop, and Enter and Space deliver `click` to it.
+`role="button"` names it for assistive technology but doesn't make it
+focusable.
+
 ## Shapes that change on hover or press
 
 Two factories morph corners; both animate over `100`, linear.
