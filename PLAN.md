@@ -36,4 +36,5 @@ too. Only `notify` (the view-file watcher) goes now.
 
 ## Status
 
-Scoped (2026-09-25). Step 1 next.
+**Complete (2026-09-25).** M99 waits on Tesserae's M40–M42 (its
+legacy widgets and `set_theme` calls).

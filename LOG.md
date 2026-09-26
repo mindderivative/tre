@@ -8,8 +8,15 @@
 
 ## Done
 
-(nothing yet)
+1. Step 1 (`2e86884`): `engine-spec`, `View`, `Component`, the binding
+   evaluator, the recording functions, and `from_view`/`show_view` deleted;
+   `set_theme`'s theme types moved to `engine-py/src/theme_spec.rs`.
+2. Step 2 (`f5547de`): the Python reactivity layer, the declarative tests,
+   examples, YAML, showcase panel, migration tool, and docs pages removed;
+   `threadsafe_reload.py` rewritten.
+3. Step 3: the full chain green -- cargo 471, pytest 993 (984 headless),
+   76 examples, showcase, mkdocs strict, 174/174 names documented.
 
 ## Status
 
-**Scoped.** Step 1 (the Rust removal) next.
+**Complete.** M99 waits on Tesserae's M40–M42.
