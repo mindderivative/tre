@@ -446,3 +446,11 @@ __all__ = [
     "register_font",
     "untrack",
 ]
+
+# M97: the migration gate's switch -- see `tre/_removed.py`.
+import os as _os
+
+if _os.environ.get("TRE_FORBID_REMOVED") == "1":
+    from tre._removed import install as _install
+
+    _install()
