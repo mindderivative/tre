@@ -13,7 +13,7 @@ Same "requires `maturin develop` first, imports the real compiled
 extension" discipline as `test_engine_py.py`.
 """
 
-from tre import Signal, View, ViewModel, Window
+from tre import Window
 
 
 def test_hover_enter_fires_when_the_pointer_arrives_on_the_node():
@@ -105,29 +105,3 @@ def test_hover_fires_even_without_calling_enable_interaction():
     assert calls == ["entered"]
 
 
-def test_view_hover_enter_actually_invokes_its_wired_handler(tmp_path):
-    path = tmp_path / "view.yaml"
-    path.write_text(
-        """
-id: root
-kind: Rect
-style: {width: 40, height: 20, background: "#112233"}
-handlers: {on_hover_enter: "bump"}
-"""
-    )
-    view = View(str(path))
-
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.hovers = Signal(0)
-            super().__init__(view)
-
-        def bump(self):
-            self.hovers.update(lambda n: n + 1)
-
-    vm = VM(view)
-    node = view.node("root")
-
-    view.hover(node)
-
-    assert vm.hovers.get() == 1

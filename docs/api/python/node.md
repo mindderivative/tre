@@ -1,7 +1,6 @@
 # `Node`
 
-A handle to one node in a [`Window`](window.md)'s or [`View`](view.md)'s
-tree. Returned by every `add_*` method; never constructed directly.
+A handle to one node in a [`Window`](window.md)'s tree. Returned by every `add_*` method; never constructed directly.
 
 *New in 0.3.4:* `on`/`off` listeners, `capture_pointer`/`release_pointer`,
 and handle equality — see [Events and Listeners](events.md) — plus `set`,
@@ -78,8 +77,8 @@ node.animate("opacity", 0.0, duration_ms=300, on_complete=lambda: print("faded")
 Raises `ValueError` for an unknown property name, or `TypeError` if `to`
 doesn't match the property's expected shape. `on_complete`, when given,
 is called with no arguments exactly once, the real frame the animation
-finishes — drained by `App.run()`'s per-frame loop, so it never fires for
-a node created via `View` (no render loop to drain it through).
+finishes — drained by `App.run()`'s per-frame loop, or by
+`window.advance(ms)` in a test.
 
 ## `get`
 
@@ -109,10 +108,9 @@ node.set_layout(width=200, flex_direction="vertical", gap=8)
 ```
 
 `align_items`/`justify_content`/`flex_direction` take the same string
-vocabulary as their declarative `style:` equivalents (see
-[Declarative Views → The view schema](../../guide/declarative-views.md#the-view-schema)
-for the full list) — an unrecognized value raises `ValueError` naming
-the ones it does accept. `padding`/`margin` set all four sides at once;
+vocabulary as `set`'s layout properties (see
+[Nodes and Properties](properties.md)) — an unrecognized value raises
+`ValueError` naming the ones it does accept. `padding`/`margin` set all four sides at once;
 the `_top`/`_right`/`_bottom`/`_left` variants override just one side
 on top of that, applied in the order given.
 

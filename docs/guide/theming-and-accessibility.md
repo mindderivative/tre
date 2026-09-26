@@ -51,12 +51,6 @@ of whether a theme is set. `window.theme` returns a fresh, cheap
 wrapper each access, so reads always reflect the window's current live
 state, including right after a `set_theme()` call.
 
-A declarative `View` has the equivalent live re-theme call,
-[`View.set_theme`](../api/python/view.md#set_theme), but no matching
-read-only `Theme` accessor — a view's own `style.background: primary`-
-style token references are resolved directly against the active
-`ColorScheme` at build/reconcile time instead.
-
 ## Theme documents
 
 Beyond a seed color, a theme can override color roles, component
@@ -79,11 +73,11 @@ Every field is optional, so a theme can override just one thing:
 | Field | Meaning |
 | --- | --- |
 | `seed` | A hex (`"#6750A4"`) or CSS-named seed color |
-| `dark` | Whether the dark scheme is active |
+| `dark` | Accepted and ignored — pass `set_theme(dark=...)` instead |
 | `colors` | Role name → color string overrides (`{"primary": "#FF0000"}`), applied on top of the seed's scheme |
 | `components` | Shape/elevation overrides for the imperative MD3 catalog — see [Shape & elevation tokens](#shape-elevation-tokens) |
 | `typography` | Per-role type-scale overrides — see [Typography theming](#typography-theming) |
-| `styles` | Declarative per-widget default styles, the same rule shape as a [stylesheet](declarative-views.md#stylesheets-md3-color-tokens) |
+| `styles` | Accepted and ignored — declarative per-widget styles, for the `View` 0.3.5 removed |
 
 A theme comes in two layers, each its own argument:
 
@@ -92,18 +86,9 @@ A theme comes in two layers, each its own argument:
   use the default theme shipped inside `tre`. Custom entries win over
   default ones key by key.
 
-Accepted by `Window.set_theme`, `View(...)`, and `View.set_theme`. What
-each consumer reads:
-
-- **`Window.set_theme`** uses both layers' `components` and
-  `typography`, and the custom layer's `colors`. A `seed` in the custom
-  layer overrides the `seed` argument. `styles` don't apply (they're
-  for declarative views).
-- **`View`** uses `styles` (as cascade tiers beneath the stylesheet —
-  `default theme < custom theme < stylesheet < inline`), `colors`, and
-  `seed` (an explicit `theme_seed=` wins, then the custom layer's seed,
-  then the default layer's). `components` don't apply (a view has no
-  imperative factories).
+`Window.set_theme` uses both layers' `components` and `typography`, and
+the custom layer's `colors`. A `seed` in the custom layer overrides the
+`seed` argument.
 
 An unknown key in the document raises `ValueError`, the same typo check
 every schema in `tre` applies.
@@ -117,9 +102,8 @@ every schema in `tre` applies.
 ## Shape & elevation tokens
 
 A theme's `components` section overrides a component's corner radius
-and elevation by name, using the same named-token vocabulary
-declarative `style:` blocks use (see
-[Declarative Views](declarative-views.md)):
+and elevation by name, using MD3's named shape and elevation tokens
+(`medium`, `level_3`) or plain numbers:
 
 ```python
 window.set_theme(

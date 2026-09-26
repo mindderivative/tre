@@ -8,10 +8,10 @@ differs from what their doc comments say, or from what a reader expecting
 Python would assume. A framework porting either one can then decide, finding
 by finding, whether to match `tre` or fix it.
 
-Every finding is pinned by a test, named in brackets: `b…` and `c…` in
+Every finding was pinned by a test, named in brackets: `b…` and `c…` in
 `crates/engine-spec/tests/audit.rs`, `p…` in `tests/test_binding_audit.py`.
-`tre` doesn't fix these — M98 removes the code — so the tests hold the
-record true until then.
+`tre` didn't fix these: M98 removed the code, and the tests with it — the
+last commit with both is `2126733` on the `0.3.5` branch.
 
 ## Doc comments that are wrong
 

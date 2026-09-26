@@ -14,7 +14,7 @@ Same "requires `maturin develop` first, imports the real compiled
 extension" discipline as `test_engine_py.py`.
 """
 
-from tre import Signal, View, ViewModel, Window
+from tre import Window
 
 
 def test_window_focus_gives_a_one_arg_handler_a_real_event():
@@ -119,34 +119,6 @@ def test_real_tab_navigation_fires_focus_enter():
 
     assert len(events) == 1
     assert events[0].kind == "focus_enter"
-
-
-def test_view_focus_actually_invokes_its_wired_handler(tmp_path):
-    path = tmp_path / "view.yaml"
-    path.write_text(
-        """
-id: root
-kind: Rect
-style: {width: 40, height: 20, background: "#112233"}
-handlers: {on_focus_enter: "bump"}
-"""
-    )
-    view = View(str(path))
-
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.focuses = Signal(0)
-            super().__init__(view)
-
-        def bump(self):
-            self.focuses.update(lambda n: n + 1)
-
-    vm = VM(view)
-    node = view.node("root")
-
-    view.focus(node)
-
-    assert vm.focuses.get() == 1
 
 
 def test_a_raising_focus_handler_is_caught_logged_and_non_fatal(capfd):

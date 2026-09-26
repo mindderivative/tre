@@ -2,10 +2,9 @@
 
 The imperative path builds a UI directly from Python method calls —
 `Window` creates nodes, and each returned [`Node`](../api/python/node.md)
-is a handle for events, animation, and property reads/writes. This is the
-lower-level of `tre`'s two authoring paths; see
-[Declarative Views](declarative-views.md) for the data-driven
-alternative.
+is a handle for events, animation, and property reads/writes. A
+declarative, data-driven layer on top belongs to a framework built on
+`tre`, such as Tesserae.
 
 ## Windows and the app loop
 
@@ -33,7 +32,7 @@ attaches its new node as a direct child of that root, in call order.
 
 ### Updating from another thread
 
-`App`, `Window`, `View`, and `Node` may only be used on the thread that
+`App`, `Window`, and `Node` may only be used on the thread that
 created them, and once `run()` starts it owns that thread. Work that
 finishes on a background thread (a download, a subprocess, a file
 watcher) hands its UI update to the event loop through
@@ -195,10 +194,7 @@ rect.animate("opacity", 0.0, duration_ms=300, on_complete=on_faded)
 
 !!! note
     `on_complete` callbacks are drained and invoked by `App.run()`'s own
-    per-frame loop. A node created via a `Window` sees its callbacks fire
-    for real; a node created via a [`View`](declarative-views.md) does
-    not, since `View` has no render loop of its own to drain them
-    through.
+    per-frame loop, or by `window.advance(ms)` in a test.
 
 ## Tree structure
 

@@ -1,9 +1,10 @@
 # Python API Reference
 
-The `tre` package's public classes. `App`, `Window`, `Node`, `View`,
-`Component`, `Theme`, `LoopHandle`, `Event`, and `CanvasContext` are
-compiled pyo3 bindings (`tre._core`); `Signal`, `Computed`, `Effect`,
-and `ViewModel` are plain Python, layered on top.
+The `tre` package's public classes, all compiled pyo3 bindings
+(`tre._core`). *Removed in 0.3.5:* `View`, `Component`, and the reactivity
+layer (`Signal`, `Computed`, `Effect`, `ViewModel`, `batch`, `untrack`) —
+declarative views and reactivity belong to a framework built on `tre`, such
+as Tesserae.
 
 | Class | Purpose |
 | --- | --- |
@@ -11,12 +12,8 @@ and `ViewModel` are plain Python, layered on top.
 | [`LoopHandle`](app.md#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s event loop, via `App.thread_handle()` |
 | [`Window`](window.md) | Owns a node tree, its size/title; creates nodes, dispatches input, docking, theming |
 | [`Node`](node.md) | A handle to one node — events, animation, property reads/writes |
-| [`View`](view.md) | A declarative view, built from a spec `dict` (or a YAML file) into its own node tree |
-| [`Component`](view.md#component) | An embedded, independent instance of another view spec, created via `View.instantiate` |
 | [`Theme`](window.md#theme) | Read-only access to a `Window`'s live MD3 theme resolution, via `window.theme` |
 | [`Event`](node.md#the-event-payload) | The payload a handler receives when it takes one argument |
-| [`Signal`](signal-and-viewmodel.md#signal) / [`Computed`](signal-and-viewmodel.md#computed) / [`Effect`](signal-and-viewmodel.md#effect) | Reactive values, derived values, and side effects (plus `batch`/`untrack`) |
-| [`ViewModel`](signal-and-viewmodel.md#viewmodel) | Wires a `View`'s declared bindings and handlers to Python state |
 | [`CanvasContext`](canvas-context.md) | The draw surface passed to a `Canvas` node's `draw` callback |
 
 *New in 0.3.4*, the [target API](../../design/target-api.md)'s building
@@ -25,7 +22,7 @@ property), [Events and Listeners](events.md), [Paint, Paths, and
 Animation](paint.md), and [Layers](layers.md).
 
 ```python
-from tre import App, Computed, Effect, Signal, View, ViewModel, Window
+from tre import App, Window
 ```
 
 ## Module functions and constants

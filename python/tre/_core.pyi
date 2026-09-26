@@ -12,7 +12,7 @@ confidence.
 
 Scope: every class `crates/engine-py/src/lib.rs`'s own `#[pymodule]`
 function registers via `m.add_class::<...>()` (`App`, `Window`, `Node`,
-`View`, `CanvasContext`, `Event`), including methods on components that predate
+`CanvasContext`, `Event`), including methods on components that predate
 this stub file -- Phase 0's own explicit charge is the *current* real
 API surface, not just what M30's later phases add. Each later phase
 extends this file with its own new components in the same phase that
@@ -58,7 +58,7 @@ class Event:
     `"focus_exit"` never carry any of `position`/`button`/`old_value`/
     `new_value` at all (a focus change, unlike a click/hover, never has
     a real pointer position -- Tab navigation, an explicit `Window.
-    focus()`/`View.focus()` call, and AccessKit's own `Action::Focus`
+    focus()` call, and AccessKit's own `Action::Focus`
     are all equally real, equally position-less sources).
     """
 
@@ -173,9 +173,9 @@ class Event:
         ...
 
 class Node:
-    """A handle to one real node in a `Window`'s (or `View`'s) tree.
-    Never constructed directly -- always returned by a `Window.add_*`
-    method, or read back via `View.node`.
+    """A handle to one real node in a `Window`'s tree.
+    Never constructed directly -- always returned by a `Window`
+    (`create`, `root`, or an `add_*` factory) or another `Node`.
     """
 
     def animate(
@@ -315,7 +315,7 @@ class Node:
     ) -> None:
         """Fires when this node becomes the keyboard-focused node --
         real click-to-focus, Tab/Shift-Tab navigation, a real `Window.
-        focus()`/`View.focus()` call, or a real AccessKit `Action::
+        focus()` call, or a real AccessKit `Action::
         Focus` request (M55). `callback` may take zero arguments, or
         one -- a real `Event` with `position`/`button`/`old_value`/
         `new_value` all `None` (a focus change carries none of those).
@@ -680,34 +680,6 @@ class Window:
         `ValueError`.
         """
         ...
-    @staticmethod
-    def from_view(view: View, width: int = 480, height: int = 200, title: str = "tre v2") -> Window:
-        """M42 Phase 1: shows a `View` (a declarative `view.yaml` +
-        `ViewModel`, headless until now) in a real, live, on-screen
-        window -- shares `view`'s own node tree directly rather than
-        building a second, separate one, so a `Signal` write that
-        re-evaluates a binding (`view.rs`'s own `_attach`) repaints this
-        same window on the very next frame. `add_window`/`App.run()`
-        work with the result exactly like any other `Window`.
-
-        A real, live resize of the returned `Window` is immediately
-        visible back on `view` itself -- `view.click(node)`/`view.hover
-        (node)`, called again after this, lay out against the window's
-        *current* real size, not the size passed here.
-        """
-        ...
-    def show_view(self, view: View) -> None:
-        """M42 Phase 2: switches which `View` this already-live `Window`
-        shows, without closing/reopening it -- each named `View` a real
-        app keeps around (its own `Reconciler`/bindings/`Signal`
-        subscriptions) stays fully alive; only what this window renders
-        and dispatches against changes, picked up on the next real
-        frame. Real, stated limit: `view`'s own `width`/`height` are
-        synced to this window's current size once, at switch time -- a
-        later live resize while a *different* `View` is showing won't
-        keep this one in sync until `show_view` is called on it again.
-        """
-        ...
     @property
     def theme(self) -> Theme:
         """M71: read-only access to this window's own live theme
@@ -743,8 +715,7 @@ class Window:
         filled: {corner_radius: 8, elevation: 2}}`) recompute and
         overwrite every matching node's own real paint in place, the
         same "recompute from scratch, snap the result in" convention
-        `View.set_theme` (§16.2) already established for the declarative
-        surface. A later `add_*` call also picks up the new theme, for
+        the declarative layer's live re-theme used before M98. A later `add_*` call also picks up the new theme, for
         real, through the identical `ColorScheme::role` lookup every
         component already resolves colors through. **Real, honest limit,
         not silently glossed over:** a component's own real, app-owned
@@ -752,11 +723,10 @@ class Window:
         Button`'s `selected`, which page a `Pagination` currently shows,
         etc.) is never re-derived by this call -- only each node's own
         theme-tier paint is recomputed, exactly the fields that state's
-        own color/shape depends on, never the state itself (see `crates/
-        engine-spec/src/theme.rs`'s own `components:` doc comment for the
-        full key convention). `default_theme`'s own
-        `components:` (omit for the engine's own shipped defaults,
-        mirroring `View.__init__`'s identical convention) supplies the
+        own color/shape depends on, never the state itself. Keys are
+        `component` or `component.variant`. `default_theme`'s own
+        `components:` (omit for the engine's own shipped defaults)
+        supplies the
         baseline, with `custom_theme`'s own `components:` layered on
         top (custom wins on any overlapping key) -- deliberately scoped
         to `components:` only: `default_theme`'s own `colors:`/`seed:`
@@ -2193,8 +2163,8 @@ class App:
     def __init__(self) -> None: ...
     def add_window(self, window: Window) -> None: ...
     def thread_handle(self) -> LoopHandle:
-        """M87: a thread-safe handle to this `App`'s event loop. `App`,
-        `Window` and `View` may only be used from the thread that created
+        """M87: a thread-safe handle to this `App`'s event loop. `App`
+        and `Window` may only be used from the thread that created
         them; this handle may be passed to and used from any thread.
         Every handle from one `App` shares the same queue.
         """
@@ -2218,8 +2188,8 @@ class LoopHandle:
     def call_soon(self, callback: Callable[[], object]) -> None:
         """Queues `callback` (called with no arguments) to run on the
         `App`'s event-loop thread, and wakes the loop -- including an
-        idle one. There it can touch `View`/`Window`/`Node` like an input
-        handler can, e.g. `view.reconcile(spec=...)` for hot reload.
+        idle one. There it can touch a `Window` and its `Node`s like an
+        input handler can -- e.g. rebuild a screen for hot reload.
 
         Safe from any thread, before, during, or after `App.run()`.
         Callbacks run in FIFO order at the top of the next frame; one
@@ -2227,244 +2197,6 @@ class LoopHandle:
         exception is logged like one from an input handler and doesn't
         stop the loop or later callbacks. Raises `TypeError` if
         `callback` isn't callable.
-        """
-        ...
-
-class View:
-    """Loads a declarative `view.yaml` file -- the §16.2 MVVM surface's
-    Rust-side crossing point. Pair with a Python `ViewModel` subclass
-    (`tre.ViewModel`), not used directly for imperative node creation
-    the way `Window` is.
-
-    Works headless (no `Window` needed) via `click`/`hover`/`right_click`
-    below, or shown live via `Window.from_view(view)` -- see `Window`'s
-    own doc comment.
-    """
-
-    def __init__(
-        self,
-        path: str | None = None,
-        stylesheet: str | None = None,
-        theme_seed: tuple[int, int, int, int] | None = None,
-        dark: bool = False,
-        default_theme: str | None = None,
-        custom_theme: str | None = None,
-        source: str | None = None,
-        spec: object | None = None,
-        json: str | None = None,
-        stylesheet_spec: object | None = None,
-        default_theme_spec: object | None = None,
-        custom_theme_spec: object | None = None,
-    ) -> None:
-        """M86: `stylesheet_spec`/`default_theme_spec`/`custom_theme_spec`
-        are the dict forms of `stylesheet`/`default_theme`/`custom_theme`
-        (the same schema each YAML file holds), for a caller that loads
-        its own files and hands `tre` data only. Each is mutually
-        exclusive with its path twin; passing both raises `ValueError`.
-
-        `stylesheet` is a path to a stylesheet YAML file (§16.3's
-        cascade); `theme_seed` builds a real MD3 `DynamicTheme` the
-        same way `Window.set_theme` does, resolving any `background:
-        primary`-style MD3 token name in the view/stylesheet.
-
-        M49: `default_theme`/`custom_theme` (paths to theme YAML files)
-        are two more cascade tiers, resolved *beneath* `stylesheet` and
-        the widget's own inline `style:` -- `default theme < custom
-        theme < stylesheet < inline`. Omitting `default_theme` uses the
-        engine's own shipped default. Either theme's `colors:` overrides
-        a role in the active `ColorScheme`; either theme's own `seed:`
-        (if present) sets the seed when `theme_seed` isn't explicitly
-        given (an explicit `theme_seed` always wins). Raises `ValueError`
-        for an unknown role name, an unparseable color, or invalid theme
-        YAML.
-
-        M50: a theme's own `components:` section (shape/elevation
-        overrides for the *imperative* MD3 catalog, `Window.add_button`/
-        `add_fab`/etc.) is silently unused here -- `View` has no
-        imperative factories to apply it to. Present in the shared
-        `ThemeSpec` type so one theme file can serve both `View` and
-        `Window`; see `Window.set_theme`'s own docstring for what it does.
-
-        M71: `source`, when given, is used directly as the view's YAML
-        text instead of reading `path` from disk -- `path` still
-        supplies the real base directory `include:`/`image.src:`
-        resolve against, and the real file `poll_reload()`/hot-reload
-        watches.
-
-        M78 (tre issue #3 Tier 1): `spec`, when given, is a real Python
-        object (a dict shaped like the view's own YAML tree) built
-        directly into the tree -- no YAML text at all. `path` becomes
-        optional: omitted, there's no base directory to resolve against
-        and no file to watch for hot-reload (`poll_reload()` then
-        always returns `False`; use `reconcile()` instead).
-
-        0.3.1 review, item 2: `json`, when given, is JSON text parsed
-        directly into the tree -- the real first consumer of `engine_
-        spec::parse_view_json`. Grouped with `spec`, not `source`: both
-        are just different ways to obtain the tree data directly, with
-        no real backing file implied by either, so `path` is optional
-        with `json` too. `source`'s own `path` requirement is specific
-        to it -- pre-processed *real file* content still wanting real
-        hot-reload. At most one of `spec`/`source`/`json` may be given;
-        at least one of `spec`/`json`/`path` is required. Raises
-        `ValueError` if more than one of `spec`/`source`/`json` is
-        given, or if none of `spec`/`json`/`path` is given.
-        """
-        ...
-    def node(self, widget_id: str) -> Node:
-        """Looks up a declared widget by its own `id:` from the YAML."""
-        ...
-    def poll_reload(self, source: str | None = None) -> bool:
-        """Checks whether the underlying YAML file changed on disk
-        since it was last loaded and, if so, reconciles the tree in
-        place (preserving `NodeId`/focus/in-flight animations where
-        possible). Returns whether a reload actually happened.
-
-        M71: `source`, when given, is reconciled instead of a fresh
-        disk read of `path` -- the real change-detection gate still
-        watches `path` on disk regardless, so this only changes what
-        gets reconciled once a real file change is detected, not
-        whether one is. A `View` with no `path` at all (M78's `spec=`
-        construction) has no watcher and always returns `False` here --
-        see `reconcile()` for the ungated equivalent.
-        """
-        ...
-    def reconcile(
-        self, source: str | None = None, spec: object | None = None, json: str | None = None
-    ) -> None:
-        """M79 (tre issue #3 Part C): the ungated sibling of
-        `poll_reload` for a `View` built with `spec=` and no backing
-        file to watch. Reconciles against `source` (YAML text), `spec`
-        (a real Python object, depythonized directly), or `json` (JSON
-        text, 0.3.1 review item 2) -- unconditionally, with no "did
-        anything change" check, since the caller's own explicit call
-        already is the change signal (typically driven by `tre.Effect`).
-        At most one of `spec`/`source`/`json` may be given; exactly one
-        is required. Raises `ValueError` if more than one is given, or
-        if none is given.
-        """
-        ...
-    def set_stylesheet(
-        self,
-        stylesheet_spec: object | None = None,
-        stylesheet: str | None = None,
-    ) -> None:
-        """M91 (issue #8): replaces this view's stylesheet and
-        re-resolves every node in place, like `set_theme` -- `NodeId`s,
-        focus, and in-flight animations are preserved, and the attached
-        ViewModel's bindings are re-applied afterward. `stylesheet_spec`
-        (a dict) and `stylesheet` (a YAML file path) are mutually
-        exclusive; passing neither clears the stylesheet.
-        """
-        ...
-    def set_theme(
-        self,
-        default_theme: str | None = None,
-        custom_theme: str | None = None,
-        theme_seed: tuple[int, int, int, int] | None = None,
-        dark: bool = False,
-        default_theme_spec: object | None = None,
-        custom_theme_spec: object | None = None,
-    ) -> None:
-        """M51: live re-theme. M86: `default_theme_spec`/
-        `custom_theme_spec` are the dict forms of `default_theme`/
-        `custom_theme`, same contract as `__init__`. Re-resolves `default_theme`/`custom_theme`/
-        `theme_seed`/`dark` exactly like `__init__` does, then walks
-        every already-built node in this `View`'s tree and recomputes
-        its `PaintProperties`/`layout_style` from its own YAML spec
-        against the new theme layers, overwriting in place -- the same
-        real "recompute and overwrite" step `poll_reload` already runs
-        on content changes, just unconditional (spec unchanged, only
-        the theme differs) rather than skipped for unchanged nodes.
-        `NodeId`/children/focus are preserved; a widget's own inline
-        `style:` still wins over any theme layer, exactly like at
-        construction time.
-
-        Real, deliberate convention, matching `Window.set_theme`'s own
-        precedent: each call is a complete, fresh theme selection --
-        omitting `default_theme`/`custom_theme` resets to the engine's
-        shipped default / no custom override, *not* "keep whatever the
-        previous call used." A `poll_reload()` called after this
-        continues resolving against the theme this call installed.
-
-        M91 (issue #8): the attached ViewModel's bindings are re-applied
-        afterward, so a bound field keeps its live value. `View` has no imperative
-        factories, so `Window.set_theme`'s own `components:` shape/
-        elevation section has nothing to apply to here.
-        """
-        ...
-    def instantiate(
-        self, path: str, into: Node, source: str | None = None, spec: object | None = None
-    ) -> Component:
-        """M43 Phase 1: embeds another view's own YAML as a real,
-        independent `Component` -- its own bindings/handlers, ready for
-        its own separate `ViewModel` to `_attach` to -- spliced into
-        this `View`'s live tree as a child of `into`. Call this once per
-        instance for multiple simultaneous instances (e.g. one per row
-        in a list); each instantiation is fully independent, even when
-        the same `path` is used repeatedly.
-
-        M73: `source`, when given, is used directly instead of reading
-        `path` from disk -- the same real `View.__init__`/`source=`
-        precedent, widened here for the embedded-component macro-
-        expansion case (Tesserae's own pre-processed component YAML).
-
-        0.3.1 review, item 3: `spec`, when given, is a real Python
-        object built directly into the tree, mirroring `View.__init__`
-        's own `spec=` (M78) -- no YAML text at all. Unlike `View.
-        __init__`, `path` stays **required** here (every real call site
-        already calls `instantiate(path, into)` positionally, and `into`
-        -- also required -- comes right after it, so making `path`
-        optional would break every one of them). Pass `path=""` when
-        using `spec=`/`source=` with no real file to name -- the same
-        "no base directory" outcome an omitted `path` means for `View.
-        __init__`. At most one of `spec`/`source` may be given; at
-        least one of `spec`/`source`/a non-empty `path` is required.
-        """
-        ...
-    def click(self, node: Node) -> None: ...
-    def hover(self, node: Node) -> None: ...
-    def focus(self, node: Node) -> None: ...
-    def right_click(self, node: Node) -> None: ...
-
-class Component:
-    """M43 Phase 1: one real, embedded instance of another view's own
-    YAML, created via `View.instantiate`/`Component.instantiate` -- not
-    constructed directly. Behaves like a small `View` scoped to just
-    this instance's own widgets (its own `node`/`_attach`), sharing the
-    same live `Tree` as whatever it was instantiated into.
-
-    Has no `click`/`hover`/`right_click` of its own -- dispatch on one
-    of its nodes goes through the *owning* `View`/`Window`'s existing
-    method instead, e.g. `view.click(component.node("button"))`.
-    """
-
-    def node(self, widget_id: str) -> Node:
-        """Looks up a declared widget by its own `id:`, scoped to this
-        component instance."""
-        ...
-    def instantiate(
-        self, path: str, into: Node, source: str | None = None, spec: object | None = None
-    ) -> Component:
-        """Embeds another component inside this one -- components nest
-        recursively, the identical real mechanism `View.instantiate`
-        itself uses.
-
-        M73: `source`, when given, is used directly instead of reading
-        `path` from disk -- see `View.instantiate`'s own docstring.
-
-        0.3.1 review, item 3: `spec`, when given, mirrors `View.
-        instantiate`'s own -- see its docstring for the real reasoning,
-        including why `path` stays required here.
-        """
-        ...
-    def remove(self) -> None:
-        """M43 Phase 2: real, structural teardown -- unsubscribes every
-        `Signal` this instance's own bindings subscribed to (so a later
-        write to one no longer tries to reach a `NodeId` that's gone),
-        then removes this instance's whole subtree from the shared
-        `Tree`. Safe to call once; the instance shouldn't be used again
-        afterward (its own `NodeId`s are no longer valid).
         """
         ...
 
@@ -2508,29 +2240,5 @@ def register_font(data: bytes) -> list[str]:
     Registering identical bytes twice is a no-op that still returns the
     names. A window already running picks the font up on its next frame.
     Raises `ValueError` if `data` holds no parseable font face.
-    """
-    ...
-
-def _record_read(signal: object) -> None:
-    """Internal -- called from `Signal.get()`. Only appends `signal` to
-    the current binding evaluation's dependency list while one is
-    genuinely in progress (`View._attach`); a no-op otherwise. Not part
-    of the public API.
-    """
-    ...
-
-def _begin_recording() -> None:
-    """Internal -- pushes a fresh recording frame. `Computed`/`Effect`/
-    `untrack` (`tre.__init__`) pair this with `_end_recording` to open a
-    dependency-tracking scope around their own callable, the same real
-    mechanism `View._attach` already uses for `{{ }}` bindings. Not part
-    of the public API.
-    """
-    ...
-
-def _end_recording() -> list[Any]:
-    """Internal -- pops the current recording frame and returns every
-    distinct object `_record_read` saw while it was on top (by identity,
-    in first-read order). Not part of the public API.
     """
     ...

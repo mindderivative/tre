@@ -2,7 +2,7 @@
 
 **Python-facing declarative/imperative GUI framework, Rust-native rendering backend.**
 
-Status: living design reference, actively implemented. 25 milestones built against this document as of `v0.2.0` (see [`BUILD_TRACKER.md`](BUILD_TRACKER.md) for the complete phase-by-phase history) — update it as decisions change, don't let it drift from the actual code.
+Status: living design reference, actively implemented. **As of M98 (0.3.5) the declarative layer is gone** — §16, the `engine-spec` crate, `View`, bindings, and reactivity moved to the Tesserae framework; what this document says about them is history until M102 rewrites it. 25 milestones built against this document as of `v0.2.0` (see [`BUILD_TRACKER.md`](BUILD_TRACKER.md) for the complete phase-by-phase history) — update it as decisions change, don't let it drift from the actual code.
 
 ---
 

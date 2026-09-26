@@ -51,7 +51,6 @@ nav:
   - Getting Started: getting-started.md
   - Guide:
       - Imperative API: guide/imperative-api.md
-      - Declarative Views (YAML): guide/declarative-views.md
       - MD3 Components: guide/components.md
       - Docking & Shell Layout: guide/docking-and-shell.md
       - Canvas & Virtualized Lists: guide/canvas-and-lists.md
@@ -66,8 +65,6 @@ nav:
       - Events and Listeners: api/python/events.md
       - Layers: api/python/layers.md
       - Paint, Paths, and Animation: api/python/paint.md
-      - View: api/python/view.md
-      - Reactivity (Signal, Computed, Effect, ViewModel): api/python/signal-and-viewmodel.md
       - CanvasContext: api/python/canvas-context.md
   - Rust Crates: api/rust.md
   - Architecture: architecture.md

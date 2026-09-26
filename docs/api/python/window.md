@@ -12,31 +12,7 @@ window's implicit root (a flex row, 16px padding, 16px gaps).
 window = Window(width=400, height=200, title="My App")
 ```
 
-## Showing a `View`
-
-### `from_view`
-
-**`Window.from_view(view, width=480, height=200, title="tre v2") -> Window`** *(static)*
-
-A window that shows a declarative [`View`](view.md), sharing the view's
-node tree directly: bindings, handlers, and `reconcile()` updates on the
-`View` appear in the live window.
-
-```python
-window = Window.from_view(view, width=400, height=300, title="Settings")
-app.add_window(window)
-```
-
-### `show_view`
-
-**`show_view(view)`**
-
-Switches which `View` an already-open window shows, without closing it.
-Each `View` an app keeps around stays fully alive (its bindings and
-`Signal` subscriptions intact); only what this window renders and
-dispatches to changes, from the next frame. The view is sized to the
-window when switched to — a later resize while a *different* view is
-showing won't resize this one until it's shown again.
+## Size
 
 ### `resize`
 

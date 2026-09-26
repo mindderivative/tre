@@ -91,10 +91,8 @@ specific ones) can be driven this way — see
 
 - [Imperative API](guide/imperative-api.md) — the full `Window`/`Node`
   tour: every node kind, events, animation, focus.
-- [Declarative Views](guide/declarative-views.md) — describe the same
-  kind of UI as data instead, with data binding against a `ViewModel`.
-- [Working with Files](guide/working-with-files.md) — load views, themes,
-  and images from files on disk, with hot reload.
+- [Working with Files](guide/working-with-files.md) — load themes and
+  images from files on disk.
 - [MD3 Components](guide/components.md) — `Checkbox`, `Slider`,
   `TextField`, `Image`, `Icon` in depth.
 - Browse [`examples/`](https://github.com/mindderivative/tre/tree/main/examples)

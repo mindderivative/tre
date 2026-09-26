@@ -7,18 +7,9 @@ with pyo3's own TypeError naming the bad keyword).
 
 import pytest
 
-from tre import Signal, View, ViewModel, Window
+from tre import Window
 
 BLACK = (0, 0, 0, 255)
-
-
-def text_spec(**style):
-    return {
-        "id": "t",
-        "kind": "Text",
-        "text": {"content": "Hi", "font_family": "Roboto", "font_size": 16},
-        "style": {"width": 60, "height": 20, **style},
-    }
 
 
 # --- A: foreground is the glyph/text color ---------------------------------
@@ -39,16 +30,6 @@ def test_add_text_takes_foreground():
 def test_the_old_glyph_color_keywords_are_gone(factory, kwargs):
     with pytest.raises(TypeError, match=next(k for k in kwargs if k in ("background", "color"))):
         getattr(Window(), factory)(**kwargs)
-
-
-def test_a_declarative_text_takes_style_foreground():
-    view = View(spec=text_spec(foreground="#1D1B20"))
-    assert view.node("t").get_text() == "Hi"
-
-
-def test_a_declarative_text_rejects_style_background_naming_foreground():
-    with pytest.raises(ValueError, match="style.foreground"):
-        View(spec=text_spec(background="#1D1B20"))
 
 
 def test_node_animate_foreground_works_on_text_and_background_is_rejected():
@@ -72,19 +53,6 @@ def test_foreground_is_not_a_property_of_a_fill_kind():
         rect.animate("foreground", (255, 0, 0, 255), duration_ms=0)
 
 
-def test_a_bound_foreground_reaches_a_declarative_text():
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.color = Signal("#FF0000")
-            super().__init__(view)
-
-    spec = text_spec(foreground="#000000")
-    spec["bindings"] = {"foreground": "{{ color.get() }}"}
-    view = View(spec=spec)
-    vm = VM(view)
-    vm.color.set("#00FF00")  # must not raise
-
-
 # --- B: toolbar vibrant ------------------------------------------------------
 
 
@@ -105,43 +73,6 @@ def test_add_switch_takes_selected_and_node_reads_it_back():
 def test_add_switch_rejects_the_old_on_keyword():
     with pytest.raises(TypeError, match="on"):
         Window().add_switch(on=True)
-
-
-@pytest.mark.parametrize("kind", ["Switch", "RadioButton"])
-def test_declarative_switch_and_radio_take_selected(kind):
-    view = View(spec={"id": "s", "kind": kind, "selected": True})
-    assert view.node("s").get_selected() is True
-
-
-@pytest.mark.parametrize("kind", ["Switch", "RadioButton"])
-def test_declarative_checked_on_a_switch_or_radio_names_selected(kind):
-    with pytest.raises(ValueError, match="`selected:`"):
-        View(spec={"id": "s", "kind": kind, "checked": True})
-
-
-def test_declarative_selected_on_a_checkbox_names_checked():
-    with pytest.raises(ValueError, match="`checked:`"):
-        View(spec={
-            "id": "c", "kind": "Checkbox", "selected": True,
-            "style": {"width": 20, "height": 20, "background": "#000000"},
-        })
-
-
-def test_a_two_way_selected_binding_round_trips_on_a_switch():
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.on = Signal(False)
-            super().__init__(view)
-
-    view = View(spec={
-        "id": "s", "kind": "Switch",
-        "bindings": {"selected": "{{ on.get() }}"}, "two_way": "selected",
-    })
-    vm = VM(view)
-    vm.on.set(True)
-    assert view.node("s").get_selected() is True
-    view.node("s").set_selected(False)
-    assert vm.on.get() is False
 
 
 # --- D: a slider's value ----------------------------------------------------
@@ -189,19 +120,6 @@ def test_the_old_orientation_booleans_are_gone():
 # --- F: lowercase enum values ------------------------------------------------
 
 
-def test_declarative_enum_values_are_lowercase_snake_case():
-    View(spec={
-        "id": "r", "kind": "Container",
-        "style": {"width": 10, "height": 10, "flex_direction": "vertical",
-                  "align_items": "flex_start", "justify_content": "space_between"},
-    })
-
-
-def test_a_pascal_case_enum_value_names_the_accepted_ones():
-    with pytest.raises(ValueError, match="horizontal"):
-        View(spec={"id": "r", "kind": "Container", "style": {"flex_direction": "Horizontal"}})
-
-
 # --- G: text-string parameters -----------------------------------------------
 
 
@@ -215,14 +133,3 @@ def test_link_dialog_and_popover_take_their_new_text_parameters():
 # --- H: typography_role ------------------------------------------------------
 
 
-def test_declarative_text_takes_typography_role():
-    spec = text_spec(foreground="#000000")
-    spec["text"] = {"content": "Hi", "typography_role": "body_large"}
-    View(spec=spec)
-
-
-def test_declarative_text_rejects_the_old_role_field():
-    spec = text_spec(foreground="#000000")
-    spec["text"] = {"content": "Hi", "role": "body_large"}
-    with pytest.raises(ValueError, match="role"):
-        View(spec=spec)

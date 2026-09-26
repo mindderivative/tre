@@ -79,13 +79,13 @@ app.run()
 
 Queues `callback` (called with no arguments) to run on the `App`'s
 event-loop thread and wakes the loop — including an idle one waiting
-for input. There it can touch `View`/`Window`/`Node` exactly like an
+for input. There it can touch a `Window` and its `Node`s exactly like an
 input handler can:
 
 ```python
 # on a background thread, after detecting a file change:
 text = path.read_text()                              # I/O off the UI thread
-handle.call_soon(lambda: view.reconcile(source=text))
+handle.call_soon(lambda: rebuild_screen(text))           # on the loop
 ```
 
 - Safe from any thread, before, during, or after `run()`.

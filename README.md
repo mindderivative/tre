@@ -56,12 +56,11 @@ mkdocs serve   # live preview at http://127.0.0.1:8000
   and MD3's container-transform choreography.
 - **A real, wide layout/styling surface** — per-side padding/margin,
   flex-grow/shrink/basis, align/justify, and border kwargs across the
-  catalog, both from Python and from declarative YAML `style:` blocks.
-- **Two authoring paths, one engine** — build a UI imperatively from
-  Python, or declaratively from YAML view files (`engine-spec`), with
-  a real stylesheet cascade, hot-reload, `include:`-based composition,
-  and one- and two-way data binding against a plain Python
-  `ViewModel`.
+  catalog.
+- **Building blocks for a framework** — build a UI from Python with
+  nodes, properties, listeners, layers, and animation. Declarative views,
+  data binding, and reactivity belong to a framework built on `tre`
+  (Tesserae); `tre` 0.3.5 removed its own.
 - **Accessibility from day one** — a real AccessKit tree built fresh
   every frame from the same node tree, keyboard focus/Tab order, and
   screen-reader-driven actions routed through the same input pipeline
@@ -93,8 +92,7 @@ python examples/checkbox.py
 For a consolidated, all-in-one tour instead, run
 [`demo/showcase.py`](demo/showcase.py) — one running app combining MD3
 components and live theming, real animation and custom `Canvas`
-drawing, a virtualized list, docking, and a declarative `View` panel,
-all in one shell with keyboard navigation:
+drawing, a virtualized list, and docking, all in one shell with keyboard navigation:
 
 ```bash
 python demo/showcase.py

@@ -23,13 +23,9 @@ just each screen proven separately.
   `add_canvas`/`add_virtual_list` become `&self` like every other real
   `add_*` method).
 - **Phase 4** (§16): a real 5,000-row virtualized list with real
-  paging, a real minimal docking layout, and a declarative YAML `View`
-  panel using M26's real stylesheet/token support -- the first place
-  both authoring paths genuinely compose in one running app, via real
-  cross-path data flow (a `View`-dispatched click updates a `Signal`,
-  reflected on an ordinary imperative label), since `View` has no
-  rendering concept of its own to nest visually. Extended `Node.
-  set_text`/`get_text` to also handle plain `Text` labels.
+  paging and a real minimal docking layout. Extended `Node.set_text`/
+  `get_text` to also handle plain `Text` labels. (A declarative `View`
+  panel lived here until M98 removed `View`.)
 - **Phase 5** (§10): a real, comprehensive keyboard-Tab-order sweep
   across every screen's own interactive controls (not just a couple of
   spot-checks), plus real keyboard *operability* (not just
@@ -56,7 +52,7 @@ import base64
 import tempfile
 from pathlib import Path
 
-from tre import App, Signal, View, ViewModel, Window
+from tre import App, Window
 
 WINDOW_WIDTH = 720
 WINDOW_HEIGHT = 480
@@ -383,16 +379,8 @@ def data_row_color(idx):
 
 def build_data_screen(window):
     """Phase 4's real data & layout screen: a genuinely large
-    virtualized list, a real docking layout, and a declarative YAML
-    `View` panel -- proving both authoring paths compose in one real
-    running app, not just separately in isolated examples. `View` has
-    no rendering/render-loop concept of its own (confirmed directly in
-    `view.rs`'s own module doc comment), so "compose" here means real,
-    meaningful data flow between the two: a click dispatched through
-    the `View`'s own real handler mechanism updates a `Signal`, read
-    back and shown on an ordinary imperative `Window` label -- the
-    honest, buildable interpretation of "embedded alongside," not a
-    literal visual nesting `View`'s own architecture can't support.
+    virtualized list and a real docking layout. (Its declarative `View`
+    panel went with `View` in M98.)
     """
     screen = window.add_rect(background=SCREEN_BG, width=SCREEN_WIDTH, height=SCREEN_HEIGHT)
     label = make_label_fn(window, screen)
@@ -466,38 +454,6 @@ def build_data_screen(window):
     move_btn.set_on_click(move_panel)
     screen.add_child(move_btn)
 
-    # --- Declarative View panel: the other authoring path, composed ---
-    label("Declarative View (M26 stylesheet + tokens)", 16, 300, width=400)
-    here = Path(__file__).parent
-    view = View(
-        str(here / "data_panel.yaml"),
-        stylesheet=str(here / "data_panel_sheet.yaml"),
-        theme_seed=SEED_COLORS[0][1],
-    )
-
-    class CounterViewModel(ViewModel):
-        def __init__(self, view):
-            self.counter = Signal(0)
-            super().__init__(view)
-
-        def bump(self):
-            self.counter.update(lambda n: n + 1)
-
-    view_model = CounterViewModel(view)
-    bump_view_button = view.node("bump_button")
-
-    counter_label = label("Declarative counter: 0", 16, 324, width=260)
-
-    def bump_declarative_counter():
-        view.click(bump_view_button)
-        counter_label.set_text(f"Declarative counter: {view_model.counter.get()}")
-
-    label("Bump declarative counter", 16, 336, width=260, height=16, font_size=12)
-    bump_btn = window.add_rect(background=(0x33, 0x33, 0x33, 0xFF), width=220, height=32, x=16, y=356)
-    bump_btn.enable_interaction()
-    bump_btn.set_on_click(bump_declarative_counter)
-    screen.add_child(bump_btn)
-
     DATA_REFS.clear()
     DATA_REFS.update(
         {
@@ -509,12 +465,6 @@ def build_data_screen(window):
             "move_btn": move_btn,
             "move_panel": move_panel,
             "dock_state": dock_state,
-            "view": view,
-            "view_model": view_model,
-            "bump_view_button": bump_view_button,
-            "counter_label": counter_label,
-            "bump_btn": bump_btn,
-            "bump_declarative_counter": bump_declarative_counter,
         }
     )
     return screen
@@ -736,9 +686,7 @@ def verify_data_screen(window):
     screen: real virtualization (paging genuinely re-materializes, not
     just accumulates), a real headless drag-and-drop (the same
     `start_panel_drag`/`drop_panel_at` sequence `tests/test_docking.py`
-    already establishes), and real cross-path data flow -- a click
-    dispatched through `View`'s own dispatch updates a `Signal`, read
-    back and reflected in an ordinary imperative `Window` label.
+    already establishes).
     """
     refs = DATA_REFS
 
@@ -746,14 +694,13 @@ def verify_data_screen(window):
     # screen -- the same real "3 nav taps first" behavior `verify_
     # motion_screen` already found and accounted for (a screen swap
     # resets focus to none). Real keyboard *operability* on the first
-    # control (page_btn, via Enter); `move_btn`/`bump_btn` are reached
-    # here but activated separately below via their own existing real
-    # checks, so a real drag/declarative-click side effect isn't
-    # accidentally triggered twice.
+    # control (page_btn, via Enter); `move_btn` is reached here but
+    # activated separately below via its own existing real check, so a
+    # real drag isn't accidentally triggered twice.
     window.press_key("tab")
     window.press_key("tab")
     window.press_key("tab")
-    interactive_order = [refs["page_btn"], refs["move_btn"], refs["bump_btn"]]
+    interactive_order = [refs["page_btn"], refs["move_btn"]]
     before_start = refs["page_state"]["start"]
     for i, node in enumerate(interactive_order):
         window.press_key("tab")
@@ -766,30 +713,11 @@ def verify_data_screen(window):
     )
     print(f"VirtualList: keyboard Enter paged from row {before_start} to row {refs['page_state']['start']}")
 
-    # Real cascade + MD3 token resolution (M26), reachable from the
-    # same declarative panel this screen embeds: the stylesheet's own
-    # `id: bump_button` rule (corner_radius: 12) must have won over its
-    # `kind: Rect` rule (corner_radius: 4).
-    assert refs["bump_view_button"].get("corner_radius") == 12.0, (
-        "the id-level stylesheet rule must win over the kind-level one"
-    )
-    print("Declarative View: stylesheet cascade resolved corner_radius=12 (id beats kind)")
-
-    # Real cross-path data flow: a View-dispatched click updates a
-    # Signal; the imperative Window label reflects the new value.
-    refs["move_panel"]()  # exercised before the View click below, so
-    # both real interactions in this screen run in one pass
+    refs["move_panel"]()
     assert refs["dock_state"]["side"] == "right", "a real headless drag must move the panel to the right zone"
     window.click(refs["panel"])  # the panel must still be real, attached, and clickable in its new zone
     print(f"Docking: panel moved to the {refs['dock_state']['side']!r} zone via a real headless drag")
 
-    before_count = refs["view_model"].counter.get()
-    refs["bump_declarative_counter"]()  # the same handler the real button click wires to
-    assert refs["view_model"].counter.get() == before_count + 1, "a View-dispatched click must update its own Signal"
-    assert refs["counter_label"].get_text() == f"Declarative counter: {refs['view_model'].counter.get()}", (
-        "the imperative label must reflect the declarative View's own real Signal state"
-    )
-    print(f"Declarative -> Imperative: {refs['counter_label'].get_text()!r}")
 
 
 def main():
@@ -831,8 +759,8 @@ def main():
     assert state["current_key"] == SCREEN_ORDER[2], "clicking the third nav button must switch to 'data'"
     print(f"nav click switched the active screen to {state['current_key']!r}")
 
-    # Phase 4: exercise the virtualized list, docking, and declarative
-    # View panel while "data" is the active screen.
+    # Phase 4: exercise the virtualized list and docking while "data"
+    # is the active screen.
     verify_data_screen(window)
 
     # Leave the gallery as the visible starting screen for anyone

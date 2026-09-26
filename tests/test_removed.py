@@ -59,17 +59,26 @@ def test_every_forbidden_name_is_in_the_migration_table() -> None:
         assert name in table or name in TABLE, name
 
 
-def test_every_forbidden_name_exists_today() -> None:
+#: Forbidden names 0.3.5 has already removed, by milestone.
+GONE = {
+    # M98: the declarative and reactivity layers.
+    "tre": {"View", "Component", "Signal", "Computed", "Effect", "ViewModel", "batch", "untrack"},
+    "Window": {"from_view", "show_view"},
+}
+
+
+def test_every_forbidden_name_exists_today_or_is_already_gone() -> None:
     """A typo'd table entry would forbid nothing."""
     classes = {"tre": tre, "Window": _core.Window, "Node": _core.Node, "Event": _core.Event}
     for owner, members in _removed.REMOVED.items():
         for name in members:
-            assert hasattr(classes[owner], name), f"{owner}.{name} doesn't exist"
+            gone = name in GONE.get(owner, set())
+            assert hasattr(classes[owner], name) != gone, f"{owner}.{name}"
 
 
 def test_off_by_default() -> None:
     assert os.environ.get("TRE_FORBID_REMOVED") != "1", "run the suite without the switch"
-    assert tre.Signal is not None
+    assert tre.Theme is not None
     assert callable(tre.Window(10, 10, "off").add_rect)
 
 

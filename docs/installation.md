@@ -102,7 +102,7 @@ portable `manylinux` wheel from an ordinary Linux dev host needs either:
 
 ```python
 import tre
-print(tre.App, tre.Window, tre.Node, tre.View, tre.Signal, tre.ViewModel)
+print(tre.App, tre.Window, tre.Node)
 ```
 
 If that import succeeds, you're ready for [Getting Started](getting-started.md).

@@ -25,13 +25,7 @@ extension" discipline as `test_engine_py.py`.
 
 import pytest
 
-from tre import Node, Signal, View, ViewModel, Window
-
-
-def write_view(tmp_path, yaml):
-    path = tmp_path / "view.yaml"
-    path.write_text(yaml)
-    return str(path)
+from tre import Node, Window
 
 
 # --- Node.set_layout ---------------------------------------------------
@@ -149,34 +143,6 @@ def test_set_layout_rejects_an_unknown_justify_content_value():
 
 
 # --- M59 (§5, §16.3): the new engine-spec fields reach a real View too -
-
-
-def test_declarative_view_parses_per_side_padding_margin_and_flex_align(tmp_path):
-    """The real declarative-path counterpart -- `StyleSpec`'s own new
-    fields (`engine-spec`) must reach a genuinely built `View` without
-    raising, the same honest "no pixel-box readback" limit as the
-    imperative path above.
-    """
-    path = write_view(
-        tmp_path,
-        """
-id: root
-kind: Container
-style:
-  width: 200
-  height: 100
-  padding: {top: 4, right: 8, bottom: 4, left: 8}
-  margin: 2
-  flex_grow: 1
-  flex_shrink: 0
-  flex_basis: 40
-  align_items: center
-  justify_content: space_between
-""",
-    )
-    view = View(path)
-    node = view.node("root")
-    assert isinstance(node, Node)
 
 
 # --- border via animate()/get() -----------------------------------------
@@ -333,120 +299,7 @@ def test_add_pagination_accepts_border_kwargs_and_styles_only_previous():
 # --- border via static YAML (StyleSpec) ----------------------------------
 
 
-def test_style_spec_parses_border_width_and_color(tmp_path):
-    path = write_view(
-        tmp_path,
-        """
-id: root
-kind: Rect
-style: {width: 10, height: 10, background: "#112233", border_width: 2.0, border_color: "#ffffff"}
-""",
-    )
-    view = View(path)
-    node = view.node("root")
-    assert node.get("border_width") == pytest.approx(2.0)
-
-
-def test_style_spec_with_an_invalid_border_color_raises(tmp_path):
-    yaml = """
-id: root
-kind: Rect
-style: {width: 10, height: 10, background: "#112233", border_color: "not-a-real-color"}
-"""
-    path = tmp_path / "view.yaml"
-    path.write_text(yaml)
-    with pytest.raises(ValueError):
-        View(str(path))
-
-
 # --- border/layout via {{ }} bindings ------------------------------------
-
-
-def test_border_width_binding_applies_its_initial_value(tmp_path):
-    path = write_view(
-        tmp_path,
-        """
-id: root
-kind: Rect
-style: {width: 10, height: 10, background: "#112233", border_width: 0.0}
-bindings: {border_width: "{{ thickness.get() }}"}
-""",
-    )
-    view = View(path)
-
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.thickness = Signal(4.0)
-            super().__init__(view)
-
-    VM(view)
-    node = view.node("root")
-    assert node.get("border_width") == pytest.approx(4.0)
-
-
-def test_border_color_binding_parses_a_bound_hex_string(tmp_path):
-    path = write_view(
-        tmp_path,
-        """
-id: root
-kind: Rect
-style: {width: 10, height: 10, background: "#112233"}
-bindings: {border_color: "{{ hue.get() }}"}
-""",
-    )
-    view = View(path)
-
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.hue = Signal("#ff0000")
-            super().__init__(view)
-
-    # Must not raise -- the same real hex-color-string dispatch
-    # "background" bindings already establish (M44), widened to
-    # "border_color" this milestone.
-    VM(view)
-
-
-@pytest.mark.parametrize("property_name", ["width", "height", "padding", "gap"])
-def test_layout_property_binding_does_not_raise(tmp_path, property_name):
-    path = write_view(
-        tmp_path,
-        f"""
-id: root
-kind: Rect
-style: {{width: 10, height: 10, background: "#112233"}}
-bindings: {{{property_name}: "{{{{ size.get() }}}}"}}
-""",
-    )
-    view = View(path)
-
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.size = Signal(25.0)
-            super().__init__(view)
-
-    VM(view)
-
-
-def test_layout_property_binding_rejects_a_non_numeric_value(tmp_path):
-    path = write_view(
-        tmp_path,
-        """
-id: root
-kind: Rect
-style: {width: 10, height: 10, background: "#112233"}
-bindings: {width: "{{ label.get() }}"}
-""",
-    )
-    view = View(path)
-
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.label = Signal("not a number")
-            super().__init__(view)
-
-    with pytest.raises(ValueError, match="expects a numeric binding"):
-        VM(view)
 
 
 # --- M62 Phase 1 (§7.1, §16.3): real line_height support -------------------

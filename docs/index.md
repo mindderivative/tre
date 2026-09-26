@@ -44,14 +44,13 @@ project's design decisions.
   container-transform choreography.
 - **A real, wide layout/styling surface** — per-side padding/margin,
   flex-grow/shrink/basis, align/justify, and border kwargs across the
-  catalog, both from Python and from declarative `style:` blocks.
-- **Two authoring paths, one engine** — build a UI
-  [imperatively from Python](guide/imperative-api.md), or
-  [declaratively as data](guide/declarative-views.md) (a tree of widget
-  specs), with a stylesheet cascade, embeddable components, in-place
-  reconciliation, and one- and two-way data binding against a plain
-  Python `ViewModel`.
-- **Data in, not files** — views, themes, and stylesheets are passed as
+  catalog.
+- **Building blocks for a framework** — build a UI
+  [from Python](guide/imperative-api.md) with nodes, properties,
+  listeners, layers, and animation. Declarative views, data binding, and
+  reactivity belong to a framework built on `tre` (Tesserae); `tre` 0.3.5
+  removed its own.
+- **Data in, not files** — themes are passed as
   plain `dict`s, images as decoded pixels, fonts as bytes, so a
   framework built on `tre` owns every file format and loading decision.
   Using `tre` directly? It will also [read files for you](guide/working-with-files.md)
@@ -94,8 +93,7 @@ guide? Run
 [`demo/showcase.py`](https://github.com/mindderivative/tre/blob/main/demo/showcase.py)
 from a source checkout — one running app combining MD3 components and
 live theming, real animation and custom `Canvas` drawing, a
-virtualized list, docking, and a declarative `View` panel, all
-keyboard-navigable.
+virtualized list, and docking, all keyboard-navigable.
 
 ## Project status
 

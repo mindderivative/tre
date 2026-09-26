@@ -132,13 +132,6 @@ def test_a_window_and_node_freed_off_thread_neither_panic_nor_leak(
     assert refs[0]() is None, "the off-thread drop was finished on this thread"
 
 
-def test_a_view_freed_off_thread_neither_panics_nor_leaks(unraisable: list[str]) -> None:
-    spec = {"id": "root", "kind": "Rect", "style": {"width": 10, "height": 10, "background": "#112233"}}
-    collect_on_another_thread(lambda: tre.View(spec=spec))
-    tre.Window(10, 10, "safe point").create("box")
-    assert unraisable == []
-
-
 def test_using_a_node_from_another_thread_still_raises() -> None:
     w = tre.Window(200, 100, "lifetime")
     box = w.create("box")
