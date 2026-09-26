@@ -76,4 +76,5 @@ nav:
       - Legacy widget reference: design/legacy-widgets.md
       - Legacy widget behavior: design/legacy-behavior.md
       - MD3 handover: design/md3-handover.md
+      - Binding and cascade audit: design/binding-cascade-audit.md
   - Contributing: contributing.md
