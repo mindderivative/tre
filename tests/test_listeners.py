@@ -281,6 +281,22 @@ def test_input_and_change_for_typing() -> None:
     assert field.get_text() == "hi"
 
 
+def test_change_is_for_user_edits_never_a_programmatic_set() -> None:
+    """tre#12: a framework applying a bound value -- new or the same --
+    mustn't look like the user editing the field."""
+    w = window()
+    field = w.create("text_input", width=150, height=30)
+    w.root.add_child(field)
+    seen: list[tuple[Any, Any]] = []
+    field.on("change", lambda e: seen.append((e.old_value, e.new_value)))
+    field.set(text="hello")
+    field.set(text="hello")
+    assert seen == []
+    field.focus()
+    w.simulate("input", text="!")
+    assert seen == [("hello", "hello!")]
+
+
 def test_focus_and_unfocus_bubble_for_focus_within() -> None:
     w = window()
     box = w.add_rect(BLACK, 200, 150)
