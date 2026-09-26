@@ -62,7 +62,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M96 — Layer, Structure, and Update Building Blocks | `██████████` 100% | ✅ Complete — all 5 phases done (2026-09-25) |
 | `v0.3.4` Release: PR #11 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) — closes issue #10 |
 | M97 — Tesserae Migration Gate | `████████░░` 80% | 🚧 In progress — Phase 1 done (`v0.3.4` released); Phase 2 Steps 1–5 done (reference, behavior, MD3 handover, binding/cascade audit, the `TRE_FORBID_REMOVED` switch); Step 6, Tesserae's confirmation, is next (2026-09-25) |
-| M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | 🚧 In progress — started 2026-09-25, cleared by Tesserae's M97 Step 6 run |
 | M99 — Remove MD3 Components, Kinds, and Theming | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M100 — Apply the Naming Convention | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M101 — Consolidation and Size Pass | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1435,11 +1435,11 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 98 — Remove the Declarative Layer
 
-**Status: ⬜ Proposed.** Starts only after M97's gate.
+**Status: 🚧 In progress (2026-09-25).** User: "Start M98." Tesserae's M97 Step 6 run found its production code uses none of M98's names. **Decided by the user:** `Window.set_theme` stays until M99, which removes it with the MD3 widgets it themes ("Keep it until M99") -- its theme types move from `engine-spec` into `engine-py`, and `serde_yaml_ng` and `pythonize`, which parse its theme files and dicts, stay until M99.
 
-### Phase 1 — Removal ⬜
+### Phase 1 — Removal 🚧
 - Step 1: delete the `engine-spec` crate, `View`, `Component`, and their `engine-py` code, including the `{{ }}` binding evaluator (`binding.rs`), which moves to Tesserae; the reactivity layer per D5; `tools/migrate_views_0_3_3.py` — ⬜
-- Step 2: remove the dependencies only they used -- `serde_yaml_ng`, `pythonize`, the file watcher -- and their tests, examples, and docs pages — ⬜
+- Step 2: remove the dependencies only they used -- the file watcher (`notify`); `serde_yaml_ng` and `pythonize` wait for M99, per the decision above -- and their tests, examples, and docs pages — ⬜
 - Step 3: full standing chain — ⬜
 
 ---
@@ -1449,7 +1449,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 **Status: ⬜ Proposed.** Starts only after M97's gate.
 
 ### Phase 1 — Factories and Theming ⬜
-- Step 1: delete the MD3 composition factories, `build_shell`, container transform, the `Theme` class, `set_theme`, and the retheme hooks — ⬜
+- Step 1: delete the MD3 composition factories, `build_shell`, container transform, the `Theme` class, `set_theme`, and the retheme hooks; with `set_theme` go the theme types M98 moved into `engine-py`, `default_theme.yaml`, and `serde_yaml_ng` and `pythonize` — ⬜
 - Step 2: reduce docking to the bare-bones mechanism M93 defines per D10 -- the docking model, panel drag and drop, and drop-target resolution stay; tab-strip, handle, and highlight presentation move to the framework — ⬜
 - Step 3: delete the `engine-md3` crate; its color science, scales, and icon data are handed to Tesserae first — ⬜
 

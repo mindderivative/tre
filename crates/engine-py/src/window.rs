@@ -21,7 +21,6 @@ use crate::listeners::WindowListenerMap;
 use crate::node::{Node, NodeState};
 use crate::terminal::TerminalSession;
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
-use crate::view::View;
 
 const PADDING: f32 = 16.0;
 const GAP: f32 = 16.0;
@@ -50,7 +49,7 @@ pub(crate) struct ThemeState {
     /// own hardcoded fallback survives untouched, the identical
     /// "un-themed default survives" contract `is_set()`'s own callers
     /// already rely on for color. M61 (§16.3): stores `Resolved
-    /// ComponentOverride`, not the parse-time `engine_spec::
+    /// ComponentOverride`, not the parse-time `crate::theme_spec::
     /// ComponentOverride` directly -- `resolve_components` (below)
     /// converts each entry's own `corner_radius`/`elevation` (a literal
     /// or a named token) into a plain `f64` exactly once, at real
@@ -71,7 +70,7 @@ pub(crate) struct ThemeState {
     /// a true no-op, the identical contract `components`'s own doc
     /// comment already states: `typography()` below still returns the
     /// real, shipped MD3 default for every role regardless.
-    typography: HashMap<String, engine_spec::TypographyOverride>,
+    typography: HashMap<String, crate::theme_spec::TypographyOverride>,
 }
 
 /// M63 (§7.1, §16.3): `engine_md3::TypeStyle`'s own real theme-resolved
@@ -88,7 +87,7 @@ pub(crate) struct ResolvedTypeStyle {
     pub(crate) line_height: f32,
 }
 
-/// M61 (§16.3): `engine_spec::ComponentOverride`'s own real resolved
+/// M61 (§16.3): `crate::theme_spec::ComponentOverride`'s own real resolved
 /// form -- both fields already-concrete `f64`s, a token name (if any)
 /// already looked up. See `ThemeState.components`'s own doc comment for
 /// why this exists as a distinct type rather than storing the parse-
@@ -99,7 +98,7 @@ struct ResolvedComponentOverride {
     elevation: Option<f64>,
 }
 
-/// M61 (§16.3): resolves every `engine_spec::ComponentOverride` in
+/// M61 (§16.3): resolves every `crate::theme_spec::ComponentOverride` in
 /// `raw` into a `ResolvedComponentOverride`, failing loudly (a real
 /// Python `ValueError`, naming the offending component key and token)
 /// on the first unrecognized token name -- the identical "fail loudly
@@ -107,12 +106,12 @@ struct ResolvedComponentOverride {
 /// Error::UnknownShapeToken` already established for the declarative
 /// `StyleSpec` path, mirrored here for the imperative one.
 fn resolve_components(
-    raw: HashMap<String, engine_spec::ComponentOverride>,
+    raw: HashMap<String, crate::theme_spec::ComponentOverride>,
 ) -> PyResult<HashMap<String, ResolvedComponentOverride>> {
     raw.into_iter()
         .map(|(key, override_)| {
             let resolve = |field: &str,
-                           value: &Option<engine_spec::ShapeOrElevationSpec>,
+                           value: &Option<crate::theme_spec::ShapeOrElevationSpec>,
                            is_elevation: bool| {
                 value
                     .as_ref()
@@ -272,7 +271,7 @@ impl ThemeState {
     /// `for_test`'s own sibling with a real `components:` override --
     /// needed by any `RetitheHook` test that also proves a corner_
     /// radius/elevation override re-resolves live, not just color.
-    /// Takes the real parse-time `engine_spec::ComponentOverride` (what
+    /// Takes the real parse-time `crate::theme_spec::ComponentOverride` (what
     /// a test naturally constructs, matching real theme YAML shape) and
     /// resolves it through the identical real `resolve_components` path
     /// `Window.set_theme` itself uses -- `expect`s success, since a
@@ -281,7 +280,7 @@ impl ThemeState {
     #[cfg(test)]
     pub(crate) fn for_test_with_components(
         seed: Color,
-        components: HashMap<String, engine_spec::ComponentOverride>,
+        components: HashMap<String, crate::theme_spec::ComponentOverride>,
     ) -> Self {
         Self {
             theme: Some(DynamicTheme::from_seed(seed)),
@@ -299,7 +298,7 @@ impl ThemeState {
     #[cfg(test)]
     pub(crate) fn for_test_with_typography(
         seed: Color,
-        typography: HashMap<String, engine_spec::TypographyOverride>,
+        typography: HashMap<String, crate::theme_spec::TypographyOverride>,
     ) -> Self {
         Self {
             theme: Some(DynamicTheme::from_seed(seed)),
@@ -713,112 +712,6 @@ impl PyWindow {
         }))
     }
 
-    /// M42 Phase 1 (§4, §5, §8, §16.2, §16.4): the real, first entry
-    /// point wiring `View`'s own declarative layer into a live,
-    /// `winit`-driven window -- shares `view`'s own `Rc<RefCell<Tree>>`,
-    /// root, `handlers`/`context_menus`, and (M42 Phase 1's own new
-    /// fields) `theme`/`completions` directly into a new `Window`, the
-    /// identical `Rc`-clone pattern `wrap_node` already uses for every
-    /// `Node` a `Window` hands out -- not a second, parallel tree.
-    ///
-    /// **Real, load-bearing consequence, not obvious from the signature
-    /// alone:** `view.width`/`view.height` become the *same* shared
-    /// `Rc<Cell<u32>>` this new `Window`'s own `width`/`height` fields
-    /// hold (mirroring `SharedSize`'s own established M33 Phase 2
-    /// pattern) -- a real live resize (`App::run`'s own `on_input`
-    /// closure, `app.rs`) writes through this one shared cell, so
-    /// `view.click()`/`view.hover()`, called again after the window is
-    /// shown, see the window's true current size immediately, not a
-    /// stale value captured at `from_view` time.
-    ///
-    /// `dock`/`materializers`/`terminals` default-empty,
-    /// confirmed safe: `engine-spec`'s own YAML builder (`Reconciler::
-    /// load`, which built `view`'s tree) has no `Terminal`/`VirtualList`/
-    /// `Canvas` case, so a View-built tree can never contain a `NodeKind`
-    /// that would need any of them populated.
-    ///
-    /// **Requires no changes to `App::run`/`WindowSetup`/`WindowRuntime`
-    /// (`app.rs`):** confirmed by reading `App::run`'s own setup step --
-    /// it already builds a `WindowSetup` generically from any `PyWindow`
-    /// instance's `pub(crate)` fields, with no assumption a `PyWindow`
-    /// was ever constructed via `PyWindow::new`. A `Window` built this
-    /// way works with the existing `App.add_window()`/`App.run()` path
-    /// completely unmodified.
-    #[staticmethod]
-    #[pyo3(signature = (view, width=480, height=200, title="tre v2"))]
-    fn from_view(view: PyRef<'_, View>, width: u32, height: u32, title: &str) -> PyWindow {
-        view.width.set(width);
-        view.height.set(height);
-        let root = view.reconciler.root();
-        let active = Rc::new(RefCell::new(ActiveTree {
-            tree: view.tree.clone(),
-            root,
-            handlers: view.handlers.clone(),
-            context_menus: view.context_menus.clone(),
-        }));
-        Self(ThreadBound::new(WindowState {
-            tree: view.tree.clone(),
-            root,
-            title: title.to_string(),
-            width: view.width.clone(),
-            height: view.height.clone(),
-            materializers: RefCell::new(HashMap::new()),
-            handlers: view.handlers.clone(),
-            context_menus: view.context_menus.clone(),
-            dock: Rc::new(RefCell::new(dock::DockState::new())),
-            theme: view.theme.clone(),
-            completions: view.completions.clone(),
-            terminals: Rc::new(RefCell::new(HashMap::new())),
-            // M52 Phase 1: fresh, empty, not shared with `view` -- a
-            // `View`-built tree never calls an `add_*` factory (it goes
-            // through `engine_spec::build`/`Reconciler`, a completely
-            // separate path that already gets its own live re-theme via
-            // `View.set_theme`/`Reconciler::retheme`, M51), so there is
-            // nothing to inherit here. A caller who then calls `add_*`
-            // directly on this `Window` still gets a real, correctly-
-            // registered hook for that node going forward.
-            retheme_hooks: RefCell::new(Vec::new()),
-            active,
-            window_listeners: Rc::new(RefCell::new(HashMap::new())),
-            os_window: Rc::new(RefCell::new(None)),
-        }))
-    }
-
-    /// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): switches which `View` a
-    /// *live* `Window` shows, without closing/reopening it -- the real
-    /// capability the user's own explicit plan-review feedback asked
-    /// for: "this allows for switching of current views without needing
-    /// to bootstrap each view/viewModel." Each named `View` a real
-    /// Tesserae-style app keeps around stays fully alive (its own
-    /// `Reconciler`/bindings/`Signal` subscriptions intact, untouched by
-    /// this call) -- only the shared `ActiveTree` bundle this `Window`'s
-    /// live render loop reads from is atomically replaced, one `RefCell`
-    /// write, picked up on the very next real frame.
-    ///
-    /// Mirrors `from_view`'s own real "sync the window's current size
-    /// into the view" step, so `view`'s own `click()`/`hover()` lay out
-    /// at this window's true current size immediately after switching --
-    /// **real, stated limit, not silently glossed over:** unlike
-    /// `from_view`'s own `width`/`height`-sharing (the *same*
-    /// `Rc<Cell<u32>>`), this only copies the *current* size once, at
-    /// switch time -- a later live resize while a *different* `View` is
-    /// showing won't keep this one's own `width`/`height` in sync until
-    /// `show_view` is called on it again. Real, separate follow-up if a
-    /// live resize ever needs to reach every registered View at once,
-    /// not just the currently-active one -- not needed for this
-    /// milestone's own real scope (only the active View is ever visible
-    /// or interactive at a time).
-    fn show_view(&self, view: PyRef<'_, View>) {
-        view.width.set(self.width.get());
-        view.height.set(self.height.get());
-        *self.active.borrow_mut() = ActiveTree {
-            tree: view.tree.clone(),
-            root: view.reconciler.root(),
-            handlers: view.handlers.clone(),
-            context_menus: view.context_menus.clone(),
-        };
-    }
-
     /// M7 Phase 3 (§7.1, Step 1): builds a real MD3 `DynamicTheme` from
     /// `seed` (via the already-proven `DynamicTheme::from_seed`) and
     /// makes it this `Window`'s active theme -- `dark` picks which of
@@ -880,14 +773,14 @@ impl PyWindow {
         default_theme_spec: Option<Py<PyAny>>,
         custom_theme_spec: Option<Py<PyAny>>,
     ) -> PyResult<()> {
-        let default_theme_spec = crate::view::resolve_theme_input(
+        let default_theme_spec = crate::theme_spec::resolve_theme_input(
             py,
             "Window.set_theme",
             ("default_theme=", default_theme.as_deref()),
             ("default_theme_spec=", default_theme_spec.as_ref()),
         )?
-        .unwrap_or_else(crate::view::shipped_default_theme_spec);
-        let custom_theme_spec = crate::view::resolve_theme_input(
+        .unwrap_or_else(crate::theme_spec::shipped_default_theme_spec);
+        let custom_theme_spec = crate::theme_spec::resolve_theme_input(
             py,
             "Window.set_theme",
             ("custom_theme=", custom_theme.as_deref()),
@@ -920,7 +813,7 @@ impl PyWindow {
 
         let seed = match custom_theme_spec
             .as_ref()
-            .map(crate::view::theme_spec_seed)
+            .map(crate::theme_spec::theme_spec_seed)
             .transpose()?
             .flatten()
         {
@@ -1162,7 +1055,7 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert(
             "label_large".to_string(),
-            engine_spec::TypographyOverride {
+            crate::theme_spec::TypographyOverride {
                 font_family: Some("Inter".to_string()),
                 font_weight: None,
                 font_size: Some(20.0),

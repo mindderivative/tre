@@ -1,13 +1,15 @@
-# LOG — Branch `0.3.5`: Milestone 97 Phase 2
+# LOG — Branch `0.3.5`: Milestone 98
 
-- From Tesserae, sent at the user's request: the M97 migration guide and a
-  gate-check proposal.
+- The user: "Start M98." Tesserae's M97 Step 6 run found its production code
+  uses none of M98's names.
+- The user kept `Window.set_theme` until M99 ("Keep it until M99"), so its
+  theme types move into `engine-py`, and `serde_yaml_ng` and `pythonize`
+  stay until M99.
 
 ## Done
 
-1. `v0.3.4` released (PR #11, tag on `29800f3`, 24 release assets).
-2. Branch `0.3.5` created and bumped; M97 Phase 2 scoped as six steps.
+(nothing yet)
 
 ## Status
 
-**Scoped.** Step 1 (the dump tool and generated widget reference) next.
+**Scoped.** Step 1 (the Rust removal) next.

@@ -21,7 +21,6 @@ engine-core = { path = "../engine-core" }
 engine-md3 = { path = "../engine-md3" }
 engine-render = { path = "../engine-render" }
 engine-platform = { path = "../engine-platform" }
-engine-spec = { path = "../engine-spec" }
 # "extension-module" is deliberately NOT enabled here -- see
 # pyproject.toml's own comment. `cargo build`/`cargo test` build this
 # crate without it (linkable standalone); maturin's actual wheel build
@@ -34,13 +33,12 @@ engine-spec = { path = "../engine-spec" }
 # cost is `inventory`-based registration not supporting Wasm, which this
 # desktop-only project (winit/wgpu throughout) never targets.
 pyo3 = { version = "0.29.2", features = ["macros", "multiple-pymethods"] }
-# tre issue #3, Part A (Tier 1): a real Python object (a dict, built by
-# an app or by Tesserae's own macro-expansion layer) -> any
-# `serde::Deserialize` type -- lets `View`'s new `spec:` param build a
-# real `WidgetSpec` directly, no YAML-text round trip. Version tracks
-# pyo3's own (`0.29.x` for pyo3 `0.29.2`), confirmed via `cargo add
-# pythonize --dry-run` before adding, not assumed.
+# `Window.set_theme`'s theme documents (`theme_spec.rs`): a dict via
+# pythonize, a YAML file via serde_yaml_ng. Both go with `set_theme` in
+# M99. pythonize tracks pyo3's version.
 pythonize = "0.29.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_yaml_ng = "0.10.0"
 thiserror = "2.0.20"
 # `App::run` builds and drives its own GPU/window state directly (§8's
 # PyApp.run(), Design Principle 1's one blocking call) -- Rust doesn't

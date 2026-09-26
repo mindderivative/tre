@@ -10888,8 +10888,8 @@ mod tests {
         let mut overrides = HashMap::new();
         overrides.insert(
             "button.filled".to_string(),
-            engine_spec::ComponentOverride {
-                corner_radius: Some(engine_spec::ShapeOrElevationSpec::Literal(4.0)),
+            crate::theme_spec::ComponentOverride {
+                corner_radius: Some(crate::theme_spec::ShapeOrElevationSpec::Literal(4.0)),
                 elevation: None,
             },
         );

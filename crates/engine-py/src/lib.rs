@@ -3,14 +3,12 @@
 //!
 //! §14 step 14 (§11.1): `App` collects registered `PyWindow`s and drives
 //! them together; each `PyWindow` owns its own `Tree`/root/size,
-//! `Node`/`View` unchanged by the split. See `app.rs`/`window.rs`'s own
+//! `Node` unchanged by the split. See `app.rs`/`window.rs`'s own
 //! module doc comments for the `PyApp`/`PyWindow` split this step made.
 
 mod app;
-mod binding;
 mod canvas;
 mod clock;
-mod component;
 mod dispatch;
 mod dock;
 mod error;
@@ -25,9 +23,9 @@ mod node_layout;
 mod node_props;
 mod shaper;
 mod terminal;
+mod theme_spec;
 mod thread_bound;
 mod thread_handle;
-mod view;
 mod window;
 mod window_docking;
 mod window_events;
@@ -40,33 +38,24 @@ use pyo3::prelude::*;
 
 pub use app::App;
 pub use canvas::CanvasContext;
-pub use component::Component;
 pub use error::EngineError;
 pub use event::Event;
 pub use node::Node;
 pub use thread_handle::LoopHandle;
-pub use view::View;
 pub use window::{PyWindow, Theme};
 
 /// The compiled extension module Python actually imports, as
 /// `tre._core` (`pyproject.toml`'s `module-name`) -- `python/tre/
-/// __init__.py` re-exports `App`/`PyWindow`/`Node`/`View` from here,
-/// plus its own pure-Python `Signal`/`ViewModel` (§16.2), as the public
-/// `tre` package surface.
+/// __init__.py` re-exports these as the public `tre` package surface.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<App>()?;
     m.add_class::<PyWindow>()?;
     m.add_class::<Node>()?;
-    m.add_class::<View>()?;
-    m.add_class::<Component>()?;
     m.add_class::<CanvasContext>()?;
     m.add_class::<Event>()?;
     m.add_class::<Theme>()?;
     m.add_class::<LoopHandle>()?;
-    m.add_function(wrap_pyfunction!(view::_record_read, m)?)?;
-    m.add_function(wrap_pyfunction!(view::_begin_recording, m)?)?;
-    m.add_function(wrap_pyfunction!(view::_end_recording, m)?)?;
     m.add_function(wrap_pyfunction!(register_font, m)?)?;
     Ok(())
 }
