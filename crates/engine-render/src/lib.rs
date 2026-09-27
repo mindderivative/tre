@@ -27,11 +27,11 @@ mod image_cache;
 mod text;
 
 use engine_core::{
-    ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, SCROLLBAR_MARGIN,
-    SCROLLBAR_THICKNESS, ScrollViewState, TimePickerDialMode, Tree, VirtualListState,
+    ContentFit, DrawCommand, NodeId, NodeKind, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS,
+    ScrollViewState, Tree, VirtualListState,
 };
 use peniko::Color;
-use peniko::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, RoundedRect, Shape, Stroke, Vec2};
+use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use fonts::{NoFontFacesFound, register_font};
@@ -503,20 +503,7 @@ fn paint_node(
     }
 
     match &node.kind {
-        NodeKind::Rect | NodeKind::Splitter(_) | NodeKind::LoadingIndicator(_) => {
-            // A splitter's own visible grip/handle paints exactly like
-            // a Rect -- `SplitterState` carries only the mechanism's
-            // animatable position (§11.5), no separate appearance data,
-            // since the universal `PaintProperties` every node already
-            // has is all a divider's own background/corner-radius needs.
-            // M39 Phase 2 (§5, §7): a real `LoadingIndicator` joins this
-            // same arm too -- its own real appearance is entirely
-            // `PaintProperties.shape` (`Tree::tick_all`'s own new
-            // per-`LoadingIndicator` case keeps it perpetually non-
-            // empty from the very first tick onward), so the identical
-            // real "active shape morph paints the current silhouette"
-            // branch just below already paints it correctly with zero
-            // new paint code.
+        NodeKind::Rect => {
             let color = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(color);
             // M7 Phase 4 (§7.4): a real, active shape morph (`node.
@@ -605,7 +592,7 @@ fn paint_node(
                 scene.stroke_path(&border_path);
             }
         }
-        NodeKind::Text(state) | NodeKind::Link(state) => {
+        NodeKind::Text(state) => {
             let color = with_opacity(node.paint.background.current, own_alpha);
             text.draw(
                 scene,
@@ -744,10 +731,7 @@ fn paint_node(
         // paint-time offset) already paints it in the right place; the
         // unconditional clip below is this kind's only other real
         // paint-time behavior, mirroring `Carousel`'s own.
-        NodeKind::Container
-        | NodeKind::VirtualList(_)
-        | NodeKind::Carousel(_)
-        | NodeKind::ScrollView(_) => {}
+        NodeKind::Container | NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
         // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
         // resolved ahead of time by `engine-py::Window.redraw_canvas`
         // (`canvas.rs`'s own module doc comment) -- every coordinate is
@@ -789,206 +773,6 @@ fn paint_node(
                     }
                 }
             }
-        }
-        // M14 Phase 1 (§5, §7.3): the box itself paints exactly like a
-        // Rect (same rounded-rect fill), then a real checkmark tick
-        // path strokes on top, its own opacity driven directly by
-        // `check_progress` -- 0.0 (unchecked) paints no visible mark at
-        // all, 1.0 (checked) paints it fully opaque, and any value
-        // between (mid-animation) fades it in/out smoothly. M20 Phase 1
-        // (§7.1, §7.3): the mark's own real color now comes from
-        // `state.mark_tint` -- plain white by default (byte-for-byte
-        // the old hardcoded literal), a real resolved MD3 "on-surface"
-        // color once `Window.set_theme` has pushed one in.
-        NodeKind::Checkbox(state) => {
-            let color = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(color);
-            let radius = node.paint.corner_radius.current;
-            // M38 Phase 1 (§5, §7, §8): the real box path is byte-for-
-            // byte the same geometry `Rect`'s own fill already caches
-            // -- reuses `GeometryCache::rounded_rect_fill` directly
-            // rather than a second, parallel Checkbox-only cache slot.
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
-
-            if state.check_progress.current > 0.0 {
-                let mut mark = BezPath::new();
-                mark.move_to((w * 0.2, h * 0.55));
-                mark.line_to((w * 0.42, h * 0.75));
-                mark.line_to((w * 0.8, h * 0.25));
-                // M25 Phase 2 (§5, §6): a real, previously-missing
-                // compounding -- the checkmark's own real alpha
-                // multiplied only `check_progress` before this, never
-                // `own_alpha` too, so a checked
-                // checkbox mid-fade-out would show its own checkmark
-                // at full alpha while its box correctly faded. Two
-                // independent real "how visible" factors, multiplied
-                // together the same way any compositing pipeline
-                // compounds independent alpha sources.
-                scene.set_paint(with_opacity(
-                    state.mark_tint,
-                    state.check_progress.current * own_alpha,
-                ));
-                scene.set_stroke(Stroke::new((w.min(h) * 0.12).max(1.0)));
-                scene.stroke_path(&mark);
-            }
-        }
-        // M30 Phase 2 Step 1 (§5, §7.3): `Checkbox`'s own real anatomy,
-        // mirrored -- a stroked ring (not a filled box, MD3's real
-        // radio-button shape) plus a real filled dot that scales in
-        // with `select_progress`. The ring's own color rides the same
-        // `select_progress` timeline via `Interpolate for peniko::
-        // Color` (real since §5's own animation core, `lerp_rect`
-        // under the hood) rather than snapping instantly between
-        // `unselected_tint`/`selected_tint` -- a real, smooth color
-        // transition, not two disconnected static states.
-        NodeKind::RadioButton(state) => {
-            let ring_color = state
-                .unselected_tint
-                .interpolate(&state.selected_tint, state.select_progress.current);
-            let stroke_width = (w.min(h) * 0.1).max(2.0);
-            let ring_radius = (w.min(h) / 2.0) - stroke_width / 2.0;
-            scene.set_paint(with_opacity(ring_color, own_alpha));
-            scene.set_stroke(Stroke::new(stroke_width));
-            // M38 Phase 1 (§5, §7, §8): the real ring/dot paths, now
-            // cached -- see `GeometryCache::circle_primary`/
-            // `circle_secondary`'s own doc comments for why a single
-            // node needs two independent real circle cache slots.
-            scene.stroke_path(geometry.circle_primary(id, w / 2.0, h / 2.0, ring_radius.max(0.0)));
-
-            if state.select_progress.current > 0.0 {
-                let dot_radius = (w.min(h) / 2.0) * 0.5 * state.select_progress.current;
-                scene.set_paint(with_opacity(
-                    state.selected_tint,
-                    state.select_progress.current * own_alpha,
-                ));
-                scene.fill_path(geometry.circle_secondary(id, w / 2.0, h / 2.0, dot_radius));
-            }
-        }
-        // M30 Phase 2 Step 2 (§5, §7.3): a real MD3 switch -- track
-        // fill (color-interpolated between `track_off_tint`/`track_
-        // on_tint`, `RadioButton`'s own real technique reused), a real
-        // fading outline stroke (only `track_outline_tint`, MD3's own
-        // real separate unselected-only role -- opacity scaled by
-        // `1.0 - toggle_progress`, so it's gone by the time the switch
-        // is fully on), and a handle that both slides *and* grows.
-        // `handle_radius`/`cx`'s own real formula: verified real MD3
-        // ratios (16dp/32dp track height unselected, 24dp/32dp
-        // selected, `(32-16)/2=8` unselected padding, `(32-24)/2=4`
-        // selected padding) collapse to one clean symmetric travel
-        // range, `h * 0.5` from each edge, at both ends -- not a
-        // coincidence: `handle_radius + padding` is `8+8=16=h*0.5`
-        // unselected and `12+4=16=h*0.5` selected, the same real
-        // total inset either way.
-        NodeKind::Switch(state) => {
-            let t = state.toggle_progress.current;
-            let track_color = state.track_off_tint.interpolate(&state.track_on_tint, t);
-            let track_radius = h / 2.0;
-            scene.set_paint(with_opacity(track_color, own_alpha));
-            // M38 Phase 1 (§5, §7, §8): the real track/outline/handle
-            // paths, now cached -- the track and outline are byte-for-
-            // byte the same real geometry `Rect`'s own fill/border
-            // already cache (reused directly, not a parallel Switch-
-            // only cache slot); the handle shares `circle_primary`
-            // with `RadioButton`'s own ring, since neither kind ever
-            // has both a `circle_primary` and a `RadioButton`-style
-            // ring/dot pair at once.
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, track_radius));
-
-            if t < 1.0 {
-                let stroke_width = (h * 0.06).max(1.5);
-                let inset = stroke_width / 2.0;
-                let outline_radius = (track_radius - inset).max(0.0);
-                scene.set_paint(with_opacity(
-                    state.track_outline_tint,
-                    (1.0 - t) * own_alpha,
-                ));
-                scene.set_stroke(Stroke::new(stroke_width));
-                scene.stroke_path(geometry.rounded_rect_border(id, w, h, outline_radius, inset));
-            }
-
-            let handle_radius = h * (0.25 + 0.125 * t);
-            let handle_color = state.handle_off_tint.interpolate(&state.handle_on_tint, t);
-            let cx = h * 0.5 + t * (w - h);
-            scene.set_paint(with_opacity(handle_color, own_alpha));
-            scene.fill_path(geometry.circle_primary(id, cx, h / 2.0, handle_radius));
-        }
-        // M30 Phase 3 Step 2 (§5, §7): a real MD3 linear progress
-        // indicator -- the track (`track_tint`, spanning the node's
-        // own full width) painted first, then the indicator on top,
-        // its own real width `value.current * w` -- the identical
-        // real "value is a fraction of the node's own box" technique
-        // `NodeKind::Slider`'s own `thumb_position * w` already uses,
-        // just filling a growing bar instead of moving a fixed-size
-        // thumb. Real MD3 anatomy: `corner-none` on both (a flat
-        // rectangle, not rounded), confirmed from Material Web's own
-        // token source, not assumed rounded like most of this
-        // catalog's other shapes.
-        NodeKind::LinearProgress(state) => {
-            scene.set_paint(with_opacity(state.track_tint, own_alpha));
-            scene.fill_path(&Rect::new(0.0, 0.0, w, h).to_path(0.1));
-
-            let indicator_width = state.value.current.clamp(0.0, 1.0) * w;
-            if indicator_width > 0.0 {
-                scene.set_paint(with_opacity(state.indicator_tint, own_alpha));
-                scene.fill_path(&Rect::new(0.0, 0.0, indicator_width, h).to_path(0.1));
-            }
-        }
-        // M30 Phase 3 Step 2 (§5, §7): `LinearProgress`'s own real
-        // circular sibling -- a stroked arc from real MD3's own
-        // 12-o'clock start (`-PI/2`), sweeping clockwise by `value *
-        // 2*PI`. No separate background track ring painted here --
-        // real MD3 anatomy genuinely has none for this indicator
-        // (`CircularProgressState`'s own doc comment has the real,
-        // confirmed finding). Stroke width is the real MD3 4dp/48dp
-        // ratio, scaled to whatever real size this node's own box is,
-        // the same proportional-to-own-box technique `RadioButton`'s
-        // ring/`Switch`'s track outline already use rather than a
-        // fixed literal px value.
-        NodeKind::CircularProgress(state) => {
-            let stroke_width = (w.min(h) * (4.0 / 48.0)).max(1.0);
-            let radius = (w.min(h) / 2.0) - stroke_width / 2.0;
-            let sweep = state.value.current.clamp(0.0, 1.0) * std::f64::consts::TAU;
-            if sweep > 0.0 {
-                // M38 Phase 1 (§5, §7, §8): the real arc path, now
-                // cached -- see `GeometryCache::arc`'s own doc comment.
-                let arc_path = geometry.arc(
-                    id,
-                    w / 2.0,
-                    h / 2.0,
-                    radius.max(0.0),
-                    -std::f64::consts::FRAC_PI_2,
-                    sweep,
-                );
-                scene.set_paint(with_opacity(state.indicator_tint, own_alpha));
-                scene.set_stroke(Stroke::new(stroke_width));
-                scene.stroke_path(arc_path);
-            }
-        }
-        // M14 Phase 2 (§5, §7.3): a real track (a thin bar spanning the
-        // node's own full width, vertically centered) plus a real
-        // thumb (a filled circle at `thumb_position * w`, the node's
-        // own real `background` color -- the same universal field
-        // every other `NodeKind`'s primary fill already uses). M20
-        // Phase 1 (§7.1, §7.3): the track's own real color now comes
-        // from `state.track_tint` -- plain gray by default (byte-for-
-        // byte the old hardcoded literal), a real resolved MD3
-        // "on-surface" color once `Window.set_theme` has pushed one in.
-        NodeKind::Slider(state) => {
-            let track_height = (h * 0.15).max(2.0);
-            let track_rect = Rect::new(0.0, (h - track_height) / 2.0, w, (h + track_height) / 2.0);
-            // M25 Phase 2 (§5, §6): a real, previously-missing
-            // compounding -- only the thumb (below) multiplied by
-            // `own_alpha`; the track painted its own
-            // real `track_tint` raw, a real internal inconsistency
-            // within this one `NodeKind`.
-            scene.set_paint(with_opacity(state.track_tint, own_alpha));
-            scene.fill_path(&track_rect.to_path(0.1));
-
-            let thumb_radius = (h * 0.4).max(4.0);
-            let thumb_x = state.thumb_position.current * w;
-            let thumb_color = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(thumb_color);
-            scene.fill_path(&Circle::new((thumb_x, h / 2.0), thumb_radius).to_path(0.1));
         }
         // M22 Phase 1 (§5): **real finding, confirmed by a failing
         // test, not assumed:** `vello_hybrid`'s ordinary `set_paint`+
@@ -1077,95 +861,6 @@ fn paint_node(
                 scene.stroke_path(&stroke);
             }
         }
-        NodeKind::Icon(state) => {
-            let icon_scale = 1.0 / ICON_VIEWBOX_SIZE;
-            let icon_transform = Affine::scale_non_uniform(w * icon_scale, h * icon_scale)
-                * Affine::translate((0.0, ICON_VIEWBOX_SIZE));
-            // M35 Phase 2 (§5, §8): `Split Button`'s own real trailing-
-            // icon rotation -- a real, fresh `Affine::rotate` built
-            // straight from `state.rotation.current` (degrees) every
-            // frame, composed in *local* node space (around this
-            // node's own real center, `(w/2, h/2)`) before the fixed
-            // viewBox-to-local `icon_transform` above, so the icon
-            // visually spins in place regardless of its own internal
-            // viewBox geometry. `IconState`'s own doc comment has the
-            // full real reason this is a dedicated scalar field, not
-            // routed through `PaintProperties.transform`.
-            let rotation = if state.rotation.current != 0.0 {
-                Affine::translate((w / 2.0, h / 2.0))
-                    * Affine::rotate(state.rotation.current.to_radians())
-                    * Affine::translate((-w / 2.0, -h / 2.0))
-            } else {
-                Affine::IDENTITY
-            };
-            scene.set_transform(composed * rotation * icon_transform);
-            scene.set_paint(with_opacity(state.tint.current, own_alpha));
-            scene.fill_path(&state.path);
-            scene.set_transform(composed);
-        }
-        // M39 Phase 2 Step 2 (§5, §7): a real MD3 Time Picker dial --
-        // see `TimePickerDialState`'s own doc comment for the full
-        // real design and its stated v1 scope limits (no digit
-        // labels; plain tick dots stand in for them here). Angle
-        // convention is byte-for-byte `CircularProgress`'s own arm
-        // above: `-PI/2` (12 o'clock) is the real zero point,
-        // sweeping clockwise -- `Tree::update_time_picker_dial_drag`
-        // (`engine-core`) already established this same convention
-        // for the reverse (pointer -> angle) direction, so paint and
-        // drag agree on where every real hour/minute position sits.
-        NodeKind::TimePickerDial(state) => {
-            let face_radius = w.min(h) / 2.0;
-            let (cx, cy) = (w / 2.0, h / 2.0);
-            let center = Point::new(cx, cy);
-
-            scene.set_paint(with_opacity(state.face_tint, own_alpha));
-            scene.fill_path(&Circle::new(center, face_radius).to_path(0.1));
-
-            // 12 real tick-dot positions -- the honest v1 stand-in for
-            // real MD3's own painted digit labels (see the struct doc
-            // comment for why no text is shaped here).
-            let tick_tint = with_opacity(state.hand_tint, 0.4 * own_alpha);
-            let tick_radius = (face_radius * 0.04).max(1.0);
-            let tick_orbit = face_radius * 0.84;
-            scene.set_paint(tick_tint);
-            for i in 0..12 {
-                let angle =
-                    -std::f64::consts::FRAC_PI_2 + (f64::from(i) / 12.0) * std::f64::consts::TAU;
-                let tick_center = center + Vec2::new(angle.cos(), angle.sin()) * tick_orbit;
-                scene.fill_path(&Circle::new(tick_center, tick_radius).to_path(0.1));
-            }
-
-            let hand_width = (face_radius * 0.05).max(1.5);
-            let hand_paint = with_opacity(state.hand_tint, own_alpha);
-            scene.set_stroke(Stroke::new(hand_width));
-            scene.set_paint(hand_paint);
-
-            let hour_angle = -std::f64::consts::FRAC_PI_2
-                + (f64::from(state.hour % 12) / 12.0) * std::f64::consts::TAU;
-            let hour_tip =
-                center + Vec2::new(hour_angle.cos(), hour_angle.sin()) * (face_radius * 0.5);
-            scene.stroke_path(&Line::new(center, hour_tip).to_path(0.1));
-
-            let minute_angle = -std::f64::consts::FRAC_PI_2
-                + (f64::from(state.minute) / 60.0) * std::f64::consts::TAU;
-            let minute_tip =
-                center + Vec2::new(minute_angle.cos(), minute_angle.sin()) * (face_radius * 0.78);
-            scene.stroke_path(&Line::new(center, minute_tip).to_path(0.1));
-
-            // The real selector dot -- MD3's own real "which hand is
-            // currently draggable" indicator, at the active hand's own
-            // tip.
-            let selector_tip = match state.mode {
-                TimePickerDialMode::Hour => hour_tip,
-                TimePickerDialMode::Minute => minute_tip,
-            };
-            scene.set_paint(hand_paint);
-            scene.fill_path(&Circle::new(selector_tip, face_radius * 0.14).to_path(0.1));
-
-            // A small real center hub, the same real anatomy a
-            // physical analog clock face has.
-            scene.fill_path(&Circle::new(center, face_radius * 0.03).to_path(0.1));
-        }
     }
 
     // M4 Phase 5 (§7.3): the real ripple/hover state-layer paint --
@@ -1237,7 +932,7 @@ fn paint_node(
     // legitimately-overflowing content nothing here actually hides).
     if matches!(
         node.kind,
-        NodeKind::VirtualList(_) | NodeKind::Carousel(_) | NodeKind::ScrollView(_)
+        NodeKind::VirtualList(_) | NodeKind::ScrollView(_)
     ) || node.paint.clip_children
     {
         // M30 Phase 9 Step 5 (§5, §7, §11.7): the real MD3 "clip items

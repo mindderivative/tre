@@ -3,7 +3,7 @@
 **Python-facing GUI framework backend, Rust-native rendering engine.**
 
 `tre` is the rendering, layout, animation, and accessibility engine
-behind a Material Design 3 desktop GUI framework. Application authors
+behind a Python desktop GUI framework (Tesserae). Application authors
 write Python — this project never asks them to touch Rust, WGPU, or
 Vello directly. The engine itself is a purpose-built retained-tree
 renderer (GPU-accelerated via [`vello_hybrid`](https://github.com/linebender/vello),
@@ -35,17 +35,15 @@ mkdocs serve   # live preview at http://127.0.0.1:8000
 - **A real, retained node tree** — layout via `taffy`, a uniform,
   centrally-ticked animation system (`Animated<T>` on every animatable
   property), and real per-frame GPU rendering.
-- **Material Design 3 visual language** — dynamic color (full HCT/
-  tonal-palette scheme resolution), elevation shadows, hover/press
-  state layers with real ripple, shape morphing, and MD3 motion
-  curves.
+- **Design-language-neutral paint** — fills, borders, per-corner radii,
+  layered shadows, vector paths with trim and morph, and cubic-bezier
+  easing. Material Design 3's components, theming, and motion belong to
+  the framework; `tre` 0.3.5 removed its own.
 - **Desktop shell primitives** — multi-window apps, a fixed-zone
-  docking system, splitters, virtualized/variable-height lists,
-  context menus and other overlays, an `AppShell` navigation pattern,
-  and MD3's container-transform choreography.
-- **A real, wide layout/styling surface** — per-side padding/margin,
-  flex-grow/shrink/basis, align/justify, and border kwargs across the
-  catalog.
+  docking mechanism, virtualized/variable-height lists, scroll views,
+  and layers for overlays.
+- **A real, wide layout surface** — per-side padding/margin,
+  flex-grow/shrink/basis, align/justify, absolute positioning.
 - **Building blocks for a framework** — build a UI from Python with
   nodes, properties, listeners, layers, and animation. Declarative views,
   data binding, and reactivity belong to a framework built on `tre`
@@ -69,22 +67,11 @@ maturin develop --release
 ```
 
 Then run any script under [`examples/`](examples/) — each one is a
-small, self-contained, real proof of one real mechanism (e.g.
-`examples/slider.py` for keyboard-driven `Slider` control,
-`examples/docking.py` for the docking system, `examples/
-view_composition.py` for declarative YAML composition):
+small, self-contained proof of one mechanism (e.g. `examples/docking.py`
+for docking, `examples/text_field.py` for text input):
 
 ```bash
-python examples/checkbox.py
-```
-
-For a consolidated, all-in-one tour instead, run
-[`demo/showcase.py`](demo/showcase.py) — one running app combining MD3
-components and live theming, real animation and custom `Canvas`
-drawing, a virtualized list, and docking, all in one shell with keyboard navigation:
-
-```bash
-python demo/showcase.py
+python examples/docking.py
 ```
 
 A minimal imperative app looks like this:

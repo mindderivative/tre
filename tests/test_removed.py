@@ -81,7 +81,12 @@ GONE = {
         # M99 Phase 1 Step 3: engine-md3's icons.
         "add_icon",
     },
-    "Node": {"set_context_menu"},
+    "Node": {
+        "set_context_menu",
+        # M99 Phase 2 Step 1: the MD3 kinds' state.
+        *_removed._WIDGET_STATE,
+        "set_checked", "set_selected", "get_checked", "get_selected",
+    },
 }  # fmt: skip
 
 

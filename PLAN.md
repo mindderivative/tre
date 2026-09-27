@@ -46,4 +46,4 @@ follow, the tracker, a local commit, memory.
 
 ## Status
 
-Phase 1 done (2026-09-26). Phase 2 Step 1, the MD3 kinds, next.
+Phase 1 and Phase 2 Step 1 done (2026-09-26). Step 2, the MD3 behavior, next.

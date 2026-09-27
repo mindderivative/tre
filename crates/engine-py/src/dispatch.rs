@@ -303,9 +303,8 @@ pub(crate) fn interaction_config() -> InteractionConfig {
 /// M54 Phase 2 (§8, §16.2): `Changed`'s own real `new_value`, read
 /// fresh from `tree` -- deliberately *not* carried on `DispatchOutcome`
 /// itself (`ChangedValue` only ever holds the pre-mutation value,
-/// engine-core's own doc comment on it explains why). Covers exactly
-/// the three real `NodeKind`s `Tree::dispatch` can produce a `Changed`
-/// outcome for (`tree.rs`'s own producer sites, confirmed via grep) --
+/// engine-core's own doc comment on it explains why). Covers the one
+/// `NodeKind` `Tree::dispatch` produces a `Changed` outcome for --
 /// `None` for any other kind, matching `Event`'s own "never fabricate
 /// a field this event's real kind has nothing to say about" contract.
 pub(crate) fn read_new_changed_value(
@@ -319,20 +318,6 @@ pub(crate) fn read_new_changed_value(
     match &n.kind {
         NodeKind::TextField(state) => Ok(Some(
             state.content.clone().into_pyobject(py)?.unbind().into_any(),
-        )),
-        NodeKind::Slider(state) => Ok(Some(
-            state
-                .thumb_position
-                .current
-                .into_pyobject(py)?
-                .unbind()
-                .into_any(),
-        )),
-        NodeKind::TimePickerDial(state) => Ok(Some(
-            (state.hour, state.minute)
-                .into_pyobject(py)?
-                .unbind()
-                .into_any(),
         )),
         _ => Ok(None),
     }

@@ -3,7 +3,7 @@
 **Python-facing GUI framework backend, Rust-native rendering engine.**
 
 `tre` is the rendering, layout, animation, and accessibility engine behind
-a Material Design 3 desktop GUI framework. Application authors write
+a Python desktop GUI framework (Tesserae). Application authors write
 Python — this project never asks them to touch Rust, WGPU, or Vello
 directly. The engine itself is a purpose-built retained-tree renderer
 exposed through a thin, stable [PyO3](https://pyo3.rs/) boundary:
@@ -24,28 +24,25 @@ project's design decisions.
 - **A real, retained node tree** — layout via `taffy`, a uniform,
   centrally-ticked animation system (`Animated<T>` on every animatable
   property), and real per-frame GPU rendering.
-- **Material Design 3 visual language** — dynamic color (full HCT/
-  tonal-palette scheme resolution), elevation shadows, hover/press state
-  layers with real ripple, shape morphing, and MD3 motion curves.
+- **Design-language-neutral paint** — fills, borders, per-corner radii,
+  layered shadows, vector paths with trim and morph, and cubic-bezier
+  easing. Material Design 3's components, theming, and motion belong to
+  the framework; `tre` 0.3.5 removed its own.
 - **Desktop shell primitives** — multi-window apps, a
-  [fixed-zone docking system](guide/docking-and-shell.md), splitters,
-  [virtualized/variable-height lists](guide/canvas-and-lists.md), context
-  menus and other overlays, an `AppShell` navigation pattern, and MD3's
-  container-transform choreography.
-- **A real, wide layout/styling surface** — per-side padding/margin,
-  flex-grow/shrink/basis, align/justify, and border kwargs across the
-  catalog.
+  [fixed-zone docking mechanism](guide/docking-and-shell.md),
+  [virtualized/variable-height lists](guide/canvas-and-lists.md), scroll
+  views, and [layers](api/python/layers.md) for overlays.
+- **A real, wide layout surface** — per-side padding/margin,
+  flex-grow/shrink/basis, align/justify, absolute positioning.
 - **Building blocks for a framework** — build a UI
   [from Python](guide/imperative-api.md) with nodes, properties,
   listeners, layers, and animation. Declarative views, data binding, and
   reactivity belong to a framework built on `tre` (Tesserae); `tre` 0.3.5
   removed its own.
-- **Data in, not files** — themes are passed as
-  plain `dict`s, images as decoded pixels, fonts as bytes, so a
-  framework built on `tre` owns every file format and loading decision.
-  Using `tre` directly? It will also [read files for you](guide/working-with-files.md)
-  — YAML views with `include:`, theme files, PNG/JPEG images, and
-  file-watching hot reload.
+- **Data in, not files** — images as decoded pixels, fonts as bytes, so
+  a framework built on `tre` owns every file format and loading
+  decision. Using `tre` directly? [Working with Files](guide/working-with-files.md)
+  shows how to load them.
 - **Thread-safe updates into a running app** — `App.thread_handle()`
   lets a background thread (a file watcher, a network client) hand work
   to the event loop, waking it even when idle.
@@ -68,22 +65,13 @@ project's design decisions.
 - **[Getting Started](getting-started.md)** — build and run a first
   window in a few lines of Python.
 - **[Guide](guide/imperative-api.md)** — walkthroughs of the imperative
-  API, declarative views, MD3 components, docking, canvas drawing, and
-  theming.
+  API, docking, canvas drawing, and accessibility.
 - **[Working with Files](guide/working-with-files.md)** — for using
-  `tre` directly: YAML view files, `include:`, theme and image files,
-  and hot reload.
+  `tre` directly: image and font files.
 - **[Python API Reference](api/python/index.md)** — every public class
   and method, with real signatures pulled from the source.
 - **[Architecture](architecture.md)** — the engine's crate layout and
   design principles.
-
-Looking for a single, all-in-one tour instead of the piece-by-piece
-guide? Run
-[`demo/showcase.py`](https://github.com/mindderivative/tre/blob/main/demo/showcase.py)
-from a source checkout — one running app combining MD3 components and
-live theming, real animation and custom `Canvas` drawing, a
-virtualized list, and docking, all keyboard-navigable.
 
 ## Project status
 

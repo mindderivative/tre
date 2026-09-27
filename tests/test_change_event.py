@@ -16,13 +16,6 @@ import pytest
 from tre import Window
 
 
-def test_get_checked_rejects_a_non_checkbox_node():
-    window = Window(width=200, height=200)
-    rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
-    with pytest.raises(ValueError, match="Rect has no property 'checked'"):
-        rect.get_checked()
-
-
 def test_real_text_field_edits_give_old_and_new_string_content():
     """`Change`'s own `old_value` for a `TextField` is genuinely
     destroyed by the mutation that produces it -- `engine-core`'s own

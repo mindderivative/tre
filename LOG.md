@@ -17,7 +17,10 @@
 3. Phase 1 Step 3: `engine-md3` deleted, with `add_icon` and `add_text`'s
    `typography_role` (Tesserae uses neither); cargo 426, pytest 477, 15
    examples, docs clean.
+4. Phase 2 Step 1: the 12 MD3 kinds deleted from `engine-core`,
+   `engine-render`, and `engine-py`, with their `Node` methods; cargo 363,
+   pytest 468, 15 examples, docs clean.
 
 ## Status
 
-**In progress.** Phase 2 Step 1 (the MD3 kinds) next.
+**In progress.** Phase 2 Step 2 (the MD3 behavior) next.

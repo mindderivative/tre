@@ -88,18 +88,14 @@ pub(crate) fn button_name(button: PointerButton) -> &'static str {
 
 /// `ChangedValue`'s own real conversion to a Python value -- the one
 /// place a `Tree::dispatch`-detected `Changed` outcome's mechanical
-/// `old_value` becomes a real Python object. `Node.set_checked`/
-/// `set_selected`/`set_on`/`set_text` and `Window.cut`'s own direct
+/// `old_value` becomes a real Python object. `Node.set_text` and
+/// `Window.cut`'s own direct
 /// (non-`Tree::dispatch`) `Change` firing never go through this at all
 /// -- their own `old`/`new` values are already real Python-native
 /// `bool`/`str` at the point they fire, constructed directly there.
 pub(crate) fn changed_value_to_py(py: Python<'_>, value: &ChangedValue) -> PyResult<Py<PyAny>> {
     match value {
         ChangedValue::Text(text) => Ok(text.into_pyobject(py)?.unbind().into_any()),
-        ChangedValue::Number(n) => Ok(n.into_pyobject(py)?.unbind().into_any()),
-        ChangedValue::Time { hour, minute } => {
-            Ok((*hour, *minute).into_pyobject(py)?.unbind().into_any())
-        }
     }
 }
 

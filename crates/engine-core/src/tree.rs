@@ -20,22 +20,18 @@ use taffy::prelude::{
 };
 
 use crate::access::AccessNodeData;
-use crate::animation::{Animated, CompletionHandle, MotionCurve};
+use crate::animation::{CompletionHandle, MotionCurve};
 #[cfg(test)]
 use crate::canvas::CanvasState;
 use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{ChangedValue, DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
 use crate::node::{
-    CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_PAD_X, CAROUSEL_PAD_Y,
-    CAROUSEL_UNCONTAINED_WIDTH, ImageState, Node, NodeId, NodeKind, PaintProperties,
-    SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS, TextFieldState, TimePickerDialMode,
+    ImageState, Node, NodeId, NodeKind, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
+    SCROLLBAR_THICKNESS, TextFieldState,
 };
 #[cfg(test)]
-use crate::node::{
-    CheckboxState, IconState, ItemExtent, SliderState, TerminalCell, TerminalState,
-    TimePickerDialState, VirtualListState,
-};
+use crate::node::{ItemExtent, TerminalCell, TerminalState, VirtualListState};
 use crate::overlay::{OverlayMeta, Placement};
 #[cfg(test)]
 use peniko::kurbo::BezPath;
@@ -95,19 +91,6 @@ pub struct Tree {
     /// real OS drag semantics). `update_drag` is what actually branches
     /// on which real kind this is.
     dragging: Option<NodeId>,
-    /// M54 Phase 1 (§8, §16.2): the `Slider`/`TimePickerDial` value
-    /// immediately *before* the drag currently held in `dragging`
-    /// began -- deliberately a separate field, not folded into
-    /// `dragging` itself, since several other real drag kinds
-    /// (`Splitter`, `Carousel`, `ScrollView`/`VirtualList` thumb) also
-    /// set `dragging` and must stay completely unaffected. Set only in
-    /// the real Slider/TimePickerDial branch of the drag-start site,
-    /// read and cleared at drag-end to build `DispatchOutcome::
-    /// Changed`'s own `old_value` -- the release-time value alone
-    /// can't serve this (a drag continuously overwrites the live value
-    /// as the pointer moves, so by release time the "old" value is
-    /// already gone).
-    drag_start_value: Option<ChangedValue>,
     /// §14 step 13 (§11.3): keyed by the overlay root's own `NodeId` --
     /// metadata only, never the node itself, which already lives in
     /// `nodes` like any other.
@@ -125,26 +108,6 @@ pub struct Tree {
     /// the very first frame always paints. Read via `take_dirty`, never
     /// this field directly, so "read" and "reset" can never drift apart.
     dirty: bool,
-    /// M65 (§5, §6): real, incremental per-kind existence counters --
-    /// `compute_layout`'s own four `sync_*_layouts` functions used to
-    /// each pay a full `self.nodes.iter()` scan (plus a `Vec`
-    /// allocation) on *every* call, purely to discover whether any
-    /// node of that one kind exists at all, before doing anything real
-    /// -- a real, confirmed cost paid on every dirty frame (interaction
-    /// or animation) even for a window containing zero `Carousel`/
-    /// `ButtonGroup`-reflow/`ScrollView`/`VirtualList` nodes anywhere.
-    /// Maintained at the two real choke points a node's own kind/flag
-    /// can change at all -- `insert` (increment) and `remove`
-    /// (decrement) -- confirmed via direct source read, not assumed,
-    /// that `PaintProperties.button_group_reflow` is never mutated on
-    /// an already-inserted node anywhere in this codebase (only ever
-    /// set once, at construction, by `engine-py::window_factory.rs`'s
-    /// `add_button_group`), so no other mutation site needs to update
-    /// these. Each `sync_*_layouts` function now checks its own
-    /// counter first and returns immediately when it's `0`, turning
-    /// the common (no-node-of-this-kind) case from an O(n) scan into a
-    /// real O(1) check.
-    carousel_count: usize,
     button_group_reflow_count: usize,
     scroll_view_count: usize,
     virtual_list_count: usize,
@@ -188,11 +151,9 @@ impl Tree {
             hovered: None,
             pressed: None,
             dragging: None,
-            drag_start_value: None,
             overlays: Vec::new(),
             dismissals: Vec::new(),
             dirty: true,
-            carousel_count: 0,
             button_group_reflow_count: 0,
             scroll_view_count: 0,
             virtual_list_count: 0,
@@ -278,7 +239,6 @@ impl Tree {
         // per-kind existence counters `compute_layout`'s own sync
         // functions consult -- see their own shared doc comment.
         match &kind {
-            NodeKind::Carousel(_) => self.carousel_count += 1,
             NodeKind::ScrollView(_) => self.scroll_view_count += 1,
             NodeKind::VirtualList(_) => self.virtual_list_count += 1,
             _ => {}
@@ -561,7 +521,6 @@ impl Tree {
         // below (each of which independently re-enters this same
         // function and does its own decrement for its own child).
         match &node.kind {
-            NodeKind::Carousel(_) => self.carousel_count -= 1,
             NodeKind::ScrollView(_) => self.scroll_view_count -= 1,
             NodeKind::VirtualList(_) => self.virtual_list_count -= 1,
             _ => {}
@@ -620,29 +579,9 @@ impl Tree {
         self.taffy
             .compute_layout(root_taffy, available_space)
             .expect("compute_layout: taffy layout computation failed");
-        // M30 Phase 9 Step 5 (§5, §7, §11.7): a real `NodeKind::Carousel`
-        // item's own width depends on the carousel's own *resolved*
-        // width (only known after the pass above) and its own real
-        // animated `position` -- `taffy` has no "measure my children
-        // after my own size is known" hook the way pyCopper's own
-        // custom `perform_layout` does, so this sets each item's real
-        // absolute inset/size by hand from what the pass above just
-        // resolved, then asks `taffy` to lay out again so those new
-        // insets actually land in `self.layout(child)` -- the real,
-        // stated v1 cost this step's own investigation found
-        // unavoidable with `taffy`'s single-pass API. A no-op call
-        // (`false`) whenever no `NodeKind::Carousel` exists anywhere in
-        // this `Tree` -- every other real `compute_layout` caller pays
-        // nothing extra.
-        if self.sync_carousel_layouts() {
-            self.taffy
-                .compute_layout(root_taffy, available_space)
-                .expect("compute_layout: taffy layout computation failed (carousel sync pass)");
-        }
         // M35 Phase 3 (§5, §7, §11.7): the identical real "container-
         // level state drives every child's own real layout_style, then
-        // taffy runs once more so it actually lands" shape the carousel
-        // sync above already establishes, applied to a real Standard
+        // taffy runs once more so it actually lands" shape, applied to a real Standard
         // Button Group's own live press-driven width reflow. A no-op
         // call (`false`) whenever no node has `PaintProperties.
         // button_group_reflow` set -- every other real `compute_layout`
@@ -655,7 +594,7 @@ impl Tree {
         // M36 Phase 1 (§5, §7, §11.7): the identical real "container-
         // level state drives one real child's own real layout_style,
         // then taffy runs once more so it actually lands" shape the
-        // carousel/button-group syncs above already establish, applied
+        // button-group sync above already establishes, applied
         // to a real, general `ScrollView`'s own scroll offset. A no-op
         // call (`false`) whenever no `NodeKind::ScrollView` exists
         // anywhere in this `Tree` -- every other real `compute_layout`
@@ -682,114 +621,6 @@ impl Tree {
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (layer placement pass)");
         }
-    }
-
-    /// M30 Phase 9 Step 5 (§5, §7, §11.7): the real per-frame item-
-    /// geometry sync every `NodeKind::Carousel` needs, called from
-    /// `compute_layout` itself (never a public method -- there is no
-    /// real reason for a caller to run this on its own, the same
-    /// "internal step of a bigger real operation" shape `update_drag`
-    /// already has). Returns whether it changed anything real (i.e.
-    /// whether a second `taffy` pass is actually needed) -- `false` the
-    /// instant no `NodeKind::Carousel` exists in this `Tree` at all, so
-    /// every unrelated `compute_layout` call anywhere in this codebase
-    /// keeps paying nothing extra.
-    ///
-    /// Every item is positioned `Position::Absolute` with an explicit,
-    /// hand-computed `inset`/`size` -- mirrors pyCopper's own real
-    /// manual `positions`/`shift` math (`perform_layout`) exactly,
-    /// rather than leaning on `taffy`'s own automatic flex placement,
-    /// since an item's width here genuinely depends on where the whole
-    /// strip currently sits, not just its own content. A deliberate,
-    /// real side benefit of computing this by hand: `Tree::hit_test_at`
-    /// and `engine-render`'s own paint walk both already read a node's
-    /// real `Layout::location` directly with no special-casing anywhere
-    /// -- unlike `VirtualList`'s own scroll offset (composed only at
-    /// paint time, never into `layout_style`), a carousel's real click/
-    /// drag hit-testing and its real paint position can never drift
-    /// apart, because both read the exact same real computed inset.
-    fn sync_carousel_layouts(&mut self) -> bool {
-        // M65 (§5, §6): the real O(1) check -- the full scan below now
-        // only ever runs when at least one real `Carousel` exists.
-        if self.carousel_count == 0 {
-            return false;
-        }
-        let carousels: Vec<NodeId> = self
-            .nodes
-            .iter()
-            .filter(|(_, node)| matches!(node.kind, NodeKind::Carousel(_)))
-            .map(|(id, _)| id)
-            .collect();
-        for carousel in carousels {
-            let outer = self.layout(carousel);
-            let width = f64::from(outer.size.width);
-            let height = f64::from(outer.size.height);
-            let item_height = (height - 2.0 * f64::from(CAROUSEL_PAD_Y)).max(0.0);
-            let available = (width - 2.0 * f64::from(CAROUSEL_PAD_X)).max(0.0);
-
-            let children = self.nodes[carousel].children.clone();
-            if children.is_empty() {
-                continue;
-            }
-
-            let NodeKind::Carousel(state) = &self.nodes[carousel].kind else {
-                unreachable!("checked by the filter above")
-            };
-            let layout = state.layout;
-
-            let widths: Vec<f64> = if layout.snaps() {
-                let large = layout.large_width(available);
-                let where_ = state.position.current;
-                (0..children.len())
-                    .map(|j| state.item_width(j as f64 - where_, large))
-                    .collect()
-            } else {
-                children
-                    .iter()
-                    .map(
-                        |&child| match self.nodes[child].layout_style.size.width.into_option() {
-                            Some(px) => f64::from(px),
-                            None => f64::from(CAROUSEL_UNCONTAINED_WIDTH),
-                        },
-                    )
-                    .collect()
-            };
-
-            let mut positions = Vec::with_capacity(widths.len());
-            let mut cursor = f64::from(CAROUSEL_PAD_X);
-            for &w in &widths {
-                positions.push(cursor);
-                cursor += w + f64::from(CAROUSEL_GAP);
-            }
-
-            let shift = if layout.snaps() {
-                let n = children.len();
-                let where_ = state.position.current.clamp(0.0, (n - 1) as f64);
-                let low = (where_ as usize).min(n - 1);
-                let high = (low + 1).min(n - 1);
-                let t = where_ - low as f64;
-                positions[low] * (1.0 - t) + positions[high] * t - f64::from(CAROUSEL_PAD_X)
-            } else {
-                state.scroll_x
-            };
-
-            for (i, &child) in children.iter().enumerate() {
-                let mut style = self.nodes[child].layout_style.clone();
-                style.position = Position::Absolute;
-                style.inset = TaffyRect {
-                    left: length((positions[i] - shift) as f32),
-                    top: length(CAROUSEL_PAD_Y),
-                    right: auto(),
-                    bottom: auto(),
-                };
-                style.size = Size {
-                    width: length(widths[i] as f32),
-                    height: length(item_height as f32),
-                };
-                self.set_layout_style(child, style);
-            }
-        }
-        true
     }
 
     /// M35 Phase 3 (§5, §7, §11.7): the real Standard Button Group's
@@ -1268,192 +1099,6 @@ impl Tree {
         // "driven directly, never eased" precedent `VirtualListState.
         // scroll_offset`'s own doc comment already establishes.
         state.scroll_offset.current = target;
-    }
-
-    /// The real total content extent of an `Uncontained` carousel's own
-    /// items -- every item's width plus every gap between them, read
-    /// from each child's own real, most-recently-computed `Layout`
-    /// (one frame stale at worst, the same real "read last frame's
-    /// layout synchronously during dispatch" precedent `update_slider_
-    /// drag`/`update_splitter_drag` already establish). `None` if `id`
-    /// isn't a real `NodeKind::Carousel` in this `Tree`, or has no
-    /// children yet.
-    fn carousel_content_extent(&self, id: NodeId) -> Option<f64> {
-        let node = self.nodes.get(id)?;
-        if !matches!(node.kind, NodeKind::Carousel(_)) {
-            return None;
-        }
-        if node.children.is_empty() {
-            return None;
-        }
-        let mut extent = f64::from(CAROUSEL_PAD_X) * 2.0;
-        for (i, &child) in node.children.iter().enumerate() {
-            extent += f64::from(self.layout(child).size.width);
-            if i + 1 < node.children.len() {
-                extent += f64::from(CAROUSEL_GAP);
-            }
-        }
-        Some(extent)
-    }
-
-    /// An `Uncontained` carousel's own real max scroll offset -- `0.0`
-    /// once every item already fits, the same clamp shape `VirtualList
-    /// State`'s own real content-extent-minus-viewport math already
-    /// uses elsewhere.
-    fn carousel_max_scroll(&self, id: NodeId) -> f64 {
-        let Some(extent) = self.carousel_content_extent(id) else {
-            return 0.0;
-        };
-        let width = f64::from(self.layout(id).size.width);
-        (extent - width).max(0.0)
-    }
-
-    /// §14-step-15-shaped public API (§11.7): moves a `NodeKind::
-    /// Carousel` to `index`, clamped to its real child count, starting
-    /// (or retargeting) a real eased snap toward it -- mirrors
-    /// pyCopper's own real `set_index` exactly, including its own real
-    /// "returns whether it actually moved" contract. A true no-op for
-    /// an `Uncontained` carousel (nothing calls this for one; wheel/
-    /// drag dispatch route it to `set_carousel_scroll` instead), and
-    /// for a carousel with fewer than 2 children (nothing to move to).
-    /// `MD3`'s own real "medium2"/"standard" motion-token choice
-    /// (`SNAP_DURATION`/`SNAP_CURVE`, pyCopper's own real, reasoned
-    /// pick -- 500ms Emphasized "would queue up behind itself" under
-    /// rapid wheel-notch snapping) is hardcoded here rather than
-    /// threaded through as a parameter: `engine-core` stays MD3-
-    /// agnostic in *name* (§1 Locked Decisions) but a snap's own real
-    /// duration/curve is this mechanism's, not a per-call choice any
-    /// real caller in this codebase actually varies (`Splitter`/
-    /// `Slider` drags already hardcode their own real motion shape the
-    /// identical way).
-    pub fn set_carousel_index(&mut self, id: NodeId, index: usize, now: Instant) -> bool {
-        self.dirty = true;
-        let child_count = self
-            .nodes
-            .get(id)
-            .expect("set_carousel_index: NodeId not found in this Tree")
-            .children
-            .len();
-        let NodeKind::Carousel(state) = &mut self
-            .nodes
-            .get_mut(id)
-            .expect("set_carousel_index: NodeId not found in this Tree")
-            .kind
-        else {
-            panic!("set_carousel_index: {id:?} is not a NodeKind::Carousel");
-        };
-        if child_count == 0 {
-            return false;
-        }
-        let clamped = index.min(child_count - 1);
-        if clamped == state.index {
-            return false;
-        }
-        state.index = clamped;
-        state.position.animate_to(
-            clamped as f64,
-            Duration::from_millis(300),
-            MotionCurve::Standard,
-            now,
-        );
-        true
-    }
-
-    /// `Uncontained`'s own real free pixel scroll -- mirrors pyCopper's
-    /// own real `set_scroll` exactly (clamped, immediate, paint-only:
-    /// no `layout_style` mutation happens here directly, but the next
-    /// `compute_layout`'s own `sync_carousel_layouts` pass reads the
-    /// new `scroll_x` and bakes it into every item's real `inset.left`,
-    /// so it still needs `self.dirty = true` to actually get there).
-    pub fn set_carousel_scroll(&mut self, id: NodeId, value: f64) -> bool {
-        self.dirty = true;
-        let max_scroll = self.carousel_max_scroll(id);
-        let NodeKind::Carousel(state) = &mut self
-            .nodes
-            .get_mut(id)
-            .expect("set_carousel_scroll: NodeId not found in this Tree")
-            .kind
-        else {
-            panic!("set_carousel_scroll: {id:?} is not a NodeKind::Carousel");
-        };
-        let clamped = value.clamp(0.0, max_scroll);
-        if clamped == state.scroll_x {
-            return false;
-        }
-        state.scroll_x = clamped;
-        true
-    }
-
-    /// A real wheel notch/tick over a `NodeKind::Carousel` -- mirrors
-    /// pyCopper's own real `on_wheel` exactly: either scroll axis
-    /// counts (most desktop mice only have a vertical wheel, so
-    /// requiring a horizontal one would leave the carousel unusable for
-    /// most users), one index per notch for a snapping layout, half the
-    /// raw pixel delta for `Uncontained` (pyCopper's own real, stated
-    /// `* 0.5` damping).
-    fn carousel_on_wheel(&mut self, id: NodeId, delta_x: f64, delta_y: f64, now: Instant) {
-        let delta = if delta_x != 0.0 { delta_x } else { delta_y };
-        if delta == 0.0 {
-            return;
-        }
-        let Some(NodeKind::Carousel(state)) = self.nodes.get(id).map(|n| &n.kind) else {
-            return;
-        };
-        if state.layout.snaps() {
-            let index = state.index;
-            let step: i64 = if delta > 0.0 { 1 } else { -1 };
-            let next = (index as i64 + step).max(0) as usize;
-            self.set_carousel_index(id, next, now);
-        } else {
-            let scroll_x = state.scroll_x;
-            self.set_carousel_scroll(id, scroll_x + delta * 0.5);
-        }
-    }
-
-    /// The real drag-in-progress half of `carousel_on_wheel`'s own
-    /// gesture -- mirrors pyCopper's own real `on_pointer_move` exactly:
-    /// additive to the wheel, since MD3's own guidelines describe moving
-    /// through a carousel as swiping, and a pointer's direct-
-    /// manipulation equivalent of a swipe is a drag, not a wheel notch.
-    /// A snapping carousel accumulates drag distance and commits one
-    /// index per `CAROUSEL_DRAG_INDEX_THRESHOLD` crossed (so one long
-    /// drag can step through several items, the same way a fast real
-    /// swipe would); `Uncontained` scrolls 1:1 with the pointer, since
-    /// it's already free scrolling and has no items to snap to.
-    fn update_carousel_drag(&mut self, id: NodeId, point: Point, now: Instant) {
-        let Some(NodeKind::Carousel(state)) = self.nodes.get(id).map(|n| &n.kind) else {
-            return;
-        };
-        let Some(last_x) = state.drag_last_x else {
-            return;
-        };
-        let dx = point.x - last_x;
-        if !state.layout.snaps() {
-            let scroll_x = state.scroll_x;
-            if let NodeKind::Carousel(state) = &mut self.nodes[id].kind {
-                state.drag_last_x = Some(point.x);
-            }
-            self.set_carousel_scroll(id, scroll_x - dx);
-            return;
-        }
-
-        let index = state.index;
-        let mut accum = state.drag_accum + dx;
-        let mut next = index as i64;
-        while accum <= -CAROUSEL_DRAG_INDEX_THRESHOLD {
-            next += 1;
-            accum += CAROUSEL_DRAG_INDEX_THRESHOLD;
-        }
-        while accum >= CAROUSEL_DRAG_INDEX_THRESHOLD {
-            next -= 1;
-            accum -= CAROUSEL_DRAG_INDEX_THRESHOLD;
-        }
-        self.set_carousel_index(id, next.max(0) as usize, now);
-        let NodeKind::Carousel(state) = &mut self.nodes[id].kind else {
-            unreachable!("checked above")
-        };
-        state.drag_last_x = Some(point.x);
-        state.drag_accum = accum;
     }
 
     /// The computed box for `id`, after `compute_layout` has run for a
@@ -1989,326 +1634,20 @@ impl Tree {
         }
     }
 
-    /// §14 step 15 (§11.5): moves a `NodeKind::Splitter` to `position`
-    /// (0.0..=1.0 along its parent's own flex axis), resizing its two
-    /// flanking siblings to match. A drag is a 1:1, instant mouse-follow,
-    /// not a smoothly-eased transition -- so despite `SplitterState.
-    /// position` being an `Animated<f64>`, this sets it via an instant
-    /// (`Duration::ZERO`) `animate_to` and ticks it immediately, the
-    /// same "an instant application needs an explicit tick to actually
-    /// materialize" fix step 12 already found for bindings
-    /// (`Animated::animate_to` alone never eagerly writes `current`).
-    ///
-    /// The splitter must be a direct child of some parent, sitting
-    /// exactly between its two flanking siblings in that parent's own
-    /// `children` order (`[..., left, splitter, right, ...]`) -- panics
-    /// otherwise, the same "internal bookkeeping bug, not a runtime
-    /// condition" reasoning `add_child` already uses for a malformed
-    /// tree. Resizes along whichever axis matches the parent's own
-    /// `flex_direction` (row -> width, column -> height), proportioning
-    /// the two siblings' *current* combined extent by `position`.
-    pub fn set_splitter_position(&mut self, id: NodeId, position: f64, now: Instant) {
-        self.dirty = true;
-        let (left, right, is_row, total) = self.splitter_geometry(id);
-
-        let position = position.clamp(0.0, 1.0);
-        let left_extent = total * position;
-        let right_extent = total - left_extent;
-
-        let mut left_style = self.nodes[left].layout_style.clone();
-        let mut right_style = self.nodes[right].layout_style.clone();
-        if is_row {
-            left_style.size.width = length(left_extent as f32);
-            right_style.size.width = length(right_extent as f32);
-        } else {
-            left_style.size.height = length(left_extent as f32);
-            right_style.size.height = length(right_extent as f32);
-        }
-        self.set_layout_style(left, left_style);
-        self.set_layout_style(right, right_style);
-
-        let NodeKind::Splitter(state) = &mut self.nodes[id].kind else {
-            unreachable!("checked by splitter_geometry")
-        };
-        state
-            .position
-            .animate_to(position, Duration::ZERO, MotionCurve::Linear, now);
-        // M9 Phase 1 (§5): kind-specific fields (`SplitterState.
-        // position`, ticked manually here, outside `Tree::tick_all`'s
-        // own real per-node walk since M8 Phase 2's own confirmed
-        // finding) don't participate in the central completion queue --
-        // a real, stated scope boundary, not silently dropped
-        // functionality (nothing attaches `on_complete` to a splitter's
-        // own position animation).
-        state.position.tick(now, &mut Vec::new());
-    }
-
-    /// M14 Phase 2 (§5, §7.3): moves a `NodeKind::Slider`'s own real
-    /// `thumb_position` to `position` (clamped `0.0..=1.0`) -- mirrors
-    /// `set_splitter_position`'s own instant (`Duration::ZERO`)
-    /// `animate_to` + immediate `tick` shape exactly (a drag is a 1:1
-    /// mouse-follow, not a smoothly-eased transition), with no sibling-
-    /// resize step: a slider doesn't resize anything else, only itself.
-    /// Panics if `id` isn't a real `NodeKind::Slider` in this `Tree`,
-    /// the same "internal bug, not a runtime condition" contract
-    /// `set_splitter_position`/`scroll_virtual_list_by` already use.
-    pub fn set_slider_position(&mut self, id: NodeId, position: f64, now: Instant) {
-        self.dirty = true;
-        let position = position.clamp(0.0, 1.0);
-        let NodeKind::Slider(state) = &mut self.nodes[id].kind else {
-            panic!("set_slider_position: {id:?} is not a NodeKind::Slider");
-        };
-        state
-            .thumb_position
-            .animate_to(position, Duration::ZERO, MotionCurve::Linear, now);
-        state.thumb_position.tick(now, &mut Vec::new());
-    }
-
-    /// M39 Phase 2 Step 2 (§5, §7): the real public setter both a
-    /// programmatic caller and `update_time_picker_dial_drag` (below)
-    /// funnel through -- one real mechanism, not two, the identical
-    /// "drag math computes a value, then calls the ordinary setter"
-    /// shape `update_splitter_drag`/`update_slider_drag` already
-    /// establish. Clamps `hour` to `0..=23`/`minute` to `0..=59` (a
-    /// real, defensive clamp -- a caller-supplied value has no type-
-    /// level guarantee of range the way `TimePickerDialState::new`'s
-    /// own internal `min()` calls do for construction). Panics if `id`
-    /// isn't a real `NodeKind::TimePickerDial`, the same "internal bug,
-    /// not a runtime condition" contract `set_slider_position` already
-    /// uses.
-    pub fn set_time_picker_dial_time(&mut self, id: NodeId, hour: u8, minute: u8) {
-        self.dirty = true;
-        let NodeKind::TimePickerDial(state) = &mut self.nodes[id].kind else {
-            panic!("set_time_picker_dial_time: {id:?} is not a NodeKind::TimePickerDial");
-        };
-        state.hour = hour.min(23);
-        state.minute = minute.min(59);
-    }
-
-    /// M39 Phase 2 Step 2 (§5, §7): switches which of the dial's two
-    /// real hands a drag moves -- the app-level equivalent of real
-    /// MD3's own hour-then-minute dialog focus, driven by whatever
-    /// control (e.g. an hour/minute toggle button) the caller builds;
-    /// see `TimePickerDialState`'s own doc comment for why this lives
-    /// outside the dial itself. Panics under the same contract `set_
-    /// time_picker_dial_time` above already uses.
-    pub fn set_time_picker_dial_mode(&mut self, id: NodeId, mode: TimePickerDialMode) {
-        self.dirty = true;
-        let NodeKind::TimePickerDial(state) = &mut self.nodes[id].kind else {
-            panic!("set_time_picker_dial_mode: {id:?} is not a NodeKind::TimePickerDial");
-        };
-        state.mode = mode;
-    }
-
-    /// Shared by `set_splitter_position` and `update_drag` (M4 Phase 3,
-    /// §11.5): resolves a splitter's own flanking-siblings geometry --
-    /// which two real siblings it sits between, which axis its parent's
-    /// `flex_direction` puts them on, and their current combined extent
-    /// along that axis (which stays constant while dragging -- the two
-    /// siblings only ever trade extent between each other). Panics under
-    /// the same "internal bookkeeping bug, not a runtime condition"
-    /// reasoning `add_child` already uses for a malformed tree.
-    fn splitter_geometry(&self, id: NodeId) -> (NodeId, NodeId, bool, f64) {
-        let node = self
-            .nodes
-            .get(id)
-            .expect("splitter_geometry: NodeId not found in this Tree");
-        assert!(
-            matches!(node.kind, NodeKind::Splitter(_)),
-            "splitter_geometry: {id:?} is not a NodeKind::Splitter"
-        );
-        let parent = node
-            .parent
-            .expect("splitter_geometry: a splitter must have a parent");
-        let siblings = &self
-            .nodes
-            .get(parent)
-            .expect("splitter_geometry: parent NodeId not found in this Tree")
-            .children;
-
-        let index = siblings.iter().position(|&c| c == id).expect(
-            "splitter_geometry: splitter isn't actually a child of its own recorded parent",
-        );
-        assert!(
-            index > 0 && index + 1 < siblings.len(),
-            "splitter_geometry: a splitter must sit between two real siblings, not at either end of its parent's children"
-        );
-        let left = siblings[index - 1];
-        let right = siblings[index + 1];
-
-        let is_row = matches!(
-            self.nodes[parent].layout_style.flex_direction,
-            taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
-        );
-
-        let (left_w, left_h) = {
-            let l = self.layout(left);
-            (f64::from(l.size.width), f64::from(l.size.height))
-        };
-        let (right_w, right_h) = {
-            let r = self.layout(right);
-            (f64::from(r.size.width), f64::from(r.size.height))
-        };
-        let total = if is_row {
-            left_w + right_w
-        } else {
-            left_h + right_h
-        };
-
-        (left, right, is_row, total)
-    }
-
-    /// M4 Phase 3 (§11.5): "on drag, `position`'s tick handler mutates
-    /// its two adjacent siblings' `layout_style`" made real -- converts
-    /// `point`'s coordinate along the dragged splitter's own parent flex
-    /// axis into a 0.0..=1.0 fraction (relative to the left sibling's
-    /// own current absolute start and the flanking siblings' combined
-    /// extent from `splitter_geometry`), then calls the *existing*
-    /// `set_splitter_position` with it -- one real mechanism, reused,
-    /// not reimplemented for the drag case. A no-op if `self.dragging`
-    /// isn't currently set or the flanking siblings have zero combined
-    /// extent (nothing to divide a fraction of).
-    ///
-    /// M14 Phase 2 (§7.3): widened with a real `Slider` branch -- much
-    /// simpler geometry (no flanking siblings; the node's own real
-    /// absolute position/width *is* the whole track), horizontal-only
-    /// for now (the same "not built since nothing here needs it yet"
-    /// scope limit `set_virtual_list_window`'s own vertical-only
-    /// restriction already established).
+    /// Moves the drag in progress along with the pointer: a scrollbar
+    /// thumb's, the only drags the engine still owns (M99 removed the
+    /// splitter, slider, carousel, and time-picker-dial drags with their
+    /// kinds). `PointerPressed` only sets `self.dragging` after a real
+    /// thumb grab (`grabs_scroll_view_thumb`/`grabs_virtual_list_thumb`).
     fn update_drag(&mut self, point: Point, now: Instant) {
         let Some(dragging) = self.dragging else {
             return;
         };
         match &self.nodes[dragging].kind {
-            NodeKind::Splitter(_) => self.update_splitter_drag(dragging, point, now),
-            NodeKind::Slider(_) => self.update_slider_drag(dragging, point, now),
-            // M30 Phase 9 Step 5 (§5, §7, §11.7): widens the same real
-            // generic drag mechanism `Splitter`/`Slider` already use --
-            // `point` here is `PointerMoved`'s own absolute canvas-space
-            // position, so this passes `point.x` straight through
-            // rather than re-deriving a local coordinate the way
-            // `update_splitter_drag`/`update_slider_drag` do (a
-            // carousel's own real drag math only ever needs a raw delta
-            // between consecutive points, not a position along a fixed
-            // track).
-            NodeKind::Carousel(_) => self.update_carousel_drag(dragging, point, now),
-            // M38 Phase 6 (§5, §7, §11.7): a real scrollbar-thumb drag
-            // -- `PointerPressed`'s own dispatch arm only ever sets
-            // `self.dragging = Some(view)` after a real `grabs_scroll_
-            // view_thumb` check already passed, mirroring `Splitter`/
-            // `Slider`/`Carousel`'s own identical "only start a drag on
-            // a genuine grab" contract.
             NodeKind::ScrollView(_) => self.update_scroll_view_thumb_drag(dragging, point, now),
-            // M47 (§5, §7, §11.7): the identical real scrollbar-thumb
-            // drag mechanism above, for `VirtualList` -- `PointerPressed`
-            // 's own dispatch arm only ever sets `self.dragging = Some
-            // (list)` after a real `grabs_virtual_list_thumb` check
-            // already passed, the same "only start a drag on a genuine
-            // grab" contract `ScrollView`/`Splitter`/`Slider`/`Carousel`
-            // already establish.
             NodeKind::VirtualList(_) => self.update_virtual_list_thumb_drag(dragging, point),
-            // M39 Phase 2 Step 2 (§5, §7): a real angle-based drag,
-            // genuinely distinct from every other real drag primitive
-            // above -- none of `Splitter`/`Slider`/`Carousel`/
-            // `ScrollView` convert a pointer position through an
-            // `atan2` at all (confirmed by direct grep before writing
-            // this), so this is real, new math, not a reuse of any
-            // existing helper.
-            NodeKind::TimePickerDial(_) => self.update_time_picker_dial_drag(dragging, point),
             _ => {}
         }
-    }
-
-    fn update_splitter_drag(&mut self, splitter: NodeId, point: Point, now: Instant) {
-        let (left, _right, is_row, total) = self.splitter_geometry(splitter);
-        if total <= 0.0 {
-            return;
-        }
-        let (left_x, left_y) = self.absolute_position(left);
-        let coord = if is_row { point.x } else { point.y };
-        let start = if is_row { left_x } else { left_y };
-        let fraction = ((coord - start) / total).clamp(0.0, 1.0);
-        self.set_splitter_position(splitter, fraction, now);
-    }
-
-    /// M14 Phase 2 (§7.3): the slider's own real, live-follows-the-
-    /// cursor drag math -- the node's own real absolute x and current
-    /// computed width are the whole track, no flanking siblings
-    /// involved. A no-op if the slider has zero real width (nothing to
-    /// divide a fraction of, the same guard `update_splitter_drag`
-    /// already has for zero combined sibling extent).
-    fn update_slider_drag(&mut self, slider: NodeId, point: Point, now: Instant) {
-        let (x, _y) = self.absolute_position(slider);
-        let width = f64::from(self.layout(slider).size.width);
-        if width <= 0.0 {
-            return;
-        }
-        let fraction = ((point.x - x) / width).clamp(0.0, 1.0);
-        self.set_slider_position(slider, fraction, now);
-    }
-
-    /// M39 Phase 2 Step 2 (§5, §7): the dial's own real drag math --
-    /// converts `point` (already the drag's own absolute canvas-space
-    /// position, the same convention every other `update_*_drag`
-    /// above already uses) into an angle from the node's own real box
-    /// center, then into whichever hand `mode` currently selects. A
-    /// no-op if the box has zero real area (nothing to compute a
-    /// center of, the same zero-extent guard `update_splitter_drag`/
-    /// `update_slider_drag` already establish for their own axes).
-    ///
-    /// Real angle convention, byte-for-byte `CircularProgress`'s own
-    /// paint-time convention (`engine-render`'s `NodeKind::
-    /// CircularProgress` arm): 12 o'clock is the real zero point
-    /// (`-PI/2` in `atan2`'s own standard "0 = 3 o'clock" convention),
-    /// sweeping clockwise. Screen-space `y` grows downward, so a plain
-    /// `atan2(dy, dx)` already increases clockwise as drawn -- no sign
-    /// flip needed, confirmed by hand-tracing `atan2` at each of the 4
-    /// cardinal points against where they render on screen.
-    fn update_time_picker_dial_drag(&mut self, dial: NodeId, point: Point) {
-        let (x, y) = self.absolute_position(dial);
-        let layout = self.layout(dial);
-        let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
-        if w <= 0.0 || h <= 0.0 {
-            return;
-        }
-        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
-        let (dx, dy) = (point.x - cx, point.y - cy);
-        let raw_angle = dy.atan2(dx);
-        // Rotate so 12 o'clock (`-PI/2` in `atan2`'s own convention)
-        // becomes the real zero point, then wrap into `0.0..TAU` --
-        // `rem_euclid` (not plain `%`) is what makes this a genuine
-        // wrap rather than leaving a real negative remainder for an
-        // angle just counter-clockwise of 12.
-        let angle = (raw_angle + std::f64::consts::FRAC_PI_2).rem_euclid(std::f64::consts::TAU);
-        let fraction = angle / std::f64::consts::TAU;
-
-        let NodeKind::TimePickerDial(state) = &mut self.nodes[dial].kind else {
-            unreachable!("checked by update_drag's own match arm")
-        };
-        match state.mode {
-            TimePickerDialMode::Hour => {
-                // 12 real positions around the face; `round() % 12`
-                // turns a full `0.0..1.0` sweep into `0..=11`, where
-                // `0` means "straight up" -- real MD3's own `12`
-                // position, not `0` o'clock. AM/PM is preserved from
-                // whichever half of the day `hour` was already in
-                // (this widget has no AM/PM toggle of its own -- see
-                // `TimePickerDialState`'s own doc comment).
-                let hour_12 = ((fraction * 12.0).round() as u32) % 12;
-                let period = if state.hour >= 12 { 12 } else { 0 };
-                state.hour = (hour_12 + period) as u8;
-            }
-            TimePickerDialMode::Minute => {
-                // 60 real positions, snapped to the nearest real
-                // 5-minute increment (`TimePickerDialState::minute`'s
-                // own doc comment states this is deliberate, not a
-                // missing feature).
-                let raw_minute = (fraction * 60.0).round() as u32 % 60;
-                let snapped = ((raw_minute + 2) / 5 * 5) % 60;
-                state.minute = snapped as u8;
-            }
-        }
-        self.dirty = true;
     }
 
     /// §14 step 15 (§11.7): materializes/recycles a `NodeKind::
@@ -2548,29 +1887,6 @@ impl Tree {
         state.resolved_offsets.extend(offsets);
     }
 
-    /// The central tick's per-`Tree` entry point (§5): ticks every
-    /// node's `PaintProperties` and (§14 step 9) its `InteractionState`
-    /// if it has one, returning `true` if any is still mid-animation. A
-    /// naive whole-tree walk, not the "active set only" scoped version
-    /// §5 describes -- see `PaintProperties::tick` for why that scoping
-    /// is deliberately deferred past this step.
-    /// M9 Phase 1 (§5): also returns the real set of `CompletionHandle`s
-    /// that finished on exactly this tick, across every node -- one
-    /// shared `Vec` threaded through the whole walk (`PaintProperties::
-    /// tick`/`InteractionState::tick`'s own `completed` parameter),
-    /// not a per-node allocation. `engine-py`'s own per-frame render
-    /// loop is what actually drains this and invokes a real Python
-    /// callback for each one (M9 Phase 2) -- this method itself stays
-    /// pyo3-agnostic, just plumbing the real data out.
-    /// M39 Phase 2 (§5, §7): MD3 Expressive's own real, cited "650ms
-    /// per shape cycle" timing (a real open-source port's own README,
-    /// quoted directly -- the M3 spec page itself carries no fetchable
-    /// static value) -- kept even though the physics model itself was
-    /// simplified to plain easing (scoped via `AskUserQuestion`), the
-    /// real cited number is still the honest, grounded choice over an
-    /// arbitrary one.
-    const LOADING_INDICATOR_SHAPE_DURATION: Duration = Duration::from_millis(650);
-
     pub fn tick_all(&mut self, now: Instant) -> (bool, Vec<CompletionHandle>) {
         let mut any_active = false;
         let mut completed = Vec::new();
@@ -2578,92 +1894,8 @@ impl Tree {
             if node.paint.tick(now, &mut completed) {
                 any_active = true;
             }
-            // M39 Phase 2 (§5, §7): a real `LoadingIndicator`'s own
-            // perpetual shape loop -- `node.paint.shape` was already
-            // ticked just above; if it's not currently mid-animation
-            // (either the very first real tick, or a real transition
-            // that genuinely just settled this tick -- `Animated::
-            // tick`'s own real implementation sets `active = None` in
-            // both the "never started" and "just completed" cases,
-            // confirmed by direct read), retarget it to the next real
-            // shape in the cycle, wrapping back to the first after the
-            // last. No app-side wiring needed at all -- see `Loading
-            // IndicatorState`'s own doc comment for the full real
-            // design.
-            if let NodeKind::LoadingIndicator(state) = &mut node.kind
-                && node.paint.shape.active.is_none()
-                && !state.shapes.is_empty()
-            {
-                state.current_shape = (state.current_shape + 1) % state.shapes.len();
-                let next = state.shapes[state.current_shape].clone();
-                node.paint.shape.animate_to(
-                    next,
-                    Self::LOADING_INDICATOR_SHAPE_DURATION,
-                    MotionCurve::Linear,
-                    now,
-                );
-                any_active = true;
-            }
             if let Some(interaction) = &mut node.interaction
                 && interaction.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            // M14 Phase 1 (§7.3): `check_progress` is meant to animate
-            // toward a real target once the app sets `checked` (unlike
-            // `SplitterState.position`/`VirtualListState.scroll_offset`,
-            // driven directly, never eased -- confirmed by direct read
-            // this loop never touched kind-specific payloads before this
-            // phase), so it needs the same central ticking `node.paint`
-            // already gets, not a second, separate mechanism.
-            if let NodeKind::Checkbox(state) = &mut node.kind
-                && state.check_progress.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            // M14 Phase 2 (§7.3): real finding while designing this --
-            // `thumb_position` is *also* exposed to `Node.animate()`
-            // (unlike `SplitterState.position`, never exposed there at
-            // all), so a real, app-triggered eased move (not a drag)
-            // needs this same central ticking, or a nonzero-duration
-            // `animate()` call would set an active animation that never
-            // progresses. The drag path itself already ticks manually
-            // (`set_slider_position`'s own `Duration::ZERO` + immediate
-            // tick), so this is a true no-op for that path -- `tick`
-            // returns `false` immediately once `self.active` is `None`.
-            if let NodeKind::Slider(state) = &mut node.kind
-                && state.thumb_position.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            // M30 Phase 2 Step 1 (§7.3): `check_progress`'s own real
-            // central-ticking need, mirrored for `select_progress` --
-            // the identical real reason `Checkbox` needed this above:
-            // without it, a real `Node.animate("select_progress", ...)`
-            // call would set an active animation that silently never
-            // progresses.
-            if let NodeKind::RadioButton(state) = &mut node.kind
-                && state.select_progress.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            // M30 Phase 2 Step 2 (§7.3): the identical real central-
-            // ticking need, mirrored a third time for `toggle_progress`.
-            if let NodeKind::Switch(state) = &mut node.kind
-                && state.toggle_progress.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            // M30 Phase 3 Step 2 (§7.3): `thumb_position`'s own real
-            // central-ticking need, mirrored for both real progress
-            // indicators' own `value`.
-            if let NodeKind::LinearProgress(state) = &mut node.kind
-                && state.value.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            if let NodeKind::CircularProgress(state) = &mut node.kind
-                && state.value.tick(now, &mut completed)
             {
                 any_active = true;
             }
@@ -2678,13 +1910,6 @@ impl Tree {
             {
                 any_active = true;
             }
-            if let NodeKind::Icon(state) = &mut node.kind {
-                let rotating = state.rotation.tick(now, &mut completed);
-                let tinting = state.tint.tick(now, &mut completed);
-                if rotating || tinting {
-                    any_active = true;
-                }
-            }
             // M96: a text input's animatable `fill` (its text color), and
             // a scroll view's animatable `scroll_offset`.
             if let NodeKind::TextField(state) = &mut node.kind
@@ -2694,20 +1919,6 @@ impl Tree {
             }
             if let NodeKind::ScrollView(state) = &mut node.kind
                 && state.scroll.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            // M30 Phase 9 Step 5 (§5, §7, §11.7): `CarouselState.
-            // position`'s own real central-ticking need -- unlike
-            // `SplitterState.position`/`VirtualListState.scroll_offset`
-            // (driven directly, never eased), `Tree::set_carousel_
-            // index` starts a real `animate_to` snap the same way
-            // `SliderState.thumb_position`'s own app-triggered eased
-            // move does (M14 Phase 2's own identical real finding),
-            // so without this it would set an active animation that
-            // silently never progresses.
-            if let NodeKind::Carousel(state) = &mut node.kind
-                && state.position.tick(now, &mut completed)
             {
                 any_active = true;
             }
@@ -2758,34 +1969,6 @@ impl Tree {
         for node in self.nodes.values_mut() {
             if let Some(interaction) = node.interaction.as_mut() {
                 interaction.tint = tint;
-            }
-        }
-    }
-
-    /// M20 Phase 1 (§7.1, §7.3): `set_all_interaction_tints`'s own real
-    /// sibling for a genuinely different kind of field -- `mark_tint`/
-    /// `track_tint` live directly on `CheckboxState`/`SliderState`
-    /// (every real instance always has one), not on the optional
-    /// `InteractionState` every node may or may not opt into. A
-    /// separate method, not a widened `set_all_interaction_tints`,
-    /// keeps that already-tested method's own real, documented
-    /// behavior (touches only `node.interaction`) unchanged, matching
-    /// this codebase's own "distinct real behaviors, distinct methods"
-    /// precedent (`set_text_field_cursor`/`extend_text_field_
-    /// selection`). No opt-in gate, unlike `set_all_interaction_
-    /// tints`: every matching node unconditionally gets the real
-    /// resolved color, since these fields aren't an optional
-    /// capability to begin with.
-    pub fn set_all_component_tints(&mut self, tint: peniko::Color) {
-        self.dirty = true;
-        for node in self.nodes.values_mut() {
-            match &mut node.kind {
-                NodeKind::Checkbox(state) => state.mark_tint = tint,
-                NodeKind::Slider(state) => state.track_tint = tint,
-                // M20 Phase 2 (§7.1, §7.3): `TextField`'s own real
-                // sibling, closing the milestone's own real mechanism.
-                NodeKind::TextField(state) => state.text_tint = Animated::new(tint),
-                _ => {}
             }
         }
     }
@@ -2961,19 +2144,6 @@ impl Tree {
                 // `NodeKind`" precedent `Checkbox`/`Slider`/`TextField`
                 // already establish, not a handler bolted onto bare `Text`.
                 NodeKind::Text(_) => false,
-                // M30 Phase 1 (§5, §7): the identical real reasoning as
-                // `NodeKind::Text` above, applied to `Icon` for the same
-                // real reason -- `Icon Button`'s own anatomy (Step 2) is a
-                // `Rect` container with a centered `Icon` child, and that
-                // child's own box sits squarely inside the container's
-                // clickable area exactly the way `Button`'s label did.
-                // Confirmed via grep before this arm existed: `demo/
-                // showcase.py`'s only `add_icon` usage (its icon gallery)
-                // is purely decorative -- never `enable_interaction`/`set_
-                // on_click` on the icon node itself -- so nothing real
-                // relies on a standalone icon being independently
-                // clickable today.
-                NodeKind::Icon(_) => false,
                 _ => rect_contains(layout, local_point),
             }
         };
@@ -3657,46 +2827,6 @@ impl Tree {
         }
     }
 
-    /// M24 Phase 1 (§10): ARCHITECTURE.md's own real, explicitly-
-    /// deferred gap ("a slider's arrow-key increments... deferred to
-    /// per-component design... exactly when each such component is
-    /// actually built") -- `Slider` landed at M14, this closes it.
-    /// `ArrowLeft`/`ArrowRight` only (WCAG's own baseline "operate the
-    /// value via keyboard" pair every mainstream desktop slider
-    /// already supports) -- `None` for any other key, the identical
-    /// "not mine to handle" contract `dispatch_text_field_key` already
-    /// established, so `Tab`/`Enter`/`Escape` still fall through to
-    /// the generic `match key` for a focused slider too. Reuses
-    /// `set_slider_position` verbatim for the real clamp + immediate
-    /// `Duration::ZERO` tick a mouse drag already gets -- the same
-    /// "live-follows" semantics, not a second mechanism -- and returns
-    /// `Changed`, the identical outcome a real drag-release already
-    /// produces, so any caller already reacting to that (e.g. a
-    /// two-way `bindings: {value: ...}` write-back) picks up an
-    /// arrow-key nudge for free.
-    fn dispatch_slider_key(
-        &mut self,
-        id: NodeId,
-        key: Key,
-        now: Instant,
-    ) -> Option<DispatchOutcome> {
-        const STEP: f64 = 0.05;
-        let NodeKind::Slider(state) = &self.nodes[id].kind else {
-            return None;
-        };
-        let old_value = state.thumb_position.current;
-        let target = match key {
-            Key::ArrowLeft => old_value - STEP,
-            Key::ArrowRight => old_value + STEP,
-            _ => return None,
-        };
-        self.set_slider_position(id, target, now);
-        Some(DispatchOutcome::Changed {
-            node: id,
-            old_value: ChangedValue::Number(old_value),
-        })
-    }
-
     /// M15 Phase 3 (§16.7): deletes a real, active selection (`anchor
     /// != cursor`) and leaves `cursor` at the deleted range's own
     /// start -- returns `true` if it did, `false` (a true no-op) if no
@@ -4242,74 +3372,6 @@ impl Tree {
                 }
                 if let Some(node) = hit {
                     self.set_pressed(Some((button, node)), config.hover_duration, now);
-                    // M4 Phase 3 (§11.5), widened M14 Phase 2 (§7.3),
-                    // widened M39 Phase 2 Step 2 (§5, §7): pressing a
-                    // splitter, a slider, or a time picker dial with
-                    // the primary button starts a real drag -- reuses
-                    // this same hit-test result, not a second one. The
-                    // dial's own whole bounding box is the hit region
-                    // (the plain `rect_contains` default already used
-                    // here for everything else), a real, stated v1
-                    // simplification -- see `TimePickerDialState`'s
-                    // own doc comment.
-                    if button == PointerButton::Primary {
-                        // M54 Phase 1 (§8, §16.2): snapshotted *before*
-                        // `self.dragging = Some(node)` below -- the real
-                        // pre-drag value, read once here since a drag
-                        // continuously overwrites it as the pointer
-                        // moves, and consumed at drag-end (below) to
-                        // build `DispatchOutcome::Changed`'s own
-                        // `old_value`. `Splitter` sets no value at all
-                        // (it never produces a real `Changed` outcome).
-                        match self.nodes.get(node).map(|n| &n.kind) {
-                            Some(NodeKind::Slider(state)) => {
-                                self.drag_start_value =
-                                    Some(ChangedValue::Number(state.thumb_position.current));
-                                self.dragging = Some(node);
-                            }
-                            Some(NodeKind::TimePickerDial(state)) => {
-                                self.drag_start_value = Some(ChangedValue::Time {
-                                    hour: state.hour,
-                                    minute: state.minute,
-                                });
-                                self.dragging = Some(node);
-                            }
-                            Some(NodeKind::Splitter(_)) => {
-                                self.dragging = Some(node);
-                            }
-                            _ => {}
-                        }
-                    }
-                    // M30 Phase 9 Step 5 (§5, §7, §11.7): a real
-                    // carousel's own drag-to-scroll must start no
-                    // matter which real item within it was actually
-                    // hit (pyCopper's own real `on_pointer_down` is
-                    // bound to the whole strip, not each item
-                    // individually) -- unlike `Splitter`/`Slider`
-                    // above, which only ever *are* the hit node, so
-                    // this walks up `node`'s own real parent chain to
-                    // find the nearest `NodeKind::Carousel` ancestor,
-                    // the identical real "a scroll gesture can land on
-                    // any materialized child" walk `InputEvent::
-                    // Scroll`'s own dispatch arm already does for
-                    // `VirtualList` (M8 Phase 3). `self.pressed` above
-                    // still records the literal hit (so a real item's
-                    // own click handler keeps working); `self.dragging`
-                    // is a separate field, so the two never conflict.
-                    if button == PointerButton::Primary {
-                        let mut current = Some(node);
-                        while let Some(id) = current {
-                            if matches!(self.nodes[id].kind, NodeKind::Carousel(_)) {
-                                self.dragging = Some(id);
-                                if let NodeKind::Carousel(state) = &mut self.nodes[id].kind {
-                                    state.drag_last_x = Some(position.x);
-                                    state.drag_accum = 0.0;
-                                }
-                                break;
-                            }
-                            current = self.nodes[id].parent;
-                        }
-                    }
                     // M18 Phase 1 (§8, §10): a real click-to-focus,
                     // scoped specifically to `TextField` -- before this,
                     // `PointerPressed` never touched `self.focused` at
@@ -4421,60 +3483,13 @@ impl Tree {
                 };
                 self.set_pressed(None, config.hover_duration, now);
 
-                // M14 Phase 3 (§16.7), widened M39 Phase 2 Step 2 (§5,
-                // §7): a real `Slider`/`TimePickerDial` drag genuinely
-                // ending is this node's own real, meaningful edit --
-                // takes priority over the ordinary same-node-press-
-                // release `Activated`/`SecondaryActivated` logic above
-                // (a slider's/dial's own real interaction is its value
-                // settling, not a click). Checked *before* `self.
-                // dragging` is cleared below.
-                let outcome = if button == PointerButton::Primary
-                    && matches!(
-                        self.dragging.map(|id| &self.nodes[id].kind),
-                        Some(NodeKind::Slider(_)) | Some(NodeKind::TimePickerDial(_))
-                    ) {
-                    DispatchOutcome::Changed {
-                        node: self.dragging.expect("checked by matches! above"),
-                        // M54 Phase 1: the real pre-drag value, snapshotted
-                        // at drag-start (`drag_start_value`) -- `expect`
-                        // is safe here since every real path that sets
-                        // `dragging` to a `Slider`/`TimePickerDial` also
-                        // sets this in the same branch (see the drag-
-                        // start site above).
-                        old_value: self.drag_start_value.clone().expect(
-                            "Slider/TimePickerDial drag-start always sets drag_start_value",
-                        ),
-                    }
-                } else {
-                    outcome
-                };
-
                 // M4 Phase 3 (§11.5): a real mouse-up always ends a
                 // drag, wherever it happens -- not conditioned on still
-                // hitting the splitter (the pointer can leave a thin
-                // splitter's own hit region mid-drag and the drag must
-                // still track it until release, matching real OS drag
-                // semantics).
+                // hitting the thumb, matching real OS drag semantics.
                 if button == PointerButton::Primary {
-                    // M30 Phase 9 Step 5 (§5, §7, §11.7): a real
-                    // carousel's own drag bookkeeping is genuinely per-
-                    // gesture (`drag_last_x`/`drag_accum`) -- mirrors
-                    // pyCopper's own real `on_pointer_up`, which clears
-                    // the identical two fields. Checked before `self.
-                    // dragging` is cleared below, the same ordering
-                    // `Slider`'s own real drag-end check above uses.
-                    if let Some(dragging) = self.dragging
-                        && let NodeKind::Carousel(state) = &mut self.nodes[dragging].kind
-                    {
-                        state.drag_last_x = None;
-                        state.drag_accum = 0.0;
-                    }
                     // M38 Phase 6 (§5, §7, §11.7): a real scrollbar
                     // thumb's own drag bookkeeping is genuinely per-
-                    // gesture too, the identical real shape `Carousel`'s
-                    // own `drag_last_x`/`drag_accum` clearing just above
-                    // establishes -- mirrors pyCopper's own real `on_
+                    // gesture -- mirrors pyCopper's own real `on_
                     // pointer_up`, which pops the identical `drag_from`/
                     // `drag_scroll` state.
                     if let Some(dragging) = self.dragging
@@ -4483,7 +3498,6 @@ impl Tree {
                         state.thumb_drag_anchor = None;
                     }
                     self.dragging = None;
-                    self.drag_start_value = None;
                 }
                 outcome
             }
@@ -4522,21 +3536,6 @@ impl Tree {
                     // caret hasn't moved, so there's nothing to scroll
                     // to).
                     self.scroll_text_field_caret_into_view(field);
-                    return outcome;
-                }
-                // M24 Phase 1 (§10): a focused `Slider`'s own real
-                // ArrowLeft/ArrowRight increment -- the identical
-                // "first refusal, `None` means not mine" contract
-                // `dispatch_text_field_key` above already established,
-                // so `Tab`/`Enter`/`Escape` still fall through to the
-                // generic `match key` below for a focused slider too.
-                if let Some(node) = self.focused
-                    && matches!(
-                        self.nodes.get(node).map(|n| &n.kind),
-                        Some(NodeKind::Slider(_))
-                    )
-                    && let Some(outcome) = self.dispatch_slider_key(node, key, now)
-                {
                     return outcome;
                 }
                 match key {
@@ -4673,27 +3672,13 @@ impl Tree {
                             self.scroll_virtual_list_by(id, delta_y);
                             break;
                         }
-                        // M30 Phase 9 Step 5 (§5, §7, §11.7): widens
-                        // this same real "walk up to the nearest
-                        // scrollable ancestor" mechanism to `Carousel`
-                        // -- a real wheel notch over any item bubbles
-                        // to its own carousel exactly the way one over
-                        // a `VirtualList` row already bubbles above.
-                        if matches!(node.kind, NodeKind::Carousel(_)) {
-                            let (delta_x, delta_y) = match delta {
-                                ScrollDelta::Lines(x, y) => (x * 20.0, y * 20.0),
-                                ScrollDelta::Pixels(x, y) => (x, y),
-                            };
-                            self.carousel_on_wheel(id, delta_x, delta_y, now);
-                            break;
-                        }
                         // M36 Phase 1 (§5, §7, §11.7): the identical
                         // real "walk up to the nearest scrollable
                         // ancestor" widening, a third time, for a real
                         // general `ScrollView` -- a wheel notch over
                         // any of its scrolled content bubbles to it
                         // exactly the way one over a `VirtualList` row
-                        // or a `Carousel` item already does above.
+                        // already does above.
                         if let NodeKind::ScrollView(state) = &node.kind {
                             let delta_along = match delta {
                                 ScrollDelta::Lines(x, y) => {
@@ -4895,29 +3880,6 @@ impl Tree {
         if node.access.states.disabled {
             access_node.set_disabled();
         }
-        // M14 Phase 1 (§7.3): the real, automatic derivation
-        // ARCHITECTURE.md already promised -- "a well-known field name
-        // on a NodeKind payload... derives its corresponding
-        // AccessStates flag... the app sets one property and the
-        // accessibility tree stays correct for free." Reads `checked`
-        // directly from `NodeKind::Checkbox` -- deliberately not
-        // mirrored into a second `AccessStates` field first, which
-        // would just be two copies of the same fact that could drift.
-        if let NodeKind::Checkbox(state) = &node.kind {
-            access_node.set_toggled(state.checked.into());
-        }
-        // M30 Phase 2 Step 1: the identical real, automatic derivation,
-        // mirrored for `RadioButton` -- `selected` is the one real
-        // source of truth, same as `checked` above.
-        if let NodeKind::RadioButton(state) = &node.kind {
-            access_node.set_toggled(state.selected.into());
-        }
-        // M30 Phase 2 Step 2: the identical real, automatic derivation,
-        // mirrored a third time for `Switch` -- `on` is the one real
-        // source of truth.
-        if let NodeKind::Switch(state) = &node.kind {
-            access_node.set_toggled(state.on.into());
-        }
         // M15 Phase 1 (§5, §16.7): the same real, automatic derivation
         // -- `content` is the one real source of truth, never mirrored
         // into a second copy here.
@@ -5021,8 +3983,7 @@ pub fn node_id_as_u64(id: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::animation::Animated;
-    use crate::node::{LoadingIndicatorState, ScrollViewState, TextAlign, TextState};
+    use crate::node::ScrollViewState;
     use peniko::Color;
     use taffy::prelude::{FlexDirection, length};
 
@@ -6636,1150 +5597,6 @@ mod tests {
             Some((PointerButton::Primary, submenu)),
             "the press must reach the submenu's own content, not be swallowed by a wrongful \
              dismissal of the parent menu"
-        );
-    }
-
-    #[test]
-    fn set_splitter_position_resizes_both_flanking_siblings() {
-        let mut tree = Tree::new();
-        let root_style = Style {
-            display: taffy::Display::Flex,
-            flex_direction: FlexDirection::Row,
-            size: Size {
-                width: length(210.0),
-                height: length(50.0),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
-        let (k, s, p) = leaf(100.0, 50.0);
-        let left = tree.insert(k, s, p);
-        tree.add_child(root, left);
-
-        let splitter = tree.insert(
-            NodeKind::Splitter(crate::node::SplitterState {
-                position: crate::animation::Animated::new(0.5),
-            }),
-            Style {
-                size: Size {
-                    width: length(10.0),
-                    height: length(50.0),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(root, splitter);
-
-        let (k, s, p) = leaf(100.0, 50.0);
-        let right = tree.insert(k, s, p);
-        tree.add_child(root, right);
-
-        let available = Size {
-            width: AvailableSpace::Definite(210.0),
-            height: AvailableSpace::Definite(50.0),
-        };
-        tree.compute_layout(root, available);
-        assert_eq!(tree.layout(left).size.width, 100.0);
-        assert_eq!(tree.layout(right).size.width, 100.0);
-
-        let now = Instant::now();
-        tree.set_splitter_position(splitter, 0.75, now);
-        tree.compute_layout(root, available);
-
-        assert_eq!(
-            tree.layout(left).size.width,
-            150.0,
-            "the left pane should now hold 75% of the 200px the two panes share"
-        );
-        assert_eq!(
-            tree.layout(right).size.width,
-            50.0,
-            "the right pane should hold the remaining 25%"
-        );
-        assert_eq!(
-            tree.layout(right).location.x,
-            160.0,
-            "the right pane must actually have moved -- 150 (left) + 10 (splitter)"
-        );
-
-        let NodeKind::Splitter(state) = &tree.get(splitter).unwrap().kind else {
-            panic!("expected a Splitter node");
-        };
-        assert_eq!(
-            state.position.current, 0.75,
-            "the splitter's own position must reflect the new value immediately, \
-             not just the two siblings' sizes"
-        );
-    }
-
-    /// A 210x50 root, `Row`: left pane [0,100), splitter [100,110),
-    /// right pane [110,210) -- the same real geometry `set_splitter_
-    /// position_resizes_both_flanking_siblings` already uses, factored
-    /// out once `dispatch`'s own drag tests needed it too.
-    fn splitter_scene() -> (Tree, NodeId, NodeId, NodeId, NodeId, Size<AvailableSpace>) {
-        let mut tree = Tree::new();
-        let root_style = Style {
-            display: taffy::Display::Flex,
-            flex_direction: FlexDirection::Row,
-            size: Size {
-                width: length(210.0),
-                height: length(50.0),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
-        let (k, s, p) = leaf(100.0, 50.0);
-        let left = tree.insert(k, s, p);
-        tree.add_child(root, left);
-
-        let splitter = tree.insert(
-            NodeKind::Splitter(crate::node::SplitterState {
-                position: crate::animation::Animated::new(0.5),
-            }),
-            Style {
-                size: Size {
-                    width: length(10.0),
-                    height: length(50.0),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(root, splitter);
-
-        let (k, s, p) = leaf(100.0, 50.0);
-        let right = tree.insert(k, s, p);
-        tree.add_child(root, right);
-
-        let available = Size {
-            width: AvailableSpace::Definite(210.0),
-            height: AvailableSpace::Definite(50.0),
-        };
-        tree.compute_layout(root, available);
-        (tree, root, left, splitter, right, available)
-    }
-
-    #[test]
-    fn dispatch_drag_on_a_splitter_resizes_flanking_siblings_live_as_the_pointer_moves() {
-        let (mut tree, root, left, _splitter, right, available) = splitter_scene();
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        // Press on the splitter itself (x=105, inside [100,110)).
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(105.0, 25.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-
-        // Drag to x=130: fraction = 130/200 = 0.65 of the shared 200px.
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(130.0, 25.0),
-            },
-            &config,
-            now,
-        );
-        tree.compute_layout(root, available);
-        assert_eq!(
-            tree.layout(left).size.width,
-            130.0,
-            "the left pane must live-follow the cursor to its first drag position"
-        );
-
-        // Keep dragging, to x=160: fraction = 160/200 = 0.8 -- proves
-        // this isn't a one-shot snap, the pane keeps following.
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(160.0, 25.0),
-            },
-            &config,
-            now,
-        );
-        tree.compute_layout(root, available);
-        assert_eq!(
-            tree.layout(left).size.width,
-            160.0,
-            "the left pane must keep following a second drag position, not just the first"
-        );
-        assert_eq!(tree.layout(right).size.width, 40.0);
-    }
-
-    #[test]
-    fn dispatch_release_ends_the_drag_so_further_pointer_moves_dont_resize() {
-        let (mut tree, root, left, _splitter, _right, available) = splitter_scene();
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(105.0, 25.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(130.0, 25.0),
-            },
-            &config,
-            now,
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: Point::new(130.0, 25.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        tree.compute_layout(root, available);
-        let width_after_release = tree.layout(left).size.width;
-
-        // A further pointer move, with no press held, must not keep
-        // resizing the pane -- the drag genuinely ended at release.
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(180.0, 25.0),
-            },
-            &config,
-            now,
-        );
-        tree.compute_layout(root, available);
-        assert_eq!(
-            tree.layout(left).size.width,
-            width_after_release,
-            "a pointer move after release must not still be tracked as a drag"
-        );
-    }
-
-    /// M14 Phase 2 (§5, §7.3): a real `Slider` scene -- a real, definite
-    /// width/height it drags along, mirroring `splitter_scene`'s own
-    /// real-geometry shape (no `Style::default()` auto-sizing, which
-    /// gives `update_slider_drag` nothing real to divide a fraction of).
-    fn slider_scene() -> (Tree, NodeId, NodeId, Size<AvailableSpace>) {
-        let mut tree = Tree::new();
-        let root_style = Style {
-            size: Size {
-                width: length(200.0),
-                height: length(20.0),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
-        let slider = tree.insert(
-            NodeKind::Slider(SliderState::new(0.0)),
-            Style {
-                size: Size {
-                    width: length(200.0),
-                    height: length(20.0),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0x63, 0x50, 0xA4, 0xFF), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(root, slider);
-
-        let available = Size {
-            width: AvailableSpace::Definite(200.0),
-            height: AvailableSpace::Definite(20.0),
-        };
-        tree.compute_layout(root, available);
-        (tree, root, slider, available)
-    }
-
-    #[test]
-    fn dispatch_drag_on_a_slider_moves_thumb_position_live_as_the_pointer_moves() {
-        let (mut tree, root, slider, _available) = slider_scene();
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        // Press anywhere on the slider (x=50, well inside [0,200)).
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(50.0, 10.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-
-        // Drag to x=100: fraction = 100/200 = 0.5.
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(100.0, 10.0),
-            },
-            &config,
-            now,
-        );
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert_eq!(
-            state.thumb_position.current, 0.5,
-            "the thumb must live-follow the cursor to its first drag position"
-        );
-
-        // Keep dragging, to x=170: fraction = 170/200 = 0.85 -- proves
-        // this isn't a one-shot snap, the thumb keeps following.
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(170.0, 10.0),
-            },
-            &config,
-            now,
-        );
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert_eq!(state.thumb_position.current, 0.85);
-    }
-
-    #[test]
-    fn dispatch_a_slider_drag_clamps_to_the_real_0_to_1_range() {
-        let (mut tree, root, slider, _available) = slider_scene();
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(50.0, 10.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        // Well past the slider's own right edge.
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(10_000.0, 10.0),
-            },
-            &config,
-            now,
-        );
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert_eq!(
-            state.thumb_position.current, 1.0,
-            "must clamp to 1.0, not overshoot"
-        );
-
-        // Well past the left edge, including negative.
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(-500.0, 10.0),
-            },
-            &config,
-            now,
-        );
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert_eq!(
-            state.thumb_position.current, 0.0,
-            "must clamp to 0.0, not go negative"
-        );
-    }
-
-    #[test]
-    fn dispatch_release_ends_a_slider_drag_so_further_pointer_moves_dont_move_it() {
-        let (mut tree, root, slider, _available) = slider_scene();
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(50.0, 10.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(100.0, 10.0),
-            },
-            &config,
-            now,
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: Point::new(100.0, 10.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        let position_after_release = state.thumb_position.current;
-
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(180.0, 10.0),
-            },
-            &config,
-            now,
-        );
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert_eq!(
-            state.thumb_position.current, position_after_release,
-            "a pointer move after release must not still be tracked as a drag"
-        );
-    }
-
-    /// M14 Phase 3 (§16.7): the real, mechanical half of a slider's own
-    /// `Change` -- `Tree::dispatch` itself must produce `DispatchOutcome
-    /// ::Changed(slider)` on the real release that ends a real drag, the
-    /// same "engine-core only knows THAT it happened" contract
-    /// `Activated`/`HoverChanged` already have.
-    #[test]
-    fn dispatch_release_ending_a_real_slider_drag_produces_changed() {
-        let (mut tree, root, slider, _available) = slider_scene();
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(50.0, 10.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(100.0, 10.0),
-            },
-            &config,
-            now,
-        );
-        let outcome = tree.dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: Point::new(100.0, 10.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        assert_eq!(
-            outcome,
-            DispatchOutcome::Changed {
-                node: slider,
-                old_value: ChangedValue::Number(0.0),
-            },
-            "a real release ending a real slider drag must produce Changed(slider) with the \
-             real pre-drag value (0.0, from SliderState::new(0.0)), not Activated or None"
-        );
-    }
-
-    /// M14 Phase 3 (§16.7): a release with *no* drag in progress (a
-    /// plain click elsewhere, or a release on a real `Slider` that was
-    /// never actually pressed to start a drag) must never produce a
-    /// spurious `Changed` -- the same "no real mechanical fact, no
-    /// outcome" contract every other `DispatchOutcome` variant already
-    /// has.
-    #[test]
-    fn dispatch_release_with_no_slider_drag_in_progress_never_produces_changed() {
-        let (mut tree, root, _slider, _available) = slider_scene();
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        let outcome = tree.dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: Point::new(500.0, 500.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        assert_eq!(outcome, DispatchOutcome::None);
-    }
-
-    /// M39 Phase 2 Step 2 (§5, §7): `slider_scene`'s own real shape,
-    /// mirrored for a 200x200 `TimePickerDial` -- a square box so its
-    /// own real center (`(100.0, 100.0)`) is trivial to reason about
-    /// by hand for every drag test below.
-    fn time_picker_dial_scene() -> (Tree, NodeId, NodeId) {
-        let mut tree = Tree::new();
-        let root_style = Style {
-            size: Size {
-                width: length(200.0),
-                height: length(200.0),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
-        let dial = tree.insert(
-            NodeKind::TimePickerDial(TimePickerDialState::new(0, 0)),
-            Style {
-                size: Size {
-                    width: length(200.0),
-                    height: length(200.0),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0x63, 0x50, 0xA4, 0xFF), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(root, dial);
-
-        let available = Size {
-            width: AvailableSpace::Definite(200.0),
-            height: AvailableSpace::Definite(200.0),
-        };
-        tree.compute_layout(root, available);
-        (tree, root, dial)
-    }
-
-    #[test]
-    fn time_picker_dial_state_new_clamps_out_of_range_hour_and_minute() {
-        let state = TimePickerDialState::new(25, 65);
-        assert_eq!(state.hour, 23);
-        assert_eq!(state.minute, 59);
-    }
-
-    #[test]
-    fn set_time_picker_dial_time_clamps_out_of_range_values_and_marks_the_tree_dirty() {
-        let (mut tree, _root, dial) = time_picker_dial_scene();
-        tree.dirty = false;
-        tree.set_time_picker_dial_time(dial, 30, 90);
-        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
-            panic!("expected a TimePickerDial");
-        };
-        assert_eq!(state.hour, 23);
-        assert_eq!(state.minute, 59);
-        assert!(tree.dirty);
-    }
-
-    #[test]
-    fn set_time_picker_dial_mode_switches_which_hand_a_drag_moves() {
-        let (mut tree, _root, dial) = time_picker_dial_scene();
-        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
-            panic!("expected a TimePickerDial");
-        };
-        assert_eq!(state.mode, TimePickerDialMode::Hour, "starts in Hour mode");
-
-        tree.set_time_picker_dial_mode(dial, TimePickerDialMode::Minute);
-        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
-            panic!("expected a TimePickerDial");
-        };
-        assert_eq!(state.mode, TimePickerDialMode::Minute);
-    }
-
-    /// A real, hand-traced angle-to-hour drag test, one case per real
-    /// clock quadrant -- `update_time_picker_dial_drag`'s own doc
-    /// comment states the exact convention (12 o'clock = zero,
-    /// clockwise), this proves it against every cardinal point by
-    /// actually dragging there, not just reading the math.
-    #[test]
-    fn dispatch_drag_in_hour_mode_sets_the_hour_to_the_nearest_of_twelve_real_positions() {
-        // `199.0`/`1.0` rather than the exact `200.0`/`0.0` box edge --
-        // `rect_contains`'s own real `Rect::contains` is exclusive on
-        // the max edge (`kurbo`'s own standard convention), so a point
-        // exactly on the dial's own right/bottom edge would miss the
-        // hit-test entirely and never start a drag at all.
-        let cases = [
-            // (point relative to the real 100,100 center, expected hour)
-            ((100.0, 1.0), 0u8), // straight up -- 12 o'clock -> hour 0
-            ((199.0, 100.0), 3), // straight right -- 3 o'clock
-            ((100.0, 199.0), 6), // straight down -- 6 o'clock
-            ((1.0, 100.0), 9),   // straight left -- 9 o'clock
-        ];
-        for (point, expected_hour) in cases {
-            let (mut tree, root, dial) = time_picker_dial_scene();
-            let config = InteractionConfig {
-                hover_opacity: 0.08,
-                hover_duration: Duration::from_millis(100),
-                focus_ring_opacity: 1.0,
-                focus_ring_duration: Duration::from_millis(100),
-                ripple_radius: 50.0,
-                ripple_opacity: 0.12,
-                ripple_duration: Duration::from_millis(300),
-            };
-            let now = Instant::now();
-            // `PointerPressed` alone only starts the drag -- like
-            // `Splitter`/`Slider`, the value itself only moves on the
-            // real `PointerMoved` that follows (`update_drag`'s own
-            // call site, `dispatch`'s `PointerMoved` arm). Press
-            // somewhere neutral first, matching `slider_scene`'s own
-            // real drag tests.
-            tree.dispatch(
-                root,
-                InputEvent::PointerPressed {
-                    position: Point::new(100.0, 100.0),
-                    button: PointerButton::Primary,
-                },
-                &config,
-                now,
-            );
-            tree.dispatch(
-                root,
-                InputEvent::PointerMoved {
-                    position: Point::new(point.0, point.1),
-                },
-                &config,
-                now,
-            );
-            let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
-                panic!("expected a TimePickerDial");
-            };
-            assert_eq!(
-                state.hour, expected_hour,
-                "dragging to {point:?} should set hour to {expected_hour}, got {}",
-                state.hour
-            );
-        }
-    }
-
-    /// A real hour drag preserves whichever half of the day `hour` was
-    /// already in -- `TimePickerDialState`'s own doc comment states
-    /// this is deliberate (no AM/PM toggle chrome in this v1), so
-    /// dragging the hour hand alone must never silently flip a real
-    /// PM hour back to AM.
-    #[test]
-    fn dragging_the_hour_hand_preserves_the_real_am_pm_half_of_the_day() {
-        let (mut tree, root, dial) = time_picker_dial_scene();
-        tree.set_time_picker_dial_time(dial, 15, 0); // 3 PM
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(100.0, 100.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        // Drag to straight-up (12 o'clock hand position).
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(100.0, 1.0),
-            },
-            &config,
-            now,
-        );
-        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
-            panic!("expected a TimePickerDial");
-        };
-        assert_eq!(
-            state.hour, 12,
-            "12 o'clock while already PM must stay PM (12), not become 0"
-        );
-    }
-
-    /// A real minute drag snaps to the nearest 5-minute increment --
-    /// `TimePickerDialState::minute`'s own doc comment states this is
-    /// the real, deliberate v1 granularity. `17` minutes' own real
-    /// angle is deliberately used here (not an exact multiple of 5),
-    /// so this only passes if real snapping actually happened, not by
-    /// coincidence.
-    #[test]
-    fn dispatch_drag_in_minute_mode_snaps_to_the_nearest_five_minute_increment() {
-        let (mut tree, root, dial) = time_picker_dial_scene();
-        tree.set_time_picker_dial_mode(dial, TimePickerDialMode::Minute);
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        let raw_angle = (17.0 / 60.0) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-        let point = Point::new(
-            100.0 + 90.0 * raw_angle.cos(),
-            100.0 + 90.0 * raw_angle.sin(),
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(100.0, 100.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved { position: point },
-            &config,
-            now,
-        );
-        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
-            panic!("expected a TimePickerDial");
-        };
-        assert_eq!(
-            state.minute, 15,
-            "a real 17-minute angle must snap to the nearest 5-minute mark (15), got {}",
-            state.minute
-        );
-    }
-
-    #[test]
-    fn dispatch_release_ending_a_real_time_picker_dial_drag_produces_changed() {
-        let (mut tree, root, dial) = time_picker_dial_scene();
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(100.0, 0.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        let outcome = tree.dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: Point::new(100.0, 0.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        assert_eq!(
-            outcome,
-            DispatchOutcome::Changed {
-                node: dial,
-                old_value: ChangedValue::Time { hour: 0, minute: 0 },
-            }
-        );
-    }
-
-    /// M24 Phase 1 (§10): a focused slider's own real ArrowRight
-    /// increment -- the real, explicitly-deferred gap ARCHITECTURE.md
-    /// §10 named for exactly this component.
-    #[test]
-    fn arrow_right_on_a_focused_slider_increases_thumb_position_by_the_real_step() {
-        let (mut tree, root, slider, _available) = slider_scene();
-        let now = Instant::now();
-        tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
-
-        let outcome = dispatch_key(&mut tree, root, Key::ArrowRight);
-        assert_eq!(
-            outcome,
-            DispatchOutcome::Changed {
-                node: slider,
-                old_value: ChangedValue::Number(0.0),
-            }
-        );
-
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert!(
-            (state.thumb_position.current - 0.05).abs() < 1e-9,
-            "expected thumb_position 0.05, got {}",
-            state.thumb_position.current
-        );
-    }
-
-    /// `dispatch_key`'s own real `ArrowLeft` sibling case.
-    #[test]
-    fn arrow_left_on_a_focused_slider_decreases_thumb_position_by_the_real_step() {
-        let (mut tree, root, slider, _available) = slider_scene();
-        let now = Instant::now();
-        tree.set_slider_position(slider, 0.5, now);
-        tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
-
-        let outcome = dispatch_key(&mut tree, root, Key::ArrowLeft);
-        assert_eq!(
-            outcome,
-            DispatchOutcome::Changed {
-                node: slider,
-                old_value: ChangedValue::Number(0.5),
-            }
-        );
-
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert!(
-            (state.thumb_position.current - 0.45).abs() < 1e-9,
-            "expected thumb_position 0.45, got {}",
-            state.thumb_position.current
-        );
-    }
-
-    /// A real, already-at-the-limit press must clamp, not go out of
-    /// range -- `set_slider_position`'s own real `clamp(0.0, 1.0)`
-    /// contract, reused verbatim here, not a second clamp.
-    #[test]
-    fn arrow_left_at_the_real_minimum_clamps_instead_of_going_negative() {
-        let (mut tree, root, slider, _available) = slider_scene();
-        let now = Instant::now();
-        tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
-
-        let outcome = dispatch_key(&mut tree, root, Key::ArrowLeft);
-        assert_eq!(
-            outcome,
-            DispatchOutcome::Changed {
-                node: slider,
-                old_value: ChangedValue::Number(0.0),
-            }
-        );
-
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert_eq!(state.thumb_position.current, 0.0);
-    }
-
-    /// With no slider focused at all, `ArrowLeft`/`ArrowRight` remain
-    /// the real, established no-op the pre-M24 catch-all already
-    /// proved -- `dispatch_slider_key` must never fire spuriously.
-    #[test]
-    fn arrow_keys_with_no_slider_focused_remain_a_true_no_op() {
-        let (mut tree, root, _slider, _available) = slider_scene();
-
-        let outcome = dispatch_key(&mut tree, root, Key::ArrowRight);
-        assert_eq!(outcome, DispatchOutcome::None);
-    }
-
-    #[test]
-    fn tick_all_animates_thumb_position_toward_a_real_target() {
-        let mut tree = Tree::new();
-        let (_, style, paint) = leaf(200.0, 20.0);
-        let slider = tree.insert(NodeKind::Slider(SliderState::new(0.0)), style, paint);
-
-        let now = Instant::now();
-        let NodeKind::Slider(state) = &mut tree.get_mut(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        state
-            .thumb_position
-            .animate_to(1.0, Duration::from_millis(100), MotionCurve::Linear, now);
-
-        let (any_active, _) = tree.tick_all(now + Duration::from_millis(50));
-        assert!(
-            any_active,
-            "a mid-flight thumb_position animation must report as active"
-        );
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider");
-        };
-        assert!(
-            state.thumb_position.current > 0.0 && state.thumb_position.current < 1.0,
-            "thumb_position must be genuinely mid-animation at the halfway point, got {}",
-            state.thumb_position.current
-        );
-
-        let (any_active, _) = tree.tick_all(now + Duration::from_millis(200));
-        assert!(
-            !any_active,
-            "the animation must be finished well past its own duration"
-        );
-    }
-
-    /// M39 Phase 2 (§5, §7) test scene: a real, focused-free `Loading
-    /// Indicator` node with its own four real, procedurally-generated
-    /// shapes and `paint.shape` seeded to the first one -- the
-    /// identical real construction `engine-py::add_loading_indicator`
-    /// performs.
-    fn loading_indicator_scene() -> (Tree, NodeId) {
-        let mut tree = Tree::new();
-        let state = LoadingIndicatorState::new(48.0, 48.0);
-        let mut paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0);
-        paint.shape = Animated::new(state.shapes[0].clone());
-        let node = tree.insert(
-            NodeKind::LoadingIndicator(state),
-            Style {
-                size: Size {
-                    width: length(48.0),
-                    height: length(48.0),
-                },
-                ..Default::default()
-            },
-            paint,
-        );
-        (tree, node)
-    }
-
-    #[test]
-    fn loading_indicator_state_new_builds_four_real_distinct_non_empty_shapes() {
-        let state = LoadingIndicatorState::new(48.0, 48.0);
-        assert_eq!(
-            state.shapes.len(),
-            4,
-            "must build exactly the four real shapes"
-        );
-        for shape in &state.shapes {
-            assert!(
-                !shape.is_empty(),
-                "every real shape must have real vertices, not be empty"
-            );
-        }
-        // Pairwise distinct -- a real, decisive proof the four shape
-        // generators produce genuinely different geometry, not four
-        // copies of the same one.
-        for i in 0..state.shapes.len() {
-            for j in (i + 1)..state.shapes.len() {
-                assert_ne!(
-                    state.shapes[i], state.shapes[j],
-                    "shape {i} and shape {j} must be genuinely different real shapes"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn tick_all_immediately_kicks_off_a_fresh_loading_indicators_own_shape_loop() {
-        let (mut tree, node) = loading_indicator_scene();
-        let now = Instant::now();
-        // A freshly-constructed indicator's own `shape` has no active
-        // animation yet (it was seeded directly via `Animated::new`,
-        // not `animate_to`) -- the very first real `tick_all` must
-        // notice this and kick off a real transition toward the
-        // *second* real shape (`current_shape` advances from 0 to 1).
-        let (any_active, _) = tree.tick_all(now);
-        assert!(
-            any_active,
-            "kicking off the real first shape transition must report active"
-        );
-        let NodeKind::LoadingIndicator(state) = &tree.get(node).unwrap().kind else {
-            panic!("expected a LoadingIndicator");
-        };
-        assert_eq!(
-            state.current_shape, 1,
-            "must advance to the real second shape"
-        );
-        let target = tree
-            .get(node)
-            .unwrap()
-            .paint
-            .shape
-            .active
-            .as_ref()
-            .map(|a| a.to.clone());
-        assert_eq!(
-            target,
-            Some(state.shapes[1].clone()),
-            "the real shape animation must target shape index 1"
-        );
-    }
-
-    #[test]
-    fn tick_all_advances_a_loading_indicator_to_the_next_shape_once_settled_and_wraps_at_the_end() {
-        let (mut tree, node) = loading_indicator_scene();
-        let mut now = Instant::now();
-        // Real duration per shape is 650ms. Each real call below is
-        // spaced >650ms after the previous one, so it both settles the
-        // transition that call kicked off *and* immediately kicks off
-        // the next one in the same real `tick_all` pass (`Animated::
-        // tick`'s own settle-then-this-block's-own-retarget both run
-        // within one call once `active.is_none()`) -- so every one of
-        // these four real calls advances `current_shape` by exactly
-        // one: 0 -> 1 -> 2 -> 3 -> 0 (wraps back to the real first
-        // shape).
-        for expected in [1, 2, 3, 0] {
-            tree.tick_all(now);
-            let NodeKind::LoadingIndicator(state) = &tree.get(node).unwrap().kind else {
-                panic!("expected a LoadingIndicator");
-            };
-            assert_eq!(
-                state.current_shape, expected,
-                "must advance to real shape index {expected}"
-            );
-            now += Duration::from_millis(700);
-        }
-    }
-
-    #[test]
-    fn dispatch_pressing_a_non_splitter_node_never_starts_a_drag() {
-        let (mut tree, root, left, _splitter, _right, available) = splitter_scene();
-        let original_left_width = tree.layout(left).size.width;
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        // Press and drag starting on the left pane itself, not the
-        // splitter -- must never move the splitter it happens to share
-        // a parent with.
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(50.0, 25.0),
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(180.0, 25.0),
-            },
-            &config,
-            now,
-        );
-        tree.compute_layout(root, available);
-        assert_eq!(
-            tree.layout(left).size.width,
-            original_left_width,
-            "dragging from a plain node must never move an unrelated splitter"
-        );
-    }
-
-    #[test]
-    fn dispatch_a_non_primary_button_press_on_a_splitter_never_starts_a_drag() {
-        let (mut tree, root, left, _splitter, _right, available) = splitter_scene();
-        let original_left_width = tree.layout(left).size.width;
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let now = Instant::now();
-
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: Point::new(105.0, 25.0),
-                button: PointerButton::Secondary,
-            },
-            &config,
-            now,
-        );
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved {
-                position: Point::new(180.0, 25.0),
-            },
-            &config,
-            now,
-        );
-        tree.compute_layout(root, available);
-        assert_eq!(
-            tree.layout(left).size.width,
-            original_left_width,
-            "a non-primary-button press on a splitter must never start a drag"
         );
     }
 
@@ -10330,78 +8147,6 @@ mod tests {
         assert_eq!(update.tree_id, accesskit::TreeId::ROOT);
     }
 
-    /// M14 Phase 1 (§7.3): `check_progress` must animate toward a real
-    /// target the same way `PaintProperties`' own fields already do --
-    /// confirming `tick_all`'s new `NodeKind::Checkbox` arm actually
-    /// runs, not just that it compiles.
-    #[test]
-    fn tick_all_animates_check_progress_toward_a_real_target() {
-        let mut tree = Tree::new();
-        let (_, style, paint) = leaf(20.0, 20.0);
-        let checkbox = tree.insert(NodeKind::Checkbox(CheckboxState::new(false)), style, paint);
-
-        let now = Instant::now();
-        let NodeKind::Checkbox(state) = &mut tree.get_mut(checkbox).unwrap().kind else {
-            panic!("expected a Checkbox");
-        };
-        state
-            .check_progress
-            .animate_to(1.0, Duration::from_millis(100), MotionCurve::Linear, now);
-
-        let (any_active, _) = tree.tick_all(now + Duration::from_millis(50));
-        assert!(
-            any_active,
-            "a mid-flight check_progress animation must report as active"
-        );
-        let NodeKind::Checkbox(state) = &tree.get(checkbox).unwrap().kind else {
-            panic!("expected a Checkbox");
-        };
-        assert!(
-            state.check_progress.current > 0.0 && state.check_progress.current < 1.0,
-            "check_progress must be genuinely mid-animation at the halfway point, got {}",
-            state.check_progress.current
-        );
-
-        let (any_active, _) = tree.tick_all(now + Duration::from_millis(200));
-        assert!(
-            !any_active,
-            "the animation must be finished well past its own duration"
-        );
-        let NodeKind::Checkbox(state) = &tree.get(checkbox).unwrap().kind else {
-            panic!("expected a Checkbox");
-        };
-        assert_eq!(
-            state.check_progress.current, 1.0,
-            "must reach the real target exactly"
-        );
-    }
-
-    /// M14 Phase 1 (§7.3): the real, automatic `checked` -> `Toggled`
-    /// derivation ARCHITECTURE.md promises -- reading straight from
-    /// `NodeKind::Checkbox`'s own real `checked` field, not a second,
-    /// separately-set copy.
-    #[test]
-    fn build_access_update_reports_the_real_toggled_state_for_a_checkbox() {
-        let mut tree = Tree::new();
-        let (_, style, paint) = leaf(20.0, 20.0);
-        let checkbox = tree.insert(NodeKind::Checkbox(CheckboxState::new(true)), style, paint);
-        tree.compute_layout(
-            checkbox,
-            Size {
-                width: AvailableSpace::Definite(20.0),
-                height: AvailableSpace::Definite(20.0),
-            },
-        );
-
-        let update = tree.build_access_update(checkbox);
-        let (_, node) = &update.nodes[0];
-        assert_eq!(
-            node.toggled(),
-            Some(accesskit::Toggled::True),
-            "a checked checkbox must report Toggled::True"
-        );
-    }
-
     /// M15 Phase 1 (§5, §16.7): `TextFieldState::new`'s own real
     /// contract -- `cursor` seeds at `content`'s own real end, a real
     /// text field's own expected initial-cursor-at-end convention, not
@@ -12141,59 +9886,6 @@ mod tests {
         assert_eq!(tree.terminal_selected_text(term), Some("hello".to_string()));
     }
 
-    /// M20 Phase 1 (§7.1, §7.3): `set_all_component_tints`'s own real
-    /// claim -- a `Checkbox` and a `Slider` both pick up the real
-    /// resolved tint on their own distinct fields, and an unrelated
-    /// `NodeKind` (a plain `Rect`) is left completely untouched, the
-    /// same "only a real match, never a lazily-created capability"
-    /// contract `set_all_interaction_tints`'s own test already proves
-    /// for a different field.
-    #[test]
-    fn set_all_component_tints_updates_checkbox_and_slider_and_leaves_others_untouched() {
-        let mut tree = Tree::new();
-        let checkbox = tree.insert(
-            NodeKind::Checkbox(CheckboxState::new(false)),
-            Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
-        );
-        let slider = tree.insert(
-            NodeKind::Slider(SliderState::new(0.0)),
-            Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
-        );
-        // M20 Phase 2 (§7.1, §7.3): TextField's own real sibling case.
-        let text_field = tree.insert(
-            NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
-            Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
-        );
-        let (kind, style, paint) = leaf(10.0, 10.0);
-        let rect = tree.insert(kind, style, paint);
-
-        let real_color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
-        tree.set_all_component_tints(real_color);
-
-        let NodeKind::Checkbox(state) = &tree.get(checkbox).unwrap().kind else {
-            panic!("expected a Checkbox node");
-        };
-        assert_eq!(state.mark_tint, real_color);
-
-        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
-            panic!("expected a Slider node");
-        };
-        assert_eq!(state.track_tint, real_color);
-
-        let NodeKind::TextField(state) = &tree.get(text_field).unwrap().kind else {
-            panic!("expected a TextField node");
-        };
-        assert_eq!(state.text_tint.current, real_color);
-
-        assert!(
-            matches!(tree.get(rect).unwrap().kind, NodeKind::Rect),
-            "an unrelated NodeKind must be left completely untouched"
-        );
-    }
-
     /// M22 Phase 1 (§5): `NodeKind::Image` round-trips through
     /// `Tree::insert`/`Tree::get` exactly like every other kind -- no
     /// special-cased storage, the same "common core + per-kind payload"
@@ -12219,71 +9911,6 @@ mod tests {
             panic!("expected an Image node");
         };
         assert_eq!(state.image, image_data);
-    }
-
-    /// M23 Phase 1 (§1, §3): `NodeKind::Icon` round-trips through
-    /// `Tree::insert`/`Tree::get` exactly like every other kind.
-    #[test]
-    fn nodekind_icon_round_trips_through_insert_and_get() {
-        let mut tree = Tree::new();
-        let path = peniko::kurbo::BezPath::from_svg("M0,0 L10,0 L10,10 Z").unwrap();
-        let tint = Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF);
-        let (_, style, paint) = leaf(24.0, 24.0);
-        let id = tree.insert(
-            NodeKind::Icon(IconState::new(path.clone(), tint)),
-            style,
-            paint,
-        );
-
-        let NodeKind::Icon(state) = &tree.get(id).unwrap().kind else {
-            panic!("expected an Icon node");
-        };
-        assert_eq!(state.path, path);
-        assert_eq!(state.tint.current, tint);
-    }
-
-    /// M92: an `Icon`'s tint is ticked centrally like every other
-    /// `Animated` field -- mid-animation it's strictly between the two
-    /// colors, and it settles exactly on the target, after which the
-    /// tree reports nothing left animating.
-    #[test]
-    fn an_icon_tint_animates_through_tick_all_and_settles_on_its_target() {
-        let mut tree = Tree::new();
-        let path = peniko::kurbo::BezPath::from_svg("M0,0 L10,0 L10,10 Z").unwrap();
-        let black = Color::from_rgba8(0, 0, 0, 0xFF);
-        let red = Color::from_rgba8(0xFF, 0, 0, 0xFF);
-        let (_, style, paint) = leaf(24.0, 24.0);
-        let id = tree.insert(NodeKind::Icon(IconState::new(path, black)), style, paint);
-
-        let start = Instant::now();
-        let NodeKind::Icon(state) = &mut tree.get_mut(id).unwrap().kind else {
-            panic!("expected an Icon node");
-        };
-        state
-            .tint
-            .animate_to(red, Duration::from_millis(200), MotionCurve::Linear, start);
-
-        let (active, _) = tree.tick_all(start + Duration::from_millis(100));
-        assert!(active, "a running tint animation must keep the tree active");
-        let NodeKind::Icon(state) = &tree.get(id).unwrap().kind else {
-            unreachable!()
-        };
-        let [r, g, b, a] = state.tint.current.to_rgba8().to_u8_array();
-        assert!(
-            r > 0 && r < 0xFF,
-            "mid-animation red channel must be between 0 and 255, got {r}"
-        );
-        assert_eq!((g, b, a), (0, 0, 0xFF));
-
-        let (active, _) = tree.tick_all(start + Duration::from_millis(400));
-        let NodeKind::Icon(state) = &tree.get(id).unwrap().kind else {
-            unreachable!()
-        };
-        assert_eq!(state.tint.current, red);
-        assert!(
-            !active,
-            "a finished tint animation must let the tree go idle"
-        );
     }
 
     /// M30 Phase 5 Step 1 (§5, §7): real, direct coverage of the new
@@ -12355,364 +9982,9 @@ mod tests {
         );
     }
 
-    /// M30 Phase 8 Step 2 (§5, §7): real, direct coverage of `NodeKind
-    /// ::Link`'s own real point -- fulfills the explicit commitment
-    /// `NodeKind::Text(_) => false`'s own doc comment already made
-    /// ("a future standalone clickable label... gets its own dedicated
-    /// `NodeKind`"). Builds the identical real geometry twice -- a
-    /// bare `Text` child spanning its own parent's full bounds, then a
-    /// `Link` child in the same real position -- proving the real
-    /// contrast directly: `Text` always defers (the parent, not the
-    /// label, is what `hit_test` returns there), `Link` never does.
-    #[test]
-    fn link_independently_claims_a_hit_where_text_would_defer() {
-        fn text_state(content: &str) -> TextState {
-            TextState {
-                content: content.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: 400.0,
-                font_size: 14.0,
-                align: TextAlign::Start,
-                line_height: None,
-                options: Default::default(),
-            }
-        }
-
-        let mut tree = Tree::new();
-        let root = tree.insert(
-            NodeKind::Container,
-            Style {
-                size: Size {
-                    width: length(100.0),
-                    height: length(40.0),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        let text_child = tree.insert(
-            NodeKind::Text(text_state("plain label")),
-            Style {
-                size: Size {
-                    width: length(100.0),
-                    height: length(40.0),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(root, text_child);
-        tree.compute_layout(
-            root,
-            Size {
-                width: AvailableSpace::Definite(100.0),
-                height: AvailableSpace::Definite(40.0),
-            },
-        );
-        let point = Point::new(50.0, 20.0);
-        assert_eq!(
-            tree.hit_test(root, point),
-            Some(root),
-            "a bare Text child must defer -- the point resolves to its own parent, not the label"
-        );
-
-        let mut tree = Tree::new();
-        let root = tree.insert(
-            NodeKind::Container,
-            Style {
-                size: Size {
-                    width: length(100.0),
-                    height: length(40.0),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        let link_child = tree.insert(
-            NodeKind::Link(text_state("Learn more")),
-            Style {
-                size: Size {
-                    width: length(100.0),
-                    height: length(40.0),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(root, link_child);
-        tree.compute_layout(
-            root,
-            Size {
-                width: AvailableSpace::Definite(100.0),
-                height: AvailableSpace::Definite(40.0),
-            },
-        );
-        assert_eq!(
-            tree.hit_test(root, point),
-            Some(link_child),
-            "a Link child must independently claim the hit, unlike Text at the identical geometry"
-        );
-    }
-
     // -------------------------------------------------------------
     // M30 Phase 9 Step 5 (§5, §7, §11.7): Carousel
     // -------------------------------------------------------------
-
-    /// A root containing one `NodeKind::Carousel` of `layout`, `root`
-    /// wide, `CAROUSEL_HEIGHT` tall, with `item_count` plain `Rect`
-    /// children (100x100 -- their own real width/height is irrelevant
-    /// for `Hero`/`MultiBrowse`, since `sync_carousel_layouts` always
-    /// overwrites it; only `Uncontained`'s own tests rely on it).
-    fn carousel_scene(
-        layout: crate::node::CarouselLayout,
-        item_count: usize,
-        root_width: f32,
-    ) -> (Tree, NodeId, NodeId, Vec<NodeId>, Size<AvailableSpace>) {
-        let mut tree = Tree::new();
-        let root_style = Style {
-            size: Size {
-                width: length(root_width),
-                height: length(crate::node::CAROUSEL_HEIGHT),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
-        let carousel = tree.insert(
-            NodeKind::Carousel(crate::node::CarouselState::new(layout)),
-            Style {
-                size: Size {
-                    width: length(root_width),
-                    height: length(crate::node::CAROUSEL_HEIGHT),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(root, carousel);
-
-        let items: Vec<NodeId> = (0..item_count)
-            .map(|_| {
-                let (k, s, p) = leaf(100.0, 100.0);
-                let item = tree.insert(k, s, p);
-                tree.add_child(carousel, item);
-                item
-            })
-            .collect();
-
-        let available = Size {
-            width: AvailableSpace::Definite(root_width),
-            height: AvailableSpace::Definite(crate::node::CAROUSEL_HEIGHT),
-        };
-        tree.compute_layout(root, available);
-        (tree, root, carousel, items, available)
-    }
-
-    #[test]
-    fn carousel_hero_items_are_large_small_small_at_rest_on_index_zero() {
-        // available = 400 - 2*16 = 368; large = 368 - SMALL_MAX(56) -
-        // GAP(8) = 304 (Hero's own pattern is [Large, Small], and every
-        // slot past the pattern's own end repeats its last entry).
-        let (tree, _root, _carousel, items, _) =
-            carousel_scene(crate::node::CarouselLayout::Hero, 3, 400.0);
-        assert!((tree.layout(items[0]).size.width - 304.0).abs() < 0.01);
-        assert!((tree.layout(items[1]).size.width - 56.0).abs() < 0.01);
-        assert!((tree.layout(items[2]).size.width - 56.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn carousel_hero_item_widths_resize_continuously_as_position_animates() {
-        // The real, distinctive MD3 behavior this step's whole
-        // investigation was about: an item promoted from small to
-        // large grows *while the snap is still travelling*, not on
-        // arrival -- proven by ticking the real `Animated<f64>`
-        // `position` to exactly its own halfway point and re-syncing,
-        // rather than only checking the two at-rest endpoints.
-        let (mut tree, root, carousel, items, available) =
-            carousel_scene(crate::node::CarouselLayout::Hero, 3, 400.0);
-        let start = Instant::now();
-        tree.set_carousel_index(carousel, 1, start);
-        // Halfway through the real 300ms snap duration.
-        tree.tick_all(start + Duration::from_millis(150));
-        tree.compute_layout(root, available);
-
-        // At index 1, item 0 -- the one item[0]/j-position slot 0 -
-        // 1 = -1 -- would land on the real "already scrolled past the
-        // leading edge" SMALL_MAX clamp, while item 1 becomes the new
-        // large item. Halfway there, item 1's own width must sit
-        // strictly between its own two real endpoints (56 at rest on
-        // index 0, 304 once fully snapped to index 1) -- neither one.
-        let w1 = tree.layout(items[1]).size.width;
-        assert!(
-            w1 > 56.5 && w1 < 303.5,
-            "item 1's own width must be strictly between its two real \
-             endpoints mid-snap, got {w1}"
-        );
-    }
-
-    #[test]
-    fn carousel_wheel_over_a_hero_item_snaps_to_the_next_index() {
-        let (mut tree, root, carousel, items, _available) =
-            carousel_scene(crate::node::CarouselLayout::Hero, 3, 400.0);
-        let config = dispatch_config();
-        let now = Instant::now();
-        // A wheel notch landing on item 0 itself, not the carousel's
-        // own body -- proves the real hit-test-then-walk-up-to-the-
-        // nearest-Carousel mechanism (mirroring `VirtualList`'s own).
-        let point = {
-            let (x, y) = tree.absolute_position(items[0]);
-            Point::new(x + 1.0, y + 1.0)
-        };
-        tree.dispatch(
-            root,
-            InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, -1.0),
-                position: point,
-            },
-            &config,
-            now,
-        );
-        let NodeKind::Carousel(state) = &tree.get(carousel).unwrap().kind else {
-            panic!("expected a Carousel node");
-        };
-        assert_eq!(
-            state.index, 1,
-            "one wheel notch must move exactly one index"
-        );
-        assert!(
-            state.position.active.is_some(),
-            "the real move must start a real eased snap, not jump instantly"
-        );
-    }
-
-    #[test]
-    fn carousel_drag_across_the_threshold_commits_one_index() {
-        let (mut tree, root, carousel, items, _available) =
-            carousel_scene(crate::node::CarouselLayout::Hero, 3, 400.0);
-        let config = dispatch_config();
-        let now = Instant::now();
-        let (item_x, item_y) = tree.absolute_position(items[0]);
-        let start = Point::new(item_x + 5.0, item_y + 5.0);
-
-        tree.dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: start,
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        assert_eq!(
-            tree.dragging,
-            Some(carousel),
-            "pressing anywhere on a real item must start dragging its own carousel ancestor"
-        );
-
-        // Past CAROUSEL_DRAG_INDEX_THRESHOLD (60px) leftward -- mirrors
-        // a real leftward swipe, which advances the index (pyCopper's
-        // own real `on_pointer_move` sign convention).
-        let moved = Point::new(start.x - 65.0, start.y);
-        tree.dispatch(
-            root,
-            InputEvent::PointerMoved { position: moved },
-            &config,
-            now,
-        );
-
-        let NodeKind::Carousel(state) = &tree.get(carousel).unwrap().kind else {
-            panic!("expected a Carousel node");
-        };
-        assert_eq!(
-            state.index, 1,
-            "a drag crossing exactly one threshold must commit exactly one index"
-        );
-
-        tree.dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: moved,
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        assert_eq!(tree.dragging, None, "release must end the drag");
-        let NodeKind::Carousel(state) = &tree.get(carousel).unwrap().kind else {
-            panic!("expected a Carousel node");
-        };
-        assert_eq!(
-            state.drag_last_x, None,
-            "release must clear the real per-gesture drag bookkeeping, \
-             mirroring pyCopper's own on_pointer_up"
-        );
-    }
-
-    #[test]
-    fn carousel_uncontained_items_keep_their_own_width_and_scroll_clamps_to_the_real_max() {
-        let mut tree = Tree::new();
-        let root_style = Style {
-            size: Size {
-                width: length(300.0),
-                height: length(crate::node::CAROUSEL_HEIGHT),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-        let carousel = tree.insert(
-            NodeKind::Carousel(crate::node::CarouselState::new(
-                crate::node::CarouselLayout::Uncontained,
-            )),
-            Style {
-                size: Size {
-                    width: length(300.0),
-                    height: length(crate::node::CAROUSEL_HEIGHT),
-                },
-                ..Default::default()
-            },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(root, carousel);
-        // Five real, explicitly-widthed 200px items -- a real total
-        // content extent far wider than the 300px carousel itself, so
-        // scrolling has genuine real room to clamp against.
-        let items: Vec<NodeId> = (0..5)
-            .map(|_| {
-                let (k, s, p) = leaf(200.0, 100.0);
-                let item = tree.insert(k, s, p);
-                tree.add_child(carousel, item);
-                item
-            })
-            .collect();
-        let available = Size {
-            width: AvailableSpace::Definite(300.0),
-            height: AvailableSpace::Definite(crate::node::CAROUSEL_HEIGHT),
-        };
-        tree.compute_layout(root, available);
-
-        assert!(
-            (tree.layout(items[0]).size.width - 200.0).abs() < 0.01,
-            "an Uncontained item keeps its own real explicit width, unlike Hero/MultiBrowse"
-        );
-
-        let moved = tree.set_carousel_scroll(carousel, 100_000.0);
-        assert!(
-            moved,
-            "a huge scroll request must still move the real offset (up to the clamp)"
-        );
-        let NodeKind::Carousel(state) = &tree.get(carousel).unwrap().kind else {
-            panic!("expected a Carousel node");
-        };
-        // Real extent: 2*PAD_X(16) + 5*200 + 4*GAP(8) = 1064; clamped
-        // max scroll = 1064 - 300 = 764.
-        assert!(
-            (state.scroll_x - 764.0).abs() < 0.01,
-            "scroll must clamp to the real content-extent-minus-viewport max, got {}",
-            state.scroll_x
-        );
-    }
 
     // --- M65 (§5, §6): the real per-kind existence counters
     // `compute_layout`'s own sync_*_layouts functions consult instead
@@ -12721,19 +9993,9 @@ mod tests {
     #[test]
     fn existence_counters_track_insert_and_remove_for_every_real_kind() {
         let mut tree = Tree::new();
-        assert_eq!(tree.carousel_count, 0);
         assert_eq!(tree.scroll_view_count, 0);
         assert_eq!(tree.virtual_list_count, 0);
         assert_eq!(tree.button_group_reflow_count, 0);
-
-        let carousel = tree.insert(
-            NodeKind::Carousel(crate::node::CarouselState::new(
-                crate::node::CarouselLayout::Uncontained,
-            )),
-            Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        assert_eq!(tree.carousel_count, 1);
 
         let scroll_view = tree.insert(
             NodeKind::ScrollView(ScrollViewState::new(false)),
@@ -12762,13 +10024,10 @@ mod tests {
             Style::default(),
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
         );
-        assert_eq!(tree.carousel_count, 1);
         assert_eq!(tree.scroll_view_count, 1);
         assert_eq!(tree.virtual_list_count, 1);
         assert_eq!(tree.button_group_reflow_count, 1);
 
-        tree.remove(carousel);
-        assert_eq!(tree.carousel_count, 0);
         tree.remove(scroll_view);
         assert_eq!(tree.scroll_view_count, 0);
         tree.remove(virtual_list);
@@ -12778,42 +10037,29 @@ mod tests {
         tree.remove(plain);
     }
 
-    /// A real, non-hypothetical case: an ancestor is removed, which
-    /// recursively removes a `Carousel` several levels below it --
-    /// each recursive `Tree::remove` call must independently decrement
-    /// the counter for its own child, not just the direct top-level
+    /// An ancestor's removal recursively removes a `ScrollView` several
+    /// levels below it -- each recursive `Tree::remove` call must
+    /// decrement the counter for its own child, not just the top-level
     /// call.
     #[test]
     fn existence_counters_decrement_correctly_through_recursive_removal() {
         let mut tree = Tree::new();
-        let root = tree.insert(
-            NodeKind::Container,
+        let paint = || PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+        let root = tree.insert(NodeKind::Container, Style::default(), paint());
+        let middle = tree.insert(NodeKind::Container, Style::default(), paint());
+        let scroll_view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(false)),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        let middle = tree.insert(
-            NodeKind::Container,
-            Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        let carousel = tree.insert(
-            NodeKind::Carousel(crate::node::CarouselState::new(
-                crate::node::CarouselLayout::Uncontained,
-            )),
-            Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            paint(),
         );
         tree.add_child(root, middle);
-        tree.add_child(middle, carousel);
-        assert_eq!(tree.carousel_count, 1);
+        tree.add_child(middle, scroll_view);
+        assert_eq!(tree.scroll_view_count, 1);
 
-        // Removes `root`, which recursively removes `middle`, which
-        // recursively removes `carousel` -- the real path this test
-        // exists to cover, not `tree.remove(carousel)` directly.
         tree.remove(root);
         assert_eq!(
-            tree.carousel_count, 0,
-            "a Carousel removed only as a side effect of an ancestor's own removal must still \
+            tree.scroll_view_count, 0,
+            "a ScrollView removed only as a side effect of an ancestor's own removal must still \
              decrement the real counter, not leave it stale"
         );
     }

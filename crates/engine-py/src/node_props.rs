@@ -324,7 +324,6 @@ pub(crate) fn animatable_to_py(
     let value = match name {
         "fill" => color_to_py(
             match &node.kind {
-                NodeKind::Icon(state) => *pick(&state.tint, target),
                 NodeKind::TextField(state) => *pick(&state.text_tint, target),
                 _ => *pick(&node.paint.background, target),
             },
@@ -391,7 +390,6 @@ pub(crate) fn animatable_to_py(
 pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyResult<bool> {
     match name {
         "fill" => match &mut node.kind {
-            NodeKind::Icon(state) => state.tint.stop(),
             NodeKind::TextField(state) => state.text_tint.stop(),
             _ => node.paint.background.stop(),
         },
@@ -723,15 +721,6 @@ pub(crate) fn parse_all(
     Ok(changes)
 }
 
-/// The built-in widget kinds whose legacy numeric `value` `get` keeps
-/// reading (the slider's position, a progress indicator's fraction).
-fn has_legacy_value(kind: &NodeKind) -> bool {
-    matches!(
-        kind,
-        NodeKind::Slider(_) | NodeKind::LinearProgress(_) | NodeKind::CircularProgress(_)
-    )
-}
-
 #[pymethods]
 impl Node {
     /// Sets any number of properties at once, atomically: every value is
@@ -795,7 +784,7 @@ impl Node {
                     .into_any()
                     .unbind(),
                 "label" => access.label.clone().into_pyobject(py)?.into_any().unbind(),
-                "value" if !has_legacy_value(&node.kind) => match &access.value {
+                "value" => match &access.value {
                     Some(AccessValue::Text(text)) => {
                         any(text.clone().into_pyobject(py)?.into_any())
                     }
@@ -1110,7 +1099,6 @@ impl Node {
                     }
                 }
                 Change::Fill(color) => match &mut node.kind {
-                    NodeKind::Icon(state) => state.tint = Animated::new(color),
                     NodeKind::TextField(state) => state.text_tint = Animated::new(color),
                     _ => node.paint.background = Animated::new(color),
                 },

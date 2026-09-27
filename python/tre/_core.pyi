@@ -309,8 +309,8 @@ class Node:
     def set_on_change(
         self, callback: Callable[[], object] | Callable[[Event], object]
     ) -> None:
-        """Fires on a real, genuine edit -- a `Slider` drag ending, or
-        `set_checked`/`set_text` being called on a `Checkbox`/`TextField`.
+        """Fires on a real, genuine edit -- a `TextField`'s text changing,
+        by typing or by `set_text`.
         `callback` may take zero arguments, or one -- a real `Event`
         (M54 Phase 2) with `event.old_value`/`event.new_value` set to
         this edit's own real before/after values.
@@ -396,14 +396,6 @@ class Node:
         listeners; focus inside it gets `unfocus` first. Using a handle to a
         freed node raises `ValueError`."""
         ...
-    def set_checked(self, checked: bool) -> None:
-        """`Checkbox`-only -- raises `ValueError` for any other kind."""
-        ...
-    def set_selected(self, selected: bool) -> None:
-        """`RadioButton`/`Switch`-only (M90: `Switch` joined, replacing
-        `set_on`) -- raises `ValueError` for any other kind.
-        """
-        ...
     def set_text(self, content: str) -> None:
         """`TextField`/`Text`-only -- raises `ValueError` for any other
         kind.
@@ -418,73 +410,11 @@ class Node:
         doesn't match `width`/`height`.
         """
         ...
-    def get_checked(self) -> bool:
-        """`Checkbox`-only -- raises `ValueError` for any other kind."""
-        ...
-    def get_selected(self) -> bool:
-        """`RadioButton`/`Switch`-only (M90: `Switch` joined, replacing
-        `get_on`) -- raises `ValueError` for any other kind.
-        """
-        ...
     def get_text(self) -> str:
         """`TextField`/`Text`/`Terminal`-only -- raises `ValueError` for
         any other kind. For a `Terminal`, returns its whole cell grid
         as plain text (each row's own trailing whitespace trimmed,
         rows joined by `"\\n"`), not just one line.
-        """
-        ...
-    def set_carousel_index(self, index: int) -> None:
-        """`Carousel`-only -- raises `ValueError` for any other kind.
-        Moves to `index` (clamped to the real child count), starting a
-        real eased snap toward it. A no-op if already there.
-        """
-        ...
-    def get_carousel_index(self) -> int:
-        """`Carousel`-only -- raises `ValueError` for any other kind.
-        The item the carousel is *settling on* -- its real destination,
-        not necessarily where it's currently drawn mid-snap (see
-        `get_carousel_position`).
-        """
-        ...
-    def get_carousel_position(self) -> float:
-        """`Carousel`-only -- raises `ValueError` for any other kind.
-        The real, currently-animating strip position: an integer at
-        rest, fractional while a snap is still travelling.
-        """
-        ...
-    def set_carousel_scroll(self, value: float) -> None:
-        """`Carousel`-only (meaningful for `layout="uncontained"`) --
-        raises `ValueError` for any other kind. Sets the real free
-        pixel scroll offset, clamped to `[0, max_scroll]`.
-        """
-        ...
-    def get_carousel_scroll(self) -> float:
-        """`Carousel`-only -- raises `ValueError` for any other kind."""
-        ...
-    def set_time_picker_dial_time(self, hour: int, minute: int) -> None:
-        """`TimePickerDial`-only -- raises `ValueError` for any other
-        kind. Moves both hands directly (an instant move, not an eased
-        one -- a clock hand snapping to wherever it's set IS the real
-        behavior here). `hour` clamps to `0..=23`, `minute` to
-        `0..=59`.
-        """
-        ...
-    def get_time_picker_dial_time(self) -> tuple[int, int]:
-        """`TimePickerDial`-only -- raises `ValueError` for any other
-        kind. Returns `(hour, minute)`.
-        """
-        ...
-    def set_time_picker_dial_mode(self, mode: str) -> None:
-        """`TimePickerDial`-only -- raises `ValueError` for any other
-        kind. `mode` is `"hour"` or `"minute"`: which hand a real drag
-        on this dial moves next -- the app-level equivalent of real
-        MD3's own hour-then-minute dialog focus (this widget has no
-        built-in toggle of its own; wire a button/tab to call this).
-        """
-        ...
-    def get_time_picker_dial_mode(self) -> str:
-        """`TimePickerDial`-only -- raises `ValueError` for any other
-        kind. `"hour"` or `"minute"`.
         """
         ...
     def is_focused(self) -> bool:

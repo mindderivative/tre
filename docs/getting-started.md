@@ -90,11 +90,9 @@ specific ones) can be driven this way — see
 
 - [Imperative API](guide/imperative-api.md) — the full `Window`/`Node`
   tour: every node kind, events, animation, focus.
-- [Working with Files](guide/working-with-files.md) — load themes and
-  images from files on disk.
+- [Working with Files](guide/working-with-files.md) — load images and
+  fonts from files on disk.
 - Browse [`examples/`](https://github.com/mindderivative/tre/tree/main/examples)
-  in the repository — each script is a small, self-contained, real proof
-  of one mechanism (`examples/slider.py` for keyboard-driven `Slider`
-  control, `examples/docking.py` for the docking system,
-  `examples/view_composition.py` for `include:`-based view composition, and
-  so on).
+  in the repository — each script is a small, self-contained proof of one
+  mechanism (`examples/docking.py` for docking, `examples/text_field.py`
+  for text input, `examples/canvas.py` for custom drawing, and so on).

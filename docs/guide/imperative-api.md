@@ -84,7 +84,7 @@ Every `Node` supports these handler registrations:
 node.set_on_click(lambda: ...)
 node.set_on_hover_enter(lambda: ...)
 node.set_on_hover_exit(lambda: ...)
-node.set_on_change(lambda: ...)        # a Slider drag ending, or set_checked/set_text
+node.set_on_change(lambda: ...)        # a TextField edit, or set_text
 node.set_on_focus_enter(lambda: ...)
 node.set_on_focus_exit(lambda: ...)
 ```
@@ -165,13 +165,6 @@ Universal properties (every node kind):
 | `"background"` | `(r, g, b, a)` tuple of ints 0–255 | fill color |
 | `"transform"` | `(translate_x, translate_y, scale)` tuple of floats | pan + zoom |
 | `"shape"` | `list[(x, y)]` float tuples | morphs to the closed polygon these vertices describe |
-
-Component-specific properties:
-
-| Property | Node kind | Meaning |
-| --- | --- | --- |
-| `"check_progress"` | `Checkbox` | the checkmark's own draw progress, 0.0–1.0 |
-| `"value"` | `Slider`, `LinearProgress`, `CircularProgress` | 0.0–1.0 |
 
 Read a property's current (possibly still-animating) value back with
 `node.get(property)`.

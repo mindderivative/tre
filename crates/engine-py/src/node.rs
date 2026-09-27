@@ -26,9 +26,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use engine_core::{
-    Action, EventKind, MotionCurve, NodeId, NodeKind, ShapeKey, TimePickerDialMode, Tree,
-};
+use engine_core::{Action, EventKind, MotionCurve, NodeId, NodeKind, ShapeKey, Tree};
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath};
 use pyo3::prelude::*;
@@ -257,9 +255,6 @@ impl Node {
                 let value = crate::node_props::parse_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                 match &mut node.kind {
-                    NodeKind::Icon(state) => {
-                        animate_field(&mut state.tint, value, duration, curve, now, handle);
-                    }
                     NodeKind::TextField(state) => {
                         animate_field(&mut state.text_tint, value, duration, curve, now, handle);
                     }
@@ -361,19 +356,11 @@ impl Node {
                     handle,
                 );
             }
-            // M90: the glyph/text color of `Text`/`Link`/`Icon`/
-            // `LoadingIndicator`. `Text`/`Link`/`LoadingIndicator` store
-            // it in `paint.background`; an `Icon` in `IconState.tint`
-            // (`Animated` since M92). Both ease the same way.
+            // M90: a text node's glyph color, stored in `paint.background`.
             "foreground" => {
                 let value = extract_color(&to, property)?;
                 match &mut node.kind {
-                    NodeKind::Icon(state) => {
-                        let handle =
-                            on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                        animate_field(&mut state.tint, value, duration, curve, now, handle);
-                    }
-                    NodeKind::Text(_) | NodeKind::Link(_) | NodeKind::LoadingIndicator(_) => {
+                    NodeKind::Text(_) => {
                         let handle =
                             on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                         animate_field(
@@ -469,104 +456,6 @@ impl Node {
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                 animate_field(&mut node.paint.shape, value, duration, curve, now, handle);
             }
-            // M14 Phase 1 (§8): the first real arm of the "two-level
-            // dispatch" ARCHITECTURE.md §8 describes -- `property`
-            // against `PaintProperties`' own universal fields first
-            // (above), then against the node's own `NodeKind` payload
-            // if it has one. Only resolves on a real `Checkbox`.
-            "check_progress" => match &mut node.kind {
-                NodeKind::Checkbox(state) => {
-                    let value = extract_f64(&to, property)?;
-                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(
-                        &mut state.check_progress,
-                        value,
-                        duration,
-                        curve,
-                        now,
-                        handle,
-                    );
-                }
-                _ => {
-                    return Err(EngineError::UnknownProperty {
-                        kind,
-                        property: property.to_string(),
-                    }
-                    .into());
-                }
-            },
-            // M14 Phase 2 (§8): the second real kind-payload arm -- a
-            // real, app-triggered eased move (a keyboard nudge, say),
-            // distinct from the real drag path (`Tree::set_slider_
-            // position`, driven entirely inside `engine-core`'s own
-            // dispatch, never through here).
-            // M30 Phase 2 Step 1 (§8): `check_progress`'s own real
-            // arm, mirrored for `RadioButton`.
-            "select_progress" => match &mut node.kind {
-                NodeKind::RadioButton(state) => {
-                    let value = extract_f64(&to, property)?;
-                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(
-                        &mut state.select_progress,
-                        value,
-                        duration,
-                        curve,
-                        now,
-                        handle,
-                    );
-                }
-                _ => {
-                    return Err(EngineError::UnknownProperty {
-                        kind,
-                        property: property.to_string(),
-                    }
-                    .into());
-                }
-            },
-            // M35 Phase 2 (§8): `Split Button`'s own real trailing-icon
-            // rotation -- degrees of clockwise rotation, the identical
-            // "a scalar progress value" shape `check_progress`/`select_
-            // progress`/`toggle_progress` already establish. Only
-            // resolves on a real `Icon` (`IconState`'s own doc comment
-            // has the full real reason this isn't routed through the
-            // universal `"transform"` arm above).
-            "rotation" => match &mut node.kind {
-                NodeKind::Icon(state) => {
-                    let value = extract_f64(&to, property)?;
-                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.rotation, value, duration, curve, now, handle);
-                }
-                _ => {
-                    return Err(EngineError::UnknownProperty {
-                        kind,
-                        property: property.to_string(),
-                    }
-                    .into());
-                }
-            },
-            // M30 Phase 2 Step 2 (§8): the same real arm, mirrored a
-            // third time for `Switch`.
-            "toggle_progress" => match &mut node.kind {
-                NodeKind::Switch(state) => {
-                    let value = extract_f64(&to, property)?;
-                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(
-                        &mut state.toggle_progress,
-                        value,
-                        duration,
-                        curve,
-                        now,
-                        handle,
-                    );
-                }
-                _ => {
-                    return Err(EngineError::UnknownProperty {
-                        kind,
-                        property: property.to_string(),
-                    }
-                    .into());
-                }
-            },
             // M30 Phase 3 Step 2 (§8): the progress indicators' own
             // arm. M90: `Slider` joins it -- a slider's position was
             // `thumb_position` here but `value` everywhere else.
@@ -621,37 +510,6 @@ impl Node {
                     );
                 }
             }
-            "value" => match &mut node.kind {
-                NodeKind::Slider(state) => {
-                    let value = extract_f64(&to, property)?;
-                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(
-                        &mut state.thumb_position,
-                        value,
-                        duration,
-                        curve,
-                        now,
-                        handle,
-                    );
-                }
-                NodeKind::LinearProgress(state) => {
-                    let value = extract_f64(&to, property)?;
-                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.value, value, duration, curve, now, handle);
-                }
-                NodeKind::CircularProgress(state) => {
-                    let value = extract_f64(&to, property)?;
-                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.value, value, duration, curve, now, handle);
-                }
-                _ => {
-                    return Err(EngineError::UnknownProperty {
-                        kind,
-                        property: property.to_string(),
-                    }
-                    .into());
-                }
-            },
             _ => {
                 return Err(EngineError::UnknownProperty {
                     kind,
@@ -1048,120 +906,6 @@ impl Node {
         Ok(())
     }
 
-    /// M14 Phase 1 (§5, §7.3): the real, plain (non-animated) write to
-    /// `NodeKind::Checkbox`'s own `checked: bool` -- Design Principle 6
-    /// ("selection/checked-state... depend on what the app's data
-    /// means") is why the engine never flips this itself on click; the
-    /// app's own `on_click` handler calls this, typically alongside
-    /// `.animate("check_progress", ...)` for the real visual
-    /// consequence, mirroring exactly how §7.3's own text separates the
-    /// two ("checked-state... ordinary NodeKind-payload fields...
-    /// animated through the same Animated<T> mechanism once set"). Also
-    /// keeps the real accessibility tree correct for free -- `Tree::
-    /// build_access_update` reads this same field directly, so there's
-    /// nothing else to update.
-    ///
-    /// M14 Phase 3 (§16.7): also fires a real `Change` (`Node.set_on_
-    /// change`'s own registered handler, if any) -- not mechanical the
-    /// way a `Slider` drag ending is (`engine-core` never touches
-    /// `checked` itself), so it fires directly here rather than through
-    /// a `Tree::dispatch` outcome; this is the *only* place `checked`
-    /// ever genuinely changes, so it's the one real place to fire from.
-    pub(crate) fn set_checked(&self, checked: bool, py: Python<'_>) -> PyResult<()> {
-        let mut tree = self.tree.borrow_mut();
-        let node = tree.get_mut(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        let kind = kind_name(&node.kind);
-        match &mut node.kind {
-            NodeKind::Checkbox(state) => {
-                let old_checked = state.checked;
-                state.checked = checked;
-                drop(tree);
-                let id = self.id;
-                let ctx = NodeContext {
-                    tree: &self.tree,
-                    handlers: &self.handlers,
-                    completions: &self.completions,
-                };
-                call_handler(&self.handlers, id, EventKind::Change, py, |py| {
-                    Event::change(
-                        py,
-                        id,
-                        &ctx,
-                        Some(
-                            old_checked
-                                .into_pyobject(py)?
-                                .to_owned()
-                                .unbind()
-                                .into_any(),
-                        ),
-                        Some(checked.into_pyobject(py)?.to_owned().unbind().into_any()),
-                    )
-                });
-                Ok(())
-            }
-            _ => Err(EngineError::UnknownProperty {
-                kind,
-                property: "checked".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// M30 Phase 2 Step 1 (§8, §16.7): `set_checked`'s own real shape,
-    /// mirrored exactly -- the engine never toggles `selected` itself
-    /// (Design Principle 6), only reflects it once the app writes it,
-    /// and always fires a real `Change` the same way.
-    pub(crate) fn set_selected(&self, selected: bool, py: Python<'_>) -> PyResult<()> {
-        let mut tree = self.tree.borrow_mut();
-        let node = tree.get_mut(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        let kind = kind_name(&node.kind);
-        match &mut node.kind {
-            NodeKind::RadioButton(_) | NodeKind::Switch(_) => {
-                // M90: `Switch` shares `selected` with `RadioButton` (MD3's
-                // own term for both); its state struct still calls it `on`.
-                let old_selected = match &mut node.kind {
-                    NodeKind::RadioButton(state) => {
-                        std::mem::replace(&mut state.selected, selected)
-                    }
-                    NodeKind::Switch(state) => std::mem::replace(&mut state.on, selected),
-                    _ => unreachable!(),
-                };
-                drop(tree);
-                let id = self.id;
-                let ctx = NodeContext {
-                    tree: &self.tree,
-                    handlers: &self.handlers,
-                    completions: &self.completions,
-                };
-                call_handler(&self.handlers, id, EventKind::Change, py, |py| {
-                    Event::change(
-                        py,
-                        id,
-                        &ctx,
-                        Some(
-                            old_selected
-                                .into_pyobject(py)?
-                                .to_owned()
-                                .unbind()
-                                .into_any(),
-                        ),
-                        Some(selected.into_pyobject(py)?.to_owned().unbind().into_any()),
-                    )
-                });
-                Ok(())
-            }
-            _ => Err(EngineError::UnknownProperty {
-                kind,
-                property: "selected".to_string(),
-            }
-            .into()),
-        }
-    }
-
     /// M15 Phase 2 (§8, §16.7): the plain, non-animated, programmatic
     /// write `set_checked`'s own real shape mirrors exactly (including
     /// always firing a real `Change`, the same established convention
@@ -1297,257 +1041,6 @@ impl Node {
         }
     }
 
-    /// M14 Phase 3 (§16.7): the missing read-back half of `set_checked`
-    /// -- real two-way binding sugar needs to read a `Checkbox`'s own
-    /// current `checked` to write it back into a bound `Signal` on a
-    /// real `Change`; `check_progress` (the animated visual half) was
-    /// already readable via `Node.get`, but `checked` itself (a plain
-    /// `bool`, not an `f64` `Animated<T>` field `get`'s own real
-    /// contract returns) needed its own dedicated getter.
-    pub(crate) fn get_checked(&self) -> PyResult<bool> {
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        match &node.kind {
-            NodeKind::Checkbox(state) => Ok(state.checked),
-            _ => Err(EngineError::UnknownProperty {
-                kind: kind_name(&node.kind),
-                property: "checked".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// M30 Phase 2 Step 1 (§5, §16.7): `get_checked`'s own real shape,
-    /// mirrored exactly.
-    pub(crate) fn get_selected(&self) -> PyResult<bool> {
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        match &node.kind {
-            NodeKind::RadioButton(state) => Ok(state.selected),
-            NodeKind::Switch(state) => Ok(state.on),
-            _ => Err(EngineError::UnknownProperty {
-                kind: kind_name(&node.kind),
-                property: "selected".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// M30 Phase 9 Step 5 (§5, §7, §11.7): moves a real `NodeKind::
-    /// Carousel` to `index`, starting (or retargeting) its own real
-    /// eased snap -- a thin real wrapper around `Tree::set_carousel_
-    /// index`, the same "engine-core owns the mechanism, this is just
-    /// the real Python entry point" shape `set_splitter_position`'s own
-    /// real Python callers already use elsewhere. `index` is a plain
-    /// `usize`, not an `f64` `Animated<T>` value -- the identical real
-    /// reason `checked`/`selected`/`on` each needed their own dedicated
-    /// setter instead of the generic `Node.animate()`.
-    pub(crate) fn set_carousel_index(&self, index: usize) -> PyResult<()> {
-        let mut tree = self.tree.borrow_mut();
-        let kind = kind_name(&tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        ).kind);
-        if !matches!(
-            tree.get(self.id).map(|n| &n.kind),
-            Some(NodeKind::Carousel(_))
-        ) {
-            return Err(EngineError::UnknownProperty {
-                kind,
-                property: "index".to_string(),
-            }
-            .into());
-        }
-        tree.set_carousel_index(self.id, index, crate::clock::now(&self.tree));
-        Ok(())
-    }
-
-    /// `set_carousel_index`'s own real read-back getter -- the item the
-    /// carousel is *settling on* (its real destination, not necessarily
-    /// where it's currently drawn mid-snap; see `get_carousel_position`
-    /// for that).
-    pub(crate) fn get_carousel_index(&self) -> PyResult<usize> {
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        match &node.kind {
-            NodeKind::Carousel(state) => Ok(state.index),
-            _ => Err(EngineError::UnknownProperty {
-                kind: kind_name(&node.kind),
-                property: "index".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// The real, currently-animating strip position -- an integer at
-    /// rest, fractional mid-snap. Exposed for the same real reason
-    /// `thumb_position` is readable via `Node.get`: `position` isn't a
-    /// plain `f64` `Animated<T>` field reachable through that generic
-    /// mechanism here (it's `CarouselState`-specific, not universal),
-    /// so it gets its own dedicated getter instead, matching `get_
-    /// checked`'s own real precedent for a kind-specific field.
-    pub(crate) fn get_carousel_position(&self) -> PyResult<f64> {
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        match &node.kind {
-            NodeKind::Carousel(state) => Ok(state.position.current),
-            _ => Err(EngineError::UnknownProperty {
-                kind: kind_name(&node.kind),
-                property: "position".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// `Uncontained`'s own real free-scroll counterpart to `set_
-    /// carousel_index` -- a thin wrapper around `Tree::set_carousel_
-    /// scroll`.
-    pub(crate) fn set_carousel_scroll(&self, value: f64) -> PyResult<()> {
-        let mut tree = self.tree.borrow_mut();
-        let kind = kind_name(&tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        ).kind);
-        if !matches!(
-            tree.get(self.id).map(|n| &n.kind),
-            Some(NodeKind::Carousel(_))
-        ) {
-            return Err(EngineError::UnknownProperty {
-                kind,
-                property: "scroll_x".to_string(),
-            }
-            .into());
-        }
-        tree.set_carousel_scroll(self.id, value);
-        Ok(())
-    }
-
-    /// `set_carousel_scroll`'s own real read-back getter.
-    pub(crate) fn get_carousel_scroll(&self) -> PyResult<f64> {
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        match &node.kind {
-            NodeKind::Carousel(state) => Ok(state.scroll_x),
-            _ => Err(EngineError::UnknownProperty {
-                kind: kind_name(&node.kind),
-                property: "scroll_x".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// M39 Phase 2 Step 2 (§5, §7): a real, direct programmatic move of
-    /// a `NodeKind::TimePickerDial`'s own hand positions -- the same
-    /// "engine-core owns the mechanism, this is just the real Python
-    /// entry point" shape `set_carousel_index` already establishes. A
-    /// thin wrapper around `Tree::set_time_picker_dial_time`, which
-    /// itself clamps `hour`/`minute` into range -- this method adds no
-    /// further validation of its own.
-    pub(crate) fn set_time_picker_dial_time(&self, hour: u8, minute: u8) -> PyResult<()> {
-        let mut tree = self.tree.borrow_mut();
-        let kind = kind_name(
-            &tree
-                .get(self.id)
-                .expect(
-                    "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-                )
-                .kind,
-        );
-        if !matches!(
-            tree.get(self.id).map(|n| &n.kind),
-            Some(NodeKind::TimePickerDial(_))
-        ) {
-            return Err(EngineError::UnknownProperty {
-                kind,
-                property: "hour/minute".to_string(),
-            }
-            .into());
-        }
-        tree.set_time_picker_dial_time(self.id, hour, minute);
-        Ok(())
-    }
-
-    /// `set_time_picker_dial_time`'s own real read-back getter.
-    pub(crate) fn get_time_picker_dial_time(&self) -> PyResult<(u8, u8)> {
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        match &node.kind {
-            NodeKind::TimePickerDial(state) => Ok((state.hour, state.minute)),
-            _ => Err(EngineError::UnknownProperty {
-                kind: kind_name(&node.kind),
-                property: "hour/minute".to_string(),
-            }
-            .into()),
-        }
-    }
-
-    /// M39 Phase 2 Step 2 (§5, §7): switches which real hand a drag on
-    /// this dial moves next -- the string-vocabulary convention
-    /// `parse_content_fit`/`parse_dock_side` already establish for a
-    /// small, closed real Rust enum exposed to Python, rather than a
-    /// dedicated pyo3-native enum type for just these two variants.
-    pub(crate) fn set_time_picker_dial_mode(&self, mode: &str) -> PyResult<()> {
-        let mode = match mode {
-            "hour" => TimePickerDialMode::Hour,
-            "minute" => TimePickerDialMode::Minute,
-            other => {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "unknown time picker dial mode {other:?} -- expected \"hour\" or \"minute\""
-                )));
-            }
-        };
-        let mut tree = self.tree.borrow_mut();
-        let kind = kind_name(
-            &tree
-                .get(self.id)
-                .expect(
-                    "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-                )
-                .kind,
-        );
-        if !matches!(
-            tree.get(self.id).map(|n| &n.kind),
-            Some(NodeKind::TimePickerDial(_))
-        ) {
-            return Err(EngineError::UnknownProperty {
-                kind,
-                property: "mode".to_string(),
-            }
-            .into());
-        }
-        tree.set_time_picker_dial_mode(self.id, mode);
-        Ok(())
-    }
-
-    /// `set_time_picker_dial_mode`'s own real read-back getter.
-    pub(crate) fn get_time_picker_dial_mode(&self) -> PyResult<&'static str> {
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        match &node.kind {
-            NodeKind::TimePickerDial(state) => Ok(match state.mode {
-                TimePickerDialMode::Hour => "hour",
-                TimePickerDialMode::Minute => "minute",
-            }),
-            _ => Err(EngineError::UnknownProperty {
-                kind: kind_name(&node.kind),
-                property: "mode".to_string(),
-            }
-            .into()),
-        }
-    }
-
     /// M15 Phase 1 (§5, §16.7): the real read-back getter for a
     /// `TextField`'s own current `content` -- mirrors `get_checked`'s
     /// own exact shape (rejecting a non-`TextField` node the same way).
@@ -1563,13 +1056,6 @@ impl Node {
             // (verifying a label's content actually changed) surfaced
             // by the exact same phase.
             NodeKind::Text(state) => Ok(state.content.clone()),
-            // Tesserae M27 (`tre` M84): `Link` wraps the identical
-            // `TextState` `Text` does (`window_factory.rs`'s own real
-            // `add_link` body confirms this directly) -- the same real
-            // read-back need `Text`'s own arm above exists for applies
-            // here too, previously missing entirely (Link had no text
-            // read-back path from Python at all).
-            NodeKind::Link(state) => Ok(state.content.clone()),
             // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own
             // "text content" is its whole cell grid, not one string --
             // joined here row by row (`\n`-separated, each row's own
@@ -1815,10 +1301,7 @@ fn renamed_property(property: &str) -> PyResult<()> {
 /// M90: kinds whose paint color is their glyph or text -- they take
 /// `foreground`, and have no fill for `background` to describe.
 fn is_glyph_kind(kind: &NodeKind) -> bool {
-    matches!(
-        kind,
-        NodeKind::Text(_) | NodeKind::Link(_) | NodeKind::Icon(_) | NodeKind::LoadingIndicator(_)
-    )
+    matches!(kind, NodeKind::Text(_))
 }
 
 fn parse_flex_direction(value: &str) -> PyResult<FlexDirection> {
@@ -1869,55 +1352,30 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Rect => "Rect",
         NodeKind::Container => "Container",
         NodeKind::Text(_) => "Text",
-        NodeKind::Splitter(_) => "Splitter",
         NodeKind::VirtualList(_) => "VirtualList",
         NodeKind::Canvas(_) => "Canvas",
-        NodeKind::Checkbox(_) => "Checkbox",
-        NodeKind::RadioButton(_) => "RadioButton",
-        NodeKind::Switch(_) => "Switch",
-        NodeKind::LinearProgress(_) => "LinearProgress",
-        NodeKind::CircularProgress(_) => "CircularProgress",
-        NodeKind::Slider(_) => "Slider",
         NodeKind::TextField(_) => "TextField",
         NodeKind::Image(_) => "Image",
-        NodeKind::Icon(_) => "Icon",
         NodeKind::Path(_) => "Path",
-        NodeKind::Link(_) => "Link",
         NodeKind::Terminal(_) => "Terminal",
-        NodeKind::Carousel(_) => "Carousel",
         NodeKind::ScrollView(_) => "ScrollView",
-        NodeKind::LoadingIndicator(_) => "LoadingIndicator",
-        NodeKind::TimePickerDial(_) => "TimePickerDial",
     }
 }
 
 /// M97: `get("kind")` -- a node's kind by the name `window.create` takes
-/// it under; the 0.3.5-removed widget kinds keep their own (snake-cased)
-/// names.
+/// it under.
 pub(crate) fn kind_id(kind: &NodeKind) -> &'static str {
     match kind {
         NodeKind::Rect => "box",
         NodeKind::Container => "container",
         NodeKind::Text(_) => "text",
-        NodeKind::Splitter(_) => "splitter",
         NodeKind::VirtualList(_) => "virtual_list",
         NodeKind::Canvas(_) => "canvas",
-        NodeKind::Checkbox(_) => "checkbox",
-        NodeKind::RadioButton(_) => "radio_button",
-        NodeKind::Switch(_) => "switch",
-        NodeKind::LinearProgress(_) => "linear_progress",
-        NodeKind::CircularProgress(_) => "circular_progress",
-        NodeKind::Slider(_) => "slider",
         NodeKind::TextField(_) => "text_input",
         NodeKind::Image(_) => "image",
-        NodeKind::Icon(_) => "icon",
         NodeKind::Path(_) => "path",
-        NodeKind::Link(_) => "link",
         NodeKind::Terminal(_) => "terminal",
-        NodeKind::Carousel(_) => "carousel",
         NodeKind::ScrollView(_) => "scroll_view",
-        NodeKind::LoadingIndicator(_) => "loading_indicator",
-        NodeKind::TimePickerDial(_) => "time_picker_dial",
     }
 }
 
@@ -2005,40 +1463,6 @@ impl Node {
             // color` stays excluded, the same real reason `background`
             // already is (not a single `f64`).
             "border_width" => Ok(node.paint.border_width.current),
-            "check_progress" => match &node.kind {
-                NodeKind::Checkbox(state) => Ok(state.check_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "select_progress" => match &node.kind {
-                NodeKind::RadioButton(state) => Ok(state.select_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "toggle_progress" => match &node.kind {
-                NodeKind::Switch(state) => Ok(state.toggle_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "value" => match &node.kind {
-                NodeKind::Slider(state) => Ok(state.thumb_position.current),
-                NodeKind::LinearProgress(state) => Ok(state.value.current),
-                NodeKind::CircularProgress(state) => Ok(state.value.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
             _ => Err(EngineError::UnknownProperty {
                 kind,
                 property: property.to_string(),

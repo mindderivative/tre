@@ -62,17 +62,12 @@ node.animate("opacity", 0.0, duration_ms=300, on_complete=lambda: print("faded")
 | `"opacity"` | `float` (0.0–1.0) | every node |
 | `"corner_radius"` | `float` | every node |
 | `"elevation"` | `float` | every node |
-| `"background"` | `(r, g, b, a)` int tuple | every node with a fill — not `Text`/`Link`/`Icon`/`LoadingIndicator` |
-| `"foreground"` | `(r, g, b, a)` int tuple | `Text`, `Link`, `Icon`, `LoadingIndicator` — the glyph/text color |
+| `"background"` | `(r, g, b, a)` int tuple | every node with a fill — not `Text` |
+| `"foreground"` | `(r, g, b, a)` int tuple | `Text` — the glyph color |
 | `"border_color"` | `(r, g, b, a)` int tuple | every node |
 | `"border_width"` | `float` | every node |
 | `"transform"` | `(translate_x, translate_y, scale)` float tuple | every node |
 | `"shape"` | `list[(x, y)]` float tuples | every node — morphs to the closed polygon these vertices describe |
-| `"check_progress"` | `float` (0.0–1.0) | `Checkbox` only |
-| `"select_progress"` | `float` (0.0–1.0) | `RadioButton` only |
-| `"toggle_progress"` | `float` (0.0–1.0) | `Switch` only |
-| `"rotation"` | `float` (degrees) | `Icon` only |
-| `"value"` | `float` (0.0–1.0) | `Slider`, `LinearProgress`, `CircularProgress` |
 
 Raises `ValueError` for an unknown property name, or `TypeError` if `to`
 doesn't match the property's expected shape. `on_complete`, when given,
@@ -85,10 +80,8 @@ finishes — drained by `App.run()`'s per-frame loop, or by
 **`get(property) -> float`**
 
 Reads a numeric property's current (possibly still-animating) value.
-Supports `"opacity"`, `"corner_radius"`, `"elevation"`,
-`"border_width"`, `"check_progress"` (`Checkbox`), `"select_progress"`
-(`RadioButton`), `"toggle_progress"` (`Switch`), and `"value"`
-(`Slider`, `LinearProgress`, `CircularProgress`). Raises `ValueError`
+Supports `"opacity"`, `"corner_radius"`, `"elevation"`, and
+`"border_width"`. Raises `ValueError`
 for an unknown/inapplicable property. Colors (`"background"`,
 `"foreground"`, `"border_color"`) aren't readable this way — they aren't
 a single `float`.
@@ -136,8 +129,8 @@ whether `enable_interaction()` was ever called.
 
 **`set_on_change(callback)`**
 
-Fires on a real `Change` — a `Slider` drag ending, or
-`set_checked`/`set_text` being called.
+Fires on a real `Change` — a `TextField`'s text changing, by typing or
+by `set_text`.
 
 ### `set_on_focus_enter` / `set_on_focus_exit`
 
@@ -224,20 +217,12 @@ Switching screens is `old.remove()` then `window.root.add_child(new)`:
   input's text, caret, and selection, and running animations, which keep
   advancing on the window's clock. Attach it again and it's as you left it.
 
-## Checkbox-specific
-
-### `set_checked`
-
-**`set_checked(checked)`**
-
-Plain, non-animated write to a `Checkbox`'s `checked` state. Fires
-`Change`. Raises `ValueError` if this node isn't a `Checkbox`.
-
-### `get_checked`
-
-**`get_checked() -> bool`**
-
-Reads a `Checkbox`'s current `checked` value.
+*0.3.5 removed the MD3 widget kinds* — checkbox, radio button, switch,
+slider, the progress indicators, loading indicator, time picker dial,
+carousel, splitter, link, and icon — with their `Node` methods
+(`set_checked`/`get_checked`, `set_selected`/`get_selected`, the
+carousel and time-picker-dial accessors) and animatable properties. A
+framework builds them from boxes, text, and paths.
 
 ## TextField-specific
 
@@ -255,8 +240,8 @@ kind.
 
 **`get_text() -> str`**
 
-Reads the current content of a `TextField`, a plain `Text` label, a
-`Link`, or a `Terminal` (its visible cell grid, one line per row).
+Reads the current content of a `TextField`, a plain `Text` label, or a
+`Terminal` (its visible cell grid, one line per row).
 Raises `ValueError` for any other node kind.
 
 ## Focus
@@ -288,36 +273,6 @@ to one visible "⋯" marker line. Replaces the whole list on every call.
 Cursor movement (`Home`/`End`/arrow keys) is fold-aware — a move that
 would land inside a folded range snaps forward past its marker instead.
 `CodeEditor`-only.
-
-## RadioButton & Switch-specific
-
-| Method | Notes |
-| --- | --- |
-| `set_selected(selected)` / `get_selected() -> bool` | `RadioButton` and `Switch` |
-
-Each raises `ValueError` on any other kind. (`Checkbox` uses
-[`set_checked`/`get_checked`](#checkbox-specific).)
-
-## Carousel-specific
-
-| Method | Notes |
-| --- | --- |
-| `set_carousel_index(index)` | Moves to `index` (clamped to the child count) with an eased snap; a no-op if already there |
-| `get_carousel_index() -> int` | The item the carousel is settling on — its destination, not necessarily where it's drawn mid-snap |
-| `get_carousel_position() -> float` | The currently-animating strip position: an integer at rest, fractional while a snap is travelling |
-| `set_carousel_scroll(value)` / `get_carousel_scroll() -> float` | The free pixel scroll offset, clamped to `[0, max_scroll]` — meaningful for `layout="uncontained"` |
-
-`Carousel` only; each raises `ValueError` on any other kind.
-
-## TimePickerDial-specific
-
-| Method | Notes |
-| --- | --- |
-| `set_time_picker_dial_time(hour, minute)` | Moves both hands instantly; `hour` clamps to `0`–`23`, `minute` to `0`–`59` |
-| `get_time_picker_dial_time() -> (hour, minute)` | |
-| `set_time_picker_dial_mode(mode)` / `get_time_picker_dial_mode() -> str` | `"hour"` or `"minute"` — which hand a drag on the dial moves next. The dial has no built-in toggle; wire a button or tab to this |
-
-`TimePickerDial` only; each raises `ValueError` on any other kind.
 
 ## Terminal-specific
 

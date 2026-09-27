@@ -333,11 +333,8 @@ pub enum EventKind {
 /// tracing every real `DispatchOutcome::Changed` producer in `tree.rs`
 /// before writing this, not assumed: a `TextField` edit (`Backspace`/
 /// `Delete`/`Space`/`Enter`/`Tab`/a real typed character) owns a
-/// `String`; a `Slider` drag/arrow-nudge owns an `f64`; a
-/// `TimePickerDial` drag owns its own `{hour, minute}` pair, not a
-/// single number at all. A generic/open-ended shape was deliberately
-/// rejected (`AskUserQuestion`, M54 scoping) in favor of this small,
-/// exact enum -- three real shapes, not a speculative fourth.
+/// `String`. M99 removed the slider's `Number` and the time picker
+/// dial's `Time` with their kinds; a text edit is the only producer.
 /// `new_value` is deliberately *not* a sibling field anywhere this
 /// type appears: unlike the old value (destroyed by the very mutation
 /// that produces this outcome, so it must be captured here, mechanically,
@@ -350,8 +347,6 @@ pub enum EventKind {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChangedValue {
     Text(String),
-    Number(f64),
-    Time { hour: u8, minute: u8 },
 }
 
 /// The one thing `Tree::dispatch` can't resolve by itself (§2 Design
@@ -359,13 +354,6 @@ pub enum ChangedValue {
 /// mechanical (hover, focus movement, ripple-spawn-on-press) already
 /// happened inside `dispatch` itself before this is ever produced.
 ///
-/// M54 Phase 1: dropped `Eq` from the derive below (kept `PartialEq`)
-/// -- `Changed`'s new `ChangedValue::Number(f64)` case can't derive
-/// `Eq` (`f64` only has `PartialEq`, the standard NaN-related reason).
-/// Confirmed via a full `grep` before this change: every real use of
-/// this derive across the workspace is `assert_eq!`/pattern matching,
-/// which only need `PartialEq`/`Debug` -- nothing hashes or `Eq`-bounds
-/// a `DispatchOutcome` anywhere.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DispatchOutcome {
     /// Nothing meaning-dependent happened this call.
