@@ -43,7 +43,7 @@ handle = app.thread_handle()
 
 def worker():                            # a background thread
     result = slow_computation()
-    handle.call_soon(lambda: label.set_text(result))
+    handle.call_soon(lambda: label.set(text=result))
 
 threading.Thread(target=worker, daemon=True).start()
 app.run()
@@ -54,67 +54,51 @@ the event-loop thread at the top of the next frame.
 
 ## Creating nodes
 
-The general-purpose factories (0.3.5 removed the MD3 component catalog built
-on them; a framework builds its own). See [Docking](docking-and-shell.md) for
-the docking methods:
+`window.create(kind, **props)` makes a detached node; attach it with
+`add_child`, to the window's `root` or any other node. The kinds are
+`"box"`, `"text"`, `"text_input"`, `"image"`, `"path"`, `"canvas"`,
+`"scroll_view"`, `"virtual_list"`, and `"terminal"`; every property is on
+[Nodes and Properties](../api/python/properties.md). See
+[Docking](docking-and-shell.md) for the docking methods.
 
-| Method | Creates |
-| --- | --- |
-| `add_rect(background, width, height, x=None, y=None, border_color=None, border_width=None)` | A plain colored rectangle, optionally bordered |
-| `add_text(content, foreground, width, height, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None)` | A plain, non-editable text label |
-| `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)` | A text field — `multiline`/`show_whitespace` mirror `add_code_editor`'s own two fields |
-| `add_code_editor(content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None)` | A monospace code editor — folding, syntax spans, whitespace glyphs |
-| `add_terminal(shell, cols, rows, background, font_size=14.0, scrollback_lines=1000, x=None, y=None)` | A real PTY-backed terminal emulator |
-| `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed image from already-decoded RGBA8 pixels |
-| `add_video(width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed video surface — frames pushed via `node.push_frame(...)` |
-| `add_scroll_view(width, height, orientation="vertical", x=None, y=None)` | A scrollable viewport over exactly one child |
-| `add_canvas(width, height, draw, x=None, y=None)` | A custom-drawn surface — see [Canvas & Virtualized Lists](canvas-and-lists.md) |
-| `add_virtual_list(item_count, materialize, item_extent=None, size_hint=None, width=None, height=None)` | A virtualized list — see [Canvas & Virtualized Lists](canvas-and-lists.md) |
+```python
+panel = window.create("box", width=240, flex_direction="vertical", gap=8, padding=12)
+title = window.create("text", text="Inbox", font_size=22, width=200, height=28)
+search = window.create("text_input", placeholder="Search", width=216, height=32)
+window.root.add_child(panel)
+panel.add_child(title)
+panel.add_child(search)
+```
 
-`x`/`y` are independently optional: give either to absolutely-position
-the node (relative to the window's own root padding box), or omit both to
-use the default flex-row flow.
+A node flows in its parent's flex layout; give it `position="absolute"`
+with `x`/`y` to place it relative to its parent's padding box instead.
+*0.3.5 replaced the `add_*` factories with `create`.*
 
 ## Events
 
-Every `Node` supports these handler registrations:
+Every `Node` takes listeners with `on(event, handler)`:
 
 ```python
-node.set_on_click(lambda: ...)
-node.set_on_hover_enter(lambda: ...)
-node.set_on_hover_exit(lambda: ...)
-node.set_on_change(lambda: ...)        # a TextField edit, or set_text
-node.set_on_focus_enter(lambda: ...)
-node.set_on_focus_exit(lambda: ...)
+node.on("click", lambda: ...)
+node.on("pointer_enter", lambda: ...)
+node.on("pointer_leave", lambda: ...)
+node.on("change", lambda event: print(event.old_value, "->", event.new_value))
+node.on("focus", lambda: ...)
+node.on("unfocus", lambda: ...)
 ```
 
-A handler may take zero arguments (as above) or exactly one — a real
-`Event` object with `kind` (a string: `"click"`, `"hover_enter"`,
-`"hover_exit"`, `"change"`, `"focus_enter"`, `"focus_exit"`), `node`
-(the live `Node` the event fired on — useful when the same function is
-registered on several nodes), `source` (a stable, opaque integer id for
-that same node), and, only when the firing `kind` genuinely has one:
-`position` (an `(x, y)` tuple), `button` (`"primary"`/`"secondary"`/
-`"middle"`), and `old_value`/`new_value` (a `Change` event's before/
-after value). Fields the current `kind` has nothing to say about are
-`None`, never fabricated:
+A handler takes no arguments or one, the `Event` — its `type`, its
+`target` (the live node it's about), `current` (whose listener is running,
+as it bubbles), and the fields the event has something to say about, such
+as `window_x`/`window_y` and `button` for pointer events and
+`old_value`/`new_value` for `change`. See
+[Events and Listeners](../api/python/events.md) for every event and field.
+An exception raised inside a handler is caught, logged, and non-fatal.
 
-```python
-def on_any_click(event):
-    print(f"{event.kind} on {event.node} at {event.position}")
-
-node.set_on_click(on_any_click)
-```
-
-Which shape a given handler wants is detected once, at registration
-time, by inspecting its arity — not re-checked per call. An exception
-raised inside a handler is caught, logged, and non-fatal — it never
-crashes the app.
-
-`set_on_click` also makes the node keyboard-Tab-reachable (it adds a
-`Focus`/`Click` accessibility action), so a node only becomes part of the
-Tab order once it's actually given behavior — see
-[Theming & Accessibility](theming-and-accessibility.md).
+A node is in the Tab order once it's focusable — set `focusable=True`.
+Enter and Space then activate it: a `click`.
+*0.3.5 removed `set_on_click` and its siblings;* unlike them, `on("click")`
+doesn't make a node focusable.
 
 Hover and press feedback is the framework's to draw, from the
 `pointer_enter`/`pointer_leave`/`pointer_down` listeners — `tre` 0.3.5
@@ -132,8 +116,8 @@ window.scroll(node, delta_y=10.0)
 window.right_click(node)          # opens a registered context menu, if any
 window.press_key("tab")           # "tab"/"enter"/"space"/"escape"/"backspace"/
                                    # "delete"/"left"/"right"/"home"/"end"
-window.type_text("hello")         # only affects the currently focused TextField
-window.copy()                     # returns the focused TextField's selected text
+window.type_text("hello")         # only affects the focused text input
+window.copy()                     # returns the focused text input's selected text
 window.cut()
 window.paste("clipboard text")
 ```

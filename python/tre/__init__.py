@@ -18,7 +18,7 @@ the reactivity layer (`Signal`, `Computed`, `Effect`, `ViewModel`, `batch`,
 
 from tre._core import (
     App,
-    CanvasContext,
+    Painter,
     Event,
     LoopHandle,
     Node,
@@ -26,18 +26,16 @@ from tre._core import (
     register_font,
 )
 
-#: M32 Phase 1 (§5, §8, §10): the real bundled monospace face
-#: `Window.add_terminal`/`add_code_editor` themselves always shape
-#: with internally (`engine_render::MONOSPACE_FONT_FAMILY`, "Hack
-#: Nerd Font Mono") -- exported here so app-composed siblings (a
-#: gutter's own `Text` node, a fold toggle) that must line up with the
-#: real editor grid can match its exact real font_family rather than
-#: guessing or drifting out of sync with it.
+#: M32 Phase 1 (§5, §8, §10): the bundled monospace face a terminal always
+#: shapes with (`engine_render::MONOSPACE_FONT_FAMILY`, "Hack Nerd Font
+#: Mono") -- give it to a code editor's text input, and to siblings (a
+#: gutter, line numbers) that must line up with a terminal's or editor's
+#: grid.
 MONOSPACE_FONT_FAMILY = "Hack Nerd Font Mono"
 
 __all__ = [
     "App",
-    "CanvasContext",
+    "Painter",
     "Event",
     "LoopHandle",
     "MONOSPACE_FONT_FAMILY",

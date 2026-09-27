@@ -28,15 +28,13 @@ mod thread_handle;
 mod window;
 mod window_docking;
 mod window_events;
-mod window_factory;
 mod window_input;
 mod window_layers;
-mod window_virtual_canvas;
 
 use pyo3::prelude::*;
 
 pub use app::App;
-pub use canvas::CanvasContext;
+pub use canvas::Painter;
 pub use error::EngineError;
 pub use event::Event;
 pub use node::Node;
@@ -51,7 +49,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<App>()?;
     m.add_class::<PyWindow>()?;
     m.add_class::<Node>()?;
-    m.add_class::<CanvasContext>()?;
+    m.add_class::<Painter>()?;
     m.add_class::<Event>()?;
     m.add_class::<LoopHandle>()?;
     m.add_function(wrap_pyfunction!(register_font, m)?)?;

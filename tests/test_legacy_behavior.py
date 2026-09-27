@@ -84,20 +84,3 @@ def test_the_elevation_table_is_the_painters_formula(level: int) -> None:
     rows = [tuple(int(v) if isinstance(v, float) else v for v in s) for s in shadows(level)]
     assert f"| {level} | `{rows}` |" in DOC.read_text()
 
-
-def test_set_on_click_makes_a_node_a_tab_stop_that_enter_and_space_activate() -> None:
-    w = tre.Window(200, 100, "click")
-    legacy, rebuilt = w.create("box", width=40, height=20), w.create("box", width=40, height=20)
-    w.root.add_child(legacy)
-    w.root.add_child(rebuilt)
-    fired: list[str] = []
-    legacy.set_on_click(lambda: fired.append("legacy"))
-    rebuilt.on("click", lambda e: fired.append("rebuilt"))
-    assert legacy.get("focusable") is True
-    assert rebuilt.get("focusable") is False, "on('click') registers the handler only"
-    rebuilt.set(focusable=True)  # the rebuild
-    for _ in range(2):
-        w.simulate("key_down", key="tab")
-        w.simulate("key_down", key="enter")
-        w.simulate("key_down", key="space")
-    assert fired == ["legacy", "legacy", "rebuilt", "rebuilt"]

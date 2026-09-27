@@ -58,13 +58,15 @@ def draw_edges(ctx):
 
 # The edges paint first (added first, so the node circles paint on top
 # of them -- children-list order is paint order, §6).
-edge_canvas = window.add_canvas(width=320, height=240, draw=draw_edges, x=0.0, y=0.0)
-window.redraw_canvas(edge_canvas)
+edge_canvas = window.create("canvas", width=320, height=240, draw=draw_edges, position="absolute", x=0.0, y=0.0)
+window.root.add_child(edge_canvas)
+edge_canvas.redraw()
 
 for (x, y), color in zip(positions, node_colors):
-    node = window.add_rect(background=color, width=NODE_SIZE, height=NODE_SIZE, x=x, y=y)
+    node = window.create("box", fill=color, width=NODE_SIZE, height=NODE_SIZE, position="absolute", x=x, y=y)
+    window.root.add_child(node)
     node.animate("corner_radius", NODE_SIZE / 2, duration_ms=0)
-    node.set_on_click(lambda: None)
+    node.on("click", lambda: None)
 
 app = App()
 app.add_window(window)

@@ -65,6 +65,7 @@ GONE = {
     "tre": {
         "View", "Component", "Signal", "Computed", "Effect", "ViewModel", "batch", "untrack",
         "Theme",
+        "CanvasContext",
     },
     "Window": {
         "from_view", "show_view",
@@ -82,6 +83,11 @@ GONE = {
         "add_icon",
         # M99 Phase 2 Step 3: the file conveniences (D6).
         "add_image",
+        # M100 Phase 1 Step 1: the renames.
+        "add_rect", "add_text", "add_text_field", "add_code_editor", "add_image_from_bytes",
+        "add_video", "add_canvas", "add_scroll_view", "add_virtual_list", "add_terminal",
+        "get_monospace_cell_size", "resize_terminal", "copy_terminal_selection",
+        "set_virtual_list_window", "redraw_canvas",
     },
     "Node": {
         "set_context_menu",
@@ -90,7 +96,13 @@ GONE = {
         "set_checked", "set_selected", "get_checked", "get_selected",
         # M99 Phase 2 Step 2: the state layer and ripple (D8).
         "enable_interaction",
+        # M100 Phase 1 Step 1: the renames.
+        "set_layout", "set_text", "set_clip_children", "set_syntax_spans", "set_folded_ranges",
+        "set_terminal_selection", "push_frame", "get_text", "is_focused", "set_on_click",
+        "set_on_hover_enter", "set_on_hover_exit", "set_on_change", "set_on_focus_enter",
+        "set_on_focus_exit",
     },
+    "Event": {"kind", "node", "source", "position"},
 }  # fmt: skip
 
 
@@ -105,8 +117,8 @@ def test_every_forbidden_name_exists_today_or_is_already_gone() -> None:
 
 def test_off_by_default() -> None:
     assert os.environ.get("TRE_FORBID_REMOVED") != "1", "run the suite without the switch"
-    assert tre.CanvasContext is not None
-    assert callable(tre.Window(10, 10, "off").add_rect)
+    assert tre.Painter is not None
+    assert callable(tre.Window(10, 10, "off").create)
 
 
 SCRIPT = r"""
@@ -171,5 +183,6 @@ def test_the_switch_forbids_removed_names_and_keeps_the_rest() -> None:
     assert results["kept"] == [0.5, [1, 2, 3, 255], "click", None]
     assert results["hasattr add_button"] is False
     assert results["__all__"] == [
-        "App", "Event", "LoopHandle", "MONOSPACE_FONT_FAMILY", "Node", "Window", "register_font",
+        "App", "Painter", "Event", "LoopHandle", "MONOSPACE_FONT_FAMILY", "Node", "Window",
+        "register_font",
     ]  # fmt: skip

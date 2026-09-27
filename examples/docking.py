@@ -17,13 +17,17 @@ from tre import App, Window
 
 window = Window(width=320, height=160, title="tre -- docking")
 
-handle = window.add_rect(background=(0x80, 0x80, 0x80, 0xFF), width=24, height=100)
-left = window.add_rect(background=(0x22, 0x22, 0x22, 0xFF), width=120, height=100)
-right = window.add_rect(background=(0x22, 0x22, 0x22, 0xFF), width=120, height=100)
+handle = window.create("box", fill=(0x80, 0x80, 0x80, 0xFF), width=24, height=100)
+window.root.add_child(handle)
+left = window.create("box", fill=(0x22, 0x22, 0x22, 0xFF), width=120, height=100)
+window.root.add_child(left)
+right = window.create("box", fill=(0x22, 0x22, 0x22, 0xFF), width=120, height=100)
+window.root.add_child(right)
 window.add_dock_zone("left", left, 120.0)
 window.add_dock_zone("right", right, 120.0)
 
-panel = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=120, height=100)
+panel = window.create("box", fill=(0xFF, 0x00, 0x00, 0xFF), width=120, height=100)
+window.root.add_child(panel)
 window.dock_panel("left", panel)
 handle.on("pointer_down", lambda: window.start_panel_drag(panel))
 

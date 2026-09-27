@@ -2,8 +2,8 @@
 
 *New in 0.3.4.* The event model of the [target API](../../design/target-api.md):
 listeners registered with `on(event, handler)` on a [`Node`](node.md) or a
-[`Window`](window.md). It sits beside the older `set_on_*` handlers, which keep
-working exactly as before (they don't bubble) until they're removed in 0.3.5.
+[`Window`](window.md). *0.3.5 removed the older, non-bubbling `set_on_*`
+handlers it replaces.*
 
 ## Node listeners
 

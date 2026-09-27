@@ -43,10 +43,9 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 - Raises `RuntimeError` if called with zero registered windows.
 - Internally drives real input dispatch (pointer press/move/release,
   theme changes, clipboard copy/cut/paste, dock drag-and-drop, text-field
-  click-to-position and drag-selection) and invokes any handlers
-  registered via `Node.set_on_click`/`set_on_hover_enter`/
-  `set_on_hover_exit`/`set_on_change`, plus accessibility-driven actions
-  from a screen reader.
+  click-to-position and drag-selection) and invokes the `on(...)`
+  listeners it reaches, plus accessibility-driven actions from a screen
+  reader.
 - If no GPU adapter is reachable, or no display is available, the process
   exits cleanly (not treated as an error) rather than raising.
 - Installs a `tracing` log subscriber as early as possible — set

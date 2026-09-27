@@ -80,7 +80,8 @@ A minimal imperative app looks like this:
 from tre import App, Window
 
 window = Window(width=400, height=200, title="tre")
-window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=300, height=48)
+field = window.create("text_input", placeholder="Type here", width=300, height=48)
+window.root.add_child(field)
 
 app = App()
 app.add_window(window)

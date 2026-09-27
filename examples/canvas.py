@@ -3,12 +3,12 @@
 window with a small custom-drawn scene -- two circular "nodes" joined by
 a stroked "edge," the same shape M5 Phase 4's own node-graph validation
 example builds on. Proves the real end-to-end path: a Python `draw`
-callback populates a `CanvasContext`, `Window.redraw_canvas` resolves it
+callback populates a `Painter` -- on creation and on each `canvas.redraw()` -- resolved
 into real `CanvasState`, and `engine-render` paints it through the same
 pipeline every other `NodeKind` uses.
 
 What this script proves automatically (headless-CI-safe, no human
-needed): the `draw` callback runs, `CanvasContext`'s drawing/hit-test
+needed): the `draw` callback runs, `Painter`'s drawing/hit-test
 methods accept real arguments, and the whole layout renders through the
 real pipeline for real frames, exiting cleanly. The definitive pixel-
 level proof that the drawn content lands at the right on-screen
@@ -35,8 +35,9 @@ def draw(ctx):
     ctx.set_hit_test_circle(cx=150, cy=90, radius=16)
 
 
-canvas = window.add_canvas(width=200, height=120, draw=draw)
-window.redraw_canvas(canvas)
+canvas = window.create("canvas", width=200, height=120, draw=draw)
+window.root.add_child(canvas)
+canvas.redraw()
 
 app = App()
 app.add_window(window)

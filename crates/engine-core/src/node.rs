@@ -875,21 +875,16 @@ impl VirtualListState {
         (track, thumb, along)
     }
 
-    /// Item `idx`'s own real top-offset. Panics if `item_extent` is
-    /// `Variable` and `idx` isn't yet resolved in `resolved_offsets` --
-    /// an internal bookkeeping bug (the caller must resolve an index
-    /// before positioning it), the same "internal bug, not a runtime
-    /// condition" contract `set_splitter_position` already uses for its
-    /// own malformed-call panics.
+    /// Item `idx`'s own real top-offset. M100: `0.0` when `item_extent`
+    /// is `Variable` and `idx` isn't resolved yet -- a list whose
+    /// `size_hint` hasn't run (no layout yet) or raised (logged) has no
+    /// extent, so it neither positions rows apart nor scrolls. This used
+    /// to panic, which a raising `size_hint` and a wheel event could
+    /// reach from Python.
     pub fn offset_of(&self, idx: usize) -> f64 {
         match &self.item_extent {
             ItemExtent::Fixed(v) => idx as f64 * v,
-            ItemExtent::Variable => *self.resolved_offsets.get(&idx).unwrap_or_else(|| {
-                panic!(
-                    "VirtualListState::offset_of: item {idx}'s own offset must be resolved \
-                     (via Tree::set_virtual_list_resolved_offsets) before it can be positioned"
-                )
-            }),
+            ItemExtent::Variable => self.resolved_offsets.get(&idx).copied().unwrap_or(0.0),
         }
     }
 

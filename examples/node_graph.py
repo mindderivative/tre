@@ -9,9 +9,9 @@ example, verbatim).
 
 Real, honest constraint this example works within, checked directly
 against the current `engine-py` API before writing it (not assumed):
-Python has no way yet to position a `Node` arbitrarily (`Window.
-add_rect`/`add_canvas` both attach as flex-row children of the
-window's own root -- no `Position::Absolute` exposed to Python) or to
+When this was written Python had no way to position a `Node`
+arbitrarily (every factory attached a flex-row child of the window's
+root; `position="absolute"` came later, in M96) or to
 animate a node's `transform` at all (`Node.animate()`'s own real
 property list is `opacity`/`corner_radius`/`elevation`/`background`
 only, confirmed by reading `engine-py/src/node.rs` directly). So this
@@ -65,8 +65,9 @@ def draw(ctx):
     ctx.set_hit_test_circle(cx=cx, cy=cy, radius=NODE_RADIUS)
 
 
-graph = window.add_canvas(width=320, height=240, draw=draw)
-window.redraw_canvas(graph)
+graph = window.create("canvas", width=320, height=240, draw=draw)
+window.root.add_child(graph)
+graph.redraw()
 
 app = App()
 app.add_window(window)

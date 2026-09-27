@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """M15 Phases 1-2's real MD3 text field (§5, §8, §10, §16.7): a real,
-live, single-line editable text field -- `Window.add_text_field`/`Node.
-get_text`/`set_text`/`is_focused`, plus real keyboard-driven editing
+live, single-line editable text field -- `window.create("text_input")`,
+`node.get("text")`/`set(text=...)`/`get("focused")`, plus real keyboard-driven editing
 (`Window.type_text`/`press_key` with the widened Backspace/Delete/
 Left/Right/Home/End vocabulary), all real. A real caret only appears
 once the field is genuinely the window's own focused node (§10's
@@ -45,34 +45,30 @@ from tre import App, Window
 
 window = Window(width=280, height=120, title="tre v2 -- text field")
 
-field = window.add_text_field(
-    background=(0xEE, 0xEE, 0xEE, 0xFF),
-    width=220,
-    height=32,
-    content="hello",
-)
+field = window.create("text_input", width=220, height=32, text="hello")
+window.root.add_child(field)
 
-print(f"before Tab: is_focused={field.is_focused()}, text={field.get_text()!r}")
+print(f"before Tab: focused={field.get("focused")}, text={field.get("text")!r}")
 window.press_key("tab")
-print(f"after Tab: is_focused={field.is_focused()}, text={field.get_text()!r}")
-assert field.is_focused(), "a real Tab press must reach the one real TextField in this window"
+print(f"after Tab: focused={field.get("focused")}, text={field.get("text")!r}")
+assert field.get("focused"), "a real Tab press must reach the one real TextField in this window"
 
 # Real keyboard-driven editing (M15 Phase 2): type past the end, then
 # navigate back to the start and insert there too, proving both
 # insertion and real cursor movement.
 window.type_text(" world")
-print(f"after typing ' world': text={field.get_text()!r}")
-assert field.get_text() == "hello world"
+print(f"after typing ' world': text={field.get("text")!r}")
+assert field.get("text") == "hello world"
 
 window.press_key("home")
 window.type_text(">> ")
-print(f"after Home + typing '>> ': text={field.get_text()!r}")
-assert field.get_text() == ">> hello world"
+print(f"after Home + typing '>> ': text={field.get("text")!r}")
+assert field.get("text") == ">> hello world"
 
 window.press_key("end")
 window.press_key("backspace")
-print(f"after End + Backspace: text={field.get_text()!r}")
-assert field.get_text() == ">> hello worl"
+print(f"after End + Backspace: text={field.get("text")!r}")
+assert field.get("text") == ">> hello worl"
 
 # M18 Phase 1 (§8, §10): a real click also focuses a TextField -- a
 # second focusable node gives Tab somewhere else to land, so "field is
@@ -80,14 +76,15 @@ assert field.get_text() == ">> hello worl"
 # just wrapping back to the field itself. (A Checkbox won't do here --
 # only TextField opts into Tab's own focus order today, M15 Phase 1's
 # own finding: `Tree::set_access` had zero other real callers.)
-spacer = window.add_text_field(background=(0xCC, 0xCC, 0xCC, 0xFF), width=60, height=24)
+spacer = window.create("text_input", width=60, height=24)
+window.root.add_child(spacer)
 window.press_key("tab")
-print(f"after Tab-away: is_focused={field.is_focused()}")
-assert not field.is_focused()
+print(f"after Tab-away: focused={field.get("focused")}")
+assert not field.get("focused")
 
 window.click(field)
-print(f"after Window.click(field): is_focused={field.is_focused()}")
-assert field.is_focused(), "a real click on a TextField must move real focus there"
+print(f"after Window.click(field): focused={field.get("focused")}")
+assert field.get("focused"), "a real click on a TextField must move real focus there"
 
 app = App()
 app.add_window(window)

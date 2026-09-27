@@ -15,13 +15,14 @@ import gc
 import weakref
 
 from tre import Window
+from helpers import add
 
 
 def test_click_fires_the_registered_handler():
     window = Window(width=200, height=200)
     calls = []
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    button.set_on_click(lambda: calls.append("clicked"))
+    button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    button.on("click", lambda: calls.append("clicked"))
 
     window.click(button)
 
@@ -36,17 +37,17 @@ def test_click_gives_a_one_arg_handler_a_real_event_with_position_and_button():
     correction: `engine-core` never needed widening for this at all).
     """
     window = Window(width=200, height=200)
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50, x=20, y=30)
+    button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50, position="absolute", x=20, y=30)
 
     events = []
-    button.set_on_click(lambda event: events.append(event))
+    button.on("click", lambda event: events.append(event))
 
     window.click(button)
 
     assert len(events) == 1
     event = events[0]
-    assert event.kind == "click"
-    assert event.position == (45.0, 55.0)  # node's own real computed center
+    assert event.type == "click"
+    assert (event.window_x, event.window_y) == (45.0, 55.0)  # node's own real computed center
     assert event.button == "primary"
     assert event.old_value is None
     assert event.new_value is None
@@ -57,29 +58,29 @@ def test_a_real_keyboard_activation_gives_a_one_arg_handler_none_position_and_bu
     position/button at all -- `Event` reports `None` for both rather
     than fabricating a synthetic value, the identical honest contract
     `HoverEnter`/`HoverExit` already have for their own irrelevant
-    fields. `set_on_click` makes `button` Tab-reachable (its own real,
-    documented side effect); `Window.press_key("tab")` then `"enter"`
-    reaches it the same way a real keyboard-only user would.
+    fields. `focusable=True` makes `button` Tab-reachable;
+    `Window.press_key("tab")` then `"enter"` reaches it the same way a
+    real keyboard-only user would.
     """
     window = Window(width=200, height=200)
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50, x=20, y=30)
+    button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50, position="absolute", x=20, y=30, focusable=True)
 
     events = []
-    button.set_on_click(lambda event: events.append(event))
+    button.on("click", lambda event: events.append(event))
 
     window.press_key("tab")
     window.press_key("enter")
 
     assert len(events) == 1
     event = events[0]
-    assert event.kind == "click"
-    assert event.position is None
+    assert event.type == "click"
+    assert event.window_x is None
     assert event.button is None
 
 
 def test_click_on_a_node_with_no_registered_handler_is_a_safe_no_op():
     window = Window(width=200, height=200)
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
 
     window.click(button)  # must not raise
 
@@ -87,10 +88,10 @@ def test_click_on_a_node_with_no_registered_handler_is_a_safe_no_op():
 def test_click_only_fires_the_clicked_nodes_own_handler_not_a_sibling():
     window = Window(width=200, height=200)
     calls = []
-    a = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    b = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    a.set_on_click(lambda: calls.append("a"))
-    b.set_on_click(lambda: calls.append("b"))
+    a = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    b = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    a.on("click", lambda: calls.append("a"))
+    b.on("click", lambda: calls.append("b"))
 
     window.click(b)
 
@@ -118,33 +119,14 @@ def test_a_raising_click_handler_is_caught_logged_and_non_fatal(capfd):
         calls.append("ran")
         raise RuntimeError("boom from a click handler")
 
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    button.set_on_click(raiser)
+    button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    button.on("click", raiser)
 
     window.click(button)  # must not raise/propagate into Python
 
     assert calls == ["ran"]
     captured = capfd.readouterr()
     assert "boom from a click handler" in captured.err
-
-
-def test_set_on_click_makes_a_node_keyboard_focusable_too():
-    """§10's own "one property write keeps both paths correct" stance,
-    applied to the one call site that actually makes a node interactive
-    for the first time: registering a click handler must also make the
-    node Tab-reachable (a non-empty `access.actions`), not just
-    mouse-clickable.
-    """
-    window = Window(width=200, height=200)
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    # Nothing public exposes `access.actions` directly from Python yet --
-    # the real, observable proxy is that `set_on_click` must not raise
-    # and a subsequent click must still fire, which the other tests here
-    # already establish; this test exists to name the requirement
-    # explicitly so a future regression (e.g. `set_on_click` forgetting
-    # to touch `access.actions`) has a place to be caught once Tab
-    # dispatch is itself reachable from Python (M4's own next step).
-    button.set_on_click(lambda: None)
 
 
 def test_window_participates_in_cyclic_gc_when_a_click_handler_captures_it_back():
@@ -165,11 +147,11 @@ def test_window_participates_in_cyclic_gc_when_a_click_handler_captures_it_back(
     holder = Holder()
     window = Window(width=50, height=50)
     holder.window = window
-    button = window.add_rect(background=(0, 0, 0, 255), width=10, height=10)
+    button = add(window, "box", fill=(0, 0, 0, 255), width=10, height=10)
 
     # window -> click_handlers -> holder.on_click (bound method) ->
     # __self__ -> holder -> .window -> window.
-    button.set_on_click(holder.on_click)
+    button.on("click", holder.on_click)
 
     holder_ref = weakref.ref(holder)
     del window

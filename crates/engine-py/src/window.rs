@@ -12,12 +12,11 @@ use engine_core::{NodeId, NodeKind, PaintProperties, Tree};
 use peniko::Color;
 use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
-use taffy::prelude::{Position, Rect as TaffyRect, Size, Style, auto, length};
+use taffy::prelude::{Rect as TaffyRect, Size, Style, length};
 
 use crate::dispatch::{CompletionRegistry, HandlerMap, SharedCompletions};
 use crate::dock::{self, SharedDockState};
 use crate::listeners::WindowListenerMap;
-use crate::node::{Node, NodeState};
 use crate::terminal::TerminalSession;
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 
@@ -70,47 +69,6 @@ pub(crate) struct ActiveTree {
 }
 
 pub(crate) type SharedActiveTree = Rc<RefCell<ActiveTree>>;
-
-/// M6 Phase 3 (§8): the real `Position::Absolute` + `taffy::Rect` inset
-/// shape every Rust-level pixel test already uses internally
-/// (`overlay_menu.rs`/`transform_composition.rs`/etc.'s own `absolute()`
-/// helpers), factored out here since two real Python call sites
-/// (`add_rect`/`add_canvas`) now need it. `x`/`y` are independently
-/// optional but trigger the same positioning mode together -- if either
-/// is given, the node is absolutely positioned with both insets (the
-/// other defaulting to `0.0`); if neither is given, `size` alone is
-/// returned unchanged (the existing implicit flex-row flow, byte-for-
-/// byte backward compatible). The inset lands relative to the window's
-/// own root padding-box origin (`PADDING`, `PyWindow::new`), not the
-/// raw window corner -- a real, stated detail, not a silent surprise.
-/// Shared by `window_factory.rs`'s `add_rect`/`add_text`/`add_checkbox`/
-/// `add_slider`/`add_image`/`add_icon`/`add_text_field` and `window_
-/// virtual_canvas.rs`'s `add_canvas` -- `pub(crate)` for exactly that
-/// cross-file reason, kept here since it belongs to neither group more
-/// than the other.
-pub(crate) fn positioned_style(
-    size: Size<taffy::style::Dimension>,
-    x: Option<f32>,
-    y: Option<f32>,
-) -> Style {
-    if x.is_none() && y.is_none() {
-        return Style {
-            size,
-            ..Default::default()
-        };
-    }
-    Style {
-        position: Position::Absolute,
-        inset: TaffyRect {
-            left: length(x.unwrap_or(0.0)),
-            top: length(y.unwrap_or(0.0)),
-            right: auto(),
-            bottom: auto(),
-        },
-        size,
-        ..Default::default()
-    }
-}
 
 /// `unsendable` (owns `Rc<RefCell<Tree>>`, §9) -- named `Window` to
 /// Python, matching `Node`'s own "renamed to match what Python actually
@@ -207,16 +165,7 @@ pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window:
 /// block -- `pyo3` has no way to expose a method taking a raw
 /// `NodeId` as a Python-callable argument, and this helper is only
 /// ever called from Rust, never from Python.
-impl PyWindow {
-    pub(crate) fn wrap_node(&self, id: NodeId) -> Node {
-        Node::from(NodeState {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            completions: self.completions.clone(),
-        })
-    }
-}
+impl PyWindow {}
 
 #[pymethods]
 impl PyWindow {

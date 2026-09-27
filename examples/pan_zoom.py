@@ -8,9 +8,8 @@ couldn't build (`Node.animate()` had no `transform` property at all),
 now real.
 
 A single node's own transform, not a "camera" `Container` wrapping
-children -- `Window` has no Python-facing way to create a plain
-`Container` yet (checked directly: `add_rect`/`add_splitter`/
-`add_virtual_list`/`add_canvas` are the whole list), so this is the
+children -- written before `Window` could create a plain container
+(M96's `window.create("box")` can now), so this is the
 real, honest, currently-buildable shape: the swatch itself pans and
 grows, exactly matching §11.9's own "pan offset × zoom scale" text, and
 exactly the `Affine::translate((tx, ty)) * Affine::scale(scale)`
@@ -28,7 +27,8 @@ from tre import App, Window
 
 window = Window(width=320, height=240, title="tre v2 -- pan/zoom")
 
-swatch = window.add_rect(background=(0x67, 0x50, 0xA4, 0xFF), width=80, height=80)
+swatch = window.create("box", fill=(0x67, 0x50, 0xA4, 0xFF), width=80, height=80)
+window.root.add_child(swatch)
 swatch.animate("transform", (60.0, 40.0, 1.5), duration_ms=1500)
 
 app = App()

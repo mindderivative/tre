@@ -23,17 +23,18 @@ import weakref
 import pytest
 
 from tre import App, Node, Window
+from helpers import add
 
 
 def test_add_rect_returns_a_node():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0x67, 0x50, 0xA4, 0xFF), width=50, height=50)
+    node = add(window, "box", fill=(0x67, 0x50, 0xA4, 0xFF), width=50, height=50)
     assert isinstance(node, Node)
 
 
 def test_animate_accepts_each_known_paint_property():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     # None of these should raise -- registering an animation is a
     # fire-and-forget call (§8: "registers work and returns, never
     # blocks"), so success is simply the absence of an exception.
@@ -46,27 +47,27 @@ def test_animate_accepts_each_known_paint_property():
 
 def test_animate_defaults_duration_to_an_instant_snap():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     node.animate("opacity", 0.2)  # duration_ms omitted -- must not raise
 
 
 def test_unknown_property_raises_value_error_naming_the_node_kind():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     with pytest.raises(ValueError, match="Rect has no property 'not_a_real_property'"):
         node.animate("not_a_real_property", 1.0)
 
 
 def test_type_mismatch_raises_type_error_naming_expected_and_actual():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     with pytest.raises(TypeError, match="expects a float, got str"):
         node.animate("opacity", "not a float")
 
 
 def test_background_requires_a_four_tuple_not_a_float():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     with pytest.raises(TypeError, match="expects an \\(r, g, b, a\\) tuple"):
         node.animate("background", 0.5)
 
@@ -76,7 +77,7 @@ def test_transform_requires_a_translate_x_translate_y_scale_three_tuple():
     scale)`, not a raw affine-coefficient tuple -- matches `Interpolate
     for Affine`'s own real limitation (M5 Phase 1, `PLAN.md`)."""
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     with pytest.raises(TypeError, match="expects a \\(translate_x, translate_y, scale\\) tuple"):
         node.animate("transform", 0.5)
 
@@ -114,7 +115,7 @@ def test_animate_accepts_a_real_on_complete_callback():
     mechanics exhaustively; this is the FFI boundary's own smoke test.
     """
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     node.animate("opacity", 0.5, duration_ms=100, on_complete=lambda: None)
 
 
@@ -122,7 +123,7 @@ def test_animate_still_works_with_on_complete_omitted():
     # Every other test in this file already omits `on_complete` and
     # still passes -- this one states that regression explicitly.
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     node.animate("opacity", 0.5, duration_ms=100)
 
 
@@ -152,7 +153,7 @@ def test_window_participates_in_cyclic_gc_when_an_on_complete_callback_captures_
     holder = Holder()
     window = Window(width=200, height=200)
     holder.window = window
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
 
     # window -> completions -> holder.on_complete (bound method) ->
     # __self__ -> holder -> .window -> window.

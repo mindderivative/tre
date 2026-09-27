@@ -11,30 +11,18 @@ buffer's own line count correctly.
 """
 
 from tre import Node, Window
+from helpers import CODE_EDITOR, add
 
 
 def _editor_and_gutter(window: Window, content: str = "") -> tuple[Node, Node]:
-    editor = window.add_code_editor(
-        content=content,
-        background=(0xFF, 0xFB, 0xFE, 0xFF),
-        width=300,
-        height=200,
-    )
-    gutter = window.add_text(
-        content="",
-        foreground=(0, 0, 0, 0xFF),
-        width=32,
-        height=200,
-        font_family="Roboto",
-        font_weight=400.0,
-        font_size=14.0,
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text=content, width=300, height=200, font_size=14)
+    gutter = add(window, "text", text="", fill=(0, 0, 0, 0xFF), width=32, height=200, font_family="Roboto", font_weight=400.0, font_size=14.0)
 
     def sync_gutter() -> None:
-        line_count = editor.get_text().count("\n") + 1
-        gutter.set_text("\n".join(str(n) for n in range(1, line_count + 1)))
+        line_count = editor.get("text").count("\n") + 1
+        gutter.set(text="\n".join(str(n) for n in range(1, line_count + 1)))
 
-    editor.set_on_change(sync_gutter)
+    editor.on("change", sync_gutter)
     sync_gutter()
     return editor, gutter
 
@@ -42,37 +30,37 @@ def _editor_and_gutter(window: Window, content: str = "") -> tuple[Node, Node]:
 def test_a_single_line_buffer_starts_the_gutter_at_one():
     window = Window(width=400, height=300)
     _editor, gutter = _editor_and_gutter(window, content="hello")
-    assert gutter.get_text() == "1"
+    assert gutter.get("text") == "1"
 
 
 def test_a_multi_line_buffer_seeds_the_gutter_with_every_real_line():
     window = Window(width=400, height=300)
     _editor, gutter = _editor_and_gutter(window, content="a\nb\nc\nd")
-    assert gutter.get_text() == "1\n2\n3\n4"
+    assert gutter.get("text") == "1\n2\n3\n4"
 
 
 def test_a_real_enter_keypress_grows_the_gutter_live():
     window = Window(width=400, height=300)
     editor, gutter = _editor_and_gutter(window, content="one\ntwo")
-    assert gutter.get_text() == "1\n2"
+    assert gutter.get("text") == "1\n2"
 
     window.click(editor)
     window.press_key("end")
     window.press_key("enter")
     window.type_text("three")
 
-    assert editor.get_text() == "one\ntwo\nthree"
-    assert gutter.get_text() == "1\n2\n3", "a real inserted line must grow the gutter live"
+    assert editor.get("text") == "one\ntwo\nthree"
+    assert gutter.get("text") == "1\n2\n3", "a real inserted line must grow the gutter live"
 
 
 def test_a_real_backspace_that_merges_two_lines_shrinks_the_gutter():
     window = Window(width=400, height=300)
     editor, gutter = _editor_and_gutter(window, content="one\ntwo\nthree")
-    assert gutter.get_text() == "1\n2\n3"
+    assert gutter.get("text") == "1\n2\n3"
 
     window.click(editor)
     window.press_key("home")  # start of "three"
     window.press_key("backspace")  # merges "two" and "three" onto one real line
 
-    assert editor.get_text() == "one\ntwothree"
-    assert gutter.get_text() == "1\n2", "merging two real lines must shrink the gutter live"
+    assert editor.get("text") == "one\ntwothree"
+    assert gutter.get("text") == "1\n2", "merging two real lines must shrink the gutter live"

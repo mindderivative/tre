@@ -1,6 +1,6 @@
 # `Node`
 
-A handle to one node in a [`Window`](window.md)'s tree. Returned by every `add_*` method; never constructed directly.
+A handle to one node in a [`Window`](window.md)'s tree. Returned by [`window.create`](window.md#nodes); never constructed directly.
 
 *New in 0.3.4:* `on`/`off` listeners, `capture_pointer`/`release_pointer`,
 and handle equality — see [Events and Listeners](events.md) — plus `set`,
@@ -77,91 +77,20 @@ is called with no arguments exactly once, the real frame the animation
 finishes — drained by `App.run()`'s per-frame loop, or by
 `window.advance(ms)` in a test.
 
-## `get`
-
-**`get(property) -> float`**
-
-Reads a numeric property's current (possibly still-animating) value.
-Supports `"opacity"`, `"corner_radius"`, and `"border_width"`. Raises `ValueError`
-for an unknown/inapplicable property. Colors (`"background"`,
-`"foreground"`, `"border_color"`) aren't readable this way — they aren't
-a single `float`.
-
-## `set_layout`
-
-**`set_layout(width=None, height=None, padding=None, padding_top=None, padding_right=None, padding_bottom=None, padding_left=None, margin=None, margin_top=None, margin_right=None, margin_bottom=None, margin_left=None, gap=None, flex_grow=None, flex_shrink=None, flex_basis=None, align_items=None, justify_content=None, flex_direction=None)`**
-
-General live layout mutation, the imperative counterpart to editing a
-declarative widget's `style:` block. Only the fields actually passed
-are changed — every omitted field keeps its current value. Applies
-immediately, not eased — layout fields aren't animatable the way
-paint properties are.
-
-```python
-node.set_layout(width=200, flex_direction="vertical", gap=8)
-```
-
-`align_items`/`justify_content`/`flex_direction` take the same string
-vocabulary as `set`'s layout properties (see
-[Nodes and Properties](properties.md)) — an unrecognized value raises
-`ValueError` naming the ones it does accept. `padding`/`margin` set all four sides at once;
-the `_top`/`_right`/`_bottom`/`_left` variants override just one side
-on top of that, applied in the order given.
-
 ## Events
 
-### `set_on_click`
+**`on(event, handler)`** registers a listener — `click`, `pointer_down`,
+`pointer_enter`, `change`, `focus`, and the rest — and **`off(event)`**
+removes it; see [Events and Listeners](events.md) for every event, bubbling,
+and the `Event` fields. A handler takes no arguments or one, the `Event`. An
+exception raised inside a handler is caught, logged, and non-fatal.
 
-**`set_on_click(callback)`**
-
-Registers `callback` (called with no arguments) for a real click — a
-primary-button release over the node, or Enter/Space while it's
-keyboard-focused. Also makes the node Tab-reachable, adding a `Click`
-accessibility action if it doesn't already have one.
-
-### `set_on_hover_enter` / `set_on_hover_exit`
-
-**`set_on_hover_enter(callback)`** / **`set_on_hover_exit(callback)`**
-
-Fire when the node becomes/stops being the hovered node — independent of
-whether the node has any other handlers.
-
-### `set_on_change`
-
-**`set_on_change(callback)`**
-
-Fires on a real `Change` — a `TextField`'s text changing, by typing or
-by `set_text`.
-
-### `set_on_focus_enter` / `set_on_focus_exit`
-
-**`set_on_focus_enter(callback)`** / **`set_on_focus_exit(callback)`**
-
-Fire when the node becomes/stops being the keyboard-focused node.
-
-### The `Event` payload
-
-A `callback` may take zero arguments (as above) or exactly one — a real
-`Event` object, detected once at registration time by inspecting the
-callback's own arity:
-
-| Field | Type | Set for |
-| --- | --- | --- |
-| `kind` | `str` | always — `"click"`, `"hover_enter"`, `"hover_exit"`, `"change"`, `"focus_enter"`, `"focus_exit"` |
-| `node` | `Node` | always — the live node this event fired on |
-| `source` | `int` | always — a stable, opaque id for that same node |
-| `position` | `(float, float)` or `None` | a pointer-driven `click`/`hover_*` |
-| `button` | `str` or `None` | a `click` — `"primary"`/`"secondary"`/`"middle"` |
-| `old_value`, `new_value` | varies or `None` | a `change` — type matches the changed property (`bool` for `checked`, `str` for `text`) |
-
-```python
-def on_any_click(event):
-    print(f"{event.kind} on {event.node} at {event.position}")
-
-node.set_on_click(on_any_click)
-```
-
-An exception raised inside any handler is caught, logged, and non-fatal.
+*0.3.5 removed the `set_on_*` methods:* `set_on_click` is `on("click")`,
+`set_on_hover_enter`/`set_on_hover_exit` are `on("pointer_enter")`/
+`on("pointer_leave")`, `set_on_change` is `on("change")`, and
+`set_on_focus_enter`/`set_on_focus_exit` are `on("focus")`/`on("unfocus")`.
+Unlike them, `click` bubbles to ancestors, and `on("click")` doesn't make a
+node focusable — set `focusable=True` for that.
 
 ## Tree structure
 
@@ -196,8 +125,6 @@ for index, key in enumerate(new_order):
   forgotten `destroy()` never leaks.
 - `destroy()` frees now. Using a handle to a freed node raises
   `ValueError`.
-- Nodes made by the older `add_*` methods start attached, and are never
-  freed this way unless you `remove()` them.
 
 Switching screens is `old.remove()` then `window.root.add_child(new)`:
 
@@ -215,89 +142,12 @@ carousel, splitter, link, and icon — with their `Node` methods
 carousel and time-picker-dial accessors) and animatable properties. A
 framework builds them from boxes, text, and paths.
 
-## TextField-specific
-
-### `set_text`
-
-**`set_text(content)`**
-
-Works on both `TextField` and plain `Text` labels. On a `TextField`:
-resets the cursor to the new content's end and fires `Change`. On a
-plain `Text` label: just replaces the content (no cursor, no `Change`
-— a label isn't interactive). Raises `ValueError` for any other node
-kind.
-
-### `get_text`
-
-**`get_text() -> str`**
-
-Reads the current content of a `TextField`, a plain `Text` label, or a
-`Terminal` (its visible cell grid, one line per row).
-Raises `ValueError` for any other node kind.
-
-## Focus
-
-### `is_focused`
-
-**`is_focused() -> bool`**
-
-Whether this node currently has keyboard focus. Works for any node kind.
-
-## Code editor-specific
-
-### `set_syntax_spans`
-
-**`set_syntax_spans(spans)`**
-
-`spans` is a list of `(start, end, (r, g, b, a))` tuples, each a byte
-range into `get_text()`'s own content and the color to paint it.
-Replaces the whole list on every call — the app re-tokenizes and calls
-this again on every real edit; `tre` never interprets or validates the
-ranges itself. `CodeEditor`-only (raises `ValueError` otherwise).
-
-### `set_folded_ranges`
-
-**`set_folded_ranges(ranges)`**
-
-`ranges` is a list of `(start, end)` byte-offset tuples, each collapsed
-to one visible "⋯" marker line. Replaces the whole list on every call.
-Cursor movement (`Home`/`End`/arrow keys) is fold-aware — a move that
-would land inside a folded range snaps forward past its marker instead.
-`CodeEditor`-only.
-
-## Terminal-specific
-
-### `set_terminal_selection`
-
-**`set_terminal_selection(start_row, start_col, end_row, end_col)`**
-
-Sets a cell-range selection directly, without a mouse drag — a linear,
-reading-order selection like every terminal emulator's. Equal start and
-end mean no selection. Read it back with
-[`Window.copy_terminal_selection`](window.md#copy_terminal_selection).
-`Terminal` only (raises `ValueError` otherwise).
-
-## Image-specific
-
-### `push_frame`
-
-**`push_frame(rgba, width, height)`**
-
-Replaces an `Image` node's pixels — `rgba` a flat `bytes`/`bytearray`
-of straight-alpha RGBA8, exactly `width * height * 4` bytes (a clear
-`ValueError` otherwise). Works on any `Image` node: one from
-`add_image`, `add_image_from_bytes`, or `add_video`, or a declarative
-`kind: Image` (a blank one built with no `src:` is the usual target).
-Call it once for a static image or once per frame for video; the app
-owns decoding and pacing — `tre` bundles no video decoder. Raises
-`ValueError` on a non-`Image` node.
-
-## Clipping
-
-### `set_clip_children`
-
-**`set_clip_children(clip)`**
-
-When `True`, children are visually clipped to this node's own bounds
-instead of painting past them. Works on any node kind — most useful on
-a plain `Container` used purely as a clipping mask.
+*0.3.5 also moved the per-kind methods onto `set` and `get`:* `set_layout(...)`
+is `set(...)`; `set_text(t)` is `set(text=t)`, which fires no `change` (that's
+for edits the user makes); `get_text()` is `get("text")` (on a terminal, its
+visible grid, one line per row); `is_focused()` is `get("focused")`;
+`set_syntax_spans`, `set_folded_ranges`, and `set_clip_children` are
+`set(syntax_spans=...)`, `set(folded_ranges=...)`, `set(clip_children=...)`;
+`set_terminal_selection(a, b, c, d)` is `set(selection=(a, b, c, d))`; and
+`push_frame(rgba, w, h)` is `set(rgba=rgba, pixel_width=w, pixel_height=h)`.
+Every property is on [Nodes and Properties](properties.md).

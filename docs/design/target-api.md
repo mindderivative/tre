@@ -513,6 +513,6 @@ has, so a project pinned to 0.3.4 can copy it and call its `install()`.
 | `Theme` (`role`, `is_set`, `shape`, `elevation`, `typography`) | removed; theming is the framework's (D7) |
 | `Signal`, `Computed`, `Effect`, `ViewModel`, `batch`, `untrack` | Tesserae (D5) |
 | `CanvasContext` | `Painter` |
-| `Event.kind`, `Event.node` | `Event.type`, `Event.target` |
+| `Event.kind`, `Event.node`, `Event.source`, `Event.position` | `Event.type`, `Event.target`; `source` goes (use `target`), and `position` becomes `window_x`/`window_y` (M100) |
 | MD3 named motion curves | cubic bezier values (framework) |
 | `App`, `LoopHandle`, `register_font`, `MONOSPACE_FONT_FAMILY` | unchanged |

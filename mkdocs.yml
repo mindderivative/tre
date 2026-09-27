@@ -63,7 +63,7 @@ nav:
       - Events and Listeners: api/python/events.md
       - Layers: api/python/layers.md
       - Paint, Paths, and Animation: api/python/paint.md
-      - CanvasContext: api/python/canvas-context.md
+      - Painter: api/python/painter.md
   - Rust Crates: api/rust.md
   - Architecture: architecture.md
   - Design:

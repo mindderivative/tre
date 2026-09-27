@@ -11,10 +11,11 @@ A zone is an ordinary node you build and register for a side. Docking a
 panel attaches it under that node and makes it the zone's shown panel.
 
 ```python
-left_zone = window.add_rect(background=(0xF5, 0xF5, 0xF5, 0xFF), width=200, height=400)
+left_zone = window.create("box", fill=(0xF5, 0xF5, 0xF5, 0xFF), width=200, height=400)
+window.root.add_child(left_zone)
 window.add_dock_zone("left", left_zone, size=200.0)
 
-panel = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=180, height=380)
+panel = window.create("box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=180, height=380)
 window.dock_panel("left", panel)
 ```
 

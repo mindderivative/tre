@@ -24,62 +24,57 @@ line.
 import pytest
 
 from tre import Node, Window
+from helpers import CODE_EDITOR, add
 
 
 def test_add_code_editor_returns_a_node():
     window = Window(width=400, height=300)
-    node = window.add_code_editor(content="", background=(255, 255, 255, 255), width=300, height=150)
+    node = add(window, "text_input", **CODE_EDITOR, text="", width=300, height=150, font_size=14)
     assert isinstance(node, Node)
 
 
 def test_add_code_editor_seeds_the_real_initial_content():
     window = Window(width=400, height=300)
-    node = window.add_code_editor(
-        content="def f():\n    pass", background=(255, 255, 255, 255), width=300, height=150
-    )
-    assert node.get_text() == "def f():\n    pass"
+    node = add(window, "text_input", **CODE_EDITOR, text="def f():\n    pass", width=300, height=150, font_size=14)
+    assert node.get("text") == "def f():\n    pass"
 
 
 def test_a_click_focuses_the_code_editor():
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(content="x", background=(255, 255, 255, 255), width=300, height=150)
-    assert editor.is_focused() is False
+    editor = add(window, "text_input", **CODE_EDITOR, text="x", width=300, height=150, font_size=14)
+    assert editor.get("focused") is False
     window.click(editor)
-    assert editor.is_focused() is True
+    assert editor.get("focused") is True
 
 
 def test_enter_inserts_a_real_newline_not_consumed_like_a_plain_text_field():
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(content="ab", background=(255, 255, 255, 255), width=300, height=150)
+    editor = add(window, "text_input", **CODE_EDITOR, text="ab", width=300, height=150, font_size=14)
     window.click(editor)
     window.press_key("home")
     window.press_key("right")
     window.press_key("enter")
-    assert editor.get_text() == "a\nb", (
+    assert editor.get("text") == "a\nb", (
         "Enter on a real Code Editor must insert a genuine newline, unlike a plain "
-        f"single-line TextField, got {editor.get_text()!r}"
+        f"single-line TextField, got {editor.get("text")!r}"
     )
 
 
 def test_home_jumps_to_the_current_line_not_the_whole_buffer():
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="one\ntwo\nthree", background=(255, 255, 255, 255), width=300, height=150
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text="one\ntwo\nthree", width=300, height=150, font_size=14)
     window.click(editor)
     # A fresh field's own real cursor starts at content's own end,
     # inside "three" -- Home here must only ever reach "three"'s own
     # real start, never byte 0.
     window.press_key("home")
     window.type_text("X")
-    assert editor.get_text() == "one\ntwo\nXthree"
+    assert editor.get("text") == "one\ntwo\nXthree"
 
 
 def test_end_jumps_to_the_current_lines_own_end():
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="one\ntwo\nthree", background=(255, 255, 255, 255), width=300, height=150
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text="one\ntwo\nthree", width=300, height=150, font_size=14)
     window.click(editor)
     for _ in range(len("one\ntwo\nthree")):
         window.press_key("left")
@@ -88,14 +83,12 @@ def test_end_jumps_to_the_current_lines_own_end():
     window.press_key("right")  # cursor now right after "one"
     window.press_key("end")
     window.type_text("X")
-    assert editor.get_text() == "oneX\ntwo\nthree"
+    assert editor.get("text") == "oneX\ntwo\nthree"
 
 
 def test_arrow_up_navigates_to_the_previous_line():
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="line1\nline2\nline3", background=(255, 255, 255, 255), width=300, height=150
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text="line1\nline2\nline3", width=300, height=150, font_size=14)
     window.click(editor)
     # Cursor starts at content's own end, inside "line3" -- two real
     # ArrowUp presses must land somewhere on "line1".
@@ -103,21 +96,19 @@ def test_arrow_up_navigates_to_the_previous_line():
     window.press_key("up")
     window.press_key("home")
     window.type_text("X")
-    assert editor.get_text() == "Xline1\nline2\nline3"
+    assert editor.get("text") == "Xline1\nline2\nline3"
 
 
 def test_arrow_down_navigates_to_the_next_line():
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="line1\nline2\nline3", background=(255, 255, 255, 255), width=300, height=150
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text="line1\nline2\nline3", width=300, height=150, font_size=14)
     window.click(editor)
     for _ in range(len("line1\nline2\nline3")):
         window.press_key("left")
     window.press_key("down")
     window.press_key("home")
     window.type_text("X")
-    assert editor.get_text() == "line1\nXline2\nline3"
+    assert editor.get("text") == "line1\nXline2\nline3"
 
 
 def test_arrow_up_and_down_remember_a_real_goal_column_through_a_shorter_line():
@@ -132,9 +123,7 @@ def test_arrow_up_and_down_remember_a_real_goal_column_through_a_shorter_line():
     the real, observable proof.
     """
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="alphabet\nhi\nbanana", background=(255, 255, 255, 255), width=300, height=150
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text="alphabet\nhi\nbanana", width=300, height=150, font_size=14)
     window.click(editor)
     # Cursor starts at content's own end, inside "banana" -- real
     # column 6. One ArrowUp clamps onto "hi" (only 2 real columns);
@@ -144,7 +133,7 @@ def test_arrow_up_and_down_remember_a_real_goal_column_through_a_shorter_line():
     window.press_key("up")
     window.press_key("up")
     window.type_text("X")
-    assert editor.get_text() == "alphabXet\nhi\nbanana"
+    assert editor.get("text") == "alphabXet\nhi\nbanana"
 
 
 def test_a_non_vertical_move_resets_the_remembered_goal_column():
@@ -155,15 +144,13 @@ def test_a_non_vertical_move_resets_the_remembered_goal_column():
     before the interrupt.
     """
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="alphabet\nhi\nbanana", background=(255, 255, 255, 255), width=300, height=150
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text="alphabet\nhi\nbanana", width=300, height=150, font_size=14)
     window.click(editor)
     window.press_key("up")  # lands on "hi"'s own end (clamped from column 6 to 2)
     window.press_key("left")  # ordinary horizontal move -- real column now 1
     window.press_key("up")
     window.type_text("X")
-    assert editor.get_text() == "aXlphabet\nhi\nbanana"
+    assert editor.get("text") == "aXlphabet\nhi\nbanana"
 
 
 def test_tab_inserts_a_real_tab_character_instead_of_moving_focus():
@@ -173,16 +160,14 @@ def test_tab_inserts_a_real_tab_character_instead_of_moving_focus():
     TextField, proven below) still does.
     """
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="ab", background=(255, 255, 255, 255), width=300, height=150
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text="ab", width=300, height=150, font_size=14)
     window.click(editor)
-    assert editor.is_focused()
+    assert editor.get("focused")
     window.press_key("home")
     window.press_key("right")
     window.press_key("tab")
-    assert editor.get_text() == "a\tb"
-    assert editor.is_focused(), "claiming Tab for indentation must never lose focus over it"
+    assert editor.get("text") == "a\tb"
+    assert editor.get("focused"), "claiming Tab for indentation must never lose focus over it"
 
 
 def test_tab_still_moves_focus_away_from_a_single_line_text_field():
@@ -191,18 +176,16 @@ def test_tab_still_moves_focus_away_from_a_single_line_text_field():
     `TextField` must keep its own prior real behavior, byte-for-byte.
     """
     window = Window(width=400, height=300)
-    field = window.add_text_field(
-        content="ab", background=(255, 255, 255, 255), width=200, height=30
-    )
+    field = add(window, "text_input", text="ab", width=200, height=30)
     # A second focusable node, so Tab genuinely has somewhere else to
     # land -- with only one focusable node in the tree, focus
     # traversal would trivially wrap back onto itself either way.
-    window.add_text_field(content="", background=(255, 255, 255, 255), width=200, height=30)
+    add(window, "text_input", text="", width=200, height=30)
     window.click(field)
-    assert field.is_focused()
+    assert field.get("focused")
     window.press_key("tab")
-    assert not field.is_focused(), "Tab on a single-line field must still move focus away"
-    assert field.get_text() == "ab", "Tab must not insert anything into a single-line field"
+    assert not field.get("focused"), "Tab on a single-line field must still move focus away"
+    assert field.get("text") == "ab", "Tab must not insert anything into a single-line field"
 
 
 def test_whitespace_indicators_never_touch_the_real_content():
@@ -219,14 +202,12 @@ def test_whitespace_indicators_never_touch_the_real_content():
     guarantee pytest actually can prove without a live render loop.
     """
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="a b\tc", background=(255, 255, 255, 255), width=300, height=150
-    )
-    assert editor.get_text() == "a b\tc"
+    editor = add(window, "text_input", **CODE_EDITOR, text="a b\tc", width=300, height=150, font_size=14)
+    assert editor.get("text") == "a b\tc"
 
     window.click(editor)
     window.type_text(" x\ty")
-    assert editor.get_text() == "a b\tc x\ty", (
+    assert editor.get("text") == "a b\tc x\ty", (
         "typing more spaces/tabs into a whitespace-indicator-showing editor "
         "must still land in get_text() completely unsubstituted"
     )
@@ -242,29 +223,25 @@ def test_set_syntax_spans_does_not_raise_and_never_touches_real_content():
     raising, and `get_text()` still reads back exactly what was typed.
     """
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="if x:\n    y", background=(255, 255, 255, 255), width=300, height=150
-    )
-    editor.set_syntax_spans(
-        [
+    editor = add(window, "text_input", **CODE_EDITOR, text="if x:\n    y", width=300, height=150, font_size=14)
+    editor.set(syntax_spans=[
             (0, 2, (0xC0, 0x1C, 0x28, 0xFF)),  # "if" -- keyword-red
             (6, 10, (0x21, 0x6D, 0xFF, 0xFF)),  # the indent -- irrelevant-blue
-        ]
-    )
-    assert editor.get_text() == "if x:\n    y"
+        ])
+    assert editor.get("text") == "if x:\n    y"
 
     # Real spans replace the whole list every call, matching a real
     # re-tokenize-on-every-edit app pattern -- an empty list is a real,
     # valid way to clear all coloring.
-    editor.set_syntax_spans([])
-    assert editor.get_text() == "if x:\n    y"
+    editor.set(syntax_spans=[])
+    assert editor.get("text") == "if x:\n    y"
 
 
 def test_set_syntax_spans_rejects_a_non_text_field_node():
     window = Window(width=400, height=300)
-    rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
-    with pytest.raises(ValueError, match="Rect has no property 'syntax_spans'"):
-        rect.set_syntax_spans([(0, 1, (255, 0, 0, 255))])
+    rect = add(window, "box", fill=(0, 0, 0, 255), width=24, height=24)
+    with pytest.raises(ValueError, match="`syntax_spans` applies only to a text_input node"):
+        rect.set(syntax_spans=[(0, 1, (255, 0, 0, 255))])
 
 
 def test_set_folded_ranges_does_not_raise_and_never_touches_real_content():
@@ -277,26 +254,21 @@ def test_set_folded_ranges_does_not_raise_and_never_touches_real_content():
     offsets`); this test proves the real FFI surface.
     """
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="def add(a, b):\n    return a + b",
-        background=(255, 255, 255, 255),
-        width=300,
-        height=150,
-    )
-    editor.set_folded_ranges([(15, 33)])  # collapses the whole function body
-    assert editor.get_text() == "def add(a, b):\n    return a + b"
+    editor = add(window, "text_input", **CODE_EDITOR, text="def add(a, b):\n    return a + b", width=300, height=150, font_size=14)
+    editor.set(folded_ranges=[(15, 33)])  # collapses the whole function body
+    assert editor.get("text") == "def add(a, b):\n    return a + b"
 
     # Real ranges replace the whole list every call -- an empty list
     # is a real, valid way to clear all folding.
-    editor.set_folded_ranges([])
-    assert editor.get_text() == "def add(a, b):\n    return a + b"
+    editor.set(folded_ranges=[])
+    assert editor.get("text") == "def add(a, b):\n    return a + b"
 
 
 def test_set_folded_ranges_rejects_a_non_text_field_node():
     window = Window(width=400, height=300)
-    rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
-    with pytest.raises(ValueError, match="Rect has no property 'folded_ranges'"):
-        rect.set_folded_ranges([(0, 1)])
+    rect = add(window, "box", fill=(0, 0, 0, 255), width=24, height=24)
+    with pytest.raises(ValueError, match="`folded_ranges` applies only to a text_input node"):
+        rect.set(folded_ranges=[(0, 1)])
 
 
 def test_arrow_down_snaps_the_cursor_out_of_a_folded_range_it_would_otherwise_land_inside():
@@ -308,10 +280,8 @@ def test_arrow_down_snaps_the_cursor_out_of_a_folded_range_it_would_otherwise_la
     the real, observable proof).
     """
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="one\ntwo\nthree\nfour", background=(255, 255, 255, 255), width=300, height=150
-    )
-    editor.set_folded_ranges([(4, 15)])  # "two\nthree\nfo" folded away
+    editor = add(window, "text_input", **CODE_EDITOR, text="one\ntwo\nthree\nfour", width=300, height=150, font_size=14)
+    editor.set(folded_ranges=[(4, 15)])  # "two\nthree\nfo" folded away
     window.click(editor)
     for _ in range(len("one\ntwo\nthree\nfour")):
         window.press_key("left")
@@ -322,7 +292,7 @@ def test_arrow_down_snaps_the_cursor_out_of_a_folded_range_it_would_otherwise_la
     # 15, right after the fold's own real marker, into "four".
     window.press_key("down")
     window.type_text("X")
-    assert editor.get_text() == "one\ntwo\nthree\nfXour"
+    assert editor.get("text") == "one\ntwo\nthree\nfXour"
 
 
 def test_folding_and_syntax_highlighting_compose_without_raising():
@@ -340,17 +310,12 @@ def test_folding_and_syntax_highlighting_compose_without_raising():
     already-passing real render-loop test elsewhere in the suite).
     """
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content="def add(a, b):\n    return a + b",
-        background=(255, 255, 255, 255),
-        width=300,
-        height=150,
-    )
-    editor.set_folded_ranges([(15, 33)])
-    editor.set_syntax_spans([(0, 3, (0xC0, 0x1C, 0x28, 0xFF))])
+    editor = add(window, "text_input", **CODE_EDITOR, text="def add(a, b):\n    return a + b", width=300, height=150, font_size=14)
+    editor.set(folded_ranges=[(15, 33)])
+    editor.set(syntax_spans=[(0, 3, (0xC0, 0x1C, 0x28, 0xFF))])
     window.click(editor)
     window.type_text("X")
-    assert editor.get_text() == "def add(a, b):\n    return a + bX"
+    assert editor.get("text") == "def add(a, b):\n    return a + bX"
 
 
 def test_navigating_and_editing_still_works_correctly_in_a_genuinely_overflowing_editor():
@@ -371,9 +336,7 @@ def test_navigating_and_editing_still_works_correctly_in_a_genuinely_overflowing
     """
     content = "\n".join(f"line{i}" for i in range(30))
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content=content, background=(255, 255, 255, 255), width=300, height=80
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text=content, width=300, height=80, font_size=14)
     window.click(editor)
     # Cursor starts at content's own real end (line29) -- 40 ArrowUps
     # walks well past the real ~4-line visible viewport, all the way
@@ -382,7 +345,7 @@ def test_navigating_and_editing_still_works_correctly_in_a_genuinely_overflowing
         window.press_key("up")
     window.press_key("home")
     window.type_text("X")
-    assert editor.get_text().startswith("Xline0\n"), (
+    assert editor.get("text").startswith("Xline0\n"), (
         "typing at the real content start after scrolling far past the visible viewport must "
         "still land on the real, correct line"
     )
@@ -397,10 +360,10 @@ def test_navigating_and_editing_still_works_correctly_in_a_genuinely_overflowing
     # metrics this test can't predict) -- a real, exactly-one-
     # character-longer content is the decisive, position-independent
     # proof the click found a real, valid insertion point.
-    before = editor.get_text()
+    before = editor.get("text")
     window.click(editor)
     window.type_text("Y")
-    assert len(editor.get_text()) == len(before) + 1, (
+    assert len(editor.get("text")) == len(before) + 1, (
         "a real click after scrolling must still focus and insert at a real, valid position"
     )
 
@@ -421,9 +384,7 @@ def test_navigating_horizontally_still_works_correctly_in_a_genuinely_overflowin
     """
     content = "a" * 60
     window = Window(width=400, height=300)
-    editor = window.add_code_editor(
-        content=content, background=(255, 255, 255, 255), width=100, height=80
-    )
+    editor = add(window, "text_input", **CODE_EDITOR, text=content, width=100, height=80, font_size=14)
     window.click(editor)
     # Cursor starts at content's own real end (column 60) -- far past
     # the real ~10-character visible viewport at font_size 14. 60
@@ -431,7 +392,7 @@ def test_navigating_horizontally_still_works_correctly_in_a_genuinely_overflowin
     for _ in range(60):
         window.press_key("left")
     window.type_text("X")
-    assert editor.get_text().startswith("X"), (
+    assert editor.get("text").startswith("X"), (
         "typing at the real line start after scrolling far past the visible horizontal "
         "viewport must still land at the real, correct column"
     )

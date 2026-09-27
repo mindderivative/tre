@@ -29,7 +29,8 @@ import threading
 from tre import App, Window
 
 window = Window(width=120, height=80)
-rect = window.add_rect(background=(255, 0, 0, 255), width=40, height=40)
+rect = window.create("box", fill=(255, 0, 0, 255), width=40, height=40)
+window.root.add_child(rect)
 app = App()
 app.add_window(window)
 handle = app.thread_handle()

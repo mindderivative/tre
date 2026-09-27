@@ -14,14 +14,15 @@ extension" discipline as `test_engine_py.py`.
 """
 
 from tre import Window
+from helpers import add
 
 
 def test_hover_enter_fires_when_the_pointer_arrives_on_the_node():
     window = Window(width=120, height=60)
-    button = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
+    button = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
 
     calls = []
-    button.set_on_hover_enter(lambda: calls.append("entered"))
+    button.on("pointer_enter", lambda: calls.append("entered"))
 
     window.hover(button)
 
@@ -30,12 +31,12 @@ def test_hover_enter_fires_when_the_pointer_arrives_on_the_node():
 
 def test_hover_exit_fires_when_the_pointer_leaves_to_a_sibling():
     window = Window(width=120, height=60)
-    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
-    b = window.add_rect(background=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
+    b = add(window, "box", fill=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40)
 
     calls = []
-    a.set_on_hover_exit(lambda: calls.append("a exited"))
-    b.set_on_hover_enter(lambda: calls.append("b entered"))
+    a.on("pointer_leave", lambda: calls.append("a exited"))
+    b.on("pointer_enter", lambda: calls.append("b entered"))
 
     window.hover(a)
     assert calls == []  # first-time entry onto `a` -- no exit yet, and `a` has no enter handler
@@ -53,12 +54,12 @@ def test_hover_enter_and_exit_give_a_one_arg_handler_a_real_event_with_position(
     those, so `Event` reports `None` rather than fabricating one.
     """
     window = Window(width=120, height=60)
-    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40, x=0, y=0)
-    b = window.add_rect(background=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40, x=60, y=0)
+    a = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40, position="absolute", x=0, y=0)
+    b = add(window, "box", fill=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40, position="absolute", x=60, y=0)
 
     events = []
-    a.set_on_hover_exit(lambda event: events.append(event))
-    b.set_on_hover_enter(lambda event: events.append(event))
+    a.on("pointer_leave", lambda event: events.append(event))
+    b.on("pointer_enter", lambda event: events.append(event))
 
     window.hover(a)
     window.hover(b)
@@ -70,10 +71,10 @@ def test_hover_enter_and_exit_give_a_one_arg_handler_a_real_event_with_position(
     # *where the pointer now is* (over `b`), not `a`'s own former
     # center; a real mousemove has exactly one position, shared by
     # whatever hover transition it triggers.
-    assert exit_event.kind == "hover_exit"
-    assert exit_event.position == (80.0, 20.0)
-    assert enter_event.kind == "hover_enter"
-    assert enter_event.position == (80.0, 20.0)  # b's own real computed center
+    assert exit_event.type == "pointer_leave"
+    assert (exit_event.window_x, exit_event.window_y) == (80.0, 20.0)
+    assert enter_event.type == "pointer_enter"
+    assert (enter_event.window_x, enter_event.window_y) == (80.0, 20.0)  # b's own real computed center
     for event in events:
         assert event.button is None
         assert event.old_value is None
@@ -82,7 +83,7 @@ def test_hover_enter_and_exit_give_a_one_arg_handler_a_real_event_with_position(
 
 def test_hovering_a_node_with_no_registered_handler_is_a_safe_no_op():
     window = Window(width=120, height=60)
-    button = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
+    button = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
 
     window.hover(button)  # must not raise
 
@@ -94,10 +95,10 @@ def test_hover_fires_even_without_calling_enable_interaction():
     -- the callback and the visual are two separate mechanisms.
     """
     window = Window(width=120, height=60)
-    button = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
+    button = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
 
     calls = []
-    button.set_on_hover_enter(lambda: calls.append("entered"))
+    button.on("pointer_enter", lambda: calls.append("entered"))
     # No enable_interaction() call here on purpose.
 
     window.hover(button)

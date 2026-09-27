@@ -23,7 +23,8 @@ from tre import App, Window
 
 window = Window(width=200, height=200, title="tre v2 -- animation completion")
 
-card = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=80, height=80)
+card = window.create("box", fill=(0xFF, 0x00, 0x00, 0xFF), width=80, height=80)
+window.root.add_child(card)
 
 calls = []
 

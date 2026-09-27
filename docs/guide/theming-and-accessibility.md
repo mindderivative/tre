@@ -27,15 +27,12 @@ returned names against what your theme's `typography:` uses.
 
 ## Keyboard focus & Tab order
 
-A node becomes part of the Tab order once it's given real interactive
-meaning:
+A node is in the Tab order once it's focusable:
 
-- `set_on_click` adds a `Click` accessibility action and makes the node
-  focusable.
-- `add_text_field` opts into `Role::TextInput` + a `Focus` action
-  automatically at construction — they're
-  Tab-reachable from the moment they're created, with no extra call
-  needed.
+- `focusable=True` on any node puts it there; Enter and Space then
+  activate it, firing `click`.
+- A `"text_input"` or `"terminal"` is focusable from the moment it's
+  created.
 
 Drive focus and keyboard interaction directly, without a live window:
 
@@ -43,7 +40,7 @@ Drive focus and keyboard interaction directly, without a live window:
 window.press_key("tab")            # move focus forward
 window.press_key("tab", shift=True)  # move focus backward
 window.press_key("enter")          # activate the focused node
-node.is_focused()                  # True if this node currently has focus
+node.get("focused")                # True if this node currently has focus
 ```
 
 Accepted `press_key` values: `"tab"`, `"enter"`, `"space"`, `"escape"`,

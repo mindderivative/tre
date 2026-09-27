@@ -5589,13 +5589,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "item 2's own offset must be resolved")]
-    fn offset_of_panics_on_an_unresolved_variable_index() {
+    fn an_unresolved_variable_list_has_no_extent_and_does_not_panic() {
         let state = VirtualListState::new(4, ItemExtent::Variable);
-        // Nothing has been resolved -- querying any index must panic
-        // with a clear message, not silently return a wrong answer
-        // (e.g. 0.0, which could be mistaken for a real, resolved offset).
-        state.offset_of(2);
+        // Nothing resolved yet (no layout, or a raising size_hint): every
+        // row sits at 0 and the list has no extent to scroll.
+        assert_eq!(state.offset_of(2), 0.0);
+        assert_eq!(state.total_extent(), 0.0);
     }
 
     #[test]

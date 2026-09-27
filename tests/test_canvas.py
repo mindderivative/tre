@@ -1,11 +1,10 @@
-"""M5 Phase 3 (§11.10/§11.11): real, repeatable coverage of the
-`Window.add_canvas`/`Window.redraw_canvas` FFI boundary -- the "draw
-callback" pattern (mirroring `add_virtual_list`/`set_virtual_list_window`'s
-own shape), its two real error paths (not a `Canvas` at all / not owned
-by this `Window`, and the callback itself raising), and real cyclic-GC
-participation for the new `canvas_draws` storage.
+"""M5 Phase 3 (§11.10/§11.11): real, repeatable coverage of canvases --
+`window.create("canvas", draw=...)` and `canvas.redraw()` (M100: formerly
+`add_canvas`/`redraw_canvas`) -- the draw callback, its error paths (not
+a canvas at all, the callback itself raising), and real cyclic-GC
+participation for the `canvas_draws` storage.
 
-The definitive proof that `CanvasContext`'s drawing/hit-test methods
+The definitive proof that `Painter`'s drawing/hit-test methods
 actually populate real, paintable/hit-testable `CanvasState` is the Rust
 pixel-readback test (`crates/engine-render/tests/canvas_paint.rs`) --
 matching this project's own established `test_splitter.py`/
@@ -23,15 +22,16 @@ import weakref
 import pytest
 
 from tre import Node, Window
+from helpers import add
 
 
 def test_add_canvas_returns_a_node():
     window = Window(width=200, height=200)
-    node = window.add_canvas(width=100, height=100, draw=lambda ctx: None)
+    node = add(window, "canvas", width=100, height=100, draw=lambda ctx: None)
     assert isinstance(node, Node)
 
 
-def test_redraw_canvas_calls_draw_exactly_once_with_a_context():
+def test_a_canvas_draws_when_created_and_once_per_redraw():
     window = Window(width=200, height=200)
     calls = []
 
@@ -39,11 +39,10 @@ def test_redraw_canvas_calls_draw_exactly_once_with_a_context():
         calls.append(ctx)
         ctx.fill_circle(cx=10, cy=10, radius=5, color=(255, 0, 0, 255))
 
-    canvas = window.add_canvas(width=100, height=100, draw=draw)
-    window.redraw_canvas(canvas)
+    canvas = add(window, "canvas", width=100, height=100, draw=draw)
     assert len(calls) == 1
 
-    window.redraw_canvas(canvas)
+    canvas.redraw()
     assert len(calls) == 2
 
 
@@ -60,8 +59,8 @@ def test_canvas_context_drawing_and_hit_test_methods_accept_real_arguments():
         ctx.stroke_path(points=[(0, 0), (10, 10), (20, 0)], color=(0, 0, 255, 255), width=2.0)
         ctx.set_hit_test_circle(cx=5, cy=5, radius=5)
 
-    canvas = window.add_canvas(width=100, height=100, draw=draw)
-    window.redraw_canvas(canvas)  # must not raise
+    canvas = add(window, "canvas", width=100, height=100, draw=draw)
+    canvas.redraw()  # must not raise
 
 
 def test_stroke_path_and_hit_test_path_reject_fewer_than_two_points():
@@ -70,9 +69,8 @@ def test_stroke_path_and_hit_test_path_reject_fewer_than_two_points():
     def draw(ctx):
         ctx.stroke_path(points=[(0, 0)], color=(255, 0, 0, 255), width=1.0)
 
-    canvas = window.add_canvas(width=100, height=100, draw=draw)
     with pytest.raises(ValueError, match="at least 2 points"):
-        window.redraw_canvas(canvas)
+        add(window, "canvas", width=100, height=100, draw=draw)
 
 
 def test_stroke_path_and_set_hit_test_path_accept_real_quadratic_and_cubic_segments():
@@ -102,8 +100,8 @@ def test_stroke_path_and_set_hit_test_path_accept_real_quadratic_and_cubic_segme
         )
         ctx.set_hit_test_path(points=[(0, 0), (50, 100, 100, 0)], tolerance=5.0)
 
-    canvas = window.add_canvas(width=100, height=100, draw=draw)
-    window.redraw_canvas(canvas)  # must not raise
+    canvas = add(window, "canvas", width=100, height=100, draw=draw)
+    canvas.redraw()  # must not raise
 
 
 def test_stroke_path_rejects_a_point_with_an_invalid_number_of_coordinates():
@@ -112,9 +110,8 @@ def test_stroke_path_rejects_a_point_with_an_invalid_number_of_coordinates():
     def draw(ctx):
         ctx.stroke_path(points=[(0, 0), (1, 2, 3)], color=(255, 0, 0, 255), width=1.0)
 
-    canvas = window.add_canvas(width=100, height=100, draw=draw)
     with pytest.raises(ValueError, match="2 numbers .line., 4"):
-        window.redraw_canvas(canvas)
+        add(window, "canvas", width=100, height=100, draw=draw)
 
 
 def test_stroke_path_rejects_a_curve_segment_as_the_first_point():
@@ -127,24 +124,17 @@ def test_stroke_path_rejects_a_curve_segment_as_the_first_point():
             width=1.0,
         )
 
-    canvas = window.add_canvas(width=100, height=100, draw=draw)
     with pytest.raises(ValueError, match="first point must be a plain"):
-        window.redraw_canvas(canvas)
+        add(window, "canvas", width=100, height=100, draw=draw)
 
 
 def test_redraw_canvas_rejects_a_node_that_is_not_a_canvas():
     window = Window(width=200, height=200)
-    rect = window.add_rect(background=(0, 0, 0, 255), width=10, height=10)
+    rect = add(window, "box", fill=(0, 0, 0, 255), width=10, height=10)
     with pytest.raises(ValueError, match="not a Canvas"):
-        window.redraw_canvas(rect)
+        rect.redraw()
 
 
-def test_redraw_canvas_rejects_a_canvas_from_another_window():
-    window_a = Window(width=200, height=200)
-    window_b = Window(width=200, height=200)
-    canvas = window_a.add_canvas(width=100, height=100, draw=lambda ctx: None)
-    with pytest.raises(ValueError, match="not a Canvas"):
-        window_b.redraw_canvas(canvas)
 
 
 def test_a_draw_callback_exception_propagates_as_a_real_python_error():
@@ -153,9 +143,8 @@ def test_a_draw_callback_exception_propagates_as_a_real_python_error():
     def draw(ctx):
         raise RuntimeError("draw is cursed")
 
-    canvas = window.add_canvas(width=100, height=100, draw=draw)
     with pytest.raises(RuntimeError, match="draw is cursed"):
-        window.redraw_canvas(canvas)
+        add(window, "canvas", width=100, height=100, draw=draw)
 
 
 def test_window_participates_in_cyclic_gc_when_its_draw_callback_captures_it_back():
@@ -179,7 +168,7 @@ def test_window_participates_in_cyclic_gc_when_its_draw_callback_captures_it_bac
 
     # window -> canvas_draws -> holder.draw (bound method) -> __self__ ->
     # holder -> .window -> window.
-    window.add_canvas(width=10, height=10, draw=holder.draw)
+    add(window, "canvas", width=10, height=10, draw=holder.draw)
 
     holder_ref = weakref.ref(holder)
     del holder

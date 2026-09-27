@@ -14,6 +14,7 @@ extension" discipline as `test_engine_py.py`.
 """
 
 from tre import Window
+from helpers import add
 
 
 def test_a_bound_method_handler_with_only_self_still_works_zero_arg():
@@ -25,7 +26,7 @@ def test_a_bound_method_handler_with_only_self_still_works_zero_arg():
     GC-cycle test, `holder.on_click`) already relies on.
     """
     window = Window(width=100, height=100)
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
 
     class Handler:
         def __init__(self):
@@ -35,7 +36,7 @@ def test_a_bound_method_handler_with_only_self_still_works_zero_arg():
             self.calls.append("bound method fired")
 
     handler = Handler()
-    button.set_on_click(handler.on_click)
+    button.on("click", handler.on_click)
     window.click(button)
 
     assert handler.calls == ["bound method fired"]
@@ -43,7 +44,7 @@ def test_a_bound_method_handler_with_only_self_still_works_zero_arg():
 
 def test_a_bound_method_handler_with_one_real_param_gets_the_event():
     window = Window(width=100, height=100)
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
 
     class Handler:
         def __init__(self):
@@ -53,11 +54,11 @@ def test_a_bound_method_handler_with_one_real_param_gets_the_event():
             self.events.append(event)
 
     handler = Handler()
-    button.set_on_click(handler.on_click)
+    button.on("click", handler.on_click)
     window.click(button)
 
     assert len(handler.events) == 1
-    assert handler.events[0].kind == "click"
+    assert handler.events[0].type == "click"
 
 
 def test_a_defaulted_parameter_counts_as_not_required_like_lambda_i_equals_i():
@@ -71,8 +72,8 @@ def test_a_defaulted_parameter_counts_as_not_required_like_lambda_i_equals_i():
     window = Window(width=100, height=100)
     calls = []
     for i in range(3):
-        b = window.add_rect(background=(0, 0, 0, 255), width=10, height=10, x=i * 15, y=0)
-        b.set_on_click(lambda i=i: calls.append(i))
+        b = add(window, "box", fill=(0, 0, 0, 255), width=10, height=10, position="absolute", x=i * 15, y=0)
+        b.on("click", lambda i=i: calls.append(i))
         window.click(b)
 
     assert calls == [0, 1, 2]
@@ -86,42 +87,33 @@ def test_a_keyword_only_parameter_does_not_make_the_event_required():
     positional call anyway).
     """
     window = Window(width=100, height=100)
-    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     calls = []
 
     def handler(*, extra=None):
         calls.append(extra)
 
-    button.set_on_click(handler)
+    button.on("click", handler)
     window.click(button)
 
     assert calls == [None]
 
 
-def test_event_source_is_a_stable_value_distinguishing_two_real_nodes():
-    """`Event.source` (a plain opaque `u64`, M54 scoping's own resolved
-    design fork) is real and usable for at least the one thing a bare
-    id is good for: telling two different real nodes' own events apart
-    when one handler is shared across both. `Event.node` (M56) is now
-    the real live-handle counterpart for the same scenario -- see
-    `test_event_node.py` -- but `source` itself is unchanged, kept
-    exactly as shipped here.
-    """
+def test_event_target_distinguishes_two_nodes_sharing_one_handler():
+    """One handler shared across two nodes tells them apart by
+    `event.target` (M100: the legacy `source` id and `node` are gone)."""
     window = Window(width=100, height=100)
-    a = window.add_rect(background=(0, 0, 0, 255), width=20, height=20, x=0, y=0)
-    b = window.add_rect(background=(0, 0, 0, 255), width=20, height=20, x=40, y=0)
+    a = add(window, "box", fill=(0, 0, 0, 255), width=20, height=20, position="absolute", x=0, y=0)
+    b = add(window, "box", fill=(0, 0, 0, 255), width=20, height=20, position="absolute", x=40, y=0)
 
-    events = []
+    targets = []
 
     def shared_handler(event):
-        events.append(event.source)
+        targets.append(event.target)
 
-    a.set_on_click(shared_handler)
-    b.set_on_click(shared_handler)
+    a.on("click", shared_handler)
+    b.on("click", shared_handler)
     window.click(a)
     window.click(b)
 
-    assert len(events) == 2
-    assert events[0] != events[1]
-    assert isinstance(events[0], int)
-    assert isinstance(events[1], int)
+    assert targets == [a, b]

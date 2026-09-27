@@ -20,21 +20,22 @@ extension" discipline as every other FFI test in this suite.
 import pytest
 
 from tre import Window
+from helpers import add
 
 
 def test_add_child_attaches_a_real_child():
     window = Window(width=200, height=200)
-    parent = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    child = window.add_rect(background=(255, 0, 0, 255), width=10, height=10)
+    parent = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    child = add(window, "box", fill=(255, 0, 0, 255), width=10, height=10)
 
     parent.add_child(child)  # must not raise
 
 
 def test_add_child_moves_an_already_attached_node():
     window = Window(width=200, height=200)
-    old_parent = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    new_parent = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    child = window.add_rect(background=(255, 0, 0, 255), width=10, height=10)
+    old_parent = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    new_parent = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    child = add(window, "box", fill=(255, 0, 0, 255), width=10, height=10)
 
     # `add_rect` already attached `child` to the window's own implicit
     # root row -- re-parenting it under `new_parent` must move it, not
@@ -45,7 +46,7 @@ def test_add_child_moves_an_already_attached_node():
 
 def test_add_child_rejects_a_node_as_its_own_child():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
 
     with pytest.raises(ValueError, match="descendant"):
         node.add_child(node)
@@ -53,9 +54,9 @@ def test_add_child_rejects_a_node_as_its_own_child():
 
 def test_add_child_rejects_an_ancestor_as_a_descendants_child():
     window = Window(width=200, height=200)
-    grandparent = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    parent = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    child = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    grandparent = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    parent = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    child = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
 
     grandparent.add_child(parent)
     parent.add_child(child)
@@ -67,8 +68,8 @@ def test_add_child_rejects_an_ancestor_as_a_descendants_child():
 def test_add_child_rejects_a_node_from_a_different_window():
     window_a = Window(width=200, height=200)
     window_b = Window(width=200, height=200)
-    parent = window_a.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    foreign_child = window_b.add_rect(background=(0, 0, 0, 255), width=10, height=10)
+    parent = add(window_a, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    foreign_child = add(window_b, "box", fill=(0, 0, 0, 255), width=10, height=10)
 
     with pytest.raises(ValueError, match="different Window"):
         parent.add_child(foreign_child)

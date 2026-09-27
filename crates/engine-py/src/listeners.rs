@@ -590,7 +590,7 @@ pub(crate) fn deliver_window(
     else {
         return false;
     };
-    let mut event = Event::for_window(py, event_type.name());
+    let mut event = Event::for_window(event_type.name());
     event.cancellable = event_type == WindowEventType::CloseRequested;
     fill(&mut event);
     let event = match Py::new(py, event) {

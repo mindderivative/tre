@@ -13,7 +13,7 @@ as Tesserae.
 | [`Window`](window.md) | Owns a node tree, its size/title; creates nodes, dispatches input, docking, theming |
 | [`Node`](node.md) | A handle to one node — events, animation, property reads/writes |
 | [`Event`](node.md#the-event-payload) | The payload a handler receives when it takes one argument |
-| [`CanvasContext`](canvas-context.md) | The draw surface passed to a `Canvas` node's `draw` callback |
+| [`Painter`](painter.md) | The draw surface passed to a canvas node's `draw` callback (was `CanvasContext`) |
 
 *New in 0.3.4*, the [target API](../../design/target-api.md)'s building
 blocks: [Nodes and Properties](properties.md) (`window.create` and every
@@ -28,7 +28,7 @@ from tre import App, Window
 
 | Name | Purpose |
 | --- | --- |
-| `MONOSPACE_FONT_FAMILY` | `"Hack Nerd Font Mono"`, the bundled monospace face `add_terminal`/`add_code_editor` shape with — use it for sibling nodes (a gutter, line numbers) that must line up with their grid |
+| `MONOSPACE_FONT_FAMILY` | `"Hack Nerd Font Mono"`, the bundled monospace face terminals shape with, and a code editor's natural font — use it for sibling nodes (a gutter, line numbers) that must line up with their grid |
 | `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded (a `.ttf`/`.otf`/`.ttc` file's raw bytes) with every current and future window; returns the family names it contains. See [Theming & Accessibility → Custom fonts](../../guide/theming-and-accessibility.md#custom-fonts) |
 
 For a narrative walkthrough of how these fit together, start with

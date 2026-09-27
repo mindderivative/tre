@@ -10,11 +10,12 @@ proof, not this file).
 import pytest
 
 from tre import Node, Window
+from helpers import add
 
 
 def test_value_property_is_unknown_on_a_non_progress_node():
     window = Window(width=200, height=200)
-    rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
+    rect = add(window, "box", fill=(0, 0, 0, 255), width=24, height=24)
     with pytest.raises(ValueError, match="Rect has no property 'value'"):
         rect.animate("value", 0.5)
     # M94: `value` is also the accessibility value every node has, so

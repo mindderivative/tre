@@ -29,21 +29,20 @@ untransformed dispatch point.
 """
 
 from tre import Window
+from helpers import add
 
 
 def test_add_rect_with_explicit_position_overlaps_the_default_flow_position():
     window = Window(width=200, height=200)
 
     hits = []
-    default_positioned = window.add_rect(background=(0, 0, 0, 255), width=40, height=40)
-    default_positioned.set_on_click(lambda: hits.append("default"))
+    default_positioned = add(window, "box", fill=(0, 0, 0, 255), width=40, height=40)
+    default_positioned.on("click", lambda: hits.append("default"))
 
     # PADDING = 16.0 (PyWindow::new) -- the first, unpositioned child's
     # own real, default flex-row position.
-    explicitly_positioned = window.add_rect(
-        background=(255, 0, 0, 255), width=40, height=40, x=16.0, y=16.0
-    )
-    explicitly_positioned.set_on_click(lambda: hits.append("explicit"))
+    explicitly_positioned = add(window, "box", fill=(255, 0, 0, 255), width=40, height=40, position="absolute", x=16.0, y=16.0)
+    explicitly_positioned.on("click", lambda: hits.append("explicit"))
 
     window.click(default_positioned)
 
@@ -59,8 +58,8 @@ def test_add_rect_without_x_or_y_is_unchanged():
     the implicit flex-row flow, clickable at its own resolved position."""
     window = Window(width=200, height=200)
     hits = []
-    node = window.add_rect(background=(0, 0, 0, 255), width=40, height=40)
-    node.set_on_click(lambda: hits.append(True))
+    node = add(window, "box", fill=(0, 0, 0, 255), width=40, height=40)
+    node.on("click", lambda: hits.append(True))
 
     window.click(node)
 
@@ -71,13 +70,11 @@ def test_add_canvas_with_explicit_position_overlaps_the_default_flow_position():
     window = Window(width=200, height=200)
 
     hits = []
-    default_positioned = window.add_rect(background=(0, 0, 0, 255), width=40, height=40)
-    default_positioned.set_on_click(lambda: hits.append("default"))
+    default_positioned = add(window, "box", fill=(0, 0, 0, 255), width=40, height=40)
+    default_positioned.on("click", lambda: hits.append("default"))
 
-    explicitly_positioned = window.add_canvas(
-        width=40, height=40, draw=lambda ctx: None, x=16.0, y=16.0
-    )
-    explicitly_positioned.set_on_click(lambda: hits.append("explicit"))
+    explicitly_positioned = add(window, "canvas", width=40, height=40, draw=lambda ctx: None, position="absolute", x=16.0, y=16.0)
+    explicitly_positioned.on("click", lambda: hits.append("explicit"))
 
     window.click(default_positioned)
 
@@ -98,8 +95,8 @@ def test_click_still_finds_a_node_after_its_own_transform_moves_it():
     position -- missing it entirely."""
     window = Window(width=200, height=200)
     hits = []
-    node = window.add_rect(background=(0, 0, 0, 255), width=40, height=40)
-    node.set_on_click(lambda: hits.append(True))
+    node = add(window, "box", fill=(0, 0, 0, 255), width=40, height=40)
+    node.on("click", lambda: hits.append(True))
 
     # duration_ms=0 -- an instant snap, matching this project's own
     # established convention for testing an animation's endpoint

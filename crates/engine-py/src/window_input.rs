@@ -510,23 +510,6 @@ impl PyWindow {
         tree.borrow().text_field_selected_text(field)
     }
 
-    /// M32 Phase 6 (§4, §5, §8): `copy`'s own real `Terminal` sibling
-    /// -- the identical real hermetic scope boundary (never touches
-    /// the actual OS clipboard, only the real, pure `Tree::terminal_
-    /// selected_text` read); a real Ctrl+Shift+C only ever originates
-    /// from an actual OS-level keyboard event, the same real "no
-    /// synthetic way to drive that specific path" gap `copy`'s own doc
-    /// comment already states for Ctrl+C. Reads whichever `Terminal`
-    /// is currently focused -- use `Node.set_terminal_selection` first
-    /// to seed a real selection without a live mouse drag.
-    fn copy_terminal_selection(&self) -> Option<String> {
-        // M57 (§8): reads through `self.active`, the identical real
-        // staleness fix `copy`'s own sibling above just got.
-        let tree = self.active.borrow().tree.clone();
-        let terminal = tree.borrow().focused()?;
-        tree.borrow().terminal_selected_text(terminal)
-    }
-
     /// `copy`'s own real Cut sibling -- same real scope boundary
     /// (hermetic, no real OS clipboard touched), reusing the real,
     /// pure `Tree::cut_text_field_selection`.
@@ -550,6 +533,10 @@ impl PyWindow {
         // place it's still whole, the same "snapshot before mutate"
         // discipline `engine-core`'s own real `Changed` producers use.
         let old = crate::dispatch::read_new_changed_value(&tree.borrow(), field, py);
+        let old_for_listeners = old
+            .as_ref()
+            .ok()
+            .and_then(|o| o.as_ref().map(|v| v.clone_ref(py)));
         let text = tree.borrow_mut().cut_text_field_selection(field)?;
         // A real cut genuinely edits the field's own content -- fires
         // `Change` the same way `Node.set_checked`/`set_text` already
@@ -568,6 +555,7 @@ impl PyWindow {
             let new = crate::dispatch::read_new_changed_value(&tree.borrow(), field, py)?;
             crate::event::Event::change(py, field, &ctx, old, new)
         });
+        crate::dispatch::deliver_change(&ctx, field, old_for_listeners, py);
         Some(text)
     }
 
@@ -581,6 +569,19 @@ impl PyWindow {
     /// text," the same real finding `PLAN.md` already states.
     fn paste(&self, text: &str, py: Python<'_>) {
         self.type_text(text, py);
+    }
+
+    /// M100: the OS clipboard's text, or `None` when it holds no text or
+    /// can't be reached -- a headless environment may have no clipboard
+    /// service (logged, never raised).
+    fn read_clipboard(&self) -> Option<String> {
+        crate::dispatch::read_clipboard()
+    }
+
+    /// M100: puts `text` on the OS clipboard. `False` when the clipboard
+    /// can't be reached (logged, never raised).
+    fn write_clipboard(&self, text: &str) -> bool {
+        crate::dispatch::write_clipboard(text)
     }
 
     /// M53 Phase 2 (§8, §10, §11.3): `copy`'s own **real**, non-hermetic
@@ -647,7 +648,7 @@ impl PyWindow {
     /// field focused, or the focused node isn't a `TextField`).
     fn select_all(&self) -> bool {
         // M57 (§8): reads through `self.active`, the identical real
-        // staleness fix `copy`/`copy_terminal_selection` above just got.
+        // staleness fix `copy` above just got.
         let tree = self.active.borrow().tree.clone();
         let Some(field) = tree.borrow().focused() else {
             return false;

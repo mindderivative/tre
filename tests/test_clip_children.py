@@ -13,21 +13,22 @@ which are `TextField`-only), and never touches `get_text()`/content.
 """
 
 from tre import Window
+from helpers import CODE_EDITOR, add
 
 
 def test_set_clip_children_does_not_raise_on_a_plain_rect():
     window = Window(width=400, height=300)
-    rect = window.add_rect(background=(255, 0, 0, 255), width=50, height=50)
-    rect.set_clip_children(True)
-    rect.set_clip_children(False)
+    rect = add(window, "box", fill=(255, 0, 0, 255), width=50, height=50)
+    rect.set(clip_children=True)
+    rect.set(clip_children=False)
 
 
 def test_set_clip_children_works_on_a_container_with_real_children():
     window = Window(width=400, height=300)
-    container = window.add_rect(background=(0, 0, 0, 0), width=100, height=50)
-    child = window.add_rect(background=(255, 0, 0, 255), width=100, height=200)
+    container = add(window, "box", fill=(0, 0, 0, 0), width=100, height=50)
+    child = add(window, "box", fill=(255, 0, 0, 255), width=100, height=200)
     container.add_child(child)
-    container.set_clip_children(True)
+    container.set(clip_children=True)
 
 
 def test_set_clip_children_is_not_text_field_specific_unlike_syntax_spans():
@@ -37,14 +38,9 @@ def test_set_clip_children_is_not_text_field_specific_unlike_syntax_spans():
     field, not a `TextField`-only one.
     """
     window = Window(width=400, height=300)
-    rect = window.add_rect(background=(0, 255, 0, 255), width=50, height=50)
-    rect.set_clip_children(True)  # must not raise for a plain Rect
+    rect = add(window, "box", fill=(0, 255, 0, 255), width=50, height=50)
+    rect.set(clip_children=True)  # must not raise for a plain Rect
 
-    editor = window.add_code_editor(
-        content="def f():\n    pass",
-        background=(255, 255, 255, 255),
-        width=200,
-        height=100,
-    )
-    editor.set_clip_children(True)  # must not raise for a TextField either
-    assert editor.get_text() == "def f():\n    pass", "clipping must never touch real content"
+    editor = add(window, "text_input", **CODE_EDITOR, text="def f():\n    pass", width=200, height=100, font_size=14)
+    editor.set(clip_children=True)  # must not raise for a TextField either
+    assert editor.get("text") == "def f():\n    pass", "clipping must never touch real content"

@@ -1,6 +1,7 @@
-//! `CanvasContext` (M5 Phase 3, §11.10/§11.11): the Python-facing
-//! imperative drawing API a `Window.add_canvas` `draw` callback receives
-//! once, real per `Window.redraw_canvas` call. Deliberately holds no
+//! `Painter` (M5 Phase 3, §11.10/§11.11; M100 renamed it from
+//! `CanvasContext`): the drawing API a canvas's `draw` callback receives
+//! each time the canvas is created, its `draw` is set, or `node.redraw()`
+//! runs. Deliberately holds no
 //! `Py<PyAny>` -- every field is plain Rust data (`engine_core::
 //! DrawCommand`/`CustomHitTest`), so this pyclass needs no
 //! `__traverse__`/`__clear__` at all, the same reasoning `context_menus`/
@@ -14,9 +15,9 @@ use peniko::kurbo::BezPath;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-#[pyclass(name = "CanvasContext")]
+#[pyclass(name = "Painter")]
 #[derive(Default)]
-pub struct CanvasContext {
+pub struct Painter {
     pub(crate) commands: Vec<DrawCommand>,
     pub(crate) hit_test: Option<CustomHitTest>,
 }
@@ -71,7 +72,7 @@ fn build_path(points: Vec<Vec<f64>>) -> PyResult<BezPath> {
 }
 
 #[pymethods]
-impl CanvasContext {
+impl Painter {
     #[new]
     fn new() -> Self {
         Self::default()

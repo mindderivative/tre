@@ -575,6 +575,17 @@ pub(crate) fn read_kind_prop(
     if !KIND_PROPS.contains(&name) || name == "scroll_offset" {
         return None;
     }
+    // M100: a terminal's text is its visible grid -- read-only, one line
+    // per row, each row's trailing blanks trimmed (was `get_text()`).
+    if let ("text", NodeKind::Terminal(state)) = (name, &node.kind) {
+        let lines: Vec<String> = (0..state.rows)
+            .map(|row| {
+                let line: String = (0..state.cols).map(|col| state.cell(row, col).ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect();
+        return Some(to_py(lines.join("\n"), py));
+    }
     let (kinds, test) = applies(name);
     if !test(&node.kind) {
         return Some(Err(PyValueError::new_err(format!(

@@ -26,6 +26,7 @@ extension" discipline as `test_engine_py.py`.
 import pytest
 
 from tre import Node, Window
+from helpers import add
 
 
 # --- Node.set_layout ---------------------------------------------------
@@ -33,31 +34,31 @@ from tre import Node, Window
 
 def test_set_layout_with_no_arguments_does_not_raise():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout()
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set()
 
 
 def test_set_layout_accepts_each_field_individually():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout(width=120.0)
-    node.set_layout(height=80.0)
-    node.set_layout(padding=8.0)
-    node.set_layout(gap=4.0)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set(width=120.0)
+    node.set(height=80.0)
+    node.set(padding=8.0)
+    node.set(gap=4.0)
 
 
 def test_set_layout_accepts_all_fields_together():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout(width=100.0, height=60.0, padding=6.0, gap=2.0)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set(width=100.0, height=60.0, padding=6.0, gap=2.0)
 
 
 def test_set_layout_can_be_called_repeatedly():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout(width=100.0)
-    node.set_layout(width=150.0)
-    node.set_layout(height=90.0)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set(width=100.0)
+    node.set(width=150.0)
+    node.set(height=90.0)
 
 
 # --- M59 (§5, §16.3): set_layout widened -- per-side padding/margin, ---
@@ -67,16 +68,16 @@ def test_set_layout_can_be_called_repeatedly():
 
 def test_set_layout_accepts_per_side_padding_and_margin_individually():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout(padding_top=4.0)
-    node.set_layout(padding_right=4.0)
-    node.set_layout(padding_bottom=4.0)
-    node.set_layout(padding_left=4.0)
-    node.set_layout(margin=2.0)
-    node.set_layout(margin_top=1.0)
-    node.set_layout(margin_right=1.0)
-    node.set_layout(margin_bottom=1.0)
-    node.set_layout(margin_left=1.0)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set(padding_top=4.0)
+    node.set(padding_right=4.0)
+    node.set(padding_bottom=4.0)
+    node.set(padding_left=4.0)
+    node.set(margin=2.0)
+    node.set(margin_top=1.0)
+    node.set(margin_right=1.0)
+    node.set(margin_bottom=1.0)
+    node.set(margin_left=1.0)
 
 
 def test_set_layout_per_side_padding_layers_on_top_of_the_uniform_value():
@@ -88,14 +89,14 @@ def test_set_layout_per_side_padding_layers_on_top_of_the_uniform_value():
     not to raise).
     """
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout(padding=8.0, padding_top=2.0, margin=4.0, margin_left=1.0)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set(padding=8.0, padding_top=2.0, margin=4.0, margin_left=1.0)
 
 
 def test_set_layout_accepts_flex_grow_shrink_and_basis():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout(flex_grow=1.0, flex_shrink=0.0, flex_basis=40.0)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set(flex_grow=1.0, flex_shrink=0.0, flex_basis=40.0)
 
 
 @pytest.mark.parametrize(
@@ -104,8 +105,8 @@ def test_set_layout_accepts_flex_grow_shrink_and_basis():
 )
 def test_set_layout_accepts_every_real_align_items_value(value):
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout(align_items=value)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set(align_items=value)
 
 
 @pytest.mark.parametrize(
@@ -124,22 +125,22 @@ def test_set_layout_accepts_every_real_align_items_value(value):
 )
 def test_set_layout_accepts_every_real_justify_content_value(value):
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
-    node.set_layout(justify_content=value)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    node.set(justify_content=value)
 
 
 def test_set_layout_rejects_an_unknown_align_items_value():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     with pytest.raises(ValueError, match="align_items"):
-        node.set_layout(align_items="sideways")
+        node.set(align_items="sideways")
 
 
 def test_set_layout_rejects_an_unknown_justify_content_value():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     with pytest.raises(ValueError, match="justify_content"):
-        node.set_layout(justify_content="sideways")
+        node.set(justify_content="sideways")
 
 
 # --- M59 (§5, §16.3): the new engine-spec fields reach a real View too -
@@ -150,7 +151,7 @@ def test_set_layout_rejects_an_unknown_justify_content_value():
 
 def test_animate_accepts_border_color_and_border_width():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     node.animate("border_color", (255, 0, 0, 255), duration_ms=0)
     node.animate("border_width", 2.0, duration_ms=0)
 
@@ -168,19 +169,19 @@ def test_animate_border_width_with_zero_duration_does_not_raise():
     # binding_applies_its_initial_value`, below), which is where a real
     # readback assertion belongs.
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     node.animate("border_width", 3.5, duration_ms=0)
 
 
 def test_border_width_defaults_to_zero():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     assert node.get("border_width") == pytest.approx(0.0)
 
 
 def test_border_color_requires_a_four_tuple_not_a_float():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     with pytest.raises(TypeError, match="expects an \\(r, g, b, a\\) tuple"):
         node.animate("border_color", 1.0)
 
@@ -190,20 +191,14 @@ def test_border_color_requires_a_four_tuple_not_a_float():
 
 def test_add_rect_accepts_border_kwargs():
     window = Window(width=200, height=200)
-    node = window.add_rect(
-        background=(0, 0, 0, 255),
-        width=50,
-        height=50,
-        border_color=(255, 255, 255, 255),
-        border_width=1.5,
-    )
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50, stroke_color=(255, 255, 255, 255), stroke_width=1.5)
     assert isinstance(node, Node)
     assert node.get("border_width") == pytest.approx(1.5)
 
 
 def test_add_rect_without_border_kwargs_still_defaults_to_zero_width():
     window = Window(width=200, height=200)
-    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     assert node.get("border_width") == pytest.approx(0.0)
 
 
@@ -230,13 +225,7 @@ def test_add_text_accepts_a_line_height_kwarg():
     # `a_larger_line_height_genuinely_widens_the_real_per_line_advance`
     # is where the actual geometry change is proven, at the Rust layer.
     window = Window(width=200, height=200)
-    node = window.add_text(
-        content="Hello",
-        foreground=(0, 0, 0, 0),
-        width=100,
-        height=40,
-        line_height=1.5,
-    )
+    node = add(window, "text", text="Hello", fill=(0, 0, 0, 0), width=100, height=40, line_height=1.5)
     assert isinstance(node, Node)
 
 
@@ -245,7 +234,7 @@ def test_add_text_line_height_defaults_to_none():
     # must still be reachable with zero change to an existing call --
     # must not raise.
     window = Window(width=200, height=200)
-    node = window.add_text(content="Hello", foreground=(0, 0, 0, 0), width=100, height=40)
+    node = add(window, "text", text="Hello", fill=(0, 0, 0, 0), width=100, height=40)
     assert isinstance(node, Node)
 
 
@@ -254,11 +243,5 @@ def test_add_text_line_height_defaults_to_none():
 
 def test_add_text_no_longer_takes_a_typography_role():
     window = Window(width=200, height=200)
-    with pytest.raises(TypeError, match="typography_role"):
-        window.add_text(
-            content="Heading",
-            foreground=(0, 0, 0, 0),
-            width=200,
-            height=40,
-            typography_role="headline_small",
-        )
+    with pytest.raises(ValueError, match="typography_role"):
+        add(window, "text", text="Heading", fill=(0, 0, 0, 0), width=200, height=40, typography_role="headline_small")

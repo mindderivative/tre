@@ -1,8 +1,8 @@
 # `Window`
 
-Owns one node tree, its root, and its own size/title. Every `add_*`
-method attaches a new [`Node`](node.md) as a direct child of this
-window's implicit root (a flex row, 16px padding, 16px gaps).
+Owns one node tree, its root, and its own size/title. Nodes come from
+[`create`](#nodes); attach them under [`root`](#nodes), a flex row with 16px
+padding and 16px gaps.
 
 ## `Window`
 
@@ -23,87 +23,48 @@ window — the same synthetic pattern as `click`/`hover`. Every later
 `add_*` call and synthetic dispatch uses the new size. A real OS resize
 updates the same shared size.
 
-## Creating nodes
+## Nodes
 
-### `add_rect`
-
-**`add_rect(background, width, height, x=None, y=None)`**
-
-A plain colored rectangle. `background` is an `(r, g, b, a)` tuple of
-ints 0–255.
-
-### `add_text`
-
-**`add_text(content, foreground, width, height, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None)`**
-
-A plain, non-editable text label. `foreground` is its text color; a
-label has no fill of its own. Unset font arguments fall back to
-Roboto, weight 400, size 16, and the font's natural line height.
-`width`/`height` are required (there's no intrinsic-sizing support to
-size a label from its own content — see [`measure_text`](#measure_text)).
-For editable text, see [`add_text_field`](#add_text_field).
-*0.3.5 removed `typography_role` with the MD3 type scale.*
-
-### `add_text_field`
-
-**`add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)`**
-
-A text field with real keyboard editing. `multiline`/`show_whitespace`
-mirror `add_code_editor`'s own two fields, both `False` by default.
-
-### `add_image_from_bytes`
-
-**`add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)`**
-
-An `Image` node from already-decoded, straight-alpha RGBA8 pixels
-(`pixel_width * pixel_height * 4` bytes exactly, or a clear
-`ValueError`). No file and no decoding inside `tre` — the caller owns
-decoding (a network fetch, any image library, a generated texture).
-`width`/`height` are the node's display box; `pixel_width`/
-`pixel_height` describe `rgba`, and `fit` (`"cover"`, `"contain"`, or
-`"fill"`) resolves any mismatch. The returned node is an ordinary
-`Image` node — [`Node.push_frame`](node.md#push_frame) replaces its
-pixels afterward.
+**`create(kind, **props) -> Node`** makes a detached node of `kind` —
+`"box"`, `"text"`, `"text_input"`, `"image"`, `"path"`, `"canvas"`,
+`"scroll_view"`, `"virtual_list"`, or `"terminal"` — and **`root`** is the
+node to attach it under. Every kind and property is on
+[Nodes and Properties](properties.md).
 
 ```python
-pixels = bytes([255, 0, 0, 255]) * (64 * 64)  # a solid red 64x64 image
-image = window.add_image_from_bytes(pixels, 64, 64, width=200, height=200)
+card = window.create("box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=200, height=120,
+                     corner_radius=12)
+window.root.add_child(card)
 ```
 
-An image file is decoded by the caller — any decoder works:
+*0.3.5 replaced the `add_*` factories* (`add_rect`, `add_text`,
+`add_text_field`, `add_code_editor`, `add_image_from_bytes`, `add_video`,
+`add_canvas`, `add_scroll_view`, `add_virtual_list`, `add_terminal`) with
+`create`, and removed `redraw_canvas` (use `canvas.redraw()`),
+`set_virtual_list_window` (a virtual list builds its own visible rows),
+`resize_terminal` (use `terminal.set(cols=, rows=)`),
+`copy_terminal_selection` (`terminal.get("selection")`), and
+`get_monospace_cell_size` (use [`measure_text`](#measure_text)).
+
+### Images
+
+An `"image"` node takes straight-alpha RGBA8 pixels; `tre` never reads or
+decodes files — any decoder works:
 
 ```python
 from PIL import Image
 
 img = Image.open("photo.png").convert("RGBA")
-picture = window.add_image_from_bytes(
-    img.tobytes(), img.width, img.height, width=200, height=120, fit="cover"
-)
+picture = window.create("image", rgba=img.tobytes(), pixel_width=img.width,
+                        pixel_height=img.height, width=200, height=120, fit="cover")
 ```
 
-*0.3.5 removed `add_image(path)` and its PNG/JPEG decoding.*
+Video is the same node with new pixels set each frame.
 
 ### Icons
 
-*0.3.5 removed `add_icon` with `engine-md3`'s icon set:* draw an icon as a
-`"path"` node from its SVG `d` and `viewBox` — see
-[Paint, Paths, and Animation](paint.md).
-
-### `add_canvas`
-
-**`add_canvas(width, height, draw, x=None, y=None)`**
-
-A custom-drawn surface. `draw: Callable[[CanvasContext], None]` is
-stored, not invoked yet — see [`redraw_canvas`](#redraw_canvas) and
-[Canvas & Virtualized Lists](../../guide/canvas-and-lists.md).
-
-### `add_virtual_list`
-
-**`add_virtual_list(item_count, materialize, item_extent=None, size_hint=None, width=None, height=None)`**
-
-A virtualized list of `item_count` logical rows. Give exactly one of
-`item_extent`/`size_hint`. Raises `ValueError` if neither or both are
-given. See [Canvas & Virtualized Lists](../../guide/canvas-and-lists.md#virtualized-lists).
+An icon is a `"path"` node from its SVG `d` and `viewBox` — see
+[Paint, Paths, and Animation](paint.md). *0.3.5 removed `add_icon`.*
 
 ## Overlays
 
@@ -113,31 +74,8 @@ older `open_*`/`close_*` pairs and the MD3 factories they opened.
 
 ## Terminal
 
-`add_terminal`'s returned `Node` is driven by real mouse/keyboard
-dispatch like any other focusable node; these three `Window`-level
-methods cover what isn't reachable through the node itself:
-
-### `resize_terminal`
-
-**`resize_terminal(node, cols, rows)`**
-
-Resizes a live terminal session's PTY and VT100 grid in place.
-
-### `get_monospace_cell_size`
-
-**`get_monospace_cell_size(font_size) -> (float, float)`**
-
-Returns `(width, height)` of one character cell in the engine's bundled
-monospace face at `font_size` — the same real measurement
-`add_terminal` itself uses to size a new terminal from `cols`/`rows`.
-
-### `copy_terminal_selection`
-
-**`copy_terminal_selection() -> str | None`**
-
-Returns the focused terminal's current text selection, or `None` — the
-terminal counterpart to `copy()` below. Seed a selection without a
-mouse drag with [`Node.set_terminal_selection`](node.md#set_terminal_selection).
+A `"terminal"` node is driven by real mouse and keyboard dispatch like any
+other focusable node.
 
 ### `press_ctrl`
 
@@ -147,7 +85,7 @@ Sends a Ctrl+`letter` control byte to the focused terminal —
 `press_ctrl("c")` sends SIGINT (`0x03`), like Ctrl+C in any terminal.
 `letter` must be one ASCII letter (case-insensitive), or `ValueError`.
 Returns whether a terminal was focused to receive it; it never touches a
-`TextField` (use `copy`/`cut`/`paste` for those).
+text input (use `copy`/`cut`/`paste` for those).
 
 ## Events, properties, and `simulate` (0.3.4)
 
@@ -155,8 +93,7 @@ Returns whether a terminal was focused to receive it; it never touches a
 `scale_factor`, `close_requested`, `closed`, `dock_target`, `dock_drop`), `window.set(title=...)`,
 `window.get(name)`, `window.root`, and `window.simulate(event, node=None,
 **fields)` for headless tests — see [Events and Listeners](events.md).
-`window.create(kind, **props)` makes detached nodes — see
-[Paint, Paths, and Animation](paint.md#creating-nodes).
+`window.create(kind, **props)` makes detached nodes — see [Nodes](#nodes).
 
 ### `measure_text`
 
@@ -199,13 +136,13 @@ dispatches at the target node's real, current center point.
 | Method | Simulates |
 | --- | --- |
 | `click(node)` | A primary-button press + release |
-| `hover(node)` | The pointer moving over `node` (fires `HoverEnter`/`HoverExit`) |
+| `hover(node)` | The pointer moving over `node` (fires `pointer_enter`/`pointer_leave`) |
 | `scroll(node, delta_y)` | A mouse wheel scroll (bubbles to the nearest `VirtualList` ancestor) |
 | `right_click(node)` | A secondary-button press + release |
 | `press_key(key, shift=False)` | A keypress — see accepted keys below |
-| `type_text(text)` | A produced text-input event (affects the currently focused `TextField` only) |
+| `type_text(text)` | A produced text-input event (affects the focused text input only) |
 | `copy()` | Ctrl+C — returns the focused field's selected text, or `None` (hermetic, no real OS clipboard) |
-| `cut()` | Ctrl+X — also edits the field and fires `Change` (hermetic) |
+| `cut()` | Ctrl+X — also edits the field and fires `change` (hermetic) |
 | `paste(text)` | Ctrl+V with explicit text — same mechanism as `type_text` (hermetic) |
 | `select_all()` | Ctrl+A — selects the focused `TextField`'s whole content (cursor lands at the end); returns whether a field was focused |
 
@@ -213,17 +150,21 @@ Accepted `key` values for `press_key`: `"tab"`, `"enter"`, `"space"`,
 `"escape"`, `"backspace"`, `"delete"`, `"left"`, `"right"`, `"home"`,
 `"end"`. Anything else raises `ValueError`.
 
-### The real OS clipboard
+### Clipboard
+
+**`read_clipboard() -> str | None`** returns the OS clipboard's text, or
+`None` when it holds no text or can't be reached. **`write_clipboard(text) ->
+bool`** puts `text` on it, `False` when it can't be reached. Neither raises: a
+headless environment may have no clipboard service, which is logged.
 
 `copy`/`cut`/`paste` above are deliberately hermetic — they never touch
 the OS clipboard, which keeps tests deterministic. These three are
-their real counterparts, the same path live Ctrl+C/X/V takes — what a
-context-menu "Copy"/"Cut"/"Paste" item's `on_click` should call:
+their real counterparts, the same path live Ctrl+C/X/V takes:
 
 | Method | Returns |
 | --- | --- |
 | `copy_to_system_clipboard() -> bool` | `True` only on a complete write; `False` when nothing is focused/selected or the OS clipboard is unreachable (logged, never raised) |
-| `cut_to_system_clipboard() -> bool` | Like copy, then removes the selection and fires `Change` — only once the write succeeded, so a failed write never loses the selection |
+| `cut_to_system_clipboard() -> bool` | Like copy, then removes the selection and fires `change` — only once the write succeeded, so a failed write never loses the selection |
 | `paste_from_system_clipboard() -> bool` | Whether the OS clipboard *read* succeeded (inserting into the focused field, if any) |
 
 On some sandboxed Linux setups with no clipboard manager, clipboard
@@ -240,25 +181,3 @@ content may only be served while the process that wrote it is running.
 
 `side` is one of `"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`.
 See [Docking](../../guide/docking-and-shell.md) for a full walkthrough.
-
-## Canvas
-
-### `redraw_canvas`
-
-**`redraw_canvas(canvas)`**
-
-Calls `canvas`'s stored `draw(ctx)` callback exactly once and replaces
-its drawn content. Raises `ValueError` if `canvas` wasn't created by this
-window's `add_canvas`. See
-[Canvas & Virtualized Lists](../../guide/canvas-and-lists.md#custom-drawing-with-canvas).
-
-## Virtualized lists
-
-### `set_virtual_list_window`
-
-**`set_virtual_list_window(list, start, end)`**
-
-Materializes rows `start..end`, removing whatever was materialized
-outside that range. Raises `ValueError` if `list` wasn't created by this
-window's `add_virtual_list`. See
-[Canvas & Virtualized Lists](../../guide/canvas-and-lists.md#virtualized-lists).

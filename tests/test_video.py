@@ -22,6 +22,7 @@ vocabulary and rejects an unknown one; and repeated `push_frame` calls
 import pytest
 
 from tre import Node, Window
+from helpers import add
 
 
 def _solid_frame(width: int, height: int, byte: int) -> bytes:
@@ -30,47 +31,47 @@ def _solid_frame(width: int, height: int, byte: int) -> bytes:
 
 def test_add_video_returns_a_node():
     window = Window(width=200, height=200)
-    node = window.add_video(width=160, height=90)
+    node = add(window, "image", width=160, height=90, rgba=bytes(4), pixel_width=1, pixel_height=1)
     assert isinstance(node, Node)
 
 
 def test_add_video_positions_like_every_other_add_method():
     window = Window(width=200, height=200)
-    node = window.add_video(width=160, height=90, x=10, y=20)
+    node = add(window, "image", width=160, height=90, rgba=bytes(4), pixel_width=1, pixel_height=1, position="absolute", x=10, y=20)
     assert isinstance(node, Node)
 
 
 @pytest.mark.parametrize("fit", ["cover", "contain", "fill"])
 def test_add_video_accepts_each_real_fit_value(fit):
     window = Window(width=200, height=200)
-    node = window.add_video(width=160, height=90, fit=fit)
+    node = add(window, "image", width=160, height=90, fit=fit, rgba=bytes(4), pixel_width=1, pixel_height=1)
     assert isinstance(node, Node)
 
 
 def test_add_video_with_an_unknown_fit_raises_a_clear_error():
     window = Window(width=200, height=200)
-    with pytest.raises(ValueError, match="unknown content fit"):
-        window.add_video(width=160, height=90, fit="stretch")
+    with pytest.raises(ValueError, match="`fit` must be one of"):
+        add(window, "image", width=160, height=90, fit="stretch", rgba=bytes(4), pixel_width=1, pixel_height=1)
 
 
 def test_push_frame_with_a_correctly_sized_buffer_does_not_raise():
     window = Window(width=200, height=200)
-    node = window.add_video(width=4, height=2)
-    node.push_frame(_solid_frame(4, 2, 0xFF), 4, 2)
+    node = add(window, "image", width=4, height=2, rgba=bytes(4), pixel_width=1, pixel_height=1)
+    node.set(rgba=_solid_frame(4, 2, 0xFF), pixel_width=4, pixel_height=2)
 
 
 def test_push_frame_with_a_wrong_sized_buffer_raises_a_clear_error():
     window = Window(width=200, height=200)
-    node = window.add_video(width=4, height=2)
-    with pytest.raises(ValueError, match="push_frame"):
-        node.push_frame(b"\x00" * 10, 4, 2)
+    node = add(window, "image", width=4, height=2, rgba=bytes(4), pixel_width=1, pixel_height=1)
+    with pytest.raises(ValueError, match="a 4x2 RGBA8 frame needs 32"):
+        node.set(rgba=b"\x00" * 10, pixel_width=4, pixel_height=2)
 
 
 def test_push_frame_on_a_non_image_node_raises_a_clear_error():
     window = Window(width=200, height=200)
-    rect = window.add_rect(background=(255, 0, 0, 255), width=40, height=40)
+    rect = add(window, "box", fill=(255, 0, 0, 255), width=40, height=40)
     with pytest.raises(ValueError):
-        rect.push_frame(_solid_frame(4, 2, 0xFF), 4, 2)
+        rect.set(rgba=_solid_frame(4, 2, 0xFF), pixel_width=4, pixel_height=2)
 
 
 def test_repeated_push_frame_calls_simulate_a_real_live_stream():
@@ -79,9 +80,9 @@ def test_repeated_push_frame_calls_simulate_a_real_live_stream():
     frames in a row, each replacing the last, none raising.
     """
     window = Window(width=200, height=200)
-    node = window.add_video(width=4, height=2)
+    node = add(window, "image", width=4, height=2, rgba=bytes(4), pixel_width=1, pixel_height=1)
     for byte in (0xFF, 0x80, 0x00, 0x40):
-        node.push_frame(_solid_frame(4, 2, byte), 4, 2)
+        node.set(rgba=_solid_frame(4, 2, byte), pixel_width=4, pixel_height=2)
 
 
 def test_push_frame_can_change_the_frame_resolution():
@@ -91,6 +92,6 @@ def test_push_frame_can_change_the_frame_resolution():
     the mismatch at paint time, no layout involvement needed.
     """
     window = Window(width=200, height=200)
-    node = window.add_video(width=160, height=90)
-    node.push_frame(_solid_frame(4, 2, 0xFF), 4, 2)
-    node.push_frame(_solid_frame(8, 6, 0x80), 8, 6)
+    node = add(window, "image", width=160, height=90, rgba=bytes(4), pixel_width=1, pixel_height=1)
+    node.set(rgba=_solid_frame(4, 2, 0xFF), pixel_width=4, pixel_height=2)
+    node.set(rgba=_solid_frame(8, 6, 0x80), pixel_width=8, pixel_height=6)

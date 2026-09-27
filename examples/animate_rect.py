@@ -2,7 +2,7 @@
 """§14 build-order step 6: "drive step 2's animation from a .py script."
 
 Real proof, not a smoke test alone: creates a node from Python
-(`Window.add_rect`), animates its opacity from Python (`Node.animate`,
+(`Window.create("box")`), animates its opacity from Python (`Node.animate`,
 §8's own "one property setter"), and runs the real render loop --
 `engine-py`'s `App.run()` opens an actual OS window and renders actual
 frames via the same `engine-render` pipeline every other step's Rust
@@ -23,11 +23,13 @@ from tre import App, Window
 
 window = Window(width=420, height=140)
 
-swatch = window.add_rect(background=(0x67, 0x50, 0xA4, 0xFF), width=100, height=100)
+swatch = window.create("box", fill=(0x67, 0x50, 0xA4, 0xFF), width=100, height=100)
+window.root.add_child(swatch)
 swatch.animate("opacity", 0.3, duration_ms=800)
 swatch.animate("corner_radius", 24.0, duration_ms=800)
 
-second = window.add_rect(background=(0x03, 0xDA, 0xC6, 0xFF), width=100, height=100)
+second = window.create("box", fill=(0x03, 0xDA, 0xC6, 0xFF), width=100, height=100)
+window.root.add_child(second)
 second.animate("background", (0x67, 0x50, 0xA4, 0xFF), duration_ms=800)
 
 app = App()

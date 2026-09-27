@@ -27,20 +27,21 @@ import time
 
 import pytest
 
-from tre import App, Node, Window
+from tre import App, MONOSPACE_FONT_FAMILY, Node, Window
+from helpers import add
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Terminal is POSIX-only in this v1")
 
 
 def test_add_terminal_returns_a_node():
     window = Window(width=400, height=300)
-    node = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    node = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     assert isinstance(node, Node)
 
 
 def test_add_terminal_positions_like_every_other_add_method():
     window = Window(width=400, height=300)
-    node = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255), x=10, y=20)
+    node = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)}, position="absolute", x=10, y=20)
     assert isinstance(node, Node)
 
 
@@ -53,24 +54,24 @@ def test_a_click_focuses_the_terminal():
     click-to-focus check `Tree::dispatch` already has.
     """
     window = Window(width=400, height=300)
-    term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
-    assert term.is_focused() is False
+    term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
+    assert term.get("focused") is False
     window.click(term)
-    assert term.is_focused() is True
+    assert term.get("focused") is True
 
 
 def test_get_text_on_a_fresh_terminal_returns_an_empty_grid():
     window = Window(width=400, height=300)
-    term = window.add_terminal(shell="/bin/sh", cols=10, rows=3, background=(0, 0, 0, 255))
-    assert term.get_text() == "\n\n"
+    term = add(window, "terminal", shell="/bin/sh", cols=10, rows=3, palette={"background": (0, 0, 0, 255)})
+    assert term.get("text") == "\n\n"
 
 
 def test_get_text_on_a_non_terminal_node_raises_a_clear_error():
     window = Window(width=400, height=300)
-    rect = window.add_rect(background=(255, 0, 0, 255), width=40, height=40)
+    rect = add(window, "box", fill=(255, 0, 0, 255), width=40, height=40)
     with pytest.raises(ValueError):
         # `get_text` is shared with Text/TextField/Terminal only.
-        rect.get_text()
+        rect.get("text")
 
 
 def test_a_real_shell_genuinely_responds_to_typed_input():
@@ -124,11 +125,9 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     *does* have a display.
     """
     window = Window(width=420, height=200)
-    term = window.add_terminal(
-        shell="/bin/sh", cols=40, rows=5, background=(0, 0, 0, 255), scrollback_lines=200
-    )
+    term = add(window, "terminal", shell="/bin/sh", cols=40, rows=5, scrollback_lines=200, palette={"background": (0, 0, 0, 255)})
     window.click(term)
-    assert term.is_focused() is True
+    assert term.get("focused") is True
 
     window.type_text("echo HELLO_FROM_TERMINAL")
     window.press_key("enter")
@@ -168,7 +167,7 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     if not frames_ran:
         pytest.skip("no display reachable: App.run() rendered no frames, so PTY output never drained")
 
-    text = term.get_text()
+    text = term.get("text")
     assert "REACHED_AFTER_SIGINT" in text, (
         f"the shell must have genuinely regained control right after the real SIGINT -- if "
         f"sleep 100 were still running, this later command would never have executed, got "
@@ -186,7 +185,7 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     # the very first real line typed -- and pushing the most recent one
     # back out of view.
     window.scroll(term, 400.0)
-    scrolled_text = term.get_text()
+    scrolled_text = term.get("text")
     assert "HELLO_FROM_TERMINAL" in scrolled_text, (
         f"a real scroll must reveal real, previously-scrolled-off history, got {scrolled_text!r}"
     )
@@ -202,8 +201,9 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     line = next(line for line in scrolled_text.split("\n") if "HELLO_FROM_TERMINAL" in line)
     col = line.index("HELLO_FROM_TERMINAL")
     row = scrolled_text.split("\n").index(line)
-    term.set_terminal_selection(row, col, row, col + len("HELLO_FROM_TERMINAL"))
-    assert window.copy_terminal_selection() == "HELLO_FROM_TERMINAL"
+    selection = (row, col, row, col + len("HELLO_FROM_TERMINAL"))
+    term.set(selection=selection)
+    assert term.get("selection") == selection
 
 
 def test_scroll_on_a_terminal_with_no_content_does_not_raise():
@@ -213,7 +213,7 @@ def test_scroll_on_a_terminal_with_no_content_does_not_raise():
     own real clamping).
     """
     window = Window(width=400, height=300)
-    term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     window.scroll(term, 100.0)
     window.scroll(term, -100.0)
 
@@ -225,9 +225,11 @@ def test_scroll_on_a_non_terminal_node_still_bubbles_to_a_virtual_list():
     it was before this phase.
     """
     window = Window(width=400, height=300)
-    items = window.add_virtual_list(
+    items = add(
+        window,
+        "virtual_list",
         item_count=10,
-        materialize=lambda _i: (255, 255, 255, 255),
+        materialize=lambda _i: window.create("box", fill=(255, 255, 255, 255)),
         item_extent=20.0,
         width=200,
         height=100,
@@ -235,46 +237,27 @@ def test_scroll_on_a_non_terminal_node_still_bubbles_to_a_virtual_list():
     window.scroll(items, 50.0)
 
 
-def test_set_terminal_selection_and_copy_terminal_selection_round_trip():
-    """M32 Phase 6 (§4, §5, §8): the real hermetic FFI path -- seeds a
-    real selection directly (no live mouse drag needed) and reads it
-    back via `Window.copy_terminal_selection`, the identical real
-    "never touches the actual OS clipboard" scope boundary `Window.
-    copy()` already established for `TextField`.
+def test_a_terminal_selection_round_trips_through_set_and_get():
+    """M32 Phase 6 (§4, §5, §8): seeds a selection directly (no live
+    mouse drag needed) and reads it back -- M100: through
+    `get("selection")` (was `Window.copy_terminal_selection`, which read
+    the selected text). A collapsed selection reads back as set.
     """
     window = Window(width=400, height=300)
-    term = window.add_terminal(shell="/bin/sh", cols=10, rows=1, background=(0, 0, 0, 255))
-    window.click(term)
-    assert term.is_focused()
-    assert window.copy_terminal_selection() is None, "no real selection exists yet"
+    term = add(window, "terminal", shell="/bin/sh", cols=10, rows=1, palette={"background": (0, 0, 0, 255)})
+    assert term.get("selection") is None, "no selection exists yet"
 
-    term.set_terminal_selection(0, 0, 0, 3)
-    selected = window.copy_terminal_selection()
-    # A freshly spawned terminal has no real echoed content yet -- every
-    # cell is a real blank space, trimmed to an empty real string.
-    assert selected == "", f"a real, if blank, selection must still read back, got {selected!r}"
-
-
-def test_set_terminal_selection_collapsed_reads_as_no_selection():
-    window = Window(width=400, height=300)
-    term = window.add_terminal(shell="/bin/sh", cols=10, rows=1, background=(0, 0, 0, 255))
-    window.click(term)
-    term.set_terminal_selection(0, 2, 0, 2)
-    assert window.copy_terminal_selection() is None
-
-
-def test_copy_terminal_selection_without_a_focused_terminal_is_none():
-    window = Window(width=400, height=300)
-    window.add_terminal(shell="/bin/sh", cols=10, rows=1, background=(0, 0, 0, 255))
-    # No window.click(term) -- nothing is focused.
-    assert window.copy_terminal_selection() is None
+    term.set(selection=(0, 0, 0, 3))
+    assert term.get("selection") == (0, 0, 0, 3)
+    term.set(selection=(0, 2, 0, 2))
+    assert term.get("selection") == (0, 2, 0, 2)
 
 
 def test_set_terminal_selection_on_a_non_terminal_node_raises():
     window = Window(width=400, height=300)
-    rect = window.add_rect(background=(255, 0, 0, 255), width=50, height=50)
+    rect = add(window, "box", fill=(255, 0, 0, 255), width=50, height=50)
     with pytest.raises(ValueError):
-        rect.set_terminal_selection(0, 0, 0, 1)
+        rect.set(selection=(0, 0, 0, 1))
 
 
 def test_resize_terminal_updates_terminal_state_synchronously():
@@ -290,38 +273,31 @@ def test_resize_terminal_updates_terminal_state_synchronously():
     viewport already proven fragile to reorder twice this session.
     """
     window = Window(width=600, height=400)
-    term = window.add_terminal(shell="/bin/sh", cols=10, rows=3, background=(0, 0, 0, 255))
-    assert len(term.get_text().split("\n")) == 3
+    term = add(window, "terminal", shell="/bin/sh", cols=10, rows=3, palette={"background": (0, 0, 0, 255)})
+    assert len(term.get("text").split("\n")) == 3
 
-    window.resize_terminal(term, cols=20, rows=6)
-    assert len(term.get_text().split("\n")) == 6, "resize_terminal must resync TerminalState"
+    term.set(cols=20, rows=6)
+    assert len(term.get("text").split("\n")) == 6, "resize_terminal must resync TerminalState"
 
 
 def test_resize_terminal_on_a_non_terminal_node_raises():
     window = Window(width=400, height=300)
-    rect = window.add_rect(background=(255, 0, 0, 255), width=50, height=50)
+    rect = add(window, "box", fill=(255, 0, 0, 255), width=50, height=50)
     with pytest.raises(ValueError):
-        window.resize_terminal(rect, cols=10, rows=5)
+        rect.set(cols=10, rows=5)
 
 
-def test_resize_terminal_on_a_foreign_node_raises():
-    window_a = Window(width=400, height=300)
-    window_b = Window(width=400, height=300)
-    term = window_a.add_terminal(shell="/bin/sh", cols=10, rows=3, background=(0, 0, 0, 255))
-    with pytest.raises(ValueError):
-        window_b.resize_terminal(term, cols=20, rows=6)
 
 
-def test_get_monospace_cell_size_returns_real_positive_values_that_scale_with_font_size():
-    """M32 Phase 1 (§5, §8, §10): the real per-font-size measured cell
-    size `add_terminal`/`add_code_editor` themselves size against
-    internally, exposed here so app-level layout code can match it --
-    proven real (positive, genuinely scales with `font_size`, not a
-    fixed placeholder) rather than just "doesn't raise".
+def test_one_monospace_cell_measures_positive_and_scales_with_font_size():
+    """M32 Phase 1 (§5, §8, §10): a terminal's cell is one character of
+    the bundled monospace face -- M100: measured with `measure_text`
+    (was `get_monospace_cell_size`), proven real (positive, genuinely
+    scales with `font_size`), not just "doesn't raise".
     """
     window = Window(width=400, height=300)
-    width_14, height_14 = window.get_monospace_cell_size(font_size=14.0)
-    width_28, height_28 = window.get_monospace_cell_size(font_size=28.0)
+    width_14, height_14 = window.measure_text("M", font_family=MONOSPACE_FONT_FAMILY, font_size=14.0)
+    width_28, height_28 = window.measure_text("M", font_family=MONOSPACE_FONT_FAMILY, font_size=28.0)
     assert width_14 > 0.0
     assert height_14 > 0.0
     assert width_28 > width_14
@@ -335,7 +311,7 @@ def test_press_key_without_a_focused_terminal_falls_through_harmlessly():
     an empty window.
     """
     window = Window(width=400, height=300)
-    window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     # No window.click(term) -- nothing is focused.
     window.press_key("enter")
     window.type_text("hello")
@@ -348,13 +324,13 @@ def test_press_ctrl_returns_false_without_a_focused_terminal():
     reports nothing was sent.
     """
     window = Window(width=400, height=300)
-    window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     assert window.press_ctrl("c") is False
 
 
 def test_press_ctrl_returns_true_for_a_real_focused_terminal():
     window = Window(width=400, height=300)
-    term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     window.click(term)
     assert window.press_ctrl("c") is True
     assert window.press_ctrl("z") is True, "every real Ctrl+<letter>, not just c/x/v"
@@ -362,7 +338,7 @@ def test_press_ctrl_returns_true_for_a_real_focused_terminal():
 
 def test_press_ctrl_rejects_anything_that_isnt_exactly_one_ascii_letter():
     window = Window(width=400, height=300)
-    term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     window.click(term)
     with pytest.raises(ValueError):
         window.press_ctrl("")

@@ -1,8 +1,8 @@
-# `CanvasContext`
+# `Painter`
 
-Passed as the `ctx` argument of the `draw` callback given to
-[`Window.add_canvas`](window.md#add_canvas), populated once per
-[`Window.redraw_canvas`](window.md#redraw_canvas) call. See
+Passed to a canvas node's `draw` callback, which runs when the canvas is
+created, when its `draw` is set, and on each `canvas.redraw()`.
+*0.3.5 renamed it from `CanvasContext`.* See
 [Canvas & Virtualized Lists](../../guide/canvas-and-lists.md) for a full
 walkthrough. Never constructed directly.
 

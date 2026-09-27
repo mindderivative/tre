@@ -15,21 +15,21 @@ extension" discipline as `test_engine_py.py`.
 """
 
 from tre import Window
+from helpers import add
 
 
 def test_window_focus_gives_a_one_arg_handler_a_real_event():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
 
     events = []
-    a.set_on_focus_enter(lambda event: events.append(event))
+    a.on("focus", lambda event: events.append(event))
 
     window.focus(a)
 
     assert len(events) == 1
     event = events[0]
-    assert event.kind == "focus_enter"
-    assert event.position is None
+    assert event.type == "focus"
     assert event.button is None
     assert event.old_value is None
     assert event.new_value is None
@@ -37,12 +37,12 @@ def test_window_focus_gives_a_one_arg_handler_a_real_event():
 
 def test_focus_exit_fires_when_focus_moves_to_a_sibling():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
-    b = window.add_rect(background=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
+    b = add(window, "box", fill=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40)
 
     calls = []
-    a.set_on_focus_exit(lambda: calls.append("a exited"))
-    b.set_on_focus_enter(lambda: calls.append("b entered"))
+    a.on("unfocus", lambda: calls.append("a exited"))
+    b.on("focus", lambda: calls.append("b entered"))
 
     window.focus(a)
     assert calls == []  # first-time focus onto `a` -- no exit yet, and `a` has no enter handler
@@ -53,17 +53,17 @@ def test_focus_exit_fires_when_focus_moves_to_a_sibling():
 
 def test_focusing_a_node_with_no_registered_handler_is_a_safe_no_op():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
 
     window.focus(a)  # must not raise
 
 
 def test_refocusing_the_already_focused_node_does_not_report_a_stale_transition():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
 
     calls = []
-    a.set_on_focus_enter(lambda: calls.append("entered"))
+    a.on("focus", lambda: calls.append("entered"))
 
     window.focus(a)
     assert calls == ["entered"]
@@ -78,15 +78,15 @@ def test_real_click_to_focus_on_a_text_field_fires_focus_enter():
     is_focused()`.
     """
     window = Window(width=200, height=100)
-    field = window.add_text_field(background=(0xFF, 0xFF, 0xFF, 0xFF), width=100, height=30, content="hi")
+    field = add(window, "text_input", width=100, height=30, text="hi")
 
     events = []
-    field.set_on_focus_enter(lambda event: events.append(event))
+    field.on("focus", lambda event: events.append(event))
 
     window.click(field)
 
     assert len(events) == 1
-    assert events[0].kind == "focus_enter"
+    assert events[0].type == "focus"
 
 
 def test_real_right_click_to_focus_on_a_text_field_fires_focus_enter():
@@ -96,29 +96,28 @@ def test_real_right_click_to_focus_on_a_text_field_fires_focus_enter():
     structurally unobservable from this entry point before now.
     """
     window = Window(width=200, height=100)
-    field = window.add_text_field(background=(0xFF, 0xFF, 0xFF, 0xFF), width=100, height=30, content="hi")
+    field = add(window, "text_input", width=100, height=30, text="hi")
 
     events = []
-    field.set_on_focus_enter(lambda event: events.append(event))
+    field.on("focus", lambda event: events.append(event))
 
     window.right_click(field)
 
     assert len(events) == 1
-    assert events[0].kind == "focus_enter"
+    assert events[0].type == "focus"
 
 
 def test_real_tab_navigation_fires_focus_enter():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
-    a.set_on_click(lambda: None)  # the real, established way to make a node Tab-reachable
+    a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40, focusable=True)
 
     events = []
-    a.set_on_focus_enter(lambda event: events.append(event))
+    a.on("focus", lambda event: events.append(event))
 
     window.press_key("tab")
 
     assert len(events) == 1
-    assert events[0].kind == "focus_enter"
+    assert events[0].type == "focus"
 
 
 def test_a_raising_focus_handler_is_caught_logged_and_non_fatal(capfd):
@@ -127,12 +126,12 @@ def test_a_raising_focus_handler_is_caught_logged_and_non_fatal(capfd):
     and logged via `tracing::error!`, not propagated.
     """
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
 
     def on_focus_enter():
         raise RuntimeError("boom from a focus handler")
 
-    a.set_on_focus_enter(on_focus_enter)
+    a.on("focus", on_focus_enter)
     window.focus(a)  # must not raise
 
     captured = capfd.readouterr()

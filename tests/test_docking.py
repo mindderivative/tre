@@ -10,16 +10,17 @@ uses -- so these tests cover the live path, not a test-only one.
 import pytest
 
 from tre import Window
+from helpers import add
 
 
 def two_zones():
     """A left zone holding one panel, and an empty right zone."""
     window = Window(width=300, height=120)
-    left = window.add_rect(background=(0, 0, 0, 0), width=100, height=100)
-    right = window.add_rect(background=(0, 0, 0, 0), width=100, height=100)
+    left = add(window, "box", fill=(0, 0, 0, 0), width=100, height=100)
+    right = add(window, "box", fill=(0, 0, 0, 0), width=100, height=100)
     window.add_dock_zone("left", left, 100.0)
     window.add_dock_zone("right", right, 100.0)
-    panel = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
+    panel = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
     window.dock_panel("left", panel)
     return window, left, right, panel
 
@@ -45,7 +46,7 @@ def test_a_drag_reports_the_zone_under_the_pointer_and_moves_the_panel():
     assert left.children() == []
     # Attached and laid out in its new place: a click lands on it.
     calls = []
-    panel.set_on_click(lambda: calls.append("clicked"))
+    panel.on("click", lambda: calls.append("clicked"))
     window.click(panel)
     assert calls == ["clicked"]
 
@@ -110,7 +111,7 @@ def test_a_handle_starts_the_drag_from_its_own_pointer_down():
     """How a framework wires its handle: `start_panel_drag` from the
     handle's `pointer_down`, then the press-move-release a user makes."""
     window, left, right, panel = two_zones()
-    handle = window.add_rect(background=(0x80, 0x80, 0x80, 0xFF), width=20, height=20)
+    handle = add(window, "box", fill=(0x80, 0x80, 0x80, 0xFF), width=20, height=20)
     handle.on("pointer_down", lambda: window.start_panel_drag(panel))
     seen = record(window)
 
@@ -137,7 +138,7 @@ def test_the_drag_ends_once_dropped():
 
 def test_moving_the_active_panel_out_shows_the_next_one():
     window, left, right, a = two_zones()
-    b = window.add_rect(background=(0x00, 0xFF, 0x00, 0xFF), width=100, height=80)
+    b = add(window, "box", fill=(0x00, 0xFF, 0x00, 0xFF), width=100, height=80)
     window.dock_panel("left", b)  # b is now the active panel
 
     window.start_panel_drag(b)
@@ -149,7 +150,7 @@ def test_moving_the_active_panel_out_shows_the_next_one():
 
 def test_start_panel_drag_needs_a_docked_panel():
     window, left, right, panel = two_zones()
-    plain = window.add_rect(background=(0, 0, 0, 0), width=10, height=10)
+    plain = add(window, "box", fill=(0, 0, 0, 0), width=10, height=10)
 
     with pytest.raises(ValueError, match="isn't a docked panel"):
         window.start_panel_drag(plain)
@@ -158,7 +159,7 @@ def test_start_panel_drag_needs_a_docked_panel():
 def test_start_panel_drag_rejects_a_node_from_another_window():
     window, left, right, panel = two_zones()
     other = Window(width=100, height=100)
-    foreign = other.add_rect(background=(0, 0, 0, 255), width=10, height=10)
+    foreign = add(other, "box", fill=(0, 0, 0, 255), width=10, height=10)
 
     with pytest.raises(ValueError, match="different Window"):
         window.start_panel_drag(foreign)
@@ -166,10 +167,10 @@ def test_start_panel_drag_rejects_a_node_from_another_window():
 
 def test_set_active_panel_switches_the_visible_panel():
     window = Window(width=200, height=120)
-    container = window.add_rect(background=(0, 0, 0, 0), width=100, height=100)
+    container = add(window, "box", fill=(0, 0, 0, 0), width=100, height=100)
     window.add_dock_zone("left", container, 100.0)
-    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
-    b = window.add_rect(background=(0x00, 0xFF, 0x00, 0xFF), width=100, height=80)
+    a = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
+    b = add(window, "box", fill=(0x00, 0xFF, 0x00, 0xFF), width=100, height=80)
     window.dock_panel("left", a)
     window.dock_panel("left", b)
 
@@ -187,7 +188,7 @@ def test_set_active_panel_rejects_an_index_out_of_range():
 
 def test_an_unknown_dock_side_raises_value_error():
     window = Window(width=200, height=120)
-    container = window.add_rect(background=(0, 0, 0, 0), width=100, height=100)
+    container = add(window, "box", fill=(0, 0, 0, 0), width=100, height=100)
     with pytest.raises(ValueError, match="nowhere"):
         window.add_dock_zone("nowhere", container, 100.0)
 

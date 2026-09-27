@@ -177,24 +177,6 @@ fn wants_event_payload(py: Python<'_>, handler: &Py<PyAny>) -> PyResult<bool> {
     Ok(false)
 }
 
-/// `Node.set_on_click`/`set_on_hover_enter`/`set_on_hover_exit`/
-/// `set_on_change` (`node.rs`) and `view.rs`'s equivalent declarative
-/// registration path all funnel through this one real place to insert
-/// into a `HandlerMap` -- arity-sniffs once here, not duplicated at
-/// each of those five real call sites.
-pub(crate) fn register_handler(
-    handlers: &HandlerMap,
-    key: (NodeId, EventKind),
-    handler: Py<PyAny>,
-    py: Python<'_>,
-) -> PyResult<()> {
-    let wants_event = wants_event_payload(py, &handler)?;
-    handlers
-        .borrow_mut()
-        .insert((key.0, HandlerKey::Legacy(key.1)), (handler, wants_event));
-    Ok(())
-}
-
 /// M94: `node.on(event, handler)`'s own registration -- the same
 /// arity-sniffing as `register_handler`, under a `Listener` key.
 pub(crate) fn register_listener(
@@ -347,19 +329,14 @@ pub(crate) fn run_dispatch_outcome(
     match outcome {
         DispatchOutcome::Activated(node) => {
             let node = *node;
-            let (position, button) = match event {
-                Some(InputEvent::PointerReleased { position, button }) => {
-                    (Some((position.x, position.y)), Some(*button))
-                }
-                // A real keyboard `Enter`/`Space` activation, or a real
-                // AccessKit-driven activation with no originating
-                // pointer/keyboard event at all -- no position/button
-                // exists to report; `None` rather than a fabricated
-                // `(0.0, 0.0)`/synthetic button.
-                _ => (None, None),
+            let button = match event {
+                Some(InputEvent::PointerReleased { button, .. }) => Some(*button),
+                // A keyboard `Enter`/`Space` activation, or an AccessKit
+                // one, has no button to report.
+                _ => None,
             };
             call_handler(handlers, node, EventKind::Click, py, |py| {
-                Event::click(py, node, &ctx, position, button)
+                Event::click(py, node, &ctx, button)
             });
             deliver_click(&ctx, EventType::Click, node, event, py);
         }
@@ -371,15 +348,14 @@ pub(crate) fn run_dispatch_outcome(
                 Some(InputEvent::PointerMoved { position }) => Some(*position),
                 _ => None,
             };
-            let position = point.map(|p| (p.x, p.y));
             if let Some(old) = old {
                 call_handler(handlers, old, EventKind::HoverExit, py, |py| {
-                    Event::hover(py, EventKind::HoverExit, old, &ctx, position)
+                    Event::hover(py, EventKind::HoverExit, old, &ctx)
                 });
             }
             if let Some(new) = new {
                 call_handler(handlers, new, EventKind::HoverEnter, py, |py| {
-                    Event::hover(py, EventKind::HoverEnter, new, &ctx, position)
+                    Event::hover(py, EventKind::HoverEnter, new, &ctx)
                 });
             }
             listeners::route_hover(&ctx, old, new, point, py);
@@ -448,7 +424,12 @@ fn deliver_click(
 /// M94: the `change` listener on a `text_input` whose text the user just
 /// changed -- text-only, per M93 (the MD3 slider and dial keep their
 /// legacy `set_on_change`), and non-bubbling. `old` is the text before.
-fn deliver_change(ctx: &NodeContext<'_>, node: NodeId, old: Option<Py<PyAny>>, py: Python<'_>) {
+pub(crate) fn deliver_change(
+    ctx: &NodeContext<'_>,
+    node: NodeId,
+    old: Option<Py<PyAny>>,
+    py: Python<'_>,
+) {
     let is_text_input = matches!(
         ctx.tree.borrow().get(node).map(|n| &n.kind),
         Some(NodeKind::TextField(_))
@@ -668,6 +649,33 @@ pub(crate) fn call_handler(
     }
 }
 
+/// M100: the OS clipboard's text, or `None` when it holds none or can't
+/// be reached (some headless environments have no clipboard service --
+/// logged, never raised). `Window.read_clipboard` and every paste use it.
+pub(crate) fn read_clipboard() -> Option<String> {
+    match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+        Ok(text) => Some(text),
+        Err(arboard::Error::ContentNotAvailable) => None,
+        Err(err) => {
+            tracing::warn!(%err, "failed to read the OS clipboard");
+            None
+        }
+    }
+}
+
+/// M100: puts `text` on the OS clipboard; `false` when it can't be
+/// reached (logged, never raised). `Window.write_clipboard` and every
+/// copy or cut use it.
+pub(crate) fn write_clipboard(text: &str) -> bool {
+    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+        Ok(()) => true,
+        Err(err) => {
+            tracing::warn!(%err, "failed to write to the OS clipboard");
+            false
+        }
+    }
+}
+
 /// M53 Phase 2 (§8, §10, §11.3): `App::run`'s own real, winit-driven
 /// `InputEvent::Copy` logic, factored out once a second real call site
 /// needed it -- `Window.copy_to_system_clipboard` (`window_input.rs`),
@@ -686,16 +694,7 @@ pub(crate) fn copy_focused_selection_to_clipboard(tree: &Rc<RefCell<Tree>>) -> b
         .borrow()
         .focused()
         .and_then(|field| tree.borrow().text_field_selected_text(field));
-    let Some(text) = selected else {
-        return false;
-    };
-    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-        Ok(()) => true,
-        Err(err) => {
-            tracing::warn!(%err, "failed to write to the real OS clipboard");
-            false
-        }
-    }
+    selected.is_some_and(|text| write_clipboard(&text))
 }
 
 /// `copy_focused_selection_to_clipboard`'s own real Cut sibling --
@@ -727,30 +726,23 @@ pub(crate) fn cut_focused_selection_to_clipboard(
     let Some((field, text)) = field_and_text else {
         return false;
     };
-    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-        Ok(()) => {
-            let old = read_new_changed_value(&tree.borrow(), field, py);
-            let old_for_listeners = old
-                .as_ref()
-                .ok()
-                .and_then(|o| o.as_ref().map(|v| v.clone_ref(py)));
-            tree.borrow_mut().cut_text_field_selection(field);
-            call_handler(handlers, field, EventKind::Change, py, |py| {
-                let old = old?;
-                let new = read_new_changed_value(&tree.borrow(), field, py)?;
-                Event::change(py, field, &ctx, old, new)
-            });
-            deliver_change(&ctx, field, old_for_listeners, py);
-            true
-        }
-        Err(err) => {
-            tracing::warn!(
-                %err,
-                "failed to write to the real OS clipboard -- selection left untouched"
-            );
-            false
-        }
+    // A failed write leaves the selection untouched.
+    if !write_clipboard(&text) {
+        return false;
     }
+    let old = read_new_changed_value(&tree.borrow(), field, py);
+    let old_for_listeners = old
+        .as_ref()
+        .ok()
+        .and_then(|o| o.as_ref().map(|v| v.clone_ref(py)));
+    tree.borrow_mut().cut_text_field_selection(field);
+    call_handler(handlers, field, EventKind::Change, py, |py| {
+        let old = old?;
+        let new = read_new_changed_value(&tree.borrow(), field, py)?;
+        Event::change(py, field, &ctx, old, new)
+    });
+    deliver_change(&ctx, field, old_for_listeners, py);
+    true
 }
 
 /// `copy_focused_selection_to_clipboard`'s own real Paste sibling --
@@ -773,18 +765,13 @@ pub(crate) fn paste_clipboard_into_focused(
     completions: &SharedCompletions,
     py: Python<'_>,
 ) -> bool {
-    match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
-        Ok(text) => {
-            let event = InputEvent::TextInput(text);
-            let outcome = tree
-                .borrow_mut()
-                .dispatch(root, event.clone(), crate::clock::now(tree));
-            run_dispatch_outcome(handlers, tree, completions, &outcome, Some(&event), py);
-            true
-        }
-        Err(err) => {
-            tracing::warn!(%err, "failed to read the real OS clipboard");
-            false
-        }
-    }
+    let Some(text) = read_clipboard() else {
+        return false;
+    };
+    let event = InputEvent::TextInput(text);
+    let outcome = tree
+        .borrow_mut()
+        .dispatch(root, event.clone(), crate::clock::now(tree));
+    run_dispatch_outcome(handlers, tree, completions, &outcome, Some(&event), py);
+    true
 }

@@ -21,11 +21,12 @@ extension" discipline as `test_engine_py.py`.
 import pytest
 
 from tre import Window
+from helpers import add
 
 
 def test_right_clicking_an_anchor_with_no_registered_menu_is_a_safe_no_op():
     window = Window(width=200, height=120)
-    anchor = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
+    anchor = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
 
     window.right_click(anchor)  # must not raise
 

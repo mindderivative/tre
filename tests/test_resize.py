@@ -30,6 +30,7 @@ review, not something that could silently regress the way a plain
 """
 
 from tre import Window
+from helpers import add
 
 
 def test_resize_does_not_raise():
@@ -50,9 +51,9 @@ def test_a_click_dispatched_after_a_real_resize_still_works():
     `click()`'s own `compute_layout` call reads.
     """
     window = Window(width=400, height=300)
-    rect = window.add_rect(background=(255, 0, 0, 255), width=50, height=50)
+    rect = add(window, "box", fill=(255, 0, 0, 255), width=50, height=50)
     clicked = []
-    rect.set_on_click(lambda: clicked.append(True))
+    rect.on("click", lambda: clicked.append(True))
 
     window.resize(800, 600)
     window.click(rect)
@@ -62,7 +63,7 @@ def test_a_click_dispatched_after_a_real_resize_still_works():
 
 def test_resize_shrinking_the_window_does_not_raise():
     window = Window(width=800, height=600)
-    window.add_rect(background=(0, 255, 0, 255), width=50, height=50)
+    add(window, "box", fill=(0, 255, 0, 255), width=50, height=50)
     window.resize(200, 150)
 
 

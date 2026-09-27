@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 import tre
+from helpers import add
 
 RED = (255, 0, 0, 255)
 
@@ -103,7 +104,7 @@ def test_paint_props_reject_bad_values(props: dict[str, Any], message: str) -> N
 
 def test_text_input_colors_placeholder_and_obscured() -> None:
     w = window()
-    field = w.add_text_field((255, 255, 255, 255), 150, 30)
+    field = add(w, "text_input", width=150, height=30)
     field.set(
         placeholder="Search",
         placeholder_fill=(1, 1, 1, 100),
@@ -121,18 +122,18 @@ def test_text_input_colors_placeholder_and_obscured() -> None:
 
 def test_an_obscured_field_never_copies_or_cuts() -> None:
     w = window()
-    field = w.add_text_field((255, 255, 255, 255), 150, 30)
+    field = add(w, "text_input", width=150, height=30)
     field.set(obscured=True)
     w.simulate("focus", node=field)
     w.simulate("input", text="secret")
     w.select_all()
     w.cut()
-    assert field.get_text() == "secret"
+    assert field.get("text") == "secret"
 
 
 def test_scroll_view_scrollbar_props() -> None:
     w = window()
-    view = w.add_scroll_view(100, 100)
+    view = add(w, "scroll_view", width=100, height=100)
     view.set(scrollbar_fill=RED, scrollbar_width=8)
     assert (view.get("scrollbar_fill"), view.get("scrollbar_width")) == (RED, 8.0)
     view.set(scrollbar_fill=None)
@@ -141,7 +142,7 @@ def test_scroll_view_scrollbar_props() -> None:
 
 def test_terminal_palette_merges_the_given_keys() -> None:
     w = window()
-    terminal = w.add_terminal("/bin/sh", 20, 5, (0, 0, 0, 255))
+    terminal = add(w, "terminal", shell="/bin/sh", cols=20, rows=5, palette={"background": (0, 0, 0, 255)})
     before = terminal.get("palette")
     assert len(before["ansi"]) == 16
     terminal.set(palette={"foreground": RED, "ansi": [RED] * 16})

@@ -151,6 +151,8 @@ REMOVED: dict[str, dict[str, str]] = {
     "Event": {
         "kind": "event.type",
         "node": "event.target",
+        "source": "event.target",
+        "position": "event.window_x and event.window_y",
     },
 }
 

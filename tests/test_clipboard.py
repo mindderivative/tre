@@ -24,6 +24,7 @@ extension" discipline as every other FFI test in this suite.
 import pytest
 
 from tre import Window
+from helpers import add
 
 
 def select_all(window):
@@ -37,76 +38,66 @@ def select_all(window):
 
 def test_copy_with_no_focused_field_returns_none():
     window = Window(width=200, height=100)
-    window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hi")
+    add(window, "text_input", width=180, height=24, text="hi")
     assert window.copy() is None
 
 
 def test_copy_with_no_real_selection_returns_none():
     window = Window(width=200, height=100)
-    window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hi")
+    add(window, "text_input", width=180, height=24, text="hi")
     window.press_key("tab")
     assert window.copy() is None
 
 
 def test_copy_reads_the_real_selected_text_without_mutating_it():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
     select_all(window)
 
     assert window.copy() == "hello"
-    assert field.get_text() == "hello", "a real copy must never mutate the field's own content"
+    assert field.get("text") == "hello", "a real copy must never mutate the field's own content"
 
 
 def test_cut_reads_and_removes_the_real_selected_text():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
     select_all(window)
 
     assert window.cut() == "hello"
-    assert field.get_text() == "", "a real cut must actually remove the selected text"
+    assert field.get("text") == "", "a real cut must actually remove the selected text"
 
 
 def test_cut_with_no_real_selection_returns_none_and_does_not_mutate():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
 
     assert window.cut() is None
-    assert field.get_text() == "hello"
+    assert field.get("text") == "hello"
 
 
 def test_paste_inserts_the_given_text_at_the_real_cursor():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
     window.press_key("home")
 
     window.paste("XY")
 
-    assert field.get_text() == "XYhello"
+    assert field.get("text") == "XYhello"
 
 
 def test_paste_replaces_a_real_active_selection():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
     select_all(window)
 
     window.paste("HI")
 
-    assert field.get_text() == "HI"
+    assert field.get("text") == "HI"
 
 
 def test_copy_fires_no_on_change_but_cut_does():
@@ -115,13 +106,11 @@ def test_copy_fires_no_on_change_but_cut_does():
     established `Change`-firing behavior for a real content change.
     """
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
 
     calls = []
-    field.set_on_change(lambda: calls.append(field.get_text()))
+    field.on("change", lambda: calls.append(field.get("text")))
 
     select_all(window)
     window.copy()
@@ -141,65 +130,57 @@ def test_copy_fires_no_on_change_but_cut_does():
 
 def test_select_all_selects_the_real_focused_fields_entire_content():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
 
     assert window.select_all() is True
     assert window.copy() == "hello", "select_all must select the field's real entire content"
-    assert field.get_text() == "hello", "select_all must never mutate the field's own content"
+    assert field.get("text") == "hello", "select_all must never mutate the field's own content"
 
 
 def test_select_all_with_no_focused_field_returns_false():
     window = Window(width=200, height=100)
-    window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hi")
+    add(window, "text_input", width=180, height=24, text="hi")
     assert window.select_all() is False
 
 
 def test_copy_to_system_clipboard_with_no_focused_field_returns_false():
     window = Window(width=200, height=100)
-    window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hi")
+    add(window, "text_input", width=180, height=24, text="hi")
     assert window.copy_to_system_clipboard() is False
 
 
 def test_copy_to_system_clipboard_round_trips_through_the_real_os_clipboard():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
     select_all(window)
 
     if not window.copy_to_system_clipboard():
         pytest.skip("no real OS clipboard service reachable in this environment")
 
-    assert field.get_text() == "hello", "a real copy must never mutate the field's own content"
+    assert field.get("text") == "hello", "a real copy must never mutate the field's own content"
 
 
 def test_cut_to_system_clipboard_removes_the_real_selection_on_success():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
     select_all(window)
 
     if not window.cut_to_system_clipboard():
         pytest.skip("no real OS clipboard service reachable in this environment")
 
-    assert field.get_text() == "", "a real cut must actually remove the selected text"
+    assert field.get("text") == "", "a real cut must actually remove the selected text"
 
 
 def test_cut_to_system_clipboard_with_no_real_selection_returns_false_and_does_not_mutate():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
 
     assert window.cut_to_system_clipboard() is False
-    assert field.get_text() == "hello"
+    assert field.get("text") == "hello"
 
 
 def test_paste_from_system_clipboard_inserts_the_real_clipboards_own_content():
@@ -217,9 +198,7 @@ def test_paste_from_system_clipboard_inserts_the_real_clipboards_own_content():
     # as "no clipboard reachable at all," not a failure of this test's
     # own logic.
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
     select_all(window)
     if not window.copy_to_system_clipboard():
@@ -228,7 +207,7 @@ def test_paste_from_system_clipboard_inserts_the_real_clipboards_own_content():
     # A second, freshly-focused field receives whatever the real OS
     # clipboard now holds -- proves this reads the real clipboard, not
     # just echoes whatever copy_to_system_clipboard happened to see.
-    second = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)
+    second = add(window, "text_input", width=180, height=24)
     window.press_key("tab")
 
     if not window.paste_from_system_clipboard():
@@ -236,19 +215,17 @@ def test_paste_from_system_clipboard_inserts_the_real_clipboards_own_content():
             "the real OS clipboard's own content did not survive past the writing "
             "Clipboard instance in this sandboxed environment"
         )
-    assert second.get_text() == "hello"
-    assert field.get_text() == "hello", "the original field must be untouched by the paste"
+    assert second.get("text") == "hello"
+    assert field.get("text") == "hello", "the original field must be untouched by the paste"
 
 
 def test_copy_to_system_clipboard_fires_no_on_change_but_cut_to_system_clipboard_does():
     window = Window(width=200, height=100)
-    field = window.add_text_field(
-        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
-    )
+    field = add(window, "text_input", width=180, height=24, text="hello")
     window.press_key("tab")
 
     calls = []
-    field.set_on_change(lambda: calls.append(field.get_text()))
+    field.on("change", lambda: calls.append(field.get("text")))
 
     select_all(window)
     if not window.copy_to_system_clipboard():

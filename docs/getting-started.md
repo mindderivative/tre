@@ -9,19 +9,19 @@ This walks through building a first window imperatively from Python. See
 from tre import App, Window
 
 window = Window(width=400, height=200, title="tre")
-window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=300, height=48)
+field = window.create("text_input", placeholder="Type here", width=300, height=48)
+window.root.add_child(field)
 
 app = App()
 app.add_window(window)
 app.run()
 ```
 
-- `Window(width, height, title)` creates a window with its own node tree —
-  every `add_*` method on it attaches a new node as a direct child of the
-  window's implicit root row.
-- `add_text_field(background, width, height, ...)` creates a real,
-  keyboard-editable `TextField` — click into it and type once the app is
-  running.
+- `Window(width, height, title)` creates a window with its own node tree;
+  `window.root` is its root, a flex row.
+- `window.create(kind, **props)` makes a node — here a keyboard-editable
+  `"text_input"`: click into it and type once the app is running — and
+  `add_child` attaches it.
 - `App()` collects one or more windows; `add_window` registers this one to
   be opened.
 - `app.run()` is the single blocking call that opens every registered
@@ -36,18 +36,20 @@ python getting_started.py
 
 ## Adding interaction
 
-Every node returned by an `add_*` method is a [`Node`](api/python/node.md)
-— it supports event handlers, animation, and property reads/writes.
-Extending the example above with a clickable button:
+Every node is a [`Node`](api/python/node.md) — it takes listeners,
+animation, and property reads and writes. Extending the example above with
+a clickable button:
 
 ```python
 from tre import App, Window
 
 window = Window(width=400, height=240, title="tre")
 
-label = window.add_text_field(
-    background=(0xEE, 0xEE, 0xEE, 0xFF), width=300, height=48, content="0 clicks"
-)
+label = window.create("text", text="0 clicks", width=300, height=48, font_size=20)
+button = window.create("box", fill=(0x67, 0x50, 0xA4, 0xFF), width=96, height=32,
+                       corner_radius=16, focusable=True, role="button", label="Count")
+window.root.add_child(label)
+window.root.add_child(button)
 
 clicks = 0
 
@@ -55,36 +57,37 @@ clicks = 0
 def on_click():
     global clicks
     clicks += 1
-    label.set_text(f"{clicks} clicks")
+    label.set(text=f"{clicks} clicks")
 
 
-button = window.add_rect(background=(0x67, 0x50, 0xA4, 0xFF), width=96, height=32)
-button.set_on_click(on_click)
+button.on("click", on_click)
 
 app = App()
 app.add_window(window)
 app.run()
 ```
 
-- [`Node.set_on_click`](api/python/node.md#set_on_click) registers a
-  Python callback fired on a real click (mouse or keyboard activation —
-  see [Accessibility & Fonts](guide/theming-and-accessibility.md)).
+- [`node.on("click", ...)`](api/python/events.md) registers a Python
+  callback fired on a real click — the mouse, or Enter or Space while the
+  node is focused; `focusable=True` puts it in the Tab order (see
+  [Accessibility & Fonts](guide/theming-and-accessibility.md)).
 - Hover and press feedback is the framework's to draw: listen for
   `pointer_enter`/`pointer_leave`/`pointer_down` and change the node's
-  paint (`tre` 0.3.5 removed the built-in MD3 ripple).
+  paint.
 
 ## Animating a property
 
 ```python
-rect = window.add_rect(background=(0x67, 0x50, 0xA4, 0xFF), width=100, height=100)
-rect.animate("opacity", 0.2, duration_ms=400, on_complete=lambda: print("faded"))
+card = window.create("box", fill=(0x67, 0x50, 0xA4, 0xFF), width=100, height=100)
+window.root.add_child(card)
+card.animate("opacity", 0.2, duration_ms=400, on_complete=lambda: print("faded"))
 ```
 
-Every `Animated<T>` property on a node (`opacity`, `corner_radius`,
-`elevation`, `background`, `transform`, `shape`, plus a few component-
-specific ones) can be driven this way — see
-[`Node.animate`](api/python/node.md#animate) for the full list and
-[Imperative API](guide/imperative-api.md) for more on the animation model.
+Every animatable property — `opacity`, `corner_radius`, `fill`,
+`stroke_color`, `stroke_width`, `shadows`, `translate_x`/`translate_y`,
+`scale`, `rotation_deg`, a path's `data` and trim — can be driven this way,
+with an optional `easing`; see [`Node.animate`](api/python/node.md#animate) and
+[Paint, Paths, and Animation](api/python/paint.md).
 
 ## Where to next
 

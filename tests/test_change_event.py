@@ -14,27 +14,26 @@ extension" discipline as `test_checkbox.py`.
 import pytest
 
 from tre import Window
+from helpers import add
 
 
 def test_real_text_field_edits_give_old_and_new_string_content():
     """`Change`'s own `old_value` for a `TextField` is genuinely
     destroyed by the mutation that produces it -- `engine-core`'s own
     `ChangedValue::Text` snapshot (M54 Phase 1) is what makes this
-    recoverable at all, for both a direct `set_text` and a real
-    keyboard-driven edit `Tree::dispatch` itself detects.
+    recoverable at all. M100: `set(text=...)` fires no `change` -- that
+    event is for edits the user makes.
     """
     window = Window(width=200, height=200)
-    field = window.add_text_field(
-        background=(0xFF, 0xFF, 0xFF, 0xFF), width=200, height=40, content="hello"
-    )
+    field = add(window, "text_input", width=200, height=40, text="hello")
     events = []
-    field.set_on_change(lambda event: events.append((event.old_value, event.new_value)))
+    field.on("change", lambda event: events.append((event.old_value, event.new_value)))
 
-    field.set_text("goodbye")
-    assert events == [("hello", "goodbye")]
+    field.set(text="goodbye")
+    assert events == []
 
     window.click(field)  # focus it
     window.press_key("backspace")
-    assert events[-1] == ("goodbye", "goodby")
+    assert events == [("goodbye", "goodby")]
 
 

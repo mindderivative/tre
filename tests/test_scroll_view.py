@@ -9,43 +9,44 @@ a_real_scroll` tests); this suite proves the real FFI surface.
 """
 
 from tre import Node, Window
+from helpers import add
 
 
 def test_add_scroll_view_returns_a_node():
     window = Window(width=800, height=600)
-    view = window.add_scroll_view(width=200, height=100)
+    view = add(window, "scroll_view", width=200, height=100)
     assert isinstance(view, Node)
 
 
 def test_a_horizontal_scroll_view_does_not_raise():
     window = Window(width=800, height=600)
-    view = window.add_scroll_view(width=200, height=100, orientation="horizontal")
+    view = add(window, "scroll_view", width=200, height=100, orientation="horizontal")
     assert isinstance(view, Node)
 
 
 def test_real_content_can_be_composed_in_via_add_child():
     window = Window(width=800, height=600)
-    view = window.add_scroll_view(width=200, height=100)
-    content = window.add_rect(background=(255, 0, 0, 255), width=200, height=1000)
+    view = add(window, "scroll_view", width=200, height=100)
+    content = add(window, "box", fill=(255, 0, 0, 255), width=200, height=1000)
     view.add_child(content)
 
 
 def test_a_real_click_on_content_composed_into_a_scroll_view_reaches_its_own_handler():
     window = Window(width=800, height=600)
-    view = window.add_scroll_view(width=200, height=100)
-    content = window.add_rect(background=(255, 0, 0, 255), width=200, height=1000)
+    view = add(window, "scroll_view", width=200, height=100)
+    content = add(window, "box", fill=(255, 0, 0, 255), width=200, height=1000)
     view.add_child(content)
 
     clicked = []
-    content.set_on_click(lambda: clicked.append(True))
+    content.on("click", lambda: clicked.append(True))
     window.click(content)
     assert clicked == [True]
 
 
 def test_scroll_with_delta_x_does_not_raise_on_a_horizontal_scroll_view():
     window = Window(width=800, height=600)
-    view = window.add_scroll_view(width=100, height=50, orientation="horizontal")
-    content = window.add_rect(background=(0, 255, 0, 255), width=1000, height=50)
+    view = add(window, "scroll_view", width=100, height=50, orientation="horizontal")
+    content = add(window, "box", fill=(0, 255, 0, 255), width=1000, height=50)
     view.add_child(content)
     window.scroll(view, 0.0, delta_x=500.0)
 
@@ -55,7 +56,7 @@ def test_scroll_still_defaults_delta_x_to_zero_for_existing_callers():
     caller of `Window.scroll(node, delta_y)` must keep working
     unchanged after `delta_x` was added."""
     window = Window(width=800, height=600)
-    view = window.add_scroll_view(width=200, height=100)
-    content = window.add_rect(background=(255, 0, 0, 255), width=200, height=1000)
+    view = add(window, "scroll_view", width=200, height=100)
+    content = add(window, "box", fill=(255, 0, 0, 255), width=200, height=1000)
     view.add_child(content)
     window.scroll(view, 50.0)

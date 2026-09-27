@@ -26,12 +26,8 @@ from tre import Window
 
 window = Window(width=280, height=120, title="tre v2 -- clipboard")
 
-field = window.add_text_field(
-    background=(0xEE, 0xEE, 0xEE, 0xFF),
-    width=220,
-    height=32,
-    content="hello world",
-)
+field = window.create("text_input", width=220, height=32, text="hello world")
+window.root.add_child(field)
 window.press_key("tab")
 
 # Select "hello" (the first 5 characters) via the same real keyboard
@@ -41,25 +37,25 @@ for _ in range(5):
     window.press_key("right", shift=True)
 
 copied = window.copy()
-print(f"copy(): {copied!r}, field still reads {field.get_text()!r}")
+print(f"copy(): {copied!r}, field still reads {field.get("text")!r}")
 assert copied == "hello"
-assert field.get_text() == "hello world", "a real copy must never mutate the field"
+assert field.get("text") == "hello world", "a real copy must never mutate the field"
 
 cut = window.cut()
-print(f"cut(): {cut!r}, field now reads {field.get_text()!r}")
+print(f"cut(): {cut!r}, field now reads {field.get("text")!r}")
 assert cut == "hello"
-assert field.get_text() == " world"
+assert field.get("text") == " world"
 
 window.press_key("home")
 window.paste("hi")
-print(f"paste('hi') at Home: field now reads {field.get_text()!r}")
-assert field.get_text() == "hi world"
+print(f"paste('hi') at Home: field now reads {field.get("text")!r}")
+assert field.get("text") == "hi world"
 
 window.press_key("home")
 for _ in range(2):
     window.press_key("right", shift=True)
 window.paste("HI")
-print(f"paste('HI') over a real selection: field now reads {field.get_text()!r}")
-assert field.get_text() == "HI world"
+print(f"paste('HI') over a real selection: field now reads {field.get("text")!r}")
+assert field.get("text") == "HI world"
 
 print("clipboard.py: exited cleanly, hermetic copy/cut/paste all proved")

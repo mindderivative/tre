@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 import tre
+from helpers import add
 
 BLACK = (0, 0, 0, 255)
 
@@ -74,8 +75,8 @@ def test_insert_child_rejects_a_cycle() -> None:
 
 def test_a_move_keeps_listeners_and_focus() -> None:
     w = window()
-    list_box = w.add_rect(BLACK, 250, 150)
-    fields = [w.add_text_field((255, 255, 255, 255), 100, 30) for _ in range(3)]
+    list_box = add(w, "box", fill=BLACK, width=250, height=150)
+    fields = [add(w, "text_input", width=100, height=30) for _ in range(3)]
     for field in fields:
         list_box.add_child(field)
     typed: list[str | None] = []
@@ -85,7 +86,7 @@ def test_a_move_keeps_listeners_and_focus() -> None:
     list_box.insert_child(2, fields[0])
     w.simulate("input", text="x")
     assert typed == ["x"], "still focused, still listening, after the move"
-    assert fields[0].get_text() == "x"
+    assert fields[0].get("text") == "x"
 
 
 def test_remove_detaches_and_keeps_the_node_alive() -> None:
