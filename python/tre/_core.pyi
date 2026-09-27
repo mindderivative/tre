@@ -372,7 +372,9 @@ class Window:
         """
         ...
     def dock_panel(self, side: str, panel: Node) -> None:
-        """Docks `panel` into `side`'s zone and shows it."""
+        """Docks `panel` into `side`'s zone and shows it. A panel docked in
+        another zone moves, as a drag would move it: its old zone stops
+        listing it and shows another of its panels."""
         ...
     def set_active_panel(self, side: str, index: int) -> None:
         """M99: shows the `index`th panel docked in `side`'s zone (was

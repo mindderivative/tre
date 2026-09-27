@@ -1,15 +1,11 @@
-# PLAN — Branch `0.3.5`: Milestone 103, Release
+# PLAN — Branch `0.3.5.1`: Milestone 104, `dock_panel` Moves a Docked Panel
 
-*(Replaces the M102 plan — M102 is complete. Every step is in `BUILD_TRACKER.md`.)*
+*(Replaces the M103 plan — M103 is complete. Every step is in `BUILD_TRACKER.md`.)*
 
-## Steps
-
-1. PR #13 (`0.3.5` → `main`), CI green on all three platforms, merge as with
-   PRs #5, #7, #9, and #11, re-verify on `main`, annotated tag `v0.3.5`, the
-   `Wheels` run attaching the assets, and the release note (the PR body) on the
-   GitHub release.
-2. Tell Tesserae the release is out and to start its M46; it moves its CI pin.
+Issue #14: `dock_panel` on a panel docked elsewhere left it in its old zone's
+list, and `set_active_panel` then put it under two parents. Fix: `dock_panel`
+moves it as a drop does, and `Tree::add_child` moves an attached node.
 
 ## Status
 
-**Complete (2026-09-27).** `v0.3.5` released; Tesserae's M46 moved it onto the release.
+**Complete (2026-09-27).** Awaiting the user's word to push and release `0.3.5.1`.

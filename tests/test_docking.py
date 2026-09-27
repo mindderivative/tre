@@ -196,3 +196,73 @@ def test_the_dock_events_are_window_events():
     window.on("dock_drop", lambda: None)
     window.off("dock_target")
     window.off("dock_drop")
+
+
+# -- dock_panel on a docked panel moves it (issue #14) -------------------------
+
+
+def labels(zone):
+    return [n.get("label") for n in zone.children()]
+
+
+def two_panels_left():
+    """Issue #14's setup: A and B docked left, B shown; an empty right zone."""
+    window = Window(width=600, height=300)
+    left = add(window, "box", width=200, height=200)
+    right = add(window, "box", width=200, height=200)
+    window.add_dock_zone("left", left, 200.0)
+    window.add_dock_zone("right", right, 200.0)
+    a = window.create("box", width=10, height=10, label="A")
+    b = window.create("box", width=10, height=10, label="B")
+    window.dock_panel("left", a)
+    window.dock_panel("left", b)
+    return window, left, right, a, b
+
+
+def test_dock_panel_moves_a_panel_docked_in_another_zone():
+    window, left, right, a, b = two_panels_left()
+    window.dock_panel("right", a)
+    assert (labels(left), labels(right)) == (["B"], ["A"])
+    assert a.parent() == right and b.parent() == left
+
+    # The old zone lists one panel now: re-showing it never steals A back.
+    window.set_active_panel("left", 0)
+    assert (labels(left), labels(right)) == (["B"], ["A"])
+    with pytest.raises(ValueError, match="out of range"):
+        window.set_active_panel("left", 1)
+
+
+def test_moving_the_shown_panel_shows_the_next_one_left_behind():
+    window, left, right, a, b = two_panels_left()
+    window.dock_panel("right", b)  # B was shown in the left zone
+    assert (labels(left), labels(right)) == (["A"], ["B"])
+
+
+def test_a_moved_panel_drags_back_from_its_new_zone():
+    window, left, right, a, b = two_panels_left()
+    window.dock_panel("right", a)
+    window.start_panel_drag(a)
+    window.simulate("pointer_move", node=left)
+    window.simulate("pointer_up", node=left)
+    assert labels(left) == ["A"] and labels(right) == []
+    window.set_active_panel("left", 0)  # the zone's panels are [B, A]
+    assert labels(left) == ["B"] and a.parent() is None
+
+
+def test_dock_panel_into_its_own_zone_shows_it():
+    window, left, right, a, b = two_panels_left()
+    window.dock_panel("left", a)
+    assert labels(left) == ["A"]
+    window.set_active_panel("left", 1)
+    assert labels(left) == ["B"], "still two panels, not a duplicate"
+    with pytest.raises(ValueError, match="out of range"):
+        window.set_active_panel("left", 2)
+
+
+def test_a_keyboard_move_menu_needs_no_simulated_input():
+    """What issue #14 asked for: moving a panel with no drag at all."""
+    window, left, right, a, b = two_panels_left()
+    for side, zone in (("right", right), ("left", left), ("right", right)):
+        window.dock_panel(side, a)
+        assert a.parent() == zone
+        assert sum(z.children().count(a) for z in (left, right)) == 1
