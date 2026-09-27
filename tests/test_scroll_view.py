@@ -8,6 +8,8 @@ and the real scroll-clamp/hit-test-after-scroll math at the Rust level
 a_real_scroll` tests); this suite proves the real FFI surface.
 """
 
+import pytest
+
 from tre import Node, Window
 from helpers import add
 
@@ -60,3 +62,8 @@ def test_scroll_still_defaults_delta_x_to_zero_for_existing_callers():
     content = add(window, "box", fill=(255, 0, 0, 255), width=200, height=1000)
     view.add_child(content)
     window.simulate("wheel", node=view, delta_y=50.0)
+
+
+def test_an_unknown_orientation_is_a_clear_error():
+    with pytest.raises(ValueError, match="`orientation` must be one of"):
+        add(Window(), "scroll_view", width=100, height=50, orientation="diagonal")

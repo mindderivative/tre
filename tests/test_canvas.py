@@ -128,10 +128,10 @@ def test_stroke_path_rejects_a_curve_segment_as_the_first_point():
         add(window, "canvas", width=100, height=100, draw=draw)
 
 
-def test_redraw_canvas_rejects_a_node_that_is_not_a_canvas():
+def test_redraw_rejects_a_node_that_is_not_a_canvas():
     window = Window(width=200, height=200)
     rect = add(window, "box", fill=(0, 0, 0, 255), width=10, height=10)
-    with pytest.raises(ValueError, match="not a Canvas"):
+    with pytest.raises(ValueError, match="applies only to a canvas"):
         rect.redraw()
 
 

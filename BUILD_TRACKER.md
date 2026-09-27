@@ -66,7 +66,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M99 — Remove MD3 Components, Kinds, and Theming | `██████████` 100% | ✅ Complete (2026-09-26) — the MD3 factories, theming, `engine-md3`, kinds, engine behavior, and file conveniences removed; docking reduced to bare bones |
 | M100 — Apply the Naming Convention | `██████████` 100% | ✅ Complete (2026-09-27) — every surviving name in its target form, `simulate` the one testing surface, the migration page published, Tesserae sent the updated `_removed.py` |
 | M101 — Consolidation and Size Pass | `██████████` 100% | ✅ Complete (2026-09-27) — against `v0.3.4`: Rust source 59,691 → 27,483 lines, public API 193 → 46 members, wheel 11.70 → 10.32 MB, release build 81 → 67 s, no frame-time regression |
-| M102 — Docs, Examples, and Tests Rewrite | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M102 — Docs, Examples, and Tests Rewrite | `██░░░░░░░░` 20% | 🚧 In progress — a gap M100 left fixed: the pre-0.3.5 property names now fail in `animate` and `get` (2026-09-27) |
 | M103 — Release | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 
 **Just closed:** M80 — a 4-lens multi-agent review (Performance/Architecture/Security/Modernization) of the full `0.3.1` diff (M71-M79) plus a lighter full-project pass, each raw finding adversarially re-verified against the real current source before being trusted. Security found nothing real. 8 findings confirmed real across the other 3 lenses; 5 fixed directly this milestone, 3 left open for explicit user input (real design/scope decisions, not mechanical).
@@ -1486,9 +1486,10 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 102 — Docs, Examples, and Tests Rewrite
 
-**Status: ⬜ Proposed.**
+**Status: 🚧 In progress.** User: "push and start M102", after M101 was pushed at `2b98331`. The guide becomes one page per building block plus a walkthrough that builds a complete widget; the API reference says what is, leaving history to the migration pages; the showcase is rebuilt from primitives, as decided at M99.
 
-### Phase 1 — Docs ⬜
+### Phase 1 — Docs 🚧
+- Step 0: a gap M100 left, found while checking the docs against the engine -- `animate` still took `background`, `foreground`, `border_color`, `border_width`, and `transform`, and `get` still read `border_width`, though the migration page says every old name fails — ✅ (the five legacy `animate` arms, the 0.3.3 `thumb_position` check, and `get`'s numeric fallback removed, with the helpers only they used; an unknown or non-animatable name now raises "node property ... isn't animatable", as `get_target` already did, and an unknown `get` names what it reads, rather than naming the Rust kind -- "Rect has no property"; `EngineError`'s dead `UnknownProperty`, `NotAVirtualList`, and `NotATerminal` removed and `NotACanvas`'s message no longer names `add_canvas`; `test_slider.py`, `test_progress.py`, and `test_naming_0_3_3.py` deleted, their surviving checks moved to `test_engine_py.py` and `test_scroll_view.py`, which now also checks each old name fails in `animate`, `get`, and `create`; the stroke tests use `stroke_*`; `animate_rect.py` and `pan_zoom.py` use `fill` and the transform parts; cargo 326, pytest 428 passed, 1 skipped, 15 examples, docs and API audit clean)
 - Step 1: rewrite the MkDocs site around the building blocks -- nodes and layout, painting, animation, events and input, text, accessibility, layers, threading -- plus a "building a widget from primitives" guide that walks through a complete widget — ⬜
 - Step 2: README and ARCHITECTURE.md rewritten to match; `mkdocs build --strict` and the API-coverage audit clean — ⬜
 

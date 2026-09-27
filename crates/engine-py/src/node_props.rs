@@ -922,12 +922,11 @@ impl Node {
                     any(focused.into_pyobject(py)?.to_owned().into_any())
                 }
                 _ => {
-                    drop(tree);
-                    return Ok(self
-                        .get_number(name)?
-                        .into_pyobject(py)?
-                        .into_any()
-                        .unbind());
+                    return Err(PyValueError::new_err(format!(
+                        "unknown node property {name:?} -- `get` reads any property `set` \
+                         takes, plus kind, focused, layer_placement, layout_x, layout_y, \
+                         layout_width, and layout_height"
+                    )));
                 }
             }
         };

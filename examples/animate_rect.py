@@ -30,7 +30,7 @@ swatch.animate("corner_radius", 24.0, duration_ms=800)
 
 second = window.create("box", fill=(0x03, 0xDA, 0xC6, 0xFF), width=100, height=100)
 window.root.add_child(second)
-second.animate("background", (0x67, 0x50, 0xA4, 0xFF), duration_ms=800)
+second.animate("fill", (0x67, 0x50, 0xA4, 0xFF), duration_ms=800)
 
 app = App()
 app.add_window(window)

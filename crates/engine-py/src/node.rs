@@ -27,8 +27,6 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use engine_core::{MotionCurve, NodeId, NodeKind, Tree};
-use peniko::Color;
-use peniko::kurbo::Affine;
 use pyo3::prelude::*;
 
 use crate::dispatch::{HandlerMap, SharedCompletions};
@@ -149,25 +147,14 @@ pub struct NodeState {
 
 #[pymethods]
 impl Node {
-    /// Starts (or retargets, §5's own `animate_to` semantics) an
-    /// animation on one property. Registers the work and returns
-    /// immediately -- never blocks waiting for the animation to finish
-    /// (§8's own design rule). Dispatch is two-level per §8's review
-    /// note: `PaintProperties`' own fields first (universal, every kind
-    /// has them), then the node's `NodeKind` payload's fields if it has
-    /// one -- `Text`'s `TextState` has none yet (§14 step 4 added no
-    /// `Animated` fields to it), so that second level currently always
-    /// falls through to `UnknownProperty`, which is the honest, correct
-    /// behavior today, not a gap.
-    /// M9 Phase 2 (§5): `on_complete`, when given, is called with no
-    /// arguments exactly once, the real tick this specific animation
-    /// genuinely finishes (`App::run`'s own per-frame loop is what
-    /// actually drains and invokes it -- a `Window`-created node's
-    /// callback fires for real; a `View`-created node's callback is
-    /// registered the same way but never fires, since `View` has no
-    /// real per-frame render loop to drain it through, the same stated
-    /// scope limit `Window.set_theme` vs. `View`'s own theme already
-    /// established, M7 Phase 3).
+    /// Starts (or retargets) an animation on one property, from its
+    /// current value, and returns immediately. The animatable properties
+    /// are the paint names (`fill`, `stroke_color`, `stroke_width`,
+    /// `opacity`, `corner_radius`, `shadows`), the transform parts, a
+    /// scroll view's `scroll_offset`, and a path's `data`/`trim_*`; any
+    /// other name raises `ValueError`. `on_complete` is called with no
+    /// arguments exactly once, the frame (or `Window.advance`) this
+    /// animation finishes; one replaced or stopped first never calls it.
     #[pyo3(signature = (property, to, duration_ms=0, easing=None, on_complete=None))]
     pub(crate) fn animate(
         &self,
@@ -180,13 +167,10 @@ impl Node {
         let duration = Duration::from_millis(duration_ms);
         let now = crate::clock::now(&self.tree);
         let curve = parse_easing(easing.as_ref())?;
-        renamed_property(property)?;
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
         );
-        let kind = kind_name(&node.kind);
-
         match property {
             "opacity" => {
                 let value = extract_f64(&to, property)?;
@@ -313,99 +297,6 @@ impl Node {
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                 animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
             }
-            "background" => {
-                if is_glyph_kind(&node.kind) {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "{kind} has no fill, so 'background' doesn't apply -- its glyph/text color \
-                         is 'foreground'"
-                    )));
-                }
-                let value = extract_color(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(
-                    &mut node.paint.background,
-                    value,
-                    duration,
-                    curve,
-                    now,
-                    handle,
-                );
-            }
-            // M90: a text node's glyph color, stored in `paint.background`.
-            "foreground" => {
-                let value = extract_color(&to, property)?;
-                match &mut node.kind {
-                    NodeKind::Text(_) => {
-                        let handle =
-                            on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                        animate_field(
-                            &mut node.paint.background,
-                            value,
-                            duration,
-                            curve,
-                            now,
-                            handle,
-                        );
-                    }
-                    _ => {
-                        return Err(EngineError::UnknownProperty {
-                            kind,
-                            property: property.to_string(),
-                        }
-                        .into());
-                    }
-                }
-            }
-            // M48 (§5, §7): `border_color`/`border_width` are real
-            // `PaintProperties` fields since M30 Phase 1 but were never
-            // reachable from `animate()` -- confirmed via direct read of
-            // this match's own exhaustive arm list before this change.
-            // Mirrors `"background"`/`"corner_radius"` exactly; no new
-            // engine-core work needed, the fields are already `Animated`.
-            "border_color" => {
-                let value = extract_color(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(
-                    &mut node.paint.border_color,
-                    value,
-                    duration,
-                    curve,
-                    now,
-                    handle,
-                );
-            }
-            "border_width" => {
-                let value = extract_f64(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(
-                    &mut node.paint.border_width,
-                    value,
-                    duration,
-                    curve,
-                    now,
-                    handle,
-                );
-            }
-            // M6 Phase 2 (§8): "pan offset × zoom scale" (§11.9's own
-            // text), not a raw 6-coefficient `Affine` -- matches
-            // `Interpolate for Affine`'s own real limitation (M5 Phase
-            // 1): a plain componentwise coefficient lerp, exact only
-            // for the no-rotation/shear subspace this 3-tuple can only
-            // ever construct. A rotation-capable API is additive
-            // whenever `Interpolate` itself gets a real decomposition.
-            "transform" => {
-                let (tx, ty, scale) = extract_translate_scale(&to, property)?;
-                let value = Affine::translate((tx, ty)) * Affine::scale(scale);
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(
-                    &mut node.paint.transform,
-                    value,
-                    duration,
-                    curve,
-                    now,
-                    handle,
-                );
-            }
             // M30 Phase 3 Step 2 (§8): the progress indicators' own
             // arm. M90: `Slider` joins it -- a slider's position was
             // `thumb_position` here but `value` everywhere else.
@@ -461,11 +352,9 @@ impl Node {
                 }
             }
             _ => {
-                return Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into());
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "node property {property:?} isn't animatable"
+                )));
             }
         }
         Ok(())
@@ -569,10 +458,7 @@ impl Node {
 /// M9 Phase 2 (§5): `animate()`'s own shared "start this field
 /// animating, optionally with a real completion handle" dispatch --
 /// generic over every `T: Interpolate + Clone` an `Animated<T>` can
-/// wrap (`f64`, `Color`, `Affine`), so each of `animate()`'s
-/// six match arms needs one call, not its own copy of this branch.
-/// `MotionCurve::Linear` matches every one of those arms' own existing,
-/// unchanged choice.
+/// wrap, so each of `animate()`'s match arms needs one call.
 /// M95: `animate`'s `easing` -- `None` or `"linear"`, or a cubic bezier
 /// `(x1, y1, x2, y2)` with `x1` and `x2` in `0.0..=1.0`, as CSS
 /// `cubic-bezier()` takes them.
@@ -617,39 +503,6 @@ fn animate_field<T: engine_core::Interpolate + Clone>(
     }
 }
 
-/// M59 (§5, §16.3): `Node.set_layout`'s own `align_items=`/`justify_
-/// content=` string parsing -- the same "small vocabulary, plain
-/// string, `ValueError` on unrecognized" convention `press_key`'s own
-/// "unknown key" error already established, not a dedicated Python-
-/// facing enum type (every other style kwarg on this method is already
-/// a plain scalar). Deliberately the same bounded subset `engine-spec`
-/// ::`AlignItemsSpec`'s own real vocabulary uses, so the imperative and
-/// declarative paths agree on what's real here.
-/// M71 (§5, §8, §16.1): `set_layout`'s own real `flex_direction=`
-/// string parsing -- the identical "small vocabulary, plain string,
-/// `ValueError` on unrecognized" convention `parse_align_items`/
-/// `parse_justify_content` (below) already establish. `"horizontal"`/
-/// `"vertical"`, not taffy's own `"row"`/`"column"` -- see `set_layout`'s
-/// own doc comment for the real reasoning (the identical vocabulary
-/// fix M70 already made to the declarative `FlexDirectionSpec` layer).
-/// M90: a property name renamed in 0.3.3 fails naming its replacement,
-/// rather than as a generic unknown property.
-fn renamed_property(property: &str) -> PyResult<()> {
-    let replacement = match property {
-        "thumb_position" => "value",
-        _ => return Ok(()),
-    };
-    Err(pyo3::exceptions::PyValueError::new_err(format!(
-        "{property:?} was renamed to {replacement:?} in tre 0.3.3"
-    )))
-}
-
-/// M90: kinds whose paint color is their glyph or text -- they take
-/// `foreground`, and have no fill for `background` to describe.
-fn is_glyph_kind(kind: &NodeKind) -> bool {
-    matches!(kind, NodeKind::Text(_))
-}
-
 /// M82: shared by `push_frame` and `Window.add_image_from_bytes` --
 /// both accept a caller-decoded, straight-alpha RGBA8 buffer with no
 /// `tre`-side decoding at all, and both need the identical real length
@@ -670,21 +523,6 @@ pub(crate) fn validate_rgba_frame_len(
         )));
     }
     Ok(())
-}
-
-fn kind_name(kind: &NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Rect => "Rect",
-        NodeKind::Container => "Container",
-        NodeKind::Text(_) => "Text",
-        NodeKind::VirtualList(_) => "VirtualList",
-        NodeKind::Canvas(_) => "Canvas",
-        NodeKind::TextField(_) => "TextField",
-        NodeKind::Image(_) => "Image",
-        NodeKind::Path(_) => "Path",
-        NodeKind::Terminal(_) => "Terminal",
-        NodeKind::ScrollView(_) => "ScrollView",
-    }
 }
 
 /// M97: `get("kind")` -- a node's kind by the name `window.create` takes
@@ -718,63 +556,4 @@ fn extract_f64(to: &Bound<'_, PyAny>, property: &str) -> Result<f64, EngineError
         expected: "a float",
         actual: type_name_of(to),
     })
-}
-
-fn extract_color(to: &Bound<'_, PyAny>, property: &str) -> Result<Color, EngineError> {
-    to.extract::<(u8, u8, u8, u8)>()
-        .map(|(r, g, b, a)| Color::from_rgba8(r, g, b, a))
-        .map_err(|_| EngineError::TypeMismatch {
-            property: property.to_string(),
-            expected: "an (r, g, b, a) tuple of 0-255 ints",
-            actual: type_name_of(to),
-        })
-}
-
-/// M6 Phase 2: `"transform"`'s own real, narrower shape -- see
-/// `animate()`'s own doc comment for why this is `(translate_x,
-/// translate_y, scale)`, not a raw `Affine` coefficient tuple.
-fn extract_translate_scale(
-    to: &Bound<'_, PyAny>,
-    property: &str,
-) -> Result<(f64, f64, f64), EngineError> {
-    to.extract::<(f64, f64, f64)>()
-        .map_err(|_| EngineError::TypeMismatch {
-            property: property.to_string(),
-            expected: "a (translate_x, translate_y, scale) tuple of floats",
-            actual: type_name_of(to),
-        })
-}
-
-impl Node {
-    /// Reads a numeric property's current (possibly still-animating)
-    /// M94: no longer a Python method itself -- `Node.get`
-    /// (`node_events.rs`) serves the M94 properties and falls back to
-    /// this for the animatable numeric ones.
-    /// value -- `animate()`'s missing counterpart, added at §14 step 12
-    /// once something (a binding's own applied value, §16.2) actually
-    /// needed to be observed from Python rather than only ever written.
-    /// `background` isn't included: it isn't a single `f64`, and
-    /// nothing yet needs to read it back.
-    pub(crate) fn get_number(&self, property: &str) -> PyResult<f64> {
-        renamed_property(property)?;
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        let kind = kind_name(&node.kind);
-        match property {
-            "opacity" => Ok(node.paint.opacity.current),
-            "corner_radius" => Ok(node.paint.corner_radius.current),
-            // M48: `border_width` is a plain `Animated<f64>`, the same
-            // shape as `corner_radius`/`elevation` above -- `border_
-            // color` stays excluded, the same real reason `background`
-            // already is (not a single `f64`).
-            "border_width" => Ok(node.paint.border_width.current),
-            _ => Err(EngineError::UnknownProperty {
-                kind,
-                property: property.to_string(),
-            }
-            .into()),
-        }
-    }
 }

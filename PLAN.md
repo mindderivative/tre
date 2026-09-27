@@ -1,38 +1,47 @@
-# PLAN — Branch `0.3.5`: Milestone 101, Consolidation and Size Pass
+# PLAN — Branch `0.3.5`: Milestone 102, Docs, Examples, and Tests Rewrite
 
-*(Replaces the M100 plan — M100 is complete. Every step is in `BUILD_TRACKER.md`.)*
+*(Replaces the M101 plan — M101 is complete. Every step is in `BUILD_TRACKER.md`.)*
 
 ## Goal
 
-The "no duplicate code" goal, measured rather than asserted: remove what
-M98–M100 left unreachable, fold duplicated logic, prune dependencies, and
-record the before-and-after size with no performance regression.
+Docs, examples, and tests that describe the engine `tre` now is — the
+building blocks — rather than the one it was. Nothing here changes behavior.
 
-## Baseline
+## Decisions
 
-`v0.3.4`, the last release before the removals (M97–M100): lines of Rust,
-public Python API count, wheel size, release build time, and the
-frame-budget benchmark, measured on this machine the same way as the
-after figures.
+- **The guide is one page per building block**, plus a walkthrough that
+  builds one complete widget from them. The four old guide pages go.
+- **The API reference says what is**, not what changed: the "new in 0.3.4" and
+  "0.3.5 removed" notes move out, since the migration pages hold that history.
+  The pages stay where they are, so links keep working.
+- **Docstrings count as docs**: `_core.pyi` and the Rust doc comments that
+  still name removed things (`show_view`, `add_*` factories, MD3, themes) are
+  corrected in the same pass.
+- **The design pages stay** under Design: they're the reference Tesserae ported
+  the widgets from.
+- **The showcase is rebuilt** from primitives as `examples/showcase.py`, as the
+  user decided at M99: the proof widgets together in one window.
 
 ## Steps
 
-**Phase 1 — Dead code and duplication**
-1. Unreachable code: the legacy handler path (`HandlerMap`'s per-`EventKind`
-   handlers, `call_handler`, the legacy `Event` constructors, and
-   `run_dispatch_outcome`'s legacy half) now that nothing registers a
-   legacy handler; `DispatchOutcome`/`InputEvent` variants and `Tree`
-   methods nothing produces or calls; per-kind branches and comments for
-   kinds that no longer exist; then fold duplicated logic.
-2. Unused Cargo dependencies and features, checked crate by crate against
-   the code.
+**Phase 1 — Docs**
+1. The MkDocs site: guide pages for nodes and layout, painting, animation,
+   events and input, text, accessibility, layers, threading, and docking; a
+   "Building a widget" walkthrough; the overview, getting started, and API
+   reference brought to the current API; `_core.pyi` docstrings corrected.
+2. `README.md`, `ARCHITECTURE.md`, and `docs/architecture.md` rewritten to
+   match; stale Rust doc comments corrected; `mkdocs build --strict` and the
+   API audit clean.
 
-**Phase 2 — Measurement**
-1. The after figures against the baseline, and the frame-budget benchmark
-   rerun.
+**Phase 2 — Examples and tests**
+1. Examples: one per building block, the proof widgets (slider, switch, ripple,
+   keyed reorder, menu layer), and the showcase; each runs headless under
+   `timeout 60`.
+2. Tests: remove or rewrite tests of removed features and tests named for old
+   milestones; confirm every public name in `_core.pyi` is exercised by a test.
 
 Each step: the full standing chain, the tracker, a local commit, memory.
 
 ## Status
 
-**M101 complete (2026-09-27).** M102, the docs, examples, and tests rewrite, is next.
+**Started (2026-09-27).** Phase 1 Step 1 next.

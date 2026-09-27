@@ -146,44 +146,31 @@ def test_set_layout_rejects_an_unknown_justify_content_value():
 # --- M59 (§5, §16.3): the new engine-spec fields reach a real View too -
 
 
-# --- border via animate()/get() -----------------------------------------
+# --- stroke via animate()/get() -----------------------------------------
 
 
-def test_animate_accepts_border_color_and_border_width():
+def test_animate_accepts_stroke_color_and_stroke_width():
     window = Window(width=200, height=200)
     node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
-    node.animate("border_color", (255, 0, 0, 255), duration_ms=0)
-    node.animate("border_width", 2.0, duration_ms=0)
+    window.advance(0)
+    node.animate("stroke_color", (255, 0, 0, 255), duration_ms=0)
+    node.animate("stroke_width", 2.0, duration_ms=0)
+    window.advance(1)
+    assert node.get("stroke_color") == (255, 0, 0, 255)
+    assert node.get("stroke_width") == pytest.approx(2.0)
 
 
-def test_animate_border_width_with_zero_duration_does_not_raise():
-    # `animate(property, value, duration_ms=0)` only *registers* the
-    # target -- it snaps on the next tick, which a plain `Window`-
-    # created node (no running render loop in this test) never gets.
-    # `get()` right afterward would still read the pre-animation value,
-    # the same real, documented `animate()`/`get()` contract every
-    # sibling test in this suite already treats as "must not raise"
-    # rather than asserting a readback (`test_engine_py.py`'s own
-    # `test_animate_defaults_duration_to_an_instant_snap`, etc.) -- only
-    # `View`'s own binding path ticks eagerly (`test_border_width_
-    # binding_applies_its_initial_value`, below), which is where a real
-    # readback assertion belongs.
+def test_stroke_width_defaults_to_zero():
     window = Window(width=200, height=200)
     node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
-    node.animate("border_width", 3.5, duration_ms=0)
+    assert node.get("stroke_width") == pytest.approx(0.0)
 
 
-def test_border_width_defaults_to_zero():
+def test_stroke_color_requires_a_four_tuple_not_a_float():
     window = Window(width=200, height=200)
     node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
-    assert node.get("border_width") == pytest.approx(0.0)
-
-
-def test_border_color_requires_a_four_tuple_not_a_float():
-    window = Window(width=200, height=200)
-    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
-    with pytest.raises(TypeError, match="expects an \\(r, g, b, a\\) tuple"):
-        node.animate("border_color", 1.0)
+    with pytest.raises(ValueError, match="must be an \\(r, g, b, a\\) tuple"):
+        node.animate("stroke_color", 1.0)
 
 
 # --- border at construction (Window.add_rect) ---------------------------
@@ -193,13 +180,13 @@ def test_add_rect_accepts_border_kwargs():
     window = Window(width=200, height=200)
     node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50, stroke_color=(255, 255, 255, 255), stroke_width=1.5)
     assert isinstance(node, Node)
-    assert node.get("border_width") == pytest.approx(1.5)
+    assert node.get("stroke_width") == pytest.approx(1.5)
 
 
 def test_add_rect_without_border_kwargs_still_defaults_to_zero_width():
     window = Window(width=200, height=200)
     node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
-    assert node.get("border_width") == pytest.approx(0.0)
+    assert node.get("stroke_width") == pytest.approx(0.0)
 
 
 # --- border at construction (M60: widened to every other Rect-backed

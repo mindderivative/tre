@@ -101,7 +101,10 @@ def test_click_still_finds_a_node_after_its_own_transform_moves_it():
     # duration_ms=0 -- an instant snap, matching this project's own
     # established convention for testing an animation's endpoint
     # synchronously.
-    node.animate("transform", (60.0, 60.0, 1.0), duration_ms=0)
+    window.advance(0)
+    node.animate("translate_x", 60.0, duration_ms=0)
+    node.animate("translate_y", 60.0, duration_ms=0)
+    window.advance(1)
 
     window.simulate("click", node=node)
 

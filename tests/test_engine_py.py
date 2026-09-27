@@ -41,8 +41,11 @@ def test_animate_accepts_each_known_paint_property():
     node.animate("opacity", 0.5, duration_ms=100)
     node.animate("corner_radius", 12.0, duration_ms=100)
     node.animate("shadows", [((0, 0, 0, 80), 0.0, 2.0, 4.0, 0.0)], duration_ms=100)
-    node.animate("background", (255, 255, 255, 255), duration_ms=100)
-    node.animate("transform", (10.0, 20.0, 1.5), duration_ms=100)
+    node.animate("fill", (255, 255, 255, 255), duration_ms=100)
+    node.animate("stroke_color", (255, 0, 0, 255), duration_ms=100)
+    node.animate("stroke_width", 2.0, duration_ms=100)
+    node.animate("translate_x", 10.0, duration_ms=100)
+    node.animate("scale", 1.5, duration_ms=100)
 
 
 def test_animate_defaults_duration_to_an_instant_snap():
@@ -51,11 +54,33 @@ def test_animate_defaults_duration_to_an_instant_snap():
     node.animate("opacity", 0.2)  # duration_ms omitted -- must not raise
 
 
-def test_unknown_property_raises_value_error_naming_the_node_kind():
+def test_an_unknown_or_non_animatable_property_raises_value_error():
     window = Window(width=200, height=200)
     node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
-    with pytest.raises(ValueError, match="Rect has no property 'not_a_real_property'"):
+    with pytest.raises(ValueError, match="\"not_a_real_property\" isn't animatable"):
         node.animate("not_a_real_property", 1.0)
+    with pytest.raises(ValueError, match="\"value\" isn't animatable"):
+        node.animate("value", 0.5)
+    # `value` is the accessibility value every node has -- unset, `None`.
+    assert node.get("value") is None
+
+
+def test_the_pre_0_3_5_property_names_are_gone():
+    window = Window(width=200, height=200)
+    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
+    for name, to in [
+        ("background", (0, 0, 0, 255)),
+        ("foreground", (0, 0, 0, 255)),
+        ("border_color", (0, 0, 0, 255)),
+        ("border_width", 1.0),
+        ("transform", (0.0, 0.0, 1.0)),
+    ]:
+        with pytest.raises(ValueError, match="isn't animatable"):
+            node.animate(name, to)
+        with pytest.raises(ValueError, match="unknown node property"):
+            node.get(name)
+        with pytest.raises(ValueError, match="unknown node property"):
+            window.create("box", **{name: to})
 
 
 def test_type_mismatch_raises_type_error_naming_expected_and_actual():
@@ -65,21 +90,11 @@ def test_type_mismatch_raises_type_error_naming_expected_and_actual():
         node.animate("opacity", "not a float")
 
 
-def test_background_requires_a_four_tuple_not_a_float():
+def test_fill_requires_a_four_tuple_not_a_float():
     window = Window(width=200, height=200)
     node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
-    with pytest.raises(TypeError, match="expects an \\(r, g, b, a\\) tuple"):
-        node.animate("background", 0.5)
-
-
-def test_transform_requires_a_translate_x_translate_y_scale_three_tuple():
-    """M6 Phase 2 (§8): `transform` is `(translate_x, translate_y,
-    scale)`, not a raw affine-coefficient tuple -- matches `Interpolate
-    for Affine`'s own real limitation (M5 Phase 1, `PLAN.md`)."""
-    window = Window(width=200, height=200)
-    node = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
-    with pytest.raises(TypeError, match="expects a \\(translate_x, translate_y, scale\\) tuple"):
-        node.animate("transform", 0.5)
+    with pytest.raises(ValueError, match="must be an \\(r, g, b, a\\) tuple"):
+        node.animate("fill", 0.5)
 
 
 def test_app_requires_at_least_one_window():
