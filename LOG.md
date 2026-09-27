@@ -7,4 +7,4 @@
 
 ## Status
 
-**Complete (2026-09-27).** Push and release wait on the user.
+**Released (2026-09-27).** `v0.3.5.1` is out; Tesserae told.

@@ -8,4 +8,4 @@ moves it as a drop does, and `Tree::add_child` moves an attached node.
 
 ## Status
 
-**Complete (2026-09-27).** Awaiting the user's word to push and release `0.3.5.1`.
+**Released (2026-09-27).** `v0.3.5.1` is out; Tesserae told.

@@ -68,11 +68,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M101 — Consolidation and Size Pass | `██████████` 100% | ✅ Complete (2026-09-27) — against `v0.3.4`: Rust source 59,691 → 27,483 lines, public API 193 → 46 members, wheel 11.70 → 10.32 MB, release build 81 → 67 s, no frame-time regression |
 | M102 — Docs, Examples, and Tests Rewrite | `██████████` 100% | ✅ Complete (2026-09-27) — a guide page per building block and a complete-widget walkthrough; ARCHITECTURE.md, README, and Rust comments describe the current engine; 21 self-checking examples and a rebuilt showcase; tests named and described in current terms |
 | M103 — Release | `██████████` 100% | ✅ Complete (2026-09-27) — `v0.3.5` released; Tesserae's M46 moved it onto the release, CI green on `tre` 2e4ed35 |
-| M104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tre/issues/14)) | `██████████` 100% | ✅ Complete (2026-09-27) — on branch `0.3.5.1`, not yet released |
+| M104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tre/issues/14)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.1`, closing issue #14 |
 
-**Just closed:** M104 — [issue #14](https://github.com/mindderivative/tre/issues/14), filed by Tesserae while building its docking presentation: `dock_panel` on a panel docked in another zone left it in the old zone's list, so a later `set_active_panel` there put the panel under two parents. `dock_panel` now moves a docked panel exactly as a drop does, and `Tree::add_child` moves an already-attached node instead of double-parenting it -- the third appearance of that bug class, closed at its source. On branch `0.3.5.1`, a patch release per the user.
+**Just closed:** M104 — [issue #14](https://github.com/mindderivative/tre/issues/14), filed by Tesserae while building its docking presentation: `dock_panel` on a panel docked in another zone left it in the old zone's list, so a later `set_active_panel` there put the panel under two parents. `dock_panel` now moves a docked panel exactly as a drop does, and `Tree::add_child` moves an already-attached node instead of double-parenting it -- the third appearance of that bug class, closed at its source. Released as `v0.3.5.1`, a patch release per the user.
 
-**Up next:** push `0.3.5.1` and release it when the user says so; then Tesserae can drop its drag-simulating `Dock.move()` workaround. Tesserae continues with its M45. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
+**Up next:** nothing scheduled on the `tre` side. `v0.3.5.1` is released and Tesserae is told, so it can drop its drag-simulating `Dock.move()` workaround in its M45. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
 
 **Known gaps:**
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
@@ -1521,7 +1521,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Branch: `0.3.5.1` — Release Prep
 
-**Status: 🚧 In progress (2026-09-27).** A patch release for issue #14. User: "lets use 0.3.5.1 as this i a minor bug fix." Cargo only accepts three-part versions, so the crates stay `0.3.5` (they're never published on their own) while the Python package, branch, and tag are `0.3.5.1` (PEP 440 allows four parts; maturin takes the wheel's version from `pyproject.toml`, checked: it builds `tre-0.3.5.1`).
+**Status: ✅ Released as `v0.3.5.1` (2026-09-27).** A patch release for issue #14. User: "lets use 0.3.5.1 as this i a minor bug fix." Cargo only accepts three-part versions, so the crates stay `0.3.5` (they're never published on their own) while the Python package, branch, and tag are `0.3.5.1` (PEP 440 allows four parts; maturin takes the wheel's version from `pyproject.toml`, checked: it builds `tre-0.3.5.1`).
 
 - Branch `0.3.5.1` created off `main` at `cc10227` (post-`v0.3.5`, post-audit) — ✅
 - `pyproject.toml` version 0.3.5 → 0.3.5.1; `Cargo.toml` unchanged — ✅
@@ -1536,6 +1536,17 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 1: `dock_panel` routes a panel docked elsewhere through `move_panel`, the path a drag's drop already used -- its old zone stops listing it and re-picks its shown panel; a panel already in the target zone is just shown; an undocked panel is taken from wherever the framework attached it, as before — ✅ (`crates/engine-py/src/dock.rs`)
 - Step 2: the root cause, closed at its source -- `Tree::add_child` attached a node without unlinking it from its current parent, so any caller re-attaching an attached node left it under two parents; `apply_active_tab` was that caller here. This is the third appearance of the bug class (`try_add_child`'s own doc names the overlay and docking fixes of M4), so `add_child` now routes an already-attached child through `try_add_child`, which moves it — ✅ (`crates/engine-core/src/tree.rs`)
 - Step 3: tests and docs — ✅ (5 new `tests/test_docking.py` tests -- the issue's own reproduction, moving the shown panel, dragging a moved panel back, `dock_panel` into its own zone, and a no-drag move cycle -- 3 of which fail on the unfixed code, checked by stashing the fix and rebuilding; 1 new engine-core test, `add_child_moves_an_already_attached_child`, checking both `children` lists and taffy; `_core.pyi`, `docs/api/python/window.md`, and `docs/guide/docking.md` (a new "Moving a panel without a drag" section) say `dock_panel` moves a docked panel; cargo 327, pytest 430 passed, 1 skipped, clippy and fmt, 21 examples, docs strict, API audit 43 names, mypy clean)
+
+---
+
+## `v0.3.5.1` Released
+
+**Status: ✅ Released (2026-09-27).** User: "push and release it, then tell Tesserae." M104, closing [issue #14](https://github.com/mindderivative/tre/issues/14).
+
+- `0.3.5.1` pushed at `07793b0`; [PR #15](https://github.com/mindderivative/tre/pull/15) opened; CI green on all three jobs -- `test` (Linux), `test-macos`, `test-windows` — ✅
+- PR #15 merged via `gh pr merge --merge` (merge commit `9cba06b`), closing issue #14; local `main` fast-forwarded and re-verified -- `maturin develop --release` (`tre` 0.3.5.1), pytest 430 passed, 1 skipped, 21 examples — ✅
+- `git tag -a v0.3.5.1` on the merge commit, pushed; the `Wheels` run succeeded on every job and attached 24 assets, named `tre-0.3.5.1-...`, confirming the four-part version reaches the wheels; the release body set to the PR's release note — ✅
+- Tesserae told the release is out and that `dock_panel` now moves a docked panel, so its `Dock.move()` drag workaround can go — ✅
 
 ---
 
