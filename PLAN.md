@@ -12,4 +12,4 @@
 
 ## Status
 
-**Released (2026-09-27).** `v0.3.5` is out; Step 2 is Tesserae's M46.
+**Complete (2026-09-27).** `v0.3.5` released; Tesserae's M46 moved it onto the release.

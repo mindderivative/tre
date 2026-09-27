@@ -67,7 +67,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M100 — Apply the Naming Convention | `██████████` 100% | ✅ Complete (2026-09-27) — every surviving name in its target form, `simulate` the one testing surface, the migration page published, Tesserae sent the updated `_removed.py` |
 | M101 — Consolidation and Size Pass | `██████████` 100% | ✅ Complete (2026-09-27) — against `v0.3.4`: Rust source 59,691 → 27,483 lines, public API 193 → 46 members, wheel 11.70 → 10.32 MB, release build 81 → 67 s, no frame-time regression |
 | M102 — Docs, Examples, and Tests Rewrite | `██████████` 100% | ✅ Complete (2026-09-27) — a guide page per building block and a complete-widget walkthrough; ARCHITECTURE.md, README, and Rust comments describe the current engine; 21 self-checking examples and a rebuilt showcase; tests named and described in current terms |
-| M103 — Release | `█████░░░░░` 50% | 🚧 `v0.3.5` released (2026-09-27) — PR #13 merged and tagged, 24 assets published; Tesserae told to start its M46, which moves its CI pin |
+| M103 — Release | `██████████` 100% | ✅ Complete (2026-09-27) — `v0.3.5` released; Tesserae's M46 moved it onto the release, CI green on `tre` 2e4ed35 |
 
 **Just closed:** M80 — a 4-lens multi-agent review (Performance/Architecture/Security/Modernization) of the full `0.3.1` diff (M71-M79) plus a lighter full-project pass, each raw finding adversarially re-verified against the real current source before being trusted. Security found nothing real. 8 findings confirmed real across the other 3 lenses; 5 fixed directly this milestone, 3 left open for explicit user input (real design/scope decisions, not mechanical).
 
@@ -1514,11 +1514,11 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 103 — Release
 
-**Status: 🚧 Released; Tesserae's pin move pending.** User: "Finish up M102, then push and move onto M103, then push and do the release. Once done let Tesserae know you are done with the release and to start M46." M102 pushed at `8608e6a`; [PR #13](https://github.com/mindderivative/tre/pull/13) (`0.3.5` → `main`) opened with the release note as its body.
+**Status: ✅ Complete (2026-09-27).** The M93–M103 program is done. User: "Finish up M102, then push and move onto M103, then push and do the release. Once done let Tesserae know you are done with the release and to start M46." M102 pushed at `8608e6a`; [PR #13](https://github.com/mindderivative/tre/pull/13) (`0.3.5` → `main`) opened with the release note as its body.
 
-### Phase 1 — Release 🚧
+### Phase 1 — Release ✅
 - Step 1: PR to `main`, CI green on all three platforms, merge, re-verify, release note, annotated tag, as with `v0.3.2` — ✅ (`v0.3.5`: PR #13 merged as `2e4ed35` and tagged; see "`v0.3.5` Released")
-- Step 2: Tesserae moves its CI pin to the release — ⬜ (handed to Tesserae with the release: its M46)
+- Step 2: Tesserae moves its CI pin to the release — ✅ (Tesserae's M46, reported by its session: `main` at `9ba1f42`, CI run 36304383406 built `tre` 0.3.5 from `2e4ed35` and passed, 1319 passed, 3 skipped with no display, its three examples clean; 1322 passed locally on the release's cp314 wheel; the one fix was a test helper expecting `get("elevation")` to raise the shim's `AttributeError` where 0.3.5 raises `ValueError`, nothing in `src/tesserae` changed; Tesserae retired its vendored `_removed.py` and switched CI run, and checked every behavior change on the migration page against its source)
 
 ---
 

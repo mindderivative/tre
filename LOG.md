@@ -10,4 +10,4 @@
 
 ## Status
 
-**Released (2026-09-27).** Step 2 is Tesserae's M46.
+**Complete (2026-09-27).** Tesserae's M46 moved it onto `v0.3.5`, CI green.
