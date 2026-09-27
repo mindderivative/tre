@@ -151,7 +151,7 @@ fn build_scene(cell: TerminalCell) -> (Tree, engine_core::NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(CONTAINER_BG, 0.0, 0.0, 1.0),
+        PaintProperties::new(CONTAINER_BG, 0.0, 1.0),
     );
     let available = Size {
         width: AvailableSpace::Definite(f32::from(WIDTH)),

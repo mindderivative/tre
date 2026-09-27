@@ -42,9 +42,8 @@ const GAP: f32 = 20.0;
 const RECTS_ROW_WIDTH: u32 =
     (RECT_SIZE as u32) * (RECT_COUNT as u32) + (GAP as u32) * (RECT_COUNT as u32 + 1);
 const RECTS_ROW_HEIGHT: u32 = (RECT_SIZE as u32) + (GAP as u32) * 2;
-/// §14 step 4's two type roles (representative MD3 scale values -- the
-/// formal token table is `engine_md3`'s own future job, not spiked
-/// here) plus one non-Latin, right-to-left string, each its own row.
+/// §14 step 4's two type roles (representative MD3 scale values) plus
+/// one non-Latin, right-to-left string, each its own row.
 const TEXT_BLOCK_HEIGHT: u32 = 160;
 const TEXT_BLOCK_PADDING: f32 = 16.0;
 const TEXT_ROW_GAP: f32 = 10.0;
@@ -147,7 +146,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         let rects_row = tree.insert(
@@ -171,10 +170,10 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         for i in 0..RECT_COUNT {
-            let mut paint = PaintProperties::new(START_COLOR, 12.0, 0.0, 1.0);
+            let mut paint = PaintProperties::new(START_COLOR, 12.0, 1.0);
             paint.background.animate_to(
                 TARGET_COLOR,
                 Duration::from_millis(600 + i as u64 * 200),
@@ -217,7 +216,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         let body = tree.insert(
             NodeKind::Text(TextState {
@@ -236,7 +235,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         let headline = tree.insert(
             NodeKind::Text(TextState {
@@ -255,7 +254,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         let arabic = tree.insert(
             NodeKind::Text(TextState {
@@ -274,7 +273,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         tree.add_child(text_block, body);
         tree.add_child(text_block, headline);

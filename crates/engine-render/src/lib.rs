@@ -27,11 +27,11 @@ mod image_cache;
 mod text;
 
 use engine_core::{
-    ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, SCROLLBAR_MARGIN,
-    SCROLLBAR_THICKNESS, ScrollViewState, TimePickerDialMode, Tree, VirtualListState,
+    ContentFit, DrawCommand, NodeId, NodeKind, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS,
+    ScrollViewState, Tree, VirtualListState,
 };
 use peniko::Color;
-use peniko::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, RoundedRect, Shape, Stroke, Vec2};
+use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use fonts::{NoFontFacesFound, register_font};
@@ -87,8 +87,7 @@ pub fn build_rect_scene(width: u16, height: u16, color: Color, opacity: f64) -> 
 /// exact risk named in §7.2/§15 ("early-stage per Vello's own release
 /// notes, no API stability guarantee yet, uneven parity across the
 /// `vello`/`vello_cpu`/`vello_hybrid` variants"). One rect, no `Tree`,
-/// no layout, no MD3 elevation tokens -- those are deliberately later
-/// steps (9, 11) that would otherwise sit on an unverified foundation.
+/// no layout.
 ///
 /// `std_dev` is the Gaussian blur's standard deviation in pixels (not a
 /// blur "radius" in the CSS `box-shadow` sense); `corner_radius` is the
@@ -114,44 +113,6 @@ pub fn build_shadow_scene(
     scene
 }
 
-/// §14 build-order step 9: standalone spike proving `vello_hybrid`
-/// 0.2.0's real `Scene::push_layer(clip_path, blend_mode, opacity,
-/// mask, filter)` genuinely does both things §7.3's ripple model needs
-/// from it -- clips a fill to an arbitrary path (here, a growing
-/// circle) *and* applies an opacity multiplier to everything painted
-/// inside the layer -- not just that the call compiles. One ripple over
-/// one solid "button" background; no `Tree`, no `InteractionState`
-/// wiring, no MD3 ripple-color token (see this step's own `LOG.md` for
-/// why: real dispatch and a real color scheme don't exist yet).
-pub fn build_ripple_scene(
-    width: u16,
-    height: u16,
-    base_color: Color,
-    ripple_color: Color,
-    origin: Point,
-    radius: f64,
-    opacity: f64,
-) -> Scene {
-    let mut scene = Scene::new(width, height);
-    let bounds = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
-    scene.set_transform(Affine::IDENTITY);
-
-    // The "button" background the ripple plays over.
-    scene.set_paint(base_color);
-    scene.fill_path(&bounds.to_path(0.1));
-
-    // The ripple itself: push_layer's `clip_path` is what actually
-    // confines the fill below to the circle -- the fill call itself
-    // still covers the whole `bounds` rect, same as the background did.
-    let circle = Circle::new(origin, radius).to_path(0.1);
-    scene.push_layer(Some(&circle), None, Some(opacity as f32), None, None);
-    scene.set_paint(ripple_color);
-    scene.fill_path(&bounds.to_path(0.1));
-    scene.pop_layer();
-
-    scene
-}
-
 /// Walks `tree` from `root` (which must already have a computed layout --
 /// call `Tree::compute_layout` first) and paints every `NodeKind::Rect`/
 /// `NodeKind::Text` at its absolute on-screen position:
@@ -166,7 +127,7 @@ pub fn build_ripple_scene(
 /// need to persist across frames, so they're the caller's, not built
 /// fresh per call -- see `TextRenderer`'s own doc comment for why.
 /// `geometry` (M34 Phase 1, §5, §8) is the identical kind of caller-
-/// owned, cross-frame cache, for `Rect`/`Splitter`'s own tessellated
+/// owned, cross-frame cache, for a `Rect`'s own tessellated
 /// fill/border paths -- see `GeometryCache`'s own doc comment.
 pub fn build_tree_scene(
     tree: &Tree,
@@ -198,89 +159,11 @@ pub fn build_tree_scene(
     scene
 }
 
-/// §11.9 (M5 Phase 1): `parent_transform` is the caller's own composed
-/// (canvas-space) transform for this node's *parent*; this call folds in
-/// this node's taffy-computed layout position and its own
-/// `PaintProperties.transform` in one product --
-/// `parent * translate(layout.location) * own_transform` -- exactly
-/// like nested `<g transform>` in SVG, "just ordinary matrix
-/// multiplication during the paint walk" (§11.9's own text). Every
-/// node's own content (and any recursive call for its children) is then
-/// painted/positioned in **local, node-relative coordinates**
-/// (`(0, 0)` to `(w, h)`), with `scene.set_transform(composed)` doing
-/// the mapping into canvas space -- both `Scene::fill_path` and
-/// `Scene::glyph_run` genuinely respect the scene's current transform
-/// (confirmed directly in `vello_hybrid = "0.2.0"`'s vendored source),
-/// so this needs no per-`NodeKind` special-casing. When every node's own
-/// `transform` is the default `Affine::IDENTITY` (true for every node
-/// before this phase), `composed` reduces to exactly the same
-/// accumulated pure translation this function used to compute by hand
-/// via `offset_x`/`offset_y` -- purely additive, no behavior change for
-/// any existing content.
-/// M7 Phase 2 (§7.2): the real MD3 "key" shadow layer's own `(offset_y,
-/// blur)`, in px, at a real (possibly fractional -- `elevation` is a
-/// real `Animated<f64>`, not a discrete 0-5 enum) elevation level.
-/// Transcribed directly from Material Web's own `elevation/internal/
-/// _elevation.scss` (the real, current, production CSS Google ships --
-/// verified via its own documented per-integer-level comments, not
-/// recalled or guessed, `PLAN.md`), preserving its exact piecewise-
-/// linear formula so a fractional `elevation` (a card animating its own
-/// lift) interpolates smoothly rather than snapping between integer
-/// levels. Each term below reproduces one documented level's own real
-/// value -- hand-checked against all 6 before trusting it.
-fn key_shadow_geometry(level: f64) -> (f32, f32) {
-    // level1: 0,1,2,0 -- level2: 0,1,2,0 -- level3: 0,1,3,0
-    // level4: 0,2,3,0 -- level5: 0,4,4,0
-    let level1_y = level.clamp(0.0, 1.0);
-    let level4_y = (level - 3.0).clamp(0.0, 1.0);
-    let level5_y = 2.0 * (level - 4.0).clamp(0.0, 1.0);
-    let y = level1_y + level4_y + level5_y;
-
-    let level1_blur = 2.0 * level.clamp(0.0, 1.0);
-    let level3_blur = (level - 2.0).clamp(0.0, 1.0);
-    let level5_blur = (level - 4.0).clamp(0.0, 1.0);
-    let blur = level1_blur + level3_blur + level5_blur;
-
-    (y as f32, blur as f32)
-}
-
-/// The real MD3 "ambient" shadow layer's own `(offset_y, blur,
-/// spread)`, in px -- same real source and same "matches every
-/// documented integer level" verification as `key_shadow_geometry`.
-/// level1: 0,1,3,1 -- level2: 0,2,6,2 -- level3: 0,4,8,3
-/// level4: 0,6,10,4 -- level5: 0,8,12,6
-fn ambient_shadow_geometry(level: f64) -> (f32, f32, f32) {
-    let level1_y = level.clamp(0.0, 1.0);
-    let level2_y = (level - 1.0).clamp(0.0, 1.0);
-    let level3to5_y = 2.0 * (level - 2.0).clamp(0.0, 3.0);
-    let y = level1_y + level2_y + level3to5_y;
-
-    let level1to2_blur = 3.0 * level.clamp(0.0, 2.0);
-    let level3to5_blur = 2.0 * (level - 2.0).clamp(0.0, 3.0);
-    let blur = level1to2_blur + level3to5_blur;
-
-    let level1to4_spread = level.clamp(0.0, 4.0);
-    let level5_spread = 2.0 * (level - 4.0).clamp(0.0, 1.0);
-    let spread = level1to4_spread + level5_spread;
-
-    (y as f32, blur as f32, spread as f32)
-}
-
 /// CSS Backgrounds and Borders Module Level 3's own real conversion,
 /// verified directly (`PLAN.md`): "a Gaussian blur with a standard
 /// deviation equal to half the blur radius."
 fn blur_to_std_dev(blur_px: f32) -> f32 {
     blur_px / 2.0
-}
-
-/// MD3's real `shadow` color role -- the neutral palette's own tone-0
-/// (blackest) position, constant regardless of the active theme's seed
-/// color (verified via search, `PLAN.md`), so this doesn't need to wait
-/// for M7 Phase 3's dynamic-color wiring the way ripple/hover's own
-/// tint does; `opacity` is each layer's own real, documented alpha
-/// (key: 0.3, ambient: 0.15).
-fn shadow_color(opacity: f32) -> Color {
-    with_opacity(Color::from_rgba8(0, 0, 0, 255), f64::from(opacity))
 }
 
 /// M22 Phase 2 (§16.1): the real `(source_region, transform)` pair
@@ -423,49 +306,6 @@ fn paint_node(
 
     scene.set_transform(composed);
 
-    // M7 Phase 2 (§7.2): a real shadow, for any NodeKind, painted
-    // behind everything else -- elevation is a universal PaintProperties
-    // field, and a shadow only ever needs this node's own bounds/corner
-    // radius, independent of what it actually draws on top (the same
-    // "zero special-casing" shape M5 Phase 1's transform composition
-    // and M4 Phase 5's ripple/hover already established). Skipped
-    // entirely at elevation <= 0.0 -- matching level 0's own real
-    // 0px-everywhere values, not a degenerate zero-blur draw call.
-    let elevation = node.paint.elevation.current;
-    // M25 Phase 2 (§5, §6): a real, previously-missing compounding --
-    // a fading node's own real shadow must fade with it (the same real
-    // expectation any CSS `opacity` compositing already has: a shadow
-    // is part of what "how visible is this node" governs, not a
-    // separate, always-opaque layer underneath it). `<= 0.0` also
-    // skips the shadow now, matching `elevation <= 0.0`'s own existing
-    // "don't draw an invisible thing" precedent.
-    let node_opacity = own_alpha;
-    if elevation > 0.0 && node_opacity > 0.0 {
-        let radius = node.paint.corner_radius.current as f32;
-
-        // Ambient first, key second -- real box-shadow stacking order
-        // (a later shadow paints on top of an earlier one).
-        let (ambient_y, ambient_blur, ambient_spread) = ambient_shadow_geometry(elevation);
-        let ambient_rect = Rect::new(
-            -f64::from(ambient_spread),
-            f64::from(ambient_y) - f64::from(ambient_spread),
-            w + f64::from(ambient_spread),
-            h + f64::from(ambient_y) + f64::from(ambient_spread),
-        );
-        scene.set_paint(shadow_color(0.15 * node_opacity as f32));
-        scene.fill_blurred_rounded_rect(
-            &ambient_rect,
-            radius,
-            blur_to_std_dev(ambient_blur),
-            false,
-        );
-
-        let (key_y, key_blur) = key_shadow_geometry(elevation);
-        let key_rect = Rect::new(0.0, f64::from(key_y), w, h + f64::from(key_y));
-        scene.set_paint(shadow_color(0.3 * node_opacity as f32));
-        scene.fill_blurred_rounded_rect(&key_rect, radius, blur_to_std_dev(key_blur), false);
-    }
-
     // M95: the `shadows` list, CSS `box-shadow`'s model -- each is the
     // node's own rounded box, offset, grown by `spread` (its corners too),
     // and blurred; the first listed paints on top, so the list paints in
@@ -503,67 +343,39 @@ fn paint_node(
     }
 
     match &node.kind {
-        NodeKind::Rect | NodeKind::Splitter(_) | NodeKind::LoadingIndicator(_) => {
-            // A splitter's own visible grip/handle paints exactly like
-            // a Rect -- `SplitterState` carries only the mechanism's
-            // animatable position (§11.5), no separate appearance data,
-            // since the universal `PaintProperties` every node already
-            // has is all a divider's own background/corner-radius needs.
-            // M39 Phase 2 (§5, §7): a real `LoadingIndicator` joins this
-            // same arm too -- its own real appearance is entirely
-            // `PaintProperties.shape` (`Tree::tick_all`'s own new
-            // per-`LoadingIndicator` case keeps it perpetually non-
-            // empty from the very first tick onward), so the identical
-            // real "active shape morph paints the current silhouette"
-            // branch just below already paints it correctly with zero
-            // new paint code.
+        NodeKind::Rect => {
             let color = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(color);
-            // M7 Phase 4 (§7.4): a real, active shape morph (`node.
-            // paint.shape.current` non-empty) paints the current
-            // interpolated silhouette instead of the plain rounded
-            // rect -- `shape` defaults to `ShapeKey::empty()`, so a
-            // node that never touches it renders byte-for-byte the
-            // same `RoundedRect` fill as before this phase.
-            if node.paint.shape.current.is_empty() {
-                // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
-                // (`[top_left, top_right, bottom_right, bottom_left]`)
-                // wins when set -- `Segmented Button`'s own real need
-                // (a first/last segment rounded only on its outer
-                // edge). `None` (every node before this step) falls
-                // through to the identical uniform-scalar `RoundedRect`
-                // this arm always painted.
-                // M34 Phase 1 (§5, §8): the real path itself comes from
-                // `geometry` now -- re-tessellated only when this
-                // node's own `w`/`h`/radius genuinely changed since its
-                // last paint, not rebuilt from scratch every frame
-                // (`GeometryCache`'s own doc comment has the real,
-                // measured motivation).
-                let path = match node
-                    .paint
-                    .corner_radii_override
-                    .as_ref()
-                    .map(|r| r.current.0)
-                {
-                    Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
-                    None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
-                };
-                scene.fill_path(path);
-            } else {
-                scene.fill_path(&node.paint.shape.current.to_path());
-            }
-            // M30 Phase 1 (§5, §7): a real stroked border -- MD3's
-            // Outlined button variant is the real consumer, but this is
-            // universal `PaintProperties`, not `Button`-specific, the
-            // same "any Rect/Splitter can use it" reach `background`/
-            // `corner_radius` already have. Inset by half the stroke
+            // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
+            // (`[top_left, top_right, bottom_right, bottom_left]`)
+            // wins when set (a segmented group's first/last segment,
+            // rounded only on its outer edge). `None` falls
+            // through to the identical uniform-scalar `RoundedRect`
+            // this arm always painted.
+            // M34 Phase 1 (§5, §8): the real path itself comes from
+            // `geometry` now -- re-tessellated only when this
+            // node's own `w`/`h`/radius genuinely changed since its
+            // last paint, not rebuilt from scratch every frame
+            // (`GeometryCache`'s own doc comment has the real,
+            // measured motivation).
+            let path = match node
+                .paint
+                .corner_radii_override
+                .as_ref()
+                .map(|r| r.current.0)
+            {
+                Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
+                None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
+            };
+            scene.fill_path(path);
+            // M30 Phase 1 (§5, §7): a real stroked border (the Python
+            // API's `stroke_color`/`stroke_width`), universal
+            // `PaintProperties` like `background`/`corner_radius`. Inset by half the stroke
             // width so the border paints entirely *inside* this node's
             // own bounds (kurbo strokes are centered on the path by
             // default) -- a border never grows past the node's own
             // taffy-computed box the way a naive un-inset stroke would.
-            // Skipped entirely at `border_width <= 0.0`, the same
-            // "off unless a caller opts in" contract `elevation`
-            // already established.
+            // Skipped entirely at `border_width <= 0.0`.
             let border_width = node.paint.border_width.current;
             if border_width > 0.0 {
                 let inset = border_width / 2.0;
@@ -572,40 +384,28 @@ fn paint_node(
                 // just above, closing a real, previously-dormant gap --
                 // `RectPathParams::PerCornerBorder`'s own doc comment
                 // has the full story (`geometry_cache.rs`).
-                let border_path: std::borrow::Cow<'_, BezPath> =
-                    if !node.paint.shape.current.is_empty() {
-                        // M39 Phase 3 (§5, §7): a real, active shape
-                        // morph now strokes a real *inset* polygon
-                        // (`ShapeKey::inset_path`'s own doc comment has
-                        // the full real algorithm and its stated scope
-                        // limit) instead of the raw silhouette centered
-                        // -- closes M38 Phase 4's own real, previously-
-                        // stated v1 gap where a shape-morphed border
-                        // could sit up to half its own width outside
-                        // the fill's own edge.
-                        std::borrow::Cow::Owned(node.paint.shape.current.inset_path(inset))
-                    } else if let Some(radii) = node
-                        .paint
-                        .corner_radii_override
-                        .as_ref()
-                        .map(|r| r.current.0)
-                    {
-                        std::borrow::Cow::Borrowed(
-                            geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
-                        )
-                    } else {
-                        let radius = (node.paint.corner_radius.current - inset).max(0.0);
-                        std::borrow::Cow::Borrowed(
-                            geometry.rounded_rect_border(id, w, h, radius, inset),
-                        )
-                    };
+                let border_path: std::borrow::Cow<'_, BezPath> = if let Some(radii) = node
+                    .paint
+                    .corner_radii_override
+                    .as_ref()
+                    .map(|r| r.current.0)
+                {
+                    std::borrow::Cow::Borrowed(
+                        geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
+                    )
+                } else {
+                    let radius = (node.paint.corner_radius.current - inset).max(0.0);
+                    std::borrow::Cow::Borrowed(
+                        geometry.rounded_rect_border(id, w, h, radius, inset),
+                    )
+                };
                 let border_color = with_opacity(node.paint.border_color.current, own_alpha);
                 scene.set_paint(border_color);
                 scene.set_stroke(Stroke::new(border_width));
                 scene.stroke_path(&border_path);
             }
         }
-        NodeKind::Text(state) | NodeKind::Link(state) => {
+        NodeKind::Text(state) => {
             let color = with_opacity(node.paint.background.current, own_alpha);
             text.draw(
                 scene,
@@ -625,12 +425,8 @@ fn paint_node(
         // glyph color), a real `TextField` is a genuinely boxed input
         // -- `background` paints its own real fill first (the same
         // `RoundedRect` fill every other boxed `NodeKind` uses), and
-        // `draw_field` paints its content/caret/selection on top in a
-        // fixed, real, not-yet-theme-aware color (the same "real but
-        // not yet theme-aware" scope `Checkbox`'s own hardcoded white
-        // checkmark, M14 Phase 1, already established -- `engine-render`
-        // has no `engine-md3` dependency, §4, to resolve a real
-        // on-surface token from here).
+        // `draw_field` paints its content/caret/selection on top in
+        // `state.text_tint` (below).
         NodeKind::TextField(state) => {
             let radius = node.paint.corner_radius.current;
             let bg = with_opacity(node.paint.background.current, own_alpha);
@@ -642,16 +438,15 @@ fn paint_node(
             // honest correction: that claim was wrong, caught here by
             // checking the actual current source rather than trusting
             // the prior write-up). Routed through `geometry` now, the
-            // same real cache `Checkbox`/`Switch`/`Terminal` already
-            // use -- also reused directly below for this same node's
+            // same real cache `Rect`/`Terminal` already use -- also
+            // reused directly below for this same node's
             // own real clip layer, since both need the identical path.
             scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
-            // M20 Phase 2 (§7.1, §7.3): the real resolved color now
-            // comes from `state.text_tint` -- plain dark by default
-            // (byte-for-byte the old hardcoded literal), a real
-            // resolved MD3 "on-surface" color once `Window.set_theme`
-            // has pushed one in.
+            // M20 Phase 2 (§7.1, §7.3): the real resolved color comes
+            // from `state.text_tint` -- plain dark by default
+            // (byte-for-byte the old hardcoded literal), or whatever
+            // the text input's `fill` sets.
             let text_color = with_opacity(state.text_tint.current, own_alpha);
             // M38 Phase 7 (§5, §8): a real, genuinely overflowing
             // `multiline` field now clips its own painted content to
@@ -694,10 +489,8 @@ fn paint_node(
         // same `RoundedRect` fill `TextField`'s own arm just above
         // already establishes), then `draw_terminal` paints every real
         // cell's own background/glyph on top, plus the caret, in a
-        // fixed, not-yet-theme-aware color (the same real scope
-        // `TextField`'s own arm already accepts -- `engine-render` has
-        // no `engine-md3` dependency to resolve a real theme token
-        // from here, §4).
+        // fixed color (`engine-render` has no design system to resolve
+        // one from, §4).
         NodeKind::Terminal(state) => {
             let radius = node.paint.corner_radius.current;
             let bg = with_opacity(node.paint.background.current, own_alpha);
@@ -726,30 +519,17 @@ fn paint_node(
         // below already only ever sees `VirtualListState::materialized`'s
         // small real subset, never `item_count`, with zero changes
         // needed here (§14 step 15, §11.7).
-        // M30 Phase 9 Step 5 (§5, §7, §11.7): a `Carousel` paints
-        // nothing of its own beyond the generic background/corner-
-        // radius box every `NodeKind` already gets above -- the
-        // identical real "exists purely to give `taffy` something to
-        // lay its children out against" shape `Container`/`VirtualList`
-        // already have. Real item geometry (position/width) is already
-        // fully baked into each child's own `layout_style` by `Tree::
-        // sync_carousel_layouts`, so nothing kind-specific is needed
-        // here at all; the clip below is this kind's only other real
-        // paint-time behavior.
         // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints nothing of
-        // its own either, the identical real shape -- its one real
+        // its own, like `Container`/`VirtualList` -- its one real
         // child's own absolute position is already baked into `layout_
         // style` by `Tree::sync_scroll_view_layouts`, so the ordinary
         // recursive walk below (composed transform only, no extra
         // paint-time offset) already paints it in the right place; the
         // unconditional clip below is this kind's only other real
-        // paint-time behavior, mirroring `Carousel`'s own.
-        NodeKind::Container
-        | NodeKind::VirtualList(_)
-        | NodeKind::Carousel(_)
-        | NodeKind::ScrollView(_) => {}
+        // paint-time behavior.
+        NodeKind::Container | NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
         // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
-        // resolved ahead of time by `engine-py::Window.redraw_canvas`
+        // resolved ahead of time by `engine-py`'s `draw` callback
         // (`canvas.rs`'s own module doc comment) -- every coordinate is
         // node-local, drawn under the same `composed` transform as
         // every other `NodeKind`, with zero special-casing beyond this
@@ -790,206 +570,6 @@ fn paint_node(
                 }
             }
         }
-        // M14 Phase 1 (§5, §7.3): the box itself paints exactly like a
-        // Rect (same rounded-rect fill), then a real checkmark tick
-        // path strokes on top, its own opacity driven directly by
-        // `check_progress` -- 0.0 (unchecked) paints no visible mark at
-        // all, 1.0 (checked) paints it fully opaque, and any value
-        // between (mid-animation) fades it in/out smoothly. M20 Phase 1
-        // (§7.1, §7.3): the mark's own real color now comes from
-        // `state.mark_tint` -- plain white by default (byte-for-byte
-        // the old hardcoded literal), a real resolved MD3 "on-surface"
-        // color once `Window.set_theme` has pushed one in.
-        NodeKind::Checkbox(state) => {
-            let color = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(color);
-            let radius = node.paint.corner_radius.current;
-            // M38 Phase 1 (§5, §7, §8): the real box path is byte-for-
-            // byte the same geometry `Rect`'s own fill already caches
-            // -- reuses `GeometryCache::rounded_rect_fill` directly
-            // rather than a second, parallel Checkbox-only cache slot.
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
-
-            if state.check_progress.current > 0.0 {
-                let mut mark = BezPath::new();
-                mark.move_to((w * 0.2, h * 0.55));
-                mark.line_to((w * 0.42, h * 0.75));
-                mark.line_to((w * 0.8, h * 0.25));
-                // M25 Phase 2 (§5, §6): a real, previously-missing
-                // compounding -- the checkmark's own real alpha
-                // multiplied only `check_progress` before this, never
-                // `own_alpha` too, so a checked
-                // checkbox mid-fade-out would show its own checkmark
-                // at full alpha while its box correctly faded. Two
-                // independent real "how visible" factors, multiplied
-                // together the same way any compositing pipeline
-                // compounds independent alpha sources.
-                scene.set_paint(with_opacity(
-                    state.mark_tint,
-                    state.check_progress.current * own_alpha,
-                ));
-                scene.set_stroke(Stroke::new((w.min(h) * 0.12).max(1.0)));
-                scene.stroke_path(&mark);
-            }
-        }
-        // M30 Phase 2 Step 1 (§5, §7.3): `Checkbox`'s own real anatomy,
-        // mirrored -- a stroked ring (not a filled box, MD3's real
-        // radio-button shape) plus a real filled dot that scales in
-        // with `select_progress`. The ring's own color rides the same
-        // `select_progress` timeline via `Interpolate for peniko::
-        // Color` (real since §5's own animation core, `lerp_rect`
-        // under the hood) rather than snapping instantly between
-        // `unselected_tint`/`selected_tint` -- a real, smooth color
-        // transition, not two disconnected static states.
-        NodeKind::RadioButton(state) => {
-            let ring_color = state
-                .unselected_tint
-                .interpolate(&state.selected_tint, state.select_progress.current);
-            let stroke_width = (w.min(h) * 0.1).max(2.0);
-            let ring_radius = (w.min(h) / 2.0) - stroke_width / 2.0;
-            scene.set_paint(with_opacity(ring_color, own_alpha));
-            scene.set_stroke(Stroke::new(stroke_width));
-            // M38 Phase 1 (§5, §7, §8): the real ring/dot paths, now
-            // cached -- see `GeometryCache::circle_primary`/
-            // `circle_secondary`'s own doc comments for why a single
-            // node needs two independent real circle cache slots.
-            scene.stroke_path(geometry.circle_primary(id, w / 2.0, h / 2.0, ring_radius.max(0.0)));
-
-            if state.select_progress.current > 0.0 {
-                let dot_radius = (w.min(h) / 2.0) * 0.5 * state.select_progress.current;
-                scene.set_paint(with_opacity(
-                    state.selected_tint,
-                    state.select_progress.current * own_alpha,
-                ));
-                scene.fill_path(geometry.circle_secondary(id, w / 2.0, h / 2.0, dot_radius));
-            }
-        }
-        // M30 Phase 2 Step 2 (§5, §7.3): a real MD3 switch -- track
-        // fill (color-interpolated between `track_off_tint`/`track_
-        // on_tint`, `RadioButton`'s own real technique reused), a real
-        // fading outline stroke (only `track_outline_tint`, MD3's own
-        // real separate unselected-only role -- opacity scaled by
-        // `1.0 - toggle_progress`, so it's gone by the time the switch
-        // is fully on), and a handle that both slides *and* grows.
-        // `handle_radius`/`cx`'s own real formula: verified real MD3
-        // ratios (16dp/32dp track height unselected, 24dp/32dp
-        // selected, `(32-16)/2=8` unselected padding, `(32-24)/2=4`
-        // selected padding) collapse to one clean symmetric travel
-        // range, `h * 0.5` from each edge, at both ends -- not a
-        // coincidence: `handle_radius + padding` is `8+8=16=h*0.5`
-        // unselected and `12+4=16=h*0.5` selected, the same real
-        // total inset either way.
-        NodeKind::Switch(state) => {
-            let t = state.toggle_progress.current;
-            let track_color = state.track_off_tint.interpolate(&state.track_on_tint, t);
-            let track_radius = h / 2.0;
-            scene.set_paint(with_opacity(track_color, own_alpha));
-            // M38 Phase 1 (§5, §7, §8): the real track/outline/handle
-            // paths, now cached -- the track and outline are byte-for-
-            // byte the same real geometry `Rect`'s own fill/border
-            // already cache (reused directly, not a parallel Switch-
-            // only cache slot); the handle shares `circle_primary`
-            // with `RadioButton`'s own ring, since neither kind ever
-            // has both a `circle_primary` and a `RadioButton`-style
-            // ring/dot pair at once.
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, track_radius));
-
-            if t < 1.0 {
-                let stroke_width = (h * 0.06).max(1.5);
-                let inset = stroke_width / 2.0;
-                let outline_radius = (track_radius - inset).max(0.0);
-                scene.set_paint(with_opacity(
-                    state.track_outline_tint,
-                    (1.0 - t) * own_alpha,
-                ));
-                scene.set_stroke(Stroke::new(stroke_width));
-                scene.stroke_path(geometry.rounded_rect_border(id, w, h, outline_radius, inset));
-            }
-
-            let handle_radius = h * (0.25 + 0.125 * t);
-            let handle_color = state.handle_off_tint.interpolate(&state.handle_on_tint, t);
-            let cx = h * 0.5 + t * (w - h);
-            scene.set_paint(with_opacity(handle_color, own_alpha));
-            scene.fill_path(geometry.circle_primary(id, cx, h / 2.0, handle_radius));
-        }
-        // M30 Phase 3 Step 2 (§5, §7): a real MD3 linear progress
-        // indicator -- the track (`track_tint`, spanning the node's
-        // own full width) painted first, then the indicator on top,
-        // its own real width `value.current * w` -- the identical
-        // real "value is a fraction of the node's own box" technique
-        // `NodeKind::Slider`'s own `thumb_position * w` already uses,
-        // just filling a growing bar instead of moving a fixed-size
-        // thumb. Real MD3 anatomy: `corner-none` on both (a flat
-        // rectangle, not rounded), confirmed from Material Web's own
-        // token source, not assumed rounded like most of this
-        // catalog's other shapes.
-        NodeKind::LinearProgress(state) => {
-            scene.set_paint(with_opacity(state.track_tint, own_alpha));
-            scene.fill_path(&Rect::new(0.0, 0.0, w, h).to_path(0.1));
-
-            let indicator_width = state.value.current.clamp(0.0, 1.0) * w;
-            if indicator_width > 0.0 {
-                scene.set_paint(with_opacity(state.indicator_tint, own_alpha));
-                scene.fill_path(&Rect::new(0.0, 0.0, indicator_width, h).to_path(0.1));
-            }
-        }
-        // M30 Phase 3 Step 2 (§5, §7): `LinearProgress`'s own real
-        // circular sibling -- a stroked arc from real MD3's own
-        // 12-o'clock start (`-PI/2`), sweeping clockwise by `value *
-        // 2*PI`. No separate background track ring painted here --
-        // real MD3 anatomy genuinely has none for this indicator
-        // (`CircularProgressState`'s own doc comment has the real,
-        // confirmed finding). Stroke width is the real MD3 4dp/48dp
-        // ratio, scaled to whatever real size this node's own box is,
-        // the same proportional-to-own-box technique `RadioButton`'s
-        // ring/`Switch`'s track outline already use rather than a
-        // fixed literal px value.
-        NodeKind::CircularProgress(state) => {
-            let stroke_width = (w.min(h) * (4.0 / 48.0)).max(1.0);
-            let radius = (w.min(h) / 2.0) - stroke_width / 2.0;
-            let sweep = state.value.current.clamp(0.0, 1.0) * std::f64::consts::TAU;
-            if sweep > 0.0 {
-                // M38 Phase 1 (§5, §7, §8): the real arc path, now
-                // cached -- see `GeometryCache::arc`'s own doc comment.
-                let arc_path = geometry.arc(
-                    id,
-                    w / 2.0,
-                    h / 2.0,
-                    radius.max(0.0),
-                    -std::f64::consts::FRAC_PI_2,
-                    sweep,
-                );
-                scene.set_paint(with_opacity(state.indicator_tint, own_alpha));
-                scene.set_stroke(Stroke::new(stroke_width));
-                scene.stroke_path(arc_path);
-            }
-        }
-        // M14 Phase 2 (§5, §7.3): a real track (a thin bar spanning the
-        // node's own full width, vertically centered) plus a real
-        // thumb (a filled circle at `thumb_position * w`, the node's
-        // own real `background` color -- the same universal field
-        // every other `NodeKind`'s primary fill already uses). M20
-        // Phase 1 (§7.1, §7.3): the track's own real color now comes
-        // from `state.track_tint` -- plain gray by default (byte-for-
-        // byte the old hardcoded literal), a real resolved MD3
-        // "on-surface" color once `Window.set_theme` has pushed one in.
-        NodeKind::Slider(state) => {
-            let track_height = (h * 0.15).max(2.0);
-            let track_rect = Rect::new(0.0, (h - track_height) / 2.0, w, (h + track_height) / 2.0);
-            // M25 Phase 2 (§5, §6): a real, previously-missing
-            // compounding -- only the thumb (below) multiplied by
-            // `own_alpha`; the track painted its own
-            // real `track_tint` raw, a real internal inconsistency
-            // within this one `NodeKind`.
-            scene.set_paint(with_opacity(state.track_tint, own_alpha));
-            scene.fill_path(&track_rect.to_path(0.1));
-
-            let thumb_radius = (h * 0.4).max(4.0);
-            let thumb_x = state.thumb_position.current * w;
-            let thumb_color = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(thumb_color);
-            scene.fill_path(&Circle::new((thumb_x, h / 2.0), thumb_radius).to_path(0.1));
-        }
         // M22 Phase 1 (§5): **real finding, confirmed by a failing
         // test, not assumed:** `vello_hybrid`'s ordinary `set_paint`+
         // `fill_path` path panics on CPU-side pixel data
@@ -1014,12 +594,9 @@ fn paint_node(
         // -- `Scene::draw_texture_rects` has no opacity parameter of
         // its own at all (confirmed via direct source read), unlike
         // every `set_paint`-based fill in this match. `push_layer`'s
-        // own real `opacity` parameter (the identical mechanism the
-        // ripple/hover overlay above already uses for the same real
-        // "an opacity-only layer, no clip") wraps the draw instead --
-        // skipped entirely at `opacity <= 0.0`, the same "don't draw
-        // an invisible thing" precedent the elevation section above
-        // already established.
+        // own real `opacity` parameter (an opacity-only layer, no
+        // clip) wraps the draw instead -- skipped entirely at
+        // `opacity <= 0.0`, so an invisible thing is never drawn.
         NodeKind::Image(state) => {
             let img_width = state.image.width;
             let img_height = state.image.height;
@@ -1039,21 +616,6 @@ fn paint_node(
                 scene.pop_layer();
             }
         }
-        // M23 Phase 1 (§1, §3): `state.path` is real, already-parsed
-        // `BezPath` data in the icon's own fixed `0..ICON_VIEWBOX_SIZE`
-        // SVG-source coordinate space (§1's own real "MD3's own icon
-        // set embedded as `kurbo::BezPath` data" design) -- every
-        // curated icon shares the identical real `viewBox="0 -960 960
-        // 960"`, confirmed via a real fetch of eight distinct icons
-        // directly from Google's own CDN, so a single fixed transform
-        // (translate the real negative-y range up into `0..960`, then
-        // scale into the node's own local box) applies uniformly.
-        // `Scene::fill_path` always draws in whatever transform is
-        // currently active (unlike `Image`'s own `draw_texture_rects`,
-        // whose `SampleRect.transform` is a real, separate per-call
-        // argument needing no such restore) -- `composed` is put back
-        // immediately after, since the post-match ripple/hover overlay
-        // below relies on it still being active.
         // M95 (D4): any vector path, in node-local pixels once fitted
         // into the view box. The fill is the whole path; the stroke is
         // the trimmed outline, centered on the path as in SVG, with round
@@ -1077,156 +639,6 @@ fn paint_node(
                 scene.stroke_path(&stroke);
             }
         }
-        NodeKind::Icon(state) => {
-            let icon_scale = 1.0 / ICON_VIEWBOX_SIZE;
-            let icon_transform = Affine::scale_non_uniform(w * icon_scale, h * icon_scale)
-                * Affine::translate((0.0, ICON_VIEWBOX_SIZE));
-            // M35 Phase 2 (§5, §8): `Split Button`'s own real trailing-
-            // icon rotation -- a real, fresh `Affine::rotate` built
-            // straight from `state.rotation.current` (degrees) every
-            // frame, composed in *local* node space (around this
-            // node's own real center, `(w/2, h/2)`) before the fixed
-            // viewBox-to-local `icon_transform` above, so the icon
-            // visually spins in place regardless of its own internal
-            // viewBox geometry. `IconState`'s own doc comment has the
-            // full real reason this is a dedicated scalar field, not
-            // routed through `PaintProperties.transform`.
-            let rotation = if state.rotation.current != 0.0 {
-                Affine::translate((w / 2.0, h / 2.0))
-                    * Affine::rotate(state.rotation.current.to_radians())
-                    * Affine::translate((-w / 2.0, -h / 2.0))
-            } else {
-                Affine::IDENTITY
-            };
-            scene.set_transform(composed * rotation * icon_transform);
-            scene.set_paint(with_opacity(state.tint.current, own_alpha));
-            scene.fill_path(&state.path);
-            scene.set_transform(composed);
-        }
-        // M39 Phase 2 Step 2 (§5, §7): a real MD3 Time Picker dial --
-        // see `TimePickerDialState`'s own doc comment for the full
-        // real design and its stated v1 scope limits (no digit
-        // labels; plain tick dots stand in for them here). Angle
-        // convention is byte-for-byte `CircularProgress`'s own arm
-        // above: `-PI/2` (12 o'clock) is the real zero point,
-        // sweeping clockwise -- `Tree::update_time_picker_dial_drag`
-        // (`engine-core`) already established this same convention
-        // for the reverse (pointer -> angle) direction, so paint and
-        // drag agree on where every real hour/minute position sits.
-        NodeKind::TimePickerDial(state) => {
-            let face_radius = w.min(h) / 2.0;
-            let (cx, cy) = (w / 2.0, h / 2.0);
-            let center = Point::new(cx, cy);
-
-            scene.set_paint(with_opacity(state.face_tint, own_alpha));
-            scene.fill_path(&Circle::new(center, face_radius).to_path(0.1));
-
-            // 12 real tick-dot positions -- the honest v1 stand-in for
-            // real MD3's own painted digit labels (see the struct doc
-            // comment for why no text is shaped here).
-            let tick_tint = with_opacity(state.hand_tint, 0.4 * own_alpha);
-            let tick_radius = (face_radius * 0.04).max(1.0);
-            let tick_orbit = face_radius * 0.84;
-            scene.set_paint(tick_tint);
-            for i in 0..12 {
-                let angle =
-                    -std::f64::consts::FRAC_PI_2 + (f64::from(i) / 12.0) * std::f64::consts::TAU;
-                let tick_center = center + Vec2::new(angle.cos(), angle.sin()) * tick_orbit;
-                scene.fill_path(&Circle::new(tick_center, tick_radius).to_path(0.1));
-            }
-
-            let hand_width = (face_radius * 0.05).max(1.5);
-            let hand_paint = with_opacity(state.hand_tint, own_alpha);
-            scene.set_stroke(Stroke::new(hand_width));
-            scene.set_paint(hand_paint);
-
-            let hour_angle = -std::f64::consts::FRAC_PI_2
-                + (f64::from(state.hour % 12) / 12.0) * std::f64::consts::TAU;
-            let hour_tip =
-                center + Vec2::new(hour_angle.cos(), hour_angle.sin()) * (face_radius * 0.5);
-            scene.stroke_path(&Line::new(center, hour_tip).to_path(0.1));
-
-            let minute_angle = -std::f64::consts::FRAC_PI_2
-                + (f64::from(state.minute) / 60.0) * std::f64::consts::TAU;
-            let minute_tip =
-                center + Vec2::new(minute_angle.cos(), minute_angle.sin()) * (face_radius * 0.78);
-            scene.stroke_path(&Line::new(center, minute_tip).to_path(0.1));
-
-            // The real selector dot -- MD3's own real "which hand is
-            // currently draggable" indicator, at the active hand's own
-            // tip.
-            let selector_tip = match state.mode {
-                TimePickerDialMode::Hour => hour_tip,
-                TimePickerDialMode::Minute => minute_tip,
-            };
-            scene.set_paint(hand_paint);
-            scene.fill_path(&Circle::new(selector_tip, face_radius * 0.14).to_path(0.1));
-
-            // A small real center hub, the same real anatomy a
-            // physical analog clock face has.
-            scene.fill_path(&Circle::new(center, face_radius * 0.03).to_path(0.1));
-        }
-    }
-
-    // M4 Phase 5 (§7.3): the real ripple/hover state-layer paint --
-    // `interaction_mut`/`Tree::dispatch`'s ripple-spawn/`update_hover`
-    // were already real and correctly animating `InteractionState`
-    // since M3 Phase 5 step 9 and M4 Phase 1 respectively, but nothing
-    // in this real per-node walk ever painted it -- only the standalone
-    // `build_ripple_scene` spike (above) ever drew a ripple, over a
-    // synthetic single-button scene with no real `Tree` at all. Painted
-    // after the node's own fill and before its children, matching real
-    // MD3 (a state layer sits under a component's own content, e.g. an
-    // icon/label). `interaction.tint` (M7 Phase 3, §7.1) is already an
-    // MD3 "on-surface"-resolved plain `Color` by the time it reaches
-    // here -- `engine-py::Window.set_theme`/`Node.enable_interaction`
-    // resolve it, `engine-render` never touches `engine_md3` (§4).
-    // `hover_opacity`/each ripple's own `opacity` are already the real,
-    // live, animated 0.0..~0.12 values `engine-core` computed -- filling
-    // with `with_opacity` at that exact value is a true no-op when it's
-    // `0.0`, not a special-cased skip.
-    if let Some(interaction) = &node.interaction {
-        let radius = node.paint.corner_radius.current;
-        let bounds = geometry.rounded_rect_fill(id, w, h, radius);
-
-        // M25 Phase 2 (§5, §6): a real, previously-missing compounding
-        // -- both the hover overlay and each ripple (below) multiplied
-        // only by their own real, independent opacity (`hover_
-        // opacity`/`ripple.opacity`) before this, never by `node.
-        // paint.opacity.current` too, so a fading node's own ripple/
-        // hover state layer would stay fully visible while everything
-        // else around it faded.
-        scene.set_paint(with_opacity(
-            interaction.tint,
-            interaction.hover_opacity.current * own_alpha,
-        ));
-        scene.fill_path(bounds);
-
-        for ripple in &interaction.ripples {
-            // `ripple.origin` is a real pointer coordinate captured by
-            // `Tree::dispatch` in absolute canvas space (§11.9's own
-            // stated scope: hit-testing/dispatch aren't transform-aware
-            // until Phase 2) -- but this node's own paths are now drawn
-            // in *local* space under `scene.set_transform(composed)`
-            // (M5 Phase 1), so `origin` has to be mapped back into that
-            // same local space via `composed`'s inverse before use.
-            // `push_layer`'s own `clip_path` intersected with the fill
-            // path below is exactly "this ripple, bounded to this
-            // node's own shape" -- no second, nested `push_layer` call
-            // needed to achieve that intersection.
-            let local_origin = composed.inverse() * ripple.origin;
-            let circle = Circle::new(local_origin, ripple.radius.current).to_path(0.1);
-            scene.push_layer(
-                Some(&circle),
-                None,
-                Some((ripple.opacity.current * own_alpha) as f32),
-                None,
-                None,
-            );
-            scene.set_paint(interaction.tint);
-            scene.fill_path(bounds);
-            scene.pop_layer();
-        }
     }
 
     // M8 Phase 2 (§11.7): a `VirtualList`'s own materialized children
@@ -1237,34 +649,18 @@ fn paint_node(
     // legitimately-overflowing content nothing here actually hides).
     if matches!(
         node.kind,
-        NodeKind::VirtualList(_) | NodeKind::Carousel(_) | NodeKind::ScrollView(_)
+        NodeKind::VirtualList(_) | NodeKind::ScrollView(_)
     ) || node.paint.clip_children
     {
-        // M30 Phase 9 Step 5 (§5, §7, §11.7): the real MD3 "clip items
-        // to the strip, so one scrolled off does not spill out" anatomy
-        // (pyCopper's own real `CLIPS_CHILDREN = True`) -- the identical
-        // real clip mechanism `VirtualList` above already uses. No
-        // scroll-offset translation needed here, unlike `VirtualList`:
-        // `Tree::sync_carousel_layouts` already bakes every real item's
-        // shifted position straight into its own `layout_style`, so
-        // `composed` alone (each child's own real `Layout::location`)
-        // is already correct -- the same real design choice that keeps
-        // hit-testing and paint from ever disagreeing (`sync_carousel_
-        // layouts`'s own doc comment).
+        // M32 Phase 3 (§5, §7, §11.7/§11.8): any `NodeKind` takes this
+        // branch when `PaintProperties.clip_children` is genuinely set.
+        // No scroll-offset translation for the general case, the
+        // identical real v1 limit `clip_children`'s own doc comment
+        // states: clipping only, not a new scroll mechanism.
         //
-        // M32 Phase 3 (§5, §7, §11.7/§11.8): `Carousel` always takes
-        // this branch (its own real MD3 anatomy, not an opt-in); any
-        // other `NodeKind` takes it only when `PaintProperties.clip_
-        // children` is genuinely set -- the real, general form of this
-        // same clip, closing "no `NodeKind` besides `VirtualList` clips
-        // today." No scroll-offset translation for the general case
-        // either, the identical real v1 limit `clip_children`'s own doc
-        // comment states: clipping only, not a new scroll mechanism.
-        //
-        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` also always takes
-        // this branch (its own real anatomy always clips, matching
-        // `Carousel`, not an opt-in) -- and, like `Carousel`, needs no
-        // scroll-offset translation here either: `Tree::sync_scroll_
+        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` always takes this
+        // branch (its own real anatomy always clips, not an opt-in) --
+        // and needs no scroll-offset translation here either: `Tree::sync_scroll_
         // view_layouts` already bakes its one real child's own current
         // scroll-shifted position into `layout_style` every frame, the
         // identical bug-avoiding "paint and hit-test read the same real
@@ -1278,7 +674,7 @@ fn paint_node(
         // every frame, the identical fix, so the separate paint-time-
         // only `Affine::translate` this branch used to need for
         // `VirtualList` alone is gone: `composed` alone is now already
-        // correct for it too, exactly like `Carousel`/`ScrollView`.
+        // correct for it too, exactly like `ScrollView`.
         let clip_radius = node.paint.corner_radius.current;
         let clip = geometry.rounded_rect_fill(id, w, h, clip_radius);
         scene.push_layer(Some(clip), None, None, None, None);
@@ -1331,13 +727,9 @@ fn paint_node(
 /// uses), reading `ScrollViewState::thumb_geometry`'s own real,
 /// shared geometry (the identical values `Tree::grabs_scroll_view_
 /// thumb`/`update_scroll_view_thumb_drag` already compute, so paint
-/// and hit-testing/dragging can never drift). **Real, honest v1 scope
-/// choice, stated directly:** a fixed, literal color (real MD3
-/// baseline `outline_variant`, `0xCAC4D0`) at pyCopper's own real
-/// `BAR_OPACITY` (0.55) -- `engine-render` has no `engine-md3`
-/// dependency to resolve a real live theme token from (§4), the
-/// identical "real but not yet theme-aware" scope `TextField`'s own
-/// hardcoded caret color already established. Uncached (no
+/// and hit-testing/dragging can never drift). Painted in the view's
+/// `scrollbar_fill`, or `DEFAULT_SCROLLBAR_FILL` when it sets none.
+/// Uncached (no
 /// `GeometryCache` entry): the thumb's own position changes on every
 /// real scroll tick, so a per-frame cache would rarely hit anyway,
 /// and it's a genuinely small shape (`SCROLLBAR_THICKNESS` = 4px

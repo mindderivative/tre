@@ -2,7 +2,7 @@
 //! border_color`/`border_width` genuinely paint a real stroked border,
 //! inset entirely inside the node's own bounds -- not just that the
 //! new fields compile and tick. Same headless render-to-texture-then-
-//! readback discipline as `checkbox_paint.rs`.
+//! readback discipline as `image_paint.rs`.
 //!
 //! Three claims, kept deliberately separate:
 //!
@@ -29,7 +29,7 @@ const BORDER_WIDTH: f64 = 8.0;
 
 async fn render(border_width: f64) -> (Vec<u8>, u32) {
     let mut tree = Tree::new();
-    let mut paint = PaintProperties::new(FILL, 0.0, 0.0, 1.0);
+    let mut paint = PaintProperties::new(FILL, 0.0, 1.0);
     paint.border_color = engine_core::Animated::new(BORDER);
     paint.border_width = engine_core::Animated::new(border_width);
     let root = tree.insert(

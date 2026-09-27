@@ -1,5 +1,0 @@
-styles:
-  - kind: Rect
-    style: {corner_radius: 4}
-  - id: bump_button
-    style: {corner_radius: 12}

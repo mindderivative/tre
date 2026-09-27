@@ -16,7 +16,7 @@ use pyo3::types::PyDict;
 use taffy::prelude::{AvailableSpace, Dimension};
 use taffy::style::ExpandedDimension;
 
-use crate::dispatch::{HandlerKey, fire_focus_transition, interaction_config};
+use crate::dispatch::{HandlerKey, fire_focus_transition};
 use crate::node::Node;
 use crate::node_kind_props::{KIND_PROPS, KindChange, parse_kind_prop, read_kind_prop};
 use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
@@ -324,7 +324,6 @@ pub(crate) fn animatable_to_py(
     let value = match name {
         "fill" => color_to_py(
             match &node.kind {
-                NodeKind::Icon(state) => *pick(&state.tint, target),
                 NodeKind::TextField(state) => *pick(&state.text_tint, target),
                 _ => *pick(&node.paint.background, target),
             },
@@ -391,7 +390,6 @@ pub(crate) fn animatable_to_py(
 pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyResult<bool> {
     match name {
         "fill" => match &mut node.kind {
-            NodeKind::Icon(state) => state.tint.stop(),
             NodeKind::TextField(state) => state.text_tint.stop(),
             _ => node.paint.background.stop(),
         },
@@ -723,15 +721,6 @@ pub(crate) fn parse_all(
     Ok(changes)
 }
 
-/// The built-in widget kinds whose legacy numeric `value` `get` keeps
-/// reading (the slider's position, a progress indicator's fraction).
-fn has_legacy_value(kind: &NodeKind) -> bool {
-    matches!(
-        kind,
-        NodeKind::Slider(_) | NodeKind::LinearProgress(_) | NodeKind::CircularProgress(_)
-    )
-}
-
 #[pymethods]
 impl Node {
     /// Sets any number of properties at once, atomically: every value is
@@ -758,8 +747,7 @@ impl Node {
 
     /// Reads one property: any `set` property, `focused`, or -- for the
     /// animatable numeric properties -- its current, possibly
-    /// mid-animation value. On a built-in slider or progress indicator,
-    /// `value` stays that widget's numeric value.
+    /// mid-animation value. `value` is the accessibility value.
     fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = {
             let tree = self.tree.borrow();
@@ -784,6 +772,9 @@ impl Node {
             let access = &node.access;
             let any = |v: Bound<'_, PyAny>| v.unbind();
             match name {
+                "kind" => any(crate::node::kind_id(&node.kind)
+                    .into_pyobject(py)?
+                    .into_any()),
                 "role" => ROLES
                     .iter()
                     .find(|(_, r)| *r == access.role)
@@ -792,7 +783,7 @@ impl Node {
                     .into_any()
                     .unbind(),
                 "label" => access.label.clone().into_pyobject(py)?.into_any().unbind(),
-                "value" if !has_legacy_value(&node.kind) => match &access.value {
+                "value" => match &access.value {
                     Some(AccessValue::Text(text)) => {
                         any(text.clone().into_pyobject(py)?.into_any())
                     }
@@ -930,12 +921,11 @@ impl Node {
                     any(focused.into_pyobject(py)?.to_owned().into_any())
                 }
                 _ => {
-                    drop(tree);
-                    return Ok(self
-                        .get_number(name)?
-                        .into_pyobject(py)?
-                        .into_any()
-                        .unbind());
+                    return Err(PyValueError::new_err(format!(
+                        "unknown node property {name:?} -- `get` reads any property `set` \
+                         takes, plus kind, focused, layer_placement, layout_x, layout_y, \
+                         layout_width, and layout_height"
+                    )));
                 }
             }
         };
@@ -971,27 +961,12 @@ impl Node {
         }
     }
 
-    /// Moves keyboard focus to this node, firing `unfocus` and `focus` (and
-    /// the legacy focus handlers) as any focus change does.
+    /// Moves keyboard focus to this node, firing `unfocus` and `focus` as
+    /// any focus change does.
     fn focus(&self, py: Python<'_>) {
-        let config = interaction_config();
-        let transition = self.tree.borrow_mut().set_focus_to(
-            self.id,
-            config.focus_ring_opacity,
-            config.focus_ring_duration,
-            crate::clock::now(&self.tree),
-        );
+        let transition = self.tree.borrow_mut().set_focus_to(self.id);
         if let Some((old, new)) = transition {
-            fire_focus_transition(
-                &self.handlers,
-                &self.tree,
-                &self.context_menus,
-                &self.theme,
-                &self.completions,
-                old,
-                new,
-                py,
-            );
+            fire_focus_transition(&self.handlers, &self.tree, &self.completions, old, new, py);
         }
     }
 }
@@ -1116,7 +1091,6 @@ impl Node {
                     }
                 }
                 Change::Fill(color) => match &mut node.kind {
-                    NodeKind::Icon(state) => state.tint = Animated::new(color),
                     NodeKind::TextField(state) => state.text_tint = Animated::new(color),
                     _ => node.paint.background = Animated::new(color),
                 },

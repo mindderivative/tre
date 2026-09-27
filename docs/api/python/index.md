@@ -1,41 +1,34 @@
 # Python API Reference
 
-The `tre` package's public classes. `App`, `Window`, `Node`, `View`,
-`Component`, `Theme`, `LoopHandle`, `Event`, and `CanvasContext` are
-compiled pyo3 bindings (`tre._core`); `Signal`, `Computed`, `Effect`,
-and `ViewModel` are plain Python, layered on top.
+The `tre` package's public classes and functions, all compiled pyo3
+bindings (`tre._core`), with type stubs for IDEs and `mypy`.
 
 | Class | Purpose |
 | --- | --- |
 | [`App`](app.md) | Opens and drives one or more `Window`s together in one blocking call |
 | [`LoopHandle`](app.md#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s event loop, via `App.thread_handle()` |
-| [`Window`](window.md) | Owns a node tree, its size/title; creates nodes, dispatches input, docking, theming |
+| [`Window`](window.md) | Owns a node tree and its size and title; creates nodes, shows layers, simulates input, docking |
 | [`Node`](node.md) | A handle to one node — events, animation, property reads/writes |
-| [`View`](view.md) | A declarative view, built from a spec `dict` (or a YAML file) into its own node tree |
-| [`Component`](view.md#component) | An embedded, independent instance of another view spec, created via `View.instantiate` |
-| [`Theme`](window.md#theme) | Read-only access to a `Window`'s live MD3 theme resolution, via `window.theme` |
-| [`Event`](node.md#the-event-payload) | The payload a handler receives when it takes one argument |
-| [`Signal`](signal-and-viewmodel.md#signal) / [`Computed`](signal-and-viewmodel.md#computed) / [`Effect`](signal-and-viewmodel.md#effect) | Reactive values, derived values, and side effects (plus `batch`/`untrack`) |
-| [`ViewModel`](signal-and-viewmodel.md#viewmodel) | Wires a `View`'s declared bindings and handlers to Python state |
-| [`CanvasContext`](canvas-context.md) | The draw surface passed to a `Canvas` node's `draw` callback |
+| [`Event`](events.md#event) | What a listener receives when it takes one argument — see [Events and Listeners](events.md#event) |
+| [`Painter`](painter.md) | The drawing surface a canvas node's `draw` callback receives |
 
-*New in 0.3.4*, the [target API](../../design/target-api.md)'s building
-blocks: [Nodes and Properties](properties.md) (`window.create` and every
-property), [Events and Listeners](events.md), [Paint, Paths, and
-Animation](paint.md), and [Layers](layers.md).
+Across classes: [Nodes and Properties](properties.md) lists every kind and
+property, [Events and Listeners](events.md) every event and `Event` field,
+[Paint, Paths, and Animation](paint.md) the paint model, and
+[Layers](layers.md) overlays.
 
 ```python
-from tre import App, Computed, Effect, Signal, View, ViewModel, Window
+from tre import App, Window
 ```
 
 ## Module functions and constants
 
 | Name | Purpose |
 | --- | --- |
-| `MONOSPACE_FONT_FAMILY` | `"Hack Nerd Font Mono"`, the bundled monospace face `add_terminal`/`add_code_editor` shape with — use it for sibling nodes (a gutter, line numbers) that must line up with their grid |
-| `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded (a `.ttf`/`.otf`/`.ttc` file's raw bytes) with every current and future window; returns the family names it contains. See [Theming & Accessibility → Custom fonts](../../guide/theming-and-accessibility.md#custom-fonts) |
+| `MONOSPACE_FONT_FAMILY` | `"Hack Nerd Font Mono"`, the bundled monospace face terminals shape with, and a code editor's natural font — use it for sibling nodes (a gutter, line numbers) that must line up with their grid |
+| `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded (a `.ttf`/`.otf`/`.ttc` file's raw bytes) with every current and future window; returns the family names it contains. See [Text → Fonts](../../guide/text.md#fonts) |
 
 For a narrative walkthrough of how these fit together, start with
 [Getting Started](../../getting-started.md) or the
-[Guide](../../guide/imperative-api.md) section instead — this reference
+[Guide](../../guide/nodes-and-layout.md) instead — this reference
 is organized by class/method, not by task.

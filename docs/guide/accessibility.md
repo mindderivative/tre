@@ -1,0 +1,91 @@
+# Accessibility
+
+Every frame, `tre` builds an [AccessKit](https://github.com/AccessKit/accesskit)
+tree from the node tree and hands it to the platform's screen reader. What
+a node tells assistive technology is what you set on it: `tre` knows boxes
+and paths, not buttons and switches, so a widget declares what it is.
+
+## Role, name, and state
+
+```python
+save = window.create("box", width=96, height=40, corner_radius=20,
+                     fill=(0x67, 0x50, 0xA4, 0xFF),
+                     role="button", label="Save", focusable=True)
+```
+
+- `role` — what the node is: `"button"`, `"checkbox"`, `"switch"`,
+  `"slider"`, `"textbox"`, `"menu"`, `"menuitem"`, `"dialog"`, `"tab"`,
+  `"heading"`, `"list"`, `"listitem"`, and the rest listed on
+  [`Node`](../api/python/node.md#set-get-and-focus).
+- `label` — the name read aloud. A text node's words aren't exposed on their
+  own, so label the widget that shows them.
+- State — `checked`, `selected`, `expanded`, `disabled`, and a heading's
+  `level`. Keep them current as the widget changes: a switch sets
+  `checked` each time it toggles.
+- Value — `value` (a string or number), with `value_min`, `value_max`, and
+  `value_step` for a range such as a slider or progress bar.
+
+A text input and a terminal are `"textbox"` from the start, and a text
+input's value is its text.
+
+## Focus
+
+Screen readers follow keyboard focus, so everything a keyboard user can
+operate should be `focusable=True` — see
+[Focus and the keyboard](events-and-input.md#focus-and-the-keyboard). An
+assistive technology's request to focus a node focuses it exactly as Tab
+would, and `focus_visible` is `True` for it.
+
+## Actions
+
+The actions a node offers follow from its role and state:
+
+- focusable nodes offer focus;
+- button-like roles (button, checkbox, radio, switch, link, menu item, tab,
+  tree item) offer activation;
+- a slider, or any node with a value range, offers increment, decrement, and
+  set-value;
+- a node with `expanded` set offers expand and collapse.
+
+Activation arrives as an ordinary `click`, so a widget that handles clicks
+already handles it. The rest arrive as `a11y_action`:
+
+```python
+volume = 0.5
+
+def set_volume(value):
+    global volume
+    volume = round(min(1.0, max(0.0, value)), 2)
+    slider.set(value=volume)          # keep what's announced current
+
+def on_action(event):
+    if event.action == "increment":
+        set_volume(volume + 0.1)
+    elif event.action == "decrement":
+        set_volume(volume - 0.1)
+    elif event.action == "set_value":
+        set_volume(float(event.value))
+
+slider.on("a11y_action", on_action)
+```
+
+`event.action` is `"increment"`, `"decrement"`, `"expand"`, `"collapse"`,
+`"scroll_into_view"`, or `"set_value"` (with `event.value`).
+
+## Announcing and hiding
+
+`live="polite"` or `"assertive"` makes a node a live region: a screen reader
+announces changes to it — a snackbar's message, a form's error. `a11y_hidden`
+hides a node from assistive technology while it stays on screen, for purely
+decorative parts; `visible=False` hides it from everyone.
+
+## Testing
+
+`window.simulate("a11y_action", node=..., action=..., value=...)` sends an
+assistive request through the same path a screen reader's does, and every
+property reads back with `get`:
+
+```python
+window.simulate("a11y_action", node=slider, action="set_value", value=0.75)
+assert slider.get("value") == 0.75
+```

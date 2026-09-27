@@ -2,9 +2,9 @@
 //! plus an optional custom hit-test override. Both fields here are
 //! plain, inert Rust data -- no `Py<PyAny>` anywhere, deliberately, so
 //! `engine-render::paint_node`/`Tree::hit_test_at` never need to touch
-//! Python on their hot paths. See `PLAN.md` for the full reasoning: the
-//! actual Python "draw callback" is invoked exactly once by
-//! `engine-py::Window.redraw_canvas`, at an app-triggered sync point
+//! Python on their hot paths: the actual Python `draw` callback is
+//! invoked by `engine-py` (when the canvas is created, its `draw` is
+//! set, or `canvas.redraw()` runs), at an app-triggered sync point
 //! outside both paint and hit-testing, and only its *result* -- this
 //! module's types -- ever reaches `Tree`.
 

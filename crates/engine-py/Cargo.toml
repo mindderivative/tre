@@ -18,10 +18,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 engine-core = { path = "../engine-core" }
-engine-md3 = { path = "../engine-md3" }
 engine-render = { path = "../engine-render" }
 engine-platform = { path = "../engine-platform" }
-engine-spec = { path = "../engine-spec" }
 # "extension-module" is deliberately NOT enabled here -- see
 # pyproject.toml's own comment. `cargo build`/`cargo test` build this
 # crate without it (linkable standalone); maturin's actual wheel build
@@ -34,13 +32,6 @@ engine-spec = { path = "../engine-spec" }
 # cost is `inventory`-based registration not supporting Wasm, which this
 # desktop-only project (winit/wgpu throughout) never targets.
 pyo3 = { version = "0.29.2", features = ["macros", "multiple-pymethods"] }
-# tre issue #3, Part A (Tier 1): a real Python object (a dict, built by
-# an app or by Tesserae's own macro-expansion layer) -> any
-# `serde::Deserialize` type -- lets `View`'s new `spec:` param build a
-# real `WidgetSpec` directly, no YAML-text round trip. Version tracks
-# pyo3's own (`0.29.x` for pyo3 `0.29.2`), confirmed via `cargo add
-# pythonize --dry-run` before adding, not assumed.
-pythonize = "0.29.0"
 thiserror = "2.0.20"
 # `App::run` builds and drives its own GPU/window state directly (§8's
 # PyApp.run(), Design Principle 1's one blocking call) -- Rust doesn't
@@ -54,7 +45,7 @@ taffy = "0.14.0"
 wgpu = "29.0.3"
 pollster = "1.0.1"
 winit = "0.30.13"
-vello_hybrid = { version = "0.2.0", features = ["wgpu", "wgpu_default", "text"] }
+vello_hybrid = { version = "0.2.0", features = ["wgpu", "wgpu_default"] }
 # M16 Phase 1 (§3, §9): `tracing` is already a real transitive
 # dependency here (confirmed via `cargo tree -p engine-py -i tracing`
 # -- pulled in by `winit`/`accesskit_unix`/`zbus`), so depending on it
@@ -74,7 +65,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # real via direct source read), not `arboard`'s own default `image-
 # data` feature (image clipboard support, unneeded here).
 arboard = { version = "3.6.1", default-features = false }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # M30 Phase 9 Step 4 (§5, §8, §10): `Terminal`'s own real PTY/VT
 # split -- the identical real "spawn a real pseudo-terminal is OS-
 # specific process management; interpreting its byte stream is the

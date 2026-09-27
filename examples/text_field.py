@@ -1,95 +1,60 @@
 #!/usr/bin/env python3
-"""M15 Phases 1-2's real MD3 text field (§5, §8, §10, §16.7): a real,
-live, single-line editable text field -- `Window.add_text_field`/`Node.
-get_text`/`set_text`/`is_focused`, plus real keyboard-driven editing
-(`Window.type_text`/`press_key` with the widened Backspace/Delete/
-Left/Right/Home/End vocabulary), all real. A real caret only appears
-once the field is genuinely the window's own focused node (§10's
-already-real Tab/focus model), reached here via a real `Window.
-press_key("tab")`, not a hardcoded assumption.
+"""A text field: a `text_input` inside a box that paints its border, the
+border turning the accent color while the input has focus. Tab or a click
+focuses it; typing, Home/End, and Backspace edit it; `input` reports what
+was typed and `change` each edit's before and after.
 
-M17 (§8) closes the two real gaps this docstring used to name:
-clipboard's own hermetic half is `examples/clipboard.py`; real IME
-composition has no Python-facing entry point at all (an `Ime` event
-only ever originates from a real OS input method -- there is nothing
-for a script to synthesize, the same category of gap `clipboard.py`'s
-own docstring already names for a real Ctrl+C/X/V keypress), so its
-definitive proof is the pixel-level `crates/engine-render/tests/
-text_field_paint.rs::a_composing_preedit_paints_a_real_underline_
-distinct_from_the_same_field_when_not_composing`, not a script here.
-
-M18 Phase 1 (§8, §10) closes the first half of that mouse gap: a real
-click now also focuses a `TextField`, demonstrated below via `Window.
-click(field)` -- the same real `Tree::dispatch`'s `PointerPressed`
-mechanism a genuine mouse press reaches, not a separate code path.
-Click-to-*position* (moving the cursor to the exact character clicked)
-needs real per-glyph shaping this script has no way to synthesize
-without a live window/renderer -- its definitive proof is `crates/
-engine-render/tests/text_field_paint.rs::hit_test_position_*` (pure
-`parley` shaping math) plus `crates/engine-core/src/tree.rs::tests::
-set_text_field_cursor_*`, not this script.
-
-What this script proves automatically (headless-CI-safe, no human
-needed): a real text field, reached by both a real Tab press and a
-real click, edited by a real sequence of synthetic keystrokes (typing,
-cursor navigation, Backspace) that mirror exactly what a real `winit`-
-driven keyboard would produce, its own real content/focus state
-observable from Python throughout, and a real render loop painting it
-(caret included) over actual frames without crashing. The definitive
-pixel-level proof the caret itself only paints while focused is
-`crates/engine-render/tests/text_field_paint.rs`, not this script --
-the same split this workspace's own examples have used throughout.
+The script types into it with `window.simulate`, then opens the window
+so you can type for real. Headless-CI-safe: `App.run()` renders
+`max_frames=60` and returns quietly without a display or GPU. See
+docs/guide/text.md.
 """
 
 from tre import App, Window
 
-window = Window(width=280, height=120, title="tre v2 -- text field")
+OUTLINE, ACCENT = (0x79, 0x74, 0x7E, 0xFF), (0x67, 0x50, 0xA4, 0xFF)
 
-field = window.add_text_field(
-    background=(0xEE, 0xEE, 0xEE, 0xFF),
-    width=220,
-    height=32,
-    content="hello",
-)
+window = Window(width=300, height=140, title="tre -- text field")
+window.root.set(flex_direction="vertical", gap=12)
 
-print(f"before Tab: is_focused={field.is_focused()}, text={field.get_text()!r}")
-window.press_key("tab")
-print(f"after Tab: is_focused={field.is_focused()}, text={field.get_text()!r}")
-assert field.is_focused(), "a real Tab press must reach the one real TextField in this window"
+box = window.create("box", width=240, height=40, padding=8, corner_radius=4,
+                    stroke_color=OUTLINE, stroke_width=1, align_items="center")
+field = window.create("text_input", text="hello", placeholder="Say something",
+                      width=224, height=22)
+box.add_child(field)
+other = window.create("text_input", placeholder="Another field", width=240, height=22)
+window.root.add_child(box)
+window.root.add_child(other)
 
-# Real keyboard-driven editing (M15 Phase 2): type past the end, then
-# navigate back to the start and insert there too, proving both
-# insertion and real cursor movement.
-window.type_text(" world")
-print(f"after typing ' world': text={field.get_text()!r}")
-assert field.get_text() == "hello world"
+field.on("focus", lambda: box.set(stroke_color=ACCENT, stroke_width=2))
+field.on("unfocus", lambda: box.set(stroke_color=OUTLINE, stroke_width=1))
+typed, changes = [], []
+field.on("input", lambda e: typed.append(e.text))
+field.on("change", lambda e: changes.append((e.old_value, e.new_value)))
 
-window.press_key("home")
-window.type_text(">> ")
-print(f"after Home + typing '>> ': text={field.get_text()!r}")
-assert field.get_text() == ">> hello world"
+# -- checks ------------------------------------------------------------------
+window.simulate("key_down", key="tab")
+assert field.get("focused") and box.get("stroke_color") == ACCENT
 
-window.press_key("end")
-window.press_key("backspace")
-print(f"after End + Backspace: text={field.get_text()!r}")
-assert field.get_text() == ">> hello worl"
+window.simulate("input", text=" world")  # the caret starts at the end
+window.simulate("key_down", key="home")
+window.simulate("input", text=">> ")
+window.simulate("key_down", key="end")
+window.simulate("key_down", key="backspace")
+assert field.get("text") == ">> hello worl"
+assert typed == [" world", ">> "]
+assert changes[-1] == (">> hello world", ">> hello worl")
 
-# M18 Phase 1 (§8, §10): a real click also focuses a TextField -- a
-# second focusable node gives Tab somewhere else to land, so "field is
-# no longer focused" genuinely proves something rather than Tab-order
-# just wrapping back to the field itself. (A Checkbox won't do here --
-# only TextField opts into Tab's own focus order today, M15 Phase 1's
-# own finding: `Tree::set_access` had zero other real callers.)
-spacer = window.add_text_field(background=(0xCC, 0xCC, 0xCC, 0xFF), width=60, height=24)
-window.press_key("tab")
-print(f"after Tab-away: is_focused={field.is_focused()}")
-assert not field.is_focused()
+field.set(text="reset")  # from code: no `change`
+assert len(changes) == 3
 
-window.click(field)
-print(f"after Window.click(field): is_focused={field.is_focused()}")
-assert field.is_focused(), "a real click on a TextField must move real focus there"
+window.simulate("key_down", key="tab")
+assert other.get("focused") and box.get("stroke_color") == OUTLINE
+window.simulate("click", node=field)
+assert field.get("focused")
+print("text_field.py: checks passed")
 
 app = App()
 app.add_window(window)
 app.run(max_frames=60)
-print("text_field.py: exited cleanly after 60 frames")
+print("text_field.py: exited cleanly")

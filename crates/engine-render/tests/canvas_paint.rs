@@ -153,7 +153,7 @@ fn canvas_draw_commands_paint_real_pixels_composed_with_an_ancestor_transform() 
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
 
         let mut state = CanvasState::new();
@@ -186,7 +186,7 @@ fn canvas_draw_commands_paint_real_pixels_composed_with_an_ancestor_transform() 
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(root, canvas);
 
@@ -259,7 +259,7 @@ fn canvas_draw_commands_compound_with_the_nodes_own_real_opacity() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
 
         let mut state = CanvasState::new();
@@ -281,7 +281,7 @@ fn canvas_draw_commands_compound_with_the_nodes_own_real_opacity() {
                 ..Default::default()
             },
             // opacity = 0.5, the fourth positional field.
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 0.5),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.5),
         );
         tree.add_child(root, canvas);
 

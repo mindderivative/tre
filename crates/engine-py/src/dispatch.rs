@@ -1,47 +1,29 @@
-//! M4 Phase 1 step 3's shared "act on a `DispatchOutcome`" logic --
-//! factored out once two real call sites needed it: `app.rs`'s own
-//! `App.run()` render-loop `on_input` closure (the real `winit`-driven
-//! path), and `window.rs`'s `Window.click()` (a direct, programmatic
-//! "click this node" entry point, the same "expose a direct method
-//! since real dispatch has nowhere else to originate outside a live
-//! window" pattern every prior interaction step used -- `Tree::
-//! spawn_ripple`, `Tree::open_overlay`, etc.). One copy of the MD3-value
-//! `InteractionConfig` constants and the click-handler lookup, not two.
-//!
-//! M4 Phase 6 (§16.2): generalized from `run_activation`/
-//! `click_handlers: HashMap<NodeId, Py<PyAny>>` (`Click`-only) into
-//! `run_dispatch_outcome`/`handlers: HashMap<(NodeId, EventKind),
-//! Py<PyAny>>`, once a second and third real event kind
-//! (`HoverEnter`/`HoverExit`, §7.3) needed the exact same "look up a
-//! registered handler for this node, call it" shape -- the Rule of
-//! Three, not premature abstraction: duplicating the original
-//! `click_handlers` shape a second and third time would have meant two
-//! more `Rc<RefCell<HashMap<...>>>` fields apiece on `Node`/`PyWindow`/
-//! `View`, for what is really one underlying concept re-keyed.
+//! The shared input pipeline and "act on a `DispatchOutcome`" logic --
+//! one copy used by both `App.run()`'s live, `winit`-driven loop
+//! (`app.rs`) and `window.simulate(...)` (`window_events.rs`): the
+//! `HandlerMap` every stored Python callback lives in, `process_input`,
+//! `run_dispatch_outcome`, and the clipboard helpers.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{
-    CompletionHandle, DispatchOutcome, EventKind, InputEvent, InteractionConfig, NodeId, NodeKind,
-    Tree,
+    CompletionHandle, DispatchOutcome, InputEvent, NodeId, NodeKind, PointerButton, Tree,
 };
-use peniko::kurbo::Point;
 use pyo3::prelude::*;
-use taffy::prelude::{AvailableSpace, Size};
 
+use crate::dock::{self, SharedDockState};
 use crate::event::{Event, NodeContext, changed_value_to_py};
-use crate::listeners::{self, EventType};
-use crate::window::SharedTheme;
+use crate::listeners::{self, EventType, WindowEventType, WindowListenerMap};
+use crate::terminal::TerminalSession;
 
 /// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
 /// `App::run`'s own top is *not* the one guaranteed place a `tracing`
-/// subscriber needs to be live. `Window.click`/`Node.set_checked`/
-/// `View.click` (and every other synthetic, no-live-window-needed
-/// dispatch entry point this whole project's own test suite relies
-/// on, deliberately, since M4 Phase 1 step 3) are all real,
-/// independently callable without `App::run()` ever running --
+/// subscriber needs to be live. `window.simulate(...)` (and every
+/// other no-live-window-needed dispatch entry point this whole
+/// project's own test suite relies on) is callable without
+/// `App::run()` ever running --
 /// confirmed the hard way, by a real pytest failure: two tests using
 /// exactly those entry points captured empty stderr even though the
 /// real event fired, because no subscriber had been installed yet in
@@ -106,29 +88,20 @@ pub(crate) fn log_uncaught_exception(err: &PyErr, py: Python<'_>) {
     tracing::error!(%traceback, "uncaught exception in a Python callback");
 }
 
-/// The one real shape shared by `Node`/`PyWindow`/`View`'s handler
-/// storage -- named here (clippy's own `type_complexity` lint, not just
-/// convenience) since this module is the one place that actually
-/// interprets it.
-///
-/// M54 Phase 2 (§8, §16.2): the stored value widened from a bare
-/// `Py<PyAny>` to `(Py<PyAny>, bool)` -- the `bool` is `wants_event_
-/// payload`'s own real, one-time answer for this handler, arity-
-/// sniffed once at registration (`Node.set_on_click`/etc.), not
-/// re-inspected on every real call. Backward compatible with every
-/// pre-existing zero-argument handler by construction: `call_handler`
-/// only ever calls `handler.call1(py, (event,))` when this is `true`.
+/// A window's stored Python callbacks, shared by its `Node` handles --
+/// named here (clippy's `type_complexity` lint) since this module is the
+/// one place that interprets it. The `bool` is `wants_event`'s answer for
+/// the callback, arity-sniffed once at registration: a listener that
+/// declares a parameter gets the `Event`, one that doesn't is called
+/// plain.
 pub(crate) type HandlerMap = Rc<RefCell<HashMap<(NodeId, HandlerKey), (Py<PyAny>, bool)>>>;
 
-/// M94: what a `HandlerMap` entry is registered for -- a legacy
-/// `set_on_*` handler (`Legacy`, non-bubbling, fired exactly as before) or
-/// a `node.on(...)` listener (`Listener`, routed by `listeners.rs` with the
-/// M93 propagation model). One map for both, so no `Node` needed a new
-/// field and every existing GC traversal already covers listeners. M100
-/// deletes `Legacy`.
+/// M94: what a `HandlerMap` entry is registered for -- a `node.on(...)`
+/// listener (`Listener`, routed by `listeners.rs` with the M93
+/// propagation model) or one of a node's own callbacks. M100 removed the
+/// legacy, non-bubbling `set_on_*` handlers that shared this map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum HandlerKey {
-    Legacy(EventKind),
     Listener(EventType),
     /// M96: a node's own callbacks -- a canvas's `draw`, a virtual list's
     /// `materialize` and `size_hint` -- stored here for the same GC and
@@ -140,18 +113,15 @@ pub(crate) enum HandlerKey {
 
 /// M54 Phase 2 (§8, §16.2): arity-sniffs `handler` at registration time
 /// -- `true` when it declares at least one real *required* positional
-/// parameter (it wants the new `Event` argument), `false` for the
-/// 133+ pre-existing zero-argument handlers this project's own
-/// `tests`/`examples` already register, confirmed via exhaustive grep
-/// before this change (M54's own scoping investigation). Uses Python's
+/// parameter (it wants the `Event` argument), `false` for a
+/// zero-argument handler. Uses Python's
 /// own `inspect.signature` -- the general, correct way to introspect
 /// an arbitrary callable (a plain function, a bound method, anything
 /// with `__call__`), not `__code__.co_argcount` (which only exists on
 /// plain functions, not every callable this codebase's own real
 /// handlers can be). A parameter with a real default value (`lambda
-/// i=i: ...`, used pervasively for closing over a loop index --
-/// `examples/segmented_button.py`, `tests/test_date_picker.py`, etc.)
-/// counts as *not required*, the same real distinction Python's own
+/// i=i: ...`, the usual way to close over a loop index) counts as
+/// *not required*, the same real distinction Python's own
 /// call semantics already make -- `VAR_POSITIONAL`/`VAR_KEYWORD`/
 /// `KEYWORD_ONLY` parameters are skipped too, since none of them make
 /// a plain positional `Event` argument mandatory.
@@ -178,26 +148,8 @@ fn wants_event_payload(py: Python<'_>, handler: &Py<PyAny>) -> PyResult<bool> {
     Ok(false)
 }
 
-/// `Node.set_on_click`/`set_on_hover_enter`/`set_on_hover_exit`/
-/// `set_on_change` (`node.rs`) and `view.rs`'s equivalent declarative
-/// registration path all funnel through this one real place to insert
-/// into a `HandlerMap` -- arity-sniffs once here, not duplicated at
-/// each of those five real call sites.
-pub(crate) fn register_handler(
-    handlers: &HandlerMap,
-    key: (NodeId, EventKind),
-    handler: Py<PyAny>,
-    py: Python<'_>,
-) -> PyResult<()> {
-    let wants_event = wants_event_payload(py, &handler)?;
-    handlers
-        .borrow_mut()
-        .insert((key.0, HandlerKey::Legacy(key.1)), (handler, wants_event));
-    Ok(())
-}
-
-/// M94: `node.on(event, handler)`'s own registration -- the same
-/// arity-sniffing as `register_handler`, under a `Listener` key.
+/// M94: `node.on(event, handler)`'s own registration -- arity-sniffed
+/// by `wants_event_payload`, under a `Listener` key.
 pub(crate) fn register_listener(
     handlers: &HandlerMap,
     node: NodeId,
@@ -221,7 +173,7 @@ pub(crate) fn wants_event(py: Python<'_>, handler: &Py<PyAny>) -> PyResult<bool>
 /// M9 Phase 2 (§5): the real registry `Node.animate(..., on_complete=
 /// ...)` mints a fresh handle into, and `run_completions` (below)
 /// drains -- the same `Rc<RefCell<...>>`-shared-into-every-`Node`
-/// shape `HandlerMap`/`SharedTheme` already use. `next_id` is a plain
+/// shape `HandlerMap` already uses. `next_id` is a plain
 /// monotonic counter, not `NodeId`-derived: a `CompletionHandle` names
 /// one specific *animation*, not a node -- the same node can have
 /// several real completions registered (each of its own animatable
@@ -253,59 +205,11 @@ impl CompletionRegistry {
 
 pub(crate) type SharedCompletions = Rc<RefCell<CompletionRegistry>>;
 
-/// Real review finding: `window.rs`'s `click`/`hover`/`scroll`/
-/// `right_click` and `view.rs`'s `click`/`hover`/`right_click` each
-/// built this identical "compute layout, then find a node's real
-/// center point" block by hand -- 7 near-copies differing only in
-/// which root to lay out from and which `AvailableSpace` to lay out
-/// against (`Window`'s own real, fixed size vs. `View`'s own
-/// `MaxContent`, since it has no window size of its own). Factored
-/// out here, the same already-established real home for logic shared
-/// between `window.rs` and `view.rs` (`interaction_config`/
-/// `run_dispatch_outcome`/`open_context_menu`, all just below).
-pub(crate) fn node_center(
-    tree: &Rc<RefCell<Tree>>,
-    root: NodeId,
-    available: Size<AvailableSpace>,
-    node: NodeId,
-) -> Point {
-    let mut tree = tree.borrow_mut();
-    tree.compute_layout(root, available);
-    let (x, y) = tree.absolute_position(node);
-    let layout = tree.layout(node);
-    Point::new(
-        x + f64::from(layout.size.width) / 2.0,
-        y + f64::from(layout.size.height) / 2.0,
-    )
-}
-
-/// `Tree::dispatch`'s own MD3-value inputs (§1 Locked Decisions keeps
-/// `engine-core` itself MD3-agnostic, so these live at the real call
-/// sites instead). Real MD3 spec values where this codebase can express
-/// them today (hover/focus state-layer opacity, MD3's own 0.08/0.12);
-/// `ripple_radius` is a flat approximation, not computed per-node from
-/// its own size the way real MD3 ripples cover a surface's diagonal
-/// from the press point -- `interaction.rs`'s own doc comment already
-/// named the real two-phase/per-node ripple model as separate, later
-/// scope, unchanged by this step.
-pub(crate) fn interaction_config() -> InteractionConfig {
-    InteractionConfig {
-        hover_opacity: 0.08,
-        hover_duration: std::time::Duration::from_millis(100),
-        focus_ring_opacity: 1.0,
-        focus_ring_duration: std::time::Duration::from_millis(100),
-        ripple_radius: 100.0,
-        ripple_opacity: 0.12,
-        ripple_duration: std::time::Duration::from_millis(300),
-    }
-}
-
 /// M54 Phase 2 (§8, §16.2): `Changed`'s own real `new_value`, read
 /// fresh from `tree` -- deliberately *not* carried on `DispatchOutcome`
 /// itself (`ChangedValue` only ever holds the pre-mutation value,
-/// engine-core's own doc comment on it explains why). Covers exactly
-/// the three real `NodeKind`s `Tree::dispatch` can produce a `Changed`
-/// outcome for (`tree.rs`'s own producer sites, confirmed via grep) --
+/// engine-core's own doc comment on it explains why). Covers the one
+/// `NodeKind` `Tree::dispatch` produces a `Changed` outcome for --
 /// `None` for any other kind, matching `Event`'s own "never fabricate
 /// a field this event's real kind has nothing to say about" contract.
 pub(crate) fn read_new_changed_value(
@@ -320,33 +224,18 @@ pub(crate) fn read_new_changed_value(
         NodeKind::TextField(state) => Ok(Some(
             state.content.clone().into_pyobject(py)?.unbind().into_any(),
         )),
-        NodeKind::Slider(state) => Ok(Some(
-            state
-                .thumb_position
-                .current
-                .into_pyobject(py)?
-                .unbind()
-                .into_any(),
-        )),
-        NodeKind::TimePickerDial(state) => Ok(Some(
-            (state.hour, state.minute)
-                .into_pyobject(py)?
-                .unbind()
-                .into_any(),
-        )),
         _ => Ok(None),
     }
 }
 
 /// The real "meaning-dependent" half `Tree::dispatch` leaves for its own
 /// caller (§2 Design Principle 6) -- every mechanical consequence
-/// (hover, focus movement, ripple-spawn-on-press) already happened
-/// inside `dispatch` itself. Interprets every real outcome today:
-/// `Activated` (look up and call a registered `Click` handler),
-/// `HoverChanged` (call the old node's `HoverExit` handler, if any, and
-/// the new node's `HoverEnter` handler, if any), and `Changed` (a real
-/// `Slider`/`TextField`/`TimePickerDial` edit `Tree::dispatch` itself
-/// detected) -- `DispatchOutcome::None` is a no-op.
+/// (hover, focus movement) already happened inside `dispatch` itself.
+/// Delivers each outcome to `node.on(...)` listeners (`listeners.rs`):
+/// `Activated`/`SecondaryActivated` as `click`/`secondary_click`,
+/// `HoverChanged` as the hover pair, `FocusChanged` as the focus pair,
+/// and `Changed` (a `text_input` edit) as `change` --
+/// `DispatchOutcome::None` is a no-op.
 ///
 /// M54 Phase 2 (§8, §16.2): widened to also take `event: Option<&
 /// InputEvent>` -- the real, found-while-implementing-Phase-1
@@ -364,15 +253,11 @@ pub(crate) fn read_new_changed_value(
 /// "don't fabricate" contract a keyboard-triggered `Click` already
 /// gets. `tree` is also new here, needed only for `Changed`'s own
 /// `new_value` (`read_new_changed_value`, above) -- borrowed
-/// immutably, released before any real callback runs, the same
-/// discipline `call_handler` itself already established for
-/// `handlers`.
+/// immutably, released before any real callback runs.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_dispatch_outcome(
     handlers: &HandlerMap,
     tree: &Rc<RefCell<Tree>>,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    theme: &SharedTheme,
     completions: &SharedCompletions,
     outcome: &DispatchOutcome,
     event: Option<&InputEvent>,
@@ -381,28 +266,11 @@ pub(crate) fn run_dispatch_outcome(
     let ctx = NodeContext {
         tree,
         handlers,
-        context_menus,
-        theme,
         completions,
     };
     match outcome {
         DispatchOutcome::Activated(node) => {
-            let node = *node;
-            let (position, button) = match event {
-                Some(InputEvent::PointerReleased { position, button }) => {
-                    (Some((position.x, position.y)), Some(*button))
-                }
-                // A real keyboard `Enter`/`Space` activation, or a real
-                // AccessKit-driven activation with no originating
-                // pointer/keyboard event at all -- no position/button
-                // exists to report; `None` rather than a fabricated
-                // `(0.0, 0.0)`/synthetic button.
-                _ => (None, None),
-            };
-            call_handler(handlers, node, EventKind::Click, py, |py| {
-                Event::click(py, node, &ctx, position, button)
-            });
-            deliver_click(&ctx, EventType::Click, node, event, py);
+            deliver_click(&ctx, EventType::Click, *node, event, py);
         }
         DispatchOutcome::HoverChanged { old, new } => {
             let (old, new) = (*old, *new);
@@ -412,34 +280,13 @@ pub(crate) fn run_dispatch_outcome(
                 Some(InputEvent::PointerMoved { position }) => Some(*position),
                 _ => None,
             };
-            let position = point.map(|p| (p.x, p.y));
-            if let Some(old) = old {
-                call_handler(handlers, old, EventKind::HoverExit, py, |py| {
-                    Event::hover(py, EventKind::HoverExit, old, &ctx, position)
-                });
-            }
-            if let Some(new) = new {
-                call_handler(handlers, new, EventKind::HoverEnter, py, |py| {
-                    Event::hover(py, EventKind::HoverEnter, new, &ctx, position)
-                });
-            }
             listeners::route_hover(&ctx, old, new, point, py);
         }
-        // M14 Phase 3 (§16.7), widened M54 Phase 2: a real `Slider`/
-        // `TextField`/`TimePickerDial` edit `Tree::dispatch` itself
-        // detected -- reuses the same real `call_handler` every other
-        // mechanical outcome already does, registered via `Node.
-        // set_on_change`. `old_value` comes straight from `engine-
-        // core`'s own real snapshot (Phase 1); `new_value` is read
-        // fresh from `tree` here, after `dispatch()` has already
-        // returned.
+        // M14 Phase 3, M54 Phase 2: a text input edit `Tree::dispatch`
+        // detected -- `old_value` comes from `engine-core`'s snapshot;
+        // `deliver_change` reads the new value fresh from `tree`.
         DispatchOutcome::Changed { node, old_value } => {
             let node = *node;
-            call_handler(handlers, node, EventKind::Change, py, |py| {
-                let old = Some(changed_value_to_py(py, old_value)?);
-                let new = read_new_changed_value(&tree.borrow(), node, py)?;
-                Event::change(py, node, &ctx, old, new)
-            });
             match changed_value_to_py(py, old_value) {
                 Ok(old) => deliver_change(&ctx, node, Some(old), py),
                 Err(err) => log_uncaught_exception(&err, py),
@@ -452,22 +299,10 @@ pub(crate) fn run_dispatch_outcome(
         // (`app.rs`) calls directly, since that path never reaches
         // `Tree::dispatch`/this function at all.
         DispatchOutcome::FocusChanged { old, new } => {
-            fire_focus_transition(
-                handlers,
-                tree,
-                context_menus,
-                theme,
-                completions,
-                *old,
-                *new,
-                py,
-            );
+            fire_focus_transition(handlers, tree, completions, *old, *new, py);
         }
-        // M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning is a
-        // context menu, handled by `open_context_menu` below -- a
-        // separate function, not a new match arm here, since it needs
-        // `&mut Tree` access this function's callback-only signature
-        // doesn't carry.
+        // M4 Phase 7 (§11.3): a secondary click -- what it means (a
+        // context menu, say) is the listener's to decide.
         DispatchOutcome::SecondaryActivated(node) => {
             deliver_click(&ctx, EventType::SecondaryClick, *node, event, py);
         }
@@ -496,9 +331,14 @@ fn deliver_click(
 }
 
 /// M94: the `change` listener on a `text_input` whose text the user just
-/// changed -- text-only, per M93 (the MD3 slider and dial keep their
-/// legacy `set_on_change`), and non-bubbling. `old` is the text before.
-fn deliver_change(ctx: &NodeContext<'_>, node: NodeId, old: Option<Py<PyAny>>, py: Python<'_>) {
+/// changed -- text-only, per M93, and non-bubbling. `old` is the text
+/// before.
+pub(crate) fn deliver_change(
+    ctx: &NodeContext<'_>,
+    node: NodeId,
+    old: Option<Py<PyAny>>,
+    py: Python<'_>,
+) {
     let is_text_input = matches!(
         ctx.tree.borrow().get(node).map(|n| &n.kind),
         Some(NodeKind::TextField(_))
@@ -519,64 +359,201 @@ fn deliver_change(ctx: &NodeContext<'_>, node: NodeId, old: Option<Py<PyAny>>, p
     });
 }
 
+/// M100: a window's state the input pipeline reaches beyond its tree --
+/// docking, window listeners, and terminal sessions.
+pub(crate) struct WindowIo<'a> {
+    pub(crate) dock: &'a SharedDockState,
+    pub(crate) listeners: &'a WindowListenerMap,
+    pub(crate) terminals: &'a SharedTerminals,
+}
+
+/// A window's terminal sessions, by node.
+pub(crate) type SharedTerminals = Rc<RefCell<HashMap<NodeId, TerminalSession>>>;
+
 /// M94: the one input pipeline, shared by `App.run()`'s live loop and
 /// `Window.simulate`: resolve the listener target before dispatch, let
 /// `Tree::dispatch` do everything mechanical, deliver the raw event to
-/// `node.on(...)` listeners, then the outcome to legacy handlers and
-/// listeners alike, then open whatever context menu a right-click
-/// requested. The caller has already computed layout.
+/// `node.on(...)` listeners, then the outcome to listeners. The caller has already computed layout. M99: a
+/// docking drag rides the same pipeline -- the pointer's moves report
+/// `dock_target` and the primary button's release drops the panel and
+/// reports `dock_drop`. M100: so do a focused terminal's keys, which go
+/// to its PTY instead of the tree, a wheel over a terminal, and the
+/// Ctrl shortcuts a text input or terminal handles itself -- so
+/// `simulate` drives every one of them exactly as a live key does.
 pub(crate) fn process_input(
     ctx: &NodeContext<'_>,
+    io: &WindowIo<'_>,
     root: NodeId,
     event: &InputEvent,
     py: Python<'_>,
 ) -> DispatchOutcome {
+    if send_to_focused_terminal(ctx, io, event) {
+        return DispatchOutcome::None;
+    }
     listeners::note_input_modality(event);
     let target = listeners::target_before(&ctx.tree.borrow(), root, event);
-    let outcome = ctx.tree.borrow_mut().dispatch(
-        root,
-        event.clone(),
-        &interaction_config(),
-        crate::clock::now(ctx.tree),
-    );
+    let outcome = ctx
+        .tree
+        .borrow_mut()
+        .dispatch(root, event.clone(), crate::clock::now(ctx.tree));
     listeners::route_input(ctx, target, event, py);
     // M96: layers an outside press or Escape asked to dismiss.
     let dismissed = ctx.tree.borrow_mut().take_dismissals();
     for layer in dismissed {
         listeners::deliver(ctx, py, listeners::EventType::Dismiss, layer, None, |_| {});
     }
+    dock_drag(ctx, io.dock, io.listeners, root, event, py);
     run_dispatch_outcome(
         ctx.handlers,
         ctx.tree,
-        ctx.context_menus,
-        ctx.theme,
         ctx.completions,
         &outcome,
         Some(event),
         py,
     );
-    open_context_menu(ctx.tree, ctx.context_menus, root, &outcome);
+    shortcuts(ctx, io, root, event, py);
     outcome
 }
 
-/// M55 (§10, §16.2): the real `FocusEnter`/`FocusExit` firing logic,
-/// shared by two real callers -- `run_dispatch_outcome`'s own
+/// The focused node, when it's a terminal.
+fn focused_terminal(tree: &Tree) -> Option<NodeId> {
+    tree.focused()
+        .filter(|&id| matches!(tree.get(id).map(|n| &n.kind), Some(NodeKind::Terminal(_))))
+}
+
+/// M30 Phase 9 Step 4, M32 Phase 4: a focused terminal claims a key
+/// entirely -- its bytes, or a Ctrl+letter's control byte (SIGINT for
+/// Ctrl+C), go to the PTY, and the tree never sees it (Tab included, which
+/// would otherwise move focus away). Whether it claimed `event`.
+fn send_to_focused_terminal(ctx: &NodeContext<'_>, io: &WindowIo<'_>, event: &InputEvent) -> bool {
+    let Some(terminal) = focused_terminal(&ctx.tree.borrow()) else {
+        return false;
+    };
+    let bytes = crate::terminal::input_bytes_for(event)
+        .or_else(|| crate::terminal::control_byte_for(event).map(|byte| vec![byte]));
+    let Some(bytes) = bytes else {
+        return false;
+    };
+    if let Some(session) = io.terminals.borrow_mut().get_mut(&terminal) {
+        session.write_input(&bytes);
+    }
+    true
+}
+
+/// M100: what a text input or terminal does with the clipboard shortcuts
+/// and a wheel -- moved here from the live loop, so `simulate` reaches
+/// them too. Copy, cut, and paste act on the focused text input (paste
+/// types the clipboard's text, so `input` and `change` fire as for any
+/// typing); Ctrl+A selects all of it; Ctrl+Shift+C copies a focused
+/// terminal's selection; a wheel over a terminal scrolls its history.
+fn shortcuts(
+    ctx: &NodeContext<'_>,
+    io: &WindowIo<'_>,
+    root: NodeId,
+    event: &InputEvent,
+    py: Python<'_>,
+) {
+    match event {
+        InputEvent::Copy => {
+            copy_focused_selection_to_clipboard(ctx.tree);
+        }
+        InputEvent::Cut => {
+            cut_focused_selection_to_clipboard(ctx.tree, ctx.handlers, ctx.completions, py);
+        }
+        InputEvent::PasteRequested => {
+            if let Some(text) = read_clipboard() {
+                process_input(ctx, io, root, &InputEvent::TextInput(text), py);
+            }
+        }
+        InputEvent::ControlChar('a') => {
+            let focused = ctx.tree.borrow().focused();
+            if let Some(field) = focused {
+                ctx.tree.borrow_mut().select_all_text_field(field);
+            }
+        }
+        InputEvent::TerminalCopyRequested => {
+            let selected = {
+                let tree = ctx.tree.borrow();
+                focused_terminal(&tree).and_then(|id| tree.terminal_selected_text(id))
+            };
+            if let Some(text) = selected {
+                write_clipboard(&text);
+            }
+        }
+        // M32 Phase 5: a wheel over a terminal moves its viewport into
+        // scrollback -- a positive wheel `y` (away from the user) reveals
+        // older history.
+        InputEvent::Scroll { delta, position } => {
+            let hit = {
+                let tree = ctx.tree.borrow();
+                tree.hit_test(root, *position).filter(|&id| {
+                    matches!(tree.get(id).map(|n| &n.kind), Some(NodeKind::Terminal(_)))
+                })
+            };
+            if let Some(terminal) = hit {
+                let lines = match delta {
+                    engine_core::ScrollDelta::Lines(_, y) => *y,
+                    engine_core::ScrollDelta::Pixels(_, y) => y / 20.0,
+                };
+                if let Some(session) = io.terminals.borrow_mut().get_mut(&terminal) {
+                    session.scroll_by(&mut ctx.tree.borrow_mut(), terminal, lines.round() as i64);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// M99: moves a docking drag along with the pointer -- see `dock.rs`.
+fn dock_drag(
+    ctx: &NodeContext<'_>,
+    dock: &SharedDockState,
+    window_listeners: &WindowListenerMap,
+    root: NodeId,
+    event: &InputEvent,
+    py: Python<'_>,
+) {
+    match *event {
+        InputEvent::PointerMoved { position } => {
+            if let Some(side) = dock::drag_to(dock, ctx.tree, root, position) {
+                listeners::deliver_window(window_listeners, py, WindowEventType::DockTarget, |e| {
+                    e.side = side.map(|s| dock::side_name(s).to_string());
+                });
+            }
+        }
+        InputEvent::PointerReleased {
+            position,
+            button: PointerButton::Primary,
+        } => {
+            if let Some((panel, side)) = dock::drop(dock, ctx.tree, root, position) {
+                let panel = match Event::build_node(py, panel, ctx) {
+                    Ok(panel) => Some(panel),
+                    Err(err) => {
+                        log_uncaught_exception(&err, py);
+                        None
+                    }
+                };
+                listeners::deliver_window(window_listeners, py, WindowEventType::DockDrop, |e| {
+                    e.panel = panel;
+                    e.side = side.map(|s| dock::side_name(s).to_string());
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
+/// M55 (§10, §16.2): the real focus-change firing logic, shared by
+/// every caller that moves focus -- `run_dispatch_outcome`'s own
 /// `FocusChanged` arm above (real click-to-focus/Tab navigation,
-/// reached through `Tree::dispatch`) and `app.rs`'s real AccessKit
+/// reached through `Tree::dispatch`), `app.rs`'s real AccessKit
 /// `Action::Focus` handling (which calls `Tree::set_focus_to` directly,
-/// never through `dispatch()`, so it can't reach this via `run_
-/// dispatch_outcome` at all). Mirrors `HoverChanged`'s own real
-/// two-single-source-`call_handler`-calls shape exactly: the old node's
-/// own registered `FocusExit` handler, if any, then the new node's own
-/// registered `FocusEnter` handler, if any -- never one event with two
-/// sources, the same real reason `HandlerMap`'s per-node key forced a
-/// kind *pair* in the first place.
+/// never through `dispatch()`), and layer focus changes. Delivers the
+/// `unfocus`/`focus` listener pair via `listeners::route_focus`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn fire_focus_transition(
     handlers: &HandlerMap,
     tree: &Rc<RefCell<Tree>>,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    theme: &SharedTheme,
     completions: &SharedCompletions,
     old: Option<NodeId>,
     new: Option<NodeId>,
@@ -585,68 +562,15 @@ pub(crate) fn fire_focus_transition(
     let ctx = NodeContext {
         tree,
         handlers,
-        context_menus,
-        theme,
         completions,
     };
-    if let Some(old) = old {
-        call_handler(handlers, old, EventKind::FocusExit, py, |py| {
-            Event::focus_transition(py, EventKind::FocusExit, old, &ctx)
-        });
-    }
-    if let Some(new) = new {
-        call_handler(handlers, new, EventKind::FocusEnter, py, |py| {
-            Event::focus_transition(py, EventKind::FocusEnter, new, &ctx)
-        });
-    }
     listeners::route_focus(&ctx, old, new, py);
-}
-
-/// M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning -- opens
-/// `anchor`'s registered context menu, if any, via the existing real
-/// `Tree::open_overlay` (§14 step 13). Guards against reopening a menu
-/// that's already open (checked via `overlay_meta`) rather than
-/// double-`add_child`-ing the same content, which `open_overlay`'s own
-/// contract doesn't protect against itself. Deliberately does not wire
-/// dismissal (`OverlayMeta.dismiss_on_outside_click`/`dismiss_on_
-/// escape`) -- a real, separate, still-open gap (`overlay.rs`'s own
-/// doc comment has named it since M3 step 13), not manufactured here
-/// just because this phase touches the same struct.
-pub(crate) fn open_context_menu(
-    tree: &Rc<RefCell<engine_core::Tree>>,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    root: NodeId,
-    outcome: &DispatchOutcome,
-) {
-    let DispatchOutcome::SecondaryActivated(anchor) = outcome else {
-        return;
-    };
-    let anchor = *anchor;
-    let Some(&content) = context_menus.borrow().get(&anchor) else {
-        return;
-    };
-    let mut tree = tree.borrow_mut();
-    if tree.overlay_meta(content).is_some() {
-        return;
-    }
-    tree.open_overlay(
-        root,
-        anchor,
-        content,
-        engine_core::OverlayMeta {
-            anchor: Some(anchor),
-            dismiss_on_outside_click: true,
-            dismiss_on_escape: true,
-            modal: false,
-            ..Default::default()
-        },
-    );
 }
 
 /// M9 Phase 2 (§5): `Tree::tick_all`'s own real "meaning-dependent"
 /// half -- invokes each just-completed animation's registered `on_
 /// complete` callback exactly once. The same "clone out, drop the
-/// borrow, *then* call" shape `call_handler` already uses (a callback
+/// borrow, *then* call" shape listener delivery uses (a callback
 /// that itself registers a new `on_complete`, a real plausible
 /// pattern, would otherwise panic on a re-entrant `RefCell` borrow),
 /// but `HashMap::remove` instead of `get`: a real CSS `transitionend`/
@@ -667,70 +591,65 @@ pub(crate) fn run_completions(
     }
 }
 
-/// M14 Phase 3 (§16.7): widened to `pub(crate)` -- `Node.set_checked`
-/// reuses this directly, since a real `Checkbox` edit isn't mechanical
-/// the way a `Slider` drag is (Design Principle 6: `engine-core` never
-/// touches `checked` itself), so it has no `Tree::dispatch` outcome to
-/// resolve through `run_dispatch_outcome` at all; calling this exact
-/// same real lookup-and-invoke helper directly is the one real,
-/// consistent way both components' own `Change` firing ends up going
-/// through the identical mechanism, not two divergent ones.
-/// M54 Phase 2 (§8, §16.2): widened with `make_event` -- called only
-/// when a handler is genuinely found *and* it arity-sniffed as wanting
-/// one (`wants_event_payload`, at registration) -- so building a real
-/// `Event` (which can itself borrow `tree`, `read_new_changed_value`)
-/// never happens on a dispatch nothing is even listening for. Returns
-/// `PyResult<Event>` rather than a bare `Event`: constructing one can
-/// itself fail (`changed_value_to_py`'s own `into_pyobject` calls are
-/// fallible in principle, matching pyo3's own general contract) -- a
-/// construction failure is logged the identical "uncaught exception,
-/// non-fatal" way any other callback failure already is here, not a
-/// silent swallow or a panic.
-pub(crate) fn call_handler(
-    handlers: &HandlerMap,
-    node: NodeId,
-    kind: EventKind,
-    py: Python<'_>,
-    make_event: impl FnOnce(Python<'_>) -> PyResult<Event>,
-) {
-    // Cloned out and the borrow dropped *before* calling the handler: a
-    // handler that itself registers a new handler (a real, plausible
-    // pattern -- rebinding a button's own click behavior from inside a
-    // click) would otherwise panic on a re-entrant `RefCell` borrow of
-    // this same `handlers` map.
-    let handler = handlers
-        .borrow()
-        .get(&(node, HandlerKey::Legacy(kind)))
-        .map(|(handler, wants_event)| (handler.clone_ref(py), *wants_event));
-    let Some((handler, wants_event)) = handler else {
-        return;
-    };
-    let result = if wants_event {
-        match make_event(py).and_then(|event| Py::new(py, event)) {
-            Ok(event) => handler.call1(py, (event,)),
-            Err(err) => Err(err),
+thread_local! {
+    /// M100: one long-lived `arboard::Clipboard` per thread. On X11 the
+    /// instance that wrote the clipboard is what serves its content, until
+    /// it's dropped -- a fresh instance per call (as before) lost the text
+    /// the moment the call returned, unless a clipboard manager copied it.
+    static CLIPBOARD: RefCell<Option<arboard::Clipboard>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` on this thread's clipboard, opening it on first use; `None`
+/// when no clipboard service can be reached (logged).
+fn with_clipboard<R>(f: impl FnOnce(&mut arboard::Clipboard) -> R) -> Option<R> {
+    CLIPBOARD.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(clipboard) => *slot = Some(clipboard),
+                Err(err) => {
+                    tracing::warn!(%err, "no OS clipboard service reachable");
+                    return None;
+                }
+            }
         }
-    } else {
-        handler.call0(py)
-    };
-    if let Err(err) = result {
-        // §9's own stated policy: "unhandled exceptions from a callback
-        // are caught, logged via `tracing::error!`, and non-fatal" --
-        // `log_uncaught_exception` (M16 Phase 2) carries the same full
-        // real traceback `PyErr::print` used to write straight to
-        // stderr, now as a real structured `tracing` event instead.
-        log_uncaught_exception(&err, py);
+        slot.as_mut().map(f)
+    })
+}
+
+/// M100: the OS clipboard's text, or `None` when it holds none or can't
+/// be reached (some headless environments have no clipboard service --
+/// logged, never raised). `Window.read_clipboard` and every paste use it.
+pub(crate) fn read_clipboard() -> Option<String> {
+    match with_clipboard(|cb| cb.get_text())? {
+        Ok(text) => Some(text),
+        Err(arboard::Error::ContentNotAvailable) => None,
+        Err(err) => {
+            tracing::warn!(%err, "failed to read the OS clipboard");
+            None
+        }
     }
 }
 
-/// M53 Phase 2 (§8, §10, §11.3): `App::run`'s own real, winit-driven
-/// `InputEvent::Copy` logic, factored out once a second real call site
-/// needed it -- `Window.copy_to_system_clipboard` (`window_input.rs`),
-/// the real, non-hermetic sibling this milestone adds so a context-
-/// menu "Copy" item's own `on_click` callback has something real to
-/// call. `engine-core` itself never touches a real clipboard (§4), so
-/// this is the one shared place with both `Tree` and real `arboard`
-/// access. A clipboard failure (no real clipboard service reachable, a
+/// M100: puts `text` on the OS clipboard; `false` when it can't be
+/// reached (logged, never raised). `Window.write_clipboard` and every
+/// copy or cut use it.
+pub(crate) fn write_clipboard(text: &str) -> bool {
+    match with_clipboard(|cb| cb.set_text(text)) {
+        Some(Ok(())) => true,
+        Some(Err(err)) => {
+            tracing::warn!(%err, "failed to write to the OS clipboard");
+            false
+        }
+        None => false,
+    }
+}
+
+/// M53 Phase 2 (§8, §10, §11.3): what `InputEvent::Copy` does -- copies
+/// the focused text input's selection (`shortcuts`, above, calls it for
+/// both a live key and `simulate`). `engine-core` itself never touches
+/// a real clipboard (§4), so this is the one shared place with both
+/// `Tree` and real `arboard` access. A clipboard failure (no real clipboard service reachable, a
 /// real, possible condition in some headless environments) is logged
 /// and non-fatal, returning `false` -- the same "real, expected,
 /// gracefully-handled" policy this crate already established for
@@ -741,16 +660,7 @@ pub(crate) fn copy_focused_selection_to_clipboard(tree: &Rc<RefCell<Tree>>) -> b
         .borrow()
         .focused()
         .and_then(|field| tree.borrow().text_field_selected_text(field));
-    let Some(text) = selected else {
-        return false;
-    };
-    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-        Ok(()) => true,
-        Err(err) => {
-            tracing::warn!(%err, "failed to write to the real OS clipboard");
-            false
-        }
-    }
+    selected.is_some_and(|text| write_clipboard(&text))
 }
 
 /// `copy_focused_selection_to_clipboard`'s own real Cut sibling --
@@ -759,23 +669,18 @@ pub(crate) fn copy_focused_selection_to_clipboard(tree: &Rc<RefCell<Tree>>) -> b
 /// selection`), and only actually removes the real selection once that
 /// write genuinely succeeds. A failed clipboard write must never
 /// silently destroy the user's own selected text with no way to
-/// recover it. Fires `Change` on a genuine cut, the same way a direct,
-/// non-`Tree::dispatch` mutation always does elsewhere in this crate
-/// (`Node.set_checked`/`set_text`).
+/// recover it. Fires `change` on a genuine cut, the same way a
+/// `Tree::dispatch` edit does.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn cut_focused_selection_to_clipboard(
     tree: &Rc<RefCell<Tree>>,
     handlers: &HandlerMap,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    theme: &SharedTheme,
     completions: &SharedCompletions,
     py: Python<'_>,
 ) -> bool {
     let ctx = NodeContext {
         tree,
         handlers,
-        context_menus,
-        theme,
         completions,
     };
     let field_and_text = tree.borrow().focused().and_then(|field| {
@@ -786,78 +691,16 @@ pub(crate) fn cut_focused_selection_to_clipboard(
     let Some((field, text)) = field_and_text else {
         return false;
     };
-    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-        Ok(()) => {
-            let old = read_new_changed_value(&tree.borrow(), field, py);
-            let old_for_listeners = old
-                .as_ref()
-                .ok()
-                .and_then(|o| o.as_ref().map(|v| v.clone_ref(py)));
-            tree.borrow_mut().cut_text_field_selection(field);
-            call_handler(handlers, field, EventKind::Change, py, |py| {
-                let old = old?;
-                let new = read_new_changed_value(&tree.borrow(), field, py)?;
-                Event::change(py, field, &ctx, old, new)
-            });
-            deliver_change(&ctx, field, old_for_listeners, py);
-            true
-        }
-        Err(err) => {
-            tracing::warn!(
-                %err,
-                "failed to write to the real OS clipboard -- selection left untouched"
-            );
-            false
-        }
+    // A failed write leaves the selection untouched.
+    if !write_clipboard(&text) {
+        return false;
     }
-}
-
-/// `copy_focused_selection_to_clipboard`'s own real Paste sibling --
-/// reads the real OS clipboard, then dispatches the resulting text
-/// exactly like a real typed character (`InputEvent::TextInput`, M15
-/// Phase 2's own existing mechanism, reused completely, no new
-/// insertion path). `Tree::dispatch` already resolves "which field, if
-/// any, is currently focused" internally for `TextInput` -- the same
-/// real behavior a genuine Ctrl+V already has, so this never needs its
-/// own focused-field check first. Returns whether the real clipboard
-/// *read* succeeded, not whether the text landed anywhere -- the
-/// identical real distinction `Window.paste`'s own hermetic sibling
-/// doesn't need to make (it's handed the text directly), but a genuine
-/// OS read can genuinely fail on its own.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn paste_clipboard_into_focused(
-    tree: &Rc<RefCell<Tree>>,
-    root: NodeId,
-    handlers: &HandlerMap,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    theme: &SharedTheme,
-    completions: &SharedCompletions,
-    py: Python<'_>,
-) -> bool {
-    match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
-        Ok(text) => {
-            let event = InputEvent::TextInput(text);
-            let outcome = tree.borrow_mut().dispatch(
-                root,
-                event.clone(),
-                &interaction_config(),
-                crate::clock::now(tree),
-            );
-            run_dispatch_outcome(
-                handlers,
-                tree,
-                context_menus,
-                theme,
-                completions,
-                &outcome,
-                Some(&event),
-                py,
-            );
-            true
-        }
-        Err(err) => {
-            tracing::warn!(%err, "failed to read the real OS clipboard");
-            false
-        }
-    }
+    let old = read_new_changed_value(&tree.borrow(), field, py);
+    let old_for_listeners = old
+        .as_ref()
+        .ok()
+        .and_then(|o| o.as_ref().map(|v| v.clone_ref(py)));
+    tree.borrow_mut().cut_text_field_selection(field);
+    deliver_change(&ctx, field, old_for_listeners, py);
+    true
 }

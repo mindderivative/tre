@@ -178,7 +178,7 @@ fn dropdown_menu_positions_by_anchor_and_paints_above_the_background_via_append_
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         // Inserted (and therefore painted) first -- covers the whole
@@ -187,7 +187,7 @@ fn dropdown_menu_positions_by_anchor_and_paints_above_the_background_via_append_
         let background = tree.insert(
             NodeKind::Rect,
             absolute(0.0, 0.0, f32::from(width), f32::from(height)),
-            PaintProperties::new(GREEN, 0.0, 0.0, 1.0),
+            PaintProperties::new(GREEN, 0.0, 1.0),
         );
         tree.add_child(root, background);
 
@@ -195,7 +195,7 @@ fn dropdown_menu_positions_by_anchor_and_paints_above_the_background_via_append_
         let anchor = tree.insert(
             NodeKind::Rect,
             absolute(20.0, 20.0, 80.0, 30.0),
-            PaintProperties::new(BLUE, 0.0, 0.0, 1.0),
+            PaintProperties::new(BLUE, 0.0, 1.0),
         );
         tree.add_child(root, anchor);
 
@@ -219,7 +219,7 @@ fn dropdown_menu_positions_by_anchor_and_paints_above_the_background_via_append_
                 },
                 ..Default::default()
             },
-            PaintProperties::new(ORANGE, 0.0, 0.0, 1.0),
+            PaintProperties::new(ORANGE, 0.0, 1.0),
         );
         tree.open_overlay(
             root,

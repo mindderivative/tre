@@ -1,59 +1,59 @@
 # Architecture
 
-This page is a short orientation. The full design reference —
-`ARCHITECTURE.md`, the living document 88 milestones have been built
-against as of `v0.3.2` — lives in the repository root:
+A short orientation. The full design reference is
+[`ARCHITECTURE.md`](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md)
+in the repository root.
 
-[**Read the full `ARCHITECTURE.md`**](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md){ .md-button }
-
-## System layers
+## Four crates
 
 ```
-engine-py  (PyO3 boundary — the only crate depending on pyo3)
+engine-py        PyO3 classes, the per-frame loop, listeners, callbacks
    │
-   ├── engine-spec     (view/stylesheet/theme schema, YAML/JSON parsing, reconciliation)
-   ├── engine-platform  (winit event loop, accesskit_winit)
-   ├── engine-render    (Vello scene building, GPU rendering)
-   └── engine-md3       (MD3 dynamic color, icons, container-transform)
+   ├── engine-platform   winit event loop, input translation, AccessKit adapter
+   └── engine-render     scene building, text shaping, paths, shadows
          │
-         └── engine-core  (node tree, Animated<T>, generic interfaces)
+         └── engine-core  node tree, Animated<T>, layout, dispatch, focus, layers
 ```
 
-`engine-core` sits at the bottom with zero dependencies on the others;
-everything layers on top of it, and only `engine-py` ever depends on
-`pyo3`. See [Rust Crates](api/rust.md) for what each crate owns.
+`engine-core` depends on none of the others and has no Python, windowing,
+or GPU code, so it's tested on its own. Only `engine-py` imports `pyo3`, and
+its Python surface is the one stability contract. See
+[Rust Crates](api/rust.md) for each crate's role.
 
-## Where each topic lives in `ARCHITECTURE.md`
+## How a frame is made
 
-| Topic | Section |
-| --- | --- |
-| Vision & scope | §1 |
-| Design principles | §2 |
-| Technology stack | §3 |
-| System architecture | §4 |
-| Core data model (`Node`, `NodeKind`, `Animated<T>`) | §5 |
-| Per-frame pipeline | §6 |
-| Material Design 3 subsystem | §7 |
-| Python/Rust FFI boundary | §8 |
-| Threading & event loop model | §9 |
-| Accessibility | §10 |
-| Desktop shell & workspace (docking, splitters, lists, overlays) | §11 |
-| Project structure | §12 |
-| Environment setup & packaging | §13 |
-| Suggested build order | §14 |
-| Risk register | §15 |
-| Declarative authoring: YAML views & stylesheets | §16 |
+1. **Input** from `winit` (or `window.simulate`) is hit-tested, moves focus,
+   edits text, and reaches your listeners, bubbling from the target.
+2. Callbacks queued with **`LoopHandle.call_soon`** run.
+3. **One central tick** advances every running animation; completion
+   callbacks run after it.
+4. **Layout** runs through `taffy`'s cache — paint-only changes never
+   dirty it — and virtual lists build their visible rows.
+5. **Paint** walks the tree into a `vello_hybrid` scene, culling what's off
+   screen, and renders it on the GPU. The **AccessKit** tree is built from
+   the same node tree.
 
-## Build history
+When nothing changed and nothing animates, the loop sleeps until the next
+input or `call_soon`.
 
-See
+## Design principles
+
+- **Rust owns every frame; Python owns intent.** Python never runs during
+  layout, paint, or interpolation — only inside callbacks.
+- **One animation mechanism.** Every animatable value is the same
+  `Animated<T>`, ticked by one pass.
+- **Mechanism in the engine, meaning and look in the framework.** `tre`
+  reports what it can know — pointer, focus, whether focus came from the
+  keyboard — and draws only what it's told.
+- **Data in, not files.** Pixels, fonts, and tree content arrive as data;
+  the framework owns every format.
+
+## History
+
+`tre` is a from-scratch second iteration of an earlier Vulkan engine,
+archived under
+[`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
+its lessons learned.
 [`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
-for the complete, phase-by-phase build history — every milestone this
-project has built against `ARCHITECTURE.md`, what was learned along the
-way, and every real gap found and closed.
-
-`tre` v2 is a from-scratch second iteration of an earlier project
-(`TRE`, a Vulkan-based 2D rendering engine), archived in full under
-[`archive/`](https://github.com/mindderivative/tre/tree/main/archive)
-along with its own lessons-learned document that shaped several of this
-project's design decisions.
+records every milestone, including the 0.3.5 program that moved Material
+Design 3 and the declarative layer out to the framework.

@@ -1,4 +1,4 @@
-"""M96 Phase 2: the layout, visibility, order, and transform properties of
+"""The layout, visibility, order, and transform properties of
 `node.set`/`node.get`, and the read-only computed box (`layout_x`,
 `layout_y`, `layout_width`, `layout_height`).
 """

@@ -1,8 +1,8 @@
-"""M96 Phase 4: layers -- `window.show_layer`/`hide_layer`, the one mechanism
-dialogs, menus, tooltips, snackbars, and sheets are built from: stacking,
-anchored placement that flips and shifts to fit, modal blocking with a focus
-trap and focus restore, each layer its own focus scope, events stopping at
-the layer, and `dismiss` on an outside press or Escape.
+"""Layers -- `window.show_layer`/`hide_layer`, the one mechanism dialogs,
+menus, tooltips, snackbars, and sheets are built from: stacking, anchored
+placement that flips and shifts to fit, modal blocking with a focus trap and
+focus restore, each layer its own focus scope, events stopping at the layer,
+and `dismiss` on an outside press or Escape.
 """
 
 from __future__ import annotations

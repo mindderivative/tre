@@ -29,7 +29,7 @@ fn materialize(_idx: usize) -> (NodeKind, Style, PaintProperties) {
             },
             ..Default::default()
         },
-        PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+        PaintProperties::new(CHIP, 0.0, 1.0),
     )
 }
 
@@ -167,7 +167,7 @@ fn build_list(
             },
             ..Default::default()
         },
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
     tree.set_virtual_list_window(list, materialized, materialize);
     let available = Size {
@@ -192,8 +192,8 @@ fn a_real_scroll_offset_shifts_materialized_children_up_by_that_many_pixels() {
         // M37 (§5, §7, §11.7): the real scroll offset is now baked
         // into each materialized item's own `layout_style` by `Tree::
         // sync_virtual_list_layouts`, which only runs inside `Tree::
-        // compute_layout` -- the identical real requirement `Carousel`/
-        // `ScrollView` already have (a direct field mutation needs a
+        // compute_layout` -- the identical real requirement
+        // `ScrollView` already has (a direct field mutation needs a
         // fresh layout pass to take visual effect; a real app's own
         // per-frame loop always calls `compute_layout` before painting
         // regardless, so this is invisible in real usage). Fixes the
@@ -324,7 +324,7 @@ fn a_virtual_list_that_fits_its_own_content_paints_no_thumb() {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+                PaintProperties::new(CHIP, 0.0, 1.0),
             )
         }
 
@@ -340,7 +340,7 @@ fn a_virtual_list_that_fits_its_own_content_paints_no_thumb() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.set_virtual_list_window(list, 0..3, narrow_item);
         let available = Size {

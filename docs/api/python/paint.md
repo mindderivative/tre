@@ -1,7 +1,6 @@
 # Paint, Paths, and Animation
 
-*New in 0.3.4.* The paint and animation building blocks of the
-[target API](../../design/target-api.md): vector paths, the paint names every
+The paint and animation building blocks: vector paths, the paint names every
 node shares, shadows, per-corner radii, group opacity, easing, and the colors
 text inputs, scroll views, and terminals paint. Everything here goes through
 [`Node.set`, `get`, and `animate`](node.md#set-get-and-focus).
@@ -67,8 +66,8 @@ and as a 4-tuple once they're set (or animated) separately; setting a number
 makes them uniform again. A shadow under a node with differing corner radii uses
 their mean.
 
-MD3's elevation is two shadows — its key and ambient shadow per level — which
-the framework supplies:
+A design system's elevation levels are shadow lists — Material Design 3's
+are a key and an ambient shadow per level:
 
 ```python
 card.set(shadows=[((0, 0, 0, 77), 0, 1, 2, 0), ((0, 0, 0, 38), 0, 1, 3, 1)])

@@ -1,108 +1,81 @@
 # tre
 
-**Python-facing GUI framework backend, Rust-native rendering engine.**
+**A GPU-rendered retained-mode UI engine for Python, written in Rust.**
 
-`tre` is the rendering, layout, animation, and accessibility engine behind
-a Material Design 3 desktop GUI framework. Application authors write
-Python — this project never asks them to touch Rust, WGPU, or Vello
-directly. The engine itself is a purpose-built retained-tree renderer
-exposed through a thin, stable [PyO3](https://pyo3.rs/) boundary:
+`tre` gives Python the building blocks of a desktop UI — nodes, layout,
+paint, animation, input, text, accessibility, and layers — and renders them
+on the GPU. It has no widgets and no theme of its own: a framework built on
+it, such as Tesserae, turns the blocks into buttons, dialogs, and design
+systems. You write Python; the engine underneath uses:
 
-- **GPU-accelerated rendering** via [`vello_hybrid`](https://github.com/linebender/vello)
-- **Layout** via [`taffy`](https://github.com/DioxusLabs/taffy) (flexbox)
-- **Text shaping** via [`parley`](https://github.com/linebender/parley)
-- **Accessibility** via [`AccessKit`](https://github.com/AccessKit/accesskit)
+- [`vello_hybrid`](https://github.com/linebender/vello) for GPU rendering
+- [`taffy`](https://github.com/DioxusLabs/taffy) for flexbox layout
+- [`parley`](https://github.com/linebender/parley) for text shaping
+- [`AccessKit`](https://github.com/AccessKit/accesskit) for accessibility
+- [`winit`](https://github.com/rust-windowing/winit) for windows and input
 
-This is a from-scratch second iteration of an earlier project (`TRE`, a
-Vulkan-based 2D rendering engine), archived in full under
-[`archive/`](https://github.com/mindderivative/tre/tree/main/archive)
-along with its own lessons-learned document that shaped several of this
-project's design decisions.
+```python
+from tre import App, Window
 
-## What's built
+window = Window(width=320, height=120, title="Hello")
+button = window.create("box", width=120, height=40, corner_radius=20,
+                       fill=(0x67, 0x50, 0xA4, 0xFF), role="button",
+                       label="Say hello", focusable=True)
+button.on("click", lambda: print("hello"))
+window.root.add_child(button)
 
-- **A real, retained node tree** — layout via `taffy`, a uniform,
-  centrally-ticked animation system (`Animated<T>` on every animatable
-  property), and real per-frame GPU rendering.
-- **Material Design 3 visual language** — dynamic color (full HCT/
-  tonal-palette scheme resolution), elevation shadows, hover/press state
-  layers with real ripple, shape morphing, and MD3 motion curves.
-- **A real, wide MD3 component catalog** — 60 `Window.add_*` factories spanning
-  [buttons, selection controls, cards, chips, navigation, overlays
-  (dialogs, menus, snackbars), a real PTY-backed `Terminal`, and a
-  `CodeEditor` with folding and syntax highlighting](guide/components.md),
-  not just a handful of samples.
-- **Full theming, not just color** — MD3 dynamic color (HCT/tonal-
-  palette resolution), a named shape/elevation token system
-  (`corner_radius: small`, `elevation: level_2`), and a real,
-  Flutter-sourced MD3 type scale apps can reference by role instead of
-  literal font values — see [Theming & Accessibility](guide/theming-and-accessibility.md).
-- **Desktop shell primitives** — multi-window apps, a
-  [fixed-zone docking system](guide/docking-and-shell.md), splitters,
-  [virtualized/variable-height lists](guide/canvas-and-lists.md), context
-  menus and other overlays, an `AppShell` navigation pattern, and MD3's
-  container-transform choreography.
-- **A real, wide layout/styling surface** — per-side padding/margin,
-  flex-grow/shrink/basis, align/justify, and border kwargs across the
-  catalog, both from Python and from declarative `style:` blocks.
-- **Two authoring paths, one engine** — build a UI
-  [imperatively from Python](guide/imperative-api.md), or
-  [declaratively as data](guide/declarative-views.md) (a tree of widget
-  specs), with a stylesheet cascade, embeddable components, in-place
-  reconciliation, and one- and two-way data binding against a plain
-  Python `ViewModel`.
-- **Data in, not files** — views, themes, and stylesheets are passed as
-  plain `dict`s, images as decoded pixels, fonts as bytes, so a
-  framework built on `tre` owns every file format and loading decision.
-  Using `tre` directly? It will also [read files for you](guide/working-with-files.md)
-  — YAML views with `include:`, theme files, PNG/JPEG images, and
-  file-watching hot reload.
-- **Thread-safe updates into a running app** — `App.thread_handle()`
-  lets a background thread (a file watcher, a network client) hand work
-  to the event loop, waking it even when idle.
-- **Accessibility from day one** — a real AccessKit tree built fresh
-  every frame from the same node tree, keyboard focus/Tab order, and
-  screen-reader-driven actions routed through the same input pipeline as
-  pointer/keyboard events.
-- **Real cross-platform packaging** — a manylinux-repaired, portable
-  wheel, built and verified end-to-end, with CI producing Linux/macOS/
-  Windows wheels across supported Python versions on every tagged
-  release.
+app = App()
+app.add_window(window)
+app.run()
+```
+
+## The building blocks
+
+- **[Nodes and layout](guide/nodes-and-layout.md)** — boxes, text, text
+  inputs, images, paths, canvases, scroll views, virtual lists, and
+  terminals, laid out with flexbox or placed absolutely.
+- **[Painting](guide/painting.md)** — fills, strokes, per-corner radii,
+  layered shadows, group opacity, transforms, and SVG paths.
+- **[Animation](guide/animation.md)** — any paint or transform property,
+  eased on a cubic-bezier curve, retargetable mid-flight, with path morphing.
+- **[Events and input](guide/events-and-input.md)** — bubbling listeners,
+  pointer capture, keyboard focus, text editing, and the clipboard.
+- **[Text](guide/text.md)** — shaped text, measurement, custom fonts, text
+  inputs, and a terminal emulator.
+- **[Accessibility](guide/accessibility.md)** — roles, names, states, and
+  actions for screen readers.
+- **[Layers](guide/layers.md)** — one mechanism for menus, dialogs, and
+  tooltips: stacking, anchoring, modality, and dismissal.
+- **[Threading](guide/threading.md)** — hand work from any thread to the
+  event loop.
+- **[Docking](guide/docking.md)** — panels in zones, dragged between them.
+
+[Building a Widget](guide/building-a-widget.md) puts them together into a
+complete switch.
+
+## What `tre` leaves to the framework
+
+- **Widgets and design** — Material Design 3 or any other design system is
+  built from the blocks; `tre` draws no default styling, focus ring, or
+  scrim.
+- **Declarative views and state** — views, bindings, and reactivity sit on
+  top of `window.create`, `node.set`, and `insert_child`.
+- **Files** — images arrive as decoded pixels and fonts as bytes; `tre`
+  reads no files and chooses no formats.
 
 ## Where to go next
 
-- **[Installation](installation.md)** — install a released wheel, or
-  build from source with `maturin`.
-- **[Migrating to 0.3.3](migrating-0.3.3.md)** — upgrading from 0.3.2:
-  the property renames, a view-file migration script, and behavior
-  changes.
-- **[Getting Started](getting-started.md)** — build and run a first
-  window in a few lines of Python.
-- **[Guide](guide/imperative-api.md)** — walkthroughs of the imperative
-  API, declarative views, MD3 components, docking, canvas drawing, and
-  theming.
-- **[Working with Files](guide/working-with-files.md)** — for using
-  `tre` directly: YAML view files, `include:`, theme and image files,
-  and hot reload.
-- **[Python API Reference](api/python/index.md)** — every public class
-  and method, with real signatures pulled from the source.
-- **[Architecture](architecture.md)** — the engine's crate layout and
-  design principles.
+- **[Installation](installation.md)** — a released wheel, or a build from
+  source.
+- **[Getting Started](getting-started.md)** — a first window, step by step.
+- **[Python API Reference](api/python/index.md)** — every class, method,
+  property, and event.
+- **[Migrating to 0.3.5](migrating-0.3.5.md)** — from 0.3.4: what moved to
+  the framework and what was renamed.
+- **[Architecture](architecture.md)** — the crates and how a frame is made.
 
-Looking for a single, all-in-one tour instead of the piece-by-piece
-guide? Run
-[`demo/showcase.py`](https://github.com/mindderivative/tre/blob/main/demo/showcase.py)
-from a source checkout — one running app combining MD3 components and
-live theming, real animation and custom `Canvas` drawing, a
-virtualized list, docking, and a declarative `View` panel, all
-keyboard-navigable.
-
-## Project status
-
-88 milestones have been built against [`ARCHITECTURE.md`](architecture.md)
-as of `v0.3.2` — see
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
-in the repository for the complete phase-by-phase build history. Every
-real engine capability has its own headless, GPU-backed pixel test
-proving it actually paints what it claims to, not just that the code
-compiles.
+`tre` is a second, from-scratch iteration of an earlier Vulkan engine,
+archived under
+[`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
+the lessons learned that shaped it. Its full build history is in
+[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md).

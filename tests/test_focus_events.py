@@ -1,167 +1,116 @@
-"""M55 (§10, §16.2): real, repeatable coverage that `FocusEnter`/
-`FocusExit` actually reach a registered Python handler -- the new
-`EventKind`/`DispatchOutcome::FocusChanged` mechanism, mirroring
-`test_hover_events.py`'s own real coverage of the identical `Hover`
-transition shape.
-
-`Window.focus(node)`/`View.focus(node)` (both new, M55) are the direct,
-no-live-window-needed way to test a real focus transition without
-relying on Tab-order or click-to-focus side effects -- the same real
-proof pattern `Window.click`/`.hover` already established for `Click`/
-`Hover`.
-
-Same "requires `maturin develop` first, imports the real compiled
-extension" discipline as `test_engine_py.py`.
+"""`focus`/`unfocus` listeners: the Event they get, focus moving between
+siblings, refocusing firing nothing, focus from a click, a secondary click,
+or Tab, and a raising listener being logged and non-fatal.
 """
 
-from tre import Signal, View, ViewModel, Window
+from tre import Window
+from helpers import add
 
 
-def test_window_focus_gives_a_one_arg_handler_a_real_event():
+def test_simulated_focus_gives_a_one_arg_listener_an_event():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
 
     events = []
-    a.set_on_focus_enter(lambda event: events.append(event))
+    a.on("focus", lambda event: events.append(event))
 
-    window.focus(a)
+    window.simulate("focus", node=a)
 
     assert len(events) == 1
     event = events[0]
-    assert event.kind == "focus_enter"
-    assert event.position is None
+    assert event.type == "focus"
     assert event.button is None
     assert event.old_value is None
     assert event.new_value is None
 
 
-def test_focus_exit_fires_when_focus_moves_to_a_sibling():
+def test_unfocus_fires_when_focus_moves_to_a_sibling():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
-    b = window.add_rect(background=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
+    b = add(window, "box", fill=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40)
 
     calls = []
-    a.set_on_focus_exit(lambda: calls.append("a exited"))
-    b.set_on_focus_enter(lambda: calls.append("b entered"))
+    a.on("unfocus", lambda: calls.append("a exited"))
+    b.on("focus", lambda: calls.append("b entered"))
 
-    window.focus(a)
-    assert calls == []  # first-time focus onto `a` -- no exit yet, and `a` has no enter handler
+    window.simulate("focus", node=a)
+    assert calls == []  # first focus onto `a` -- no unfocus yet, and `a` has no focus listener
 
-    window.focus(b)
+    window.simulate("focus", node=b)
     assert calls == ["a exited", "b entered"]
 
 
-def test_focusing_a_node_with_no_registered_handler_is_a_safe_no_op():
+def test_focusing_a_node_with_no_listener_is_a_safe_no_op():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
 
-    window.focus(a)  # must not raise
+    window.simulate("focus", node=a)  # must not raise
 
 
-def test_refocusing_the_already_focused_node_does_not_report_a_stale_transition():
+def test_refocusing_the_focused_node_fires_nothing():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
 
     calls = []
-    a.set_on_focus_enter(lambda: calls.append("entered"))
+    a.on("focus", lambda: calls.append("entered"))
 
-    window.focus(a)
+    window.simulate("focus", node=a)
     assert calls == ["entered"]
 
-    window.focus(a)
+    window.simulate("focus", node=a)
     assert calls == ["entered"], "focusing an already-focused node must not fire a stale transition"
 
 
-def test_real_click_to_focus_on_a_text_field_fires_focus_enter():
-    """M18/M30/M53's own real click-to-focus mechanism -- now genuinely
-    observable via a registered `FocusEnter` handler, not just `Node.
-    is_focused()`.
-    """
+def test_clicking_a_text_input_fires_focus():
     window = Window(width=200, height=100)
-    field = window.add_text_field(background=(0xFF, 0xFF, 0xFF, 0xFF), width=100, height=30, content="hi")
+    field = add(window, "text_input", width=100, height=30, text="hi")
 
     events = []
-    field.set_on_focus_enter(lambda event: events.append(event))
+    field.on("focus", lambda event: events.append(event))
 
-    window.click(field)
+    window.simulate("click", node=field)
 
     assert len(events) == 1
-    assert events[0].kind == "focus_enter"
+    assert events[0].type == "focus"
 
 
-def test_real_right_click_to_focus_on_a_text_field_fires_focus_enter():
-    """M55's own real, found-while-scoping fix: `Window.right_click`'s
-    own `PointerPressed` dispatch used to discard its outcome with no
-    variable at all, so a real right-click-to-focus (M53) was
-    structurally unobservable from this entry point before now.
-    """
+def test_a_secondary_click_on_a_text_input_fires_focus():
     window = Window(width=200, height=100)
-    field = window.add_text_field(background=(0xFF, 0xFF, 0xFF, 0xFF), width=100, height=30, content="hi")
+    field = add(window, "text_input", width=100, height=30, text="hi")
 
     events = []
-    field.set_on_focus_enter(lambda event: events.append(event))
+    field.on("focus", lambda event: events.append(event))
 
-    window.right_click(field)
+    window.simulate("secondary_click", node=field)
 
     assert len(events) == 1
-    assert events[0].kind == "focus_enter"
+    assert events[0].type == "focus"
 
 
-def test_real_tab_navigation_fires_focus_enter():
+def test_tab_navigation_fires_focus():
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
-    a.set_on_click(lambda: None)  # the real, established way to make a node Tab-reachable
+    a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40, focusable=True)
 
     events = []
-    a.set_on_focus_enter(lambda event: events.append(event))
+    a.on("focus", lambda event: events.append(event))
 
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
     assert len(events) == 1
-    assert events[0].kind == "focus_enter"
+    assert events[0].type == "focus"
 
 
-def test_view_focus_actually_invokes_its_wired_handler(tmp_path):
-    path = tmp_path / "view.yaml"
-    path.write_text(
-        """
-id: root
-kind: Rect
-style: {width: 40, height: 20, background: "#112233"}
-handlers: {on_focus_enter: "bump"}
-"""
-    )
-    view = View(str(path))
-
-    class VM(ViewModel):
-        def __init__(self, view):
-            self.focuses = Signal(0)
-            super().__init__(view)
-
-        def bump(self):
-            self.focuses.update(lambda n: n + 1)
-
-    vm = VM(view)
-    node = view.node("root")
-
-    view.focus(node)
-
-    assert vm.focuses.get() == 1
-
-
-def test_a_raising_focus_handler_is_caught_logged_and_non_fatal(capfd):
-    """Matches `Window.click`/`Node.set_on_change`'s own established
-    policy (§9): an uncaught exception from a real handler is caught
-    and logged via `tracing::error!`, not propagated.
-    """
+def test_a_raising_focus_listener_is_caught_logged_and_non_fatal(capfd):
+    """Like every listener, a raising one is logged via `tracing::error!`,
+    not propagated."""
     window = Window(width=200, height=100)
-    a = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
+    a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
 
     def on_focus_enter():
         raise RuntimeError("boom from a focus handler")
 
-    a.set_on_focus_enter(on_focus_enter)
-    window.focus(a)  # must not raise
+    a.on("focus", on_focus_enter)
+    window.simulate("focus", node=a)  # must not raise
 
     captured = capfd.readouterr()
     assert "boom from a focus handler" in captured.err

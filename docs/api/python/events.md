@@ -1,9 +1,8 @@
 # Events and Listeners
 
-*New in 0.3.4.* The event model of the [target API](../../design/target-api.md):
-listeners registered with `on(event, handler)` on a [`Node`](node.md) or a
-[`Window`](window.md). It sits beside the older `set_on_*` handlers, which keep
-working exactly as before (they don't bubble) until they're removed in 0.3.5.
+Listeners registered with `on(event, handler)` on a [`Node`](node.md) or a
+[`Window`](window.md). For a walkthrough, see
+[Events and Input](../../guide/events-and-input.md).
 
 ## Node listeners
 
@@ -103,6 +102,8 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `scale_factor` | The window moved to a display with a different scale factor | `scale_factor` |
 | `close_requested` | The user asked to close the window; `event.cancel()` keeps it open | — |
 | `closed` | The window closed — by the user or by reaching `max_frames` | — |
+| `dock_target` | During a docking drag, the pointer moved into another dock zone, or out of every zone | `side` |
+| `dock_drop` | A docking drag ended with the primary button's release; the panel has moved to the zone there, if any | `panel`, `side` |
 
 A window event has no node: `event.target` is `None`.
 
@@ -136,6 +137,8 @@ is the window's root node.
 | `related_target` | `focus`, `unfocus` — the node on the other side of the move |
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
+| `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |
+| `panel` | `dock_drop` — the dragged panel |
 
 Methods: `stop()` ends propagation; `cancel()` prevents `close_requested`'s
 default (any other event raises `ValueError`).
@@ -150,7 +153,7 @@ for character keys.
 ## Testing without a display
 
 `window.simulate(event, node=None, **fields)` delivers a synthetic event through
-the same pipeline as real input, so listeners and the older handlers both fire.
+the same pipeline as real input, so every listener fires as it would live.
 
 ```python
 window.simulate("click", node=button)
@@ -177,4 +180,5 @@ window.simulate("resize", width=800, height=600)
 Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
 window-space `x`/`y` without a node. Any event also takes `shift`, `ctrl`,
 `alt`, and `meta`. A simulated key press edits text and moves focus exactly
-as a real one does. An unknown event or field raises `ValueError`.
+as a real one does — Ctrl+C/X/V/A included — and a focused terminal takes
+every key, as it does live. An unknown event or field raises `ValueError`.

@@ -72,7 +72,7 @@ struct LayoutCacheKey {
     /// explicitly, an un-spanned glyph's own real `style_index` would
     /// point at `Style::default()`'s own `[u8; 4]::default()` brush
     /// (`[0, 0, 0, 0]`, fully transparent), not `at.color`. Part of
-    /// the cache key since a real theme change changes it.
+    /// the cache key since a real color change changes it.
     default_color: Color,
     /// M96: italics, letter spacing, wrapping, and the line limit.
     options: TextOptions,
@@ -813,14 +813,11 @@ impl TextRenderer {
     /// derives real caret/selection-highlight paint geometry via
     /// `parley::{Cursor, Selection}` -- not a second, disconnected
     /// measurement, so the geometry always lines up with the glyphs
-    /// actually painted. Real MD3 stacking order: selection highlight
+    /// actually painted. Stacking order: selection highlight
     /// first (behind text), then glyphs, then the caret last (on top)
     /// -- the same order any real text editor paints these three
-    /// layers in. Neither the caret nor the highlight is yet a real,
-    /// theme-resolved MD3 color (`engine-render` doesn't depend on
-    /// `engine-md3`, §4) -- both derive from `at.color`, the same
-    /// "real but not yet theme-aware" scope `Checkbox`'s own hardcoded
-    /// white checkmark (M14 Phase 1) already established. `node_id`
+    /// layers in. The caret and the highlight both derive from
+    /// `at.color` (`engine-render` has no design system, §4). `node_id`
     /// keys the same per-node shaping cache `draw` uses -- see its own
     /// doc comment; keyed on `display_content` (below), so an active
     /// IME composition -- which changes what's displayed every
@@ -1365,7 +1362,7 @@ fn field_max_width(state: &TextFieldState, max_width: f32) -> f32 {
 
 /// M39 Phase 4 (§5, §7): `draw_terminal`'s own real `inverse`
 /// resolution -- a real `vt100` "reverse video" cell paints with its
-/// own foreground and background swapped, real MD3-neutral terminal
+/// own foreground and background swapped, real terminal
 /// emulator behavior this function makes real for both the background-
 /// run loop and the glyph-run loop (both need the identical swap, so
 /// this is the one real place it's computed, not duplicated).
@@ -1378,9 +1375,8 @@ fn field_max_width(state: &TextFieldState, max_width: f32) -> f32 {
 /// bug (inverse text silently vanishing), not a defensible edge case,
 /// so this falls back to `Color::BLACK` instead: always legible against
 /// whatever the swapped-in background block now is, even though it
-/// isn't a true theme-aware resolution of "the terminal's own real
-/// background color" (`engine-core` has no theme awareness at all,
-/// §4, and threading the container's own `PaintProperties.background`
+/// isn't a true resolution of "the terminal's own real background
+/// color" (threading the container's own `PaintProperties.background`
 /// through this per-cell path is real, further plumbing this pass
 /// doesn't need for a real, legible result).
 fn terminal_cell_effective_colors(
@@ -1701,7 +1697,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         )
     }
 
@@ -1720,7 +1716,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         )
     }
 
@@ -1850,7 +1846,7 @@ mod tests {
                 options: Default::default(),
             }),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         let base_spans: Vec<(Range<usize>, Color)> =

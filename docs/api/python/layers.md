@@ -1,6 +1,6 @@
 # Layers
 
-*New in 0.3.4.* One mechanism for everything that floats over a window's
+One mechanism for everything that floats over a window's
 content — dialogs, menus, tooltips, snackbars, side sheets, drawers, context
 menus. You build the content from ordinary nodes; `tre` stacks it, places it,
 routes input around it, and tells you when it's dismissed. `tre` draws no scrim:

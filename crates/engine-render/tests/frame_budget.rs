@@ -68,12 +68,11 @@ fn build_grid_tree(start: Instant) -> (Tree, engine_core::NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
 
     for _ in 0..(GRID_COLS * GRID_ROWS) {
-        let mut paint =
-            PaintProperties::new(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF), 4.0, 0.0, 1.0);
+        let mut paint = PaintProperties::new(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF), 4.0, 1.0);
         // Every node has a genuinely active animation, several seconds
         // long, so every timed iteration's tick_all does real per-node
         // interpolation work rather than an early-out no-op check.

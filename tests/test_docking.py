@@ -1,244 +1,198 @@
-"""M4 Phase 9 (§11.4, the final M4 phase): real, repeatable coverage
-that a real drag actually moves a panel from one dock zone to another
--- `Window.add_dock_zone`/`dock_panel`/`set_active_tab`/
-`set_dock_handle` (the Python-facing docking API that never existed
-before this phase) and `start_panel_drag`/`drop_panel_at` (the real
-drag-to-rearrange mechanism, mirroring `.click()`/`.hover()`/
-`.right_click()`'s own no-live-window-needed proof pattern).
-
-The real, functional proof that a panel genuinely moved: after
-dragging it into a new zone, clicking it there (via `Window.click()`,
-which only works on a node that's really attached and laid out)
-confirms its own handler fires -- not an inspection of internal
-`DockLayout` state Python has no getter for.
-
-Same "requires `maturin develop` first, imports the real compiled
-extension" discipline as `test_engine_py.py`.
+"""Docking: zones, docked panels, the active panel, and a drag that reports
+where it is and where it ended. The framework draws the handle and the
+target highlight. Drags are driven by `window.simulate` pointer events,
+through the same input pipeline `App.run()` uses.
 """
 
 import pytest
 
 from tre import Window
+from helpers import add
 
 
-def build_two_zone_window():
-    """Left zone (with one panel + its own drag handle) and an empty
-    Right zone -- the minimal real setup a drag-to-rearrange test
-    needs.
-    """
+def two_zones():
+    """A left zone holding one panel, and an empty right zone."""
     window = Window(width=300, height=120)
-    left_container = window.add_rect(background=(0, 0, 0, 0), width=100, height=100)
-    right_container = window.add_rect(background=(0, 0, 0, 0), width=100, height=100)
-    window.add_dock_zone("left", left_container, 100.0)
-    window.add_dock_zone("right", right_container, 100.0)
-
-    handle = window.add_rect(background=(0x80, 0x80, 0x80, 0xFF), width=100, height=20)
-    panel = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
+    left = add(window, "box", fill=(0, 0, 0, 0), width=100, height=100)
+    right = add(window, "box", fill=(0, 0, 0, 0), width=100, height=100)
+    window.add_dock_zone("left", left, 100.0)
+    window.add_dock_zone("right", right, 100.0)
+    panel = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
     window.dock_panel("left", panel)
-    window.set_dock_handle(handle, panel)
-
-    return window, handle, panel, right_container
+    return window, left, right, panel
 
 
-def test_dragging_a_registered_handle_moves_its_panel_for_real():
-    window, handle, panel, right_container = build_two_zone_window()
+def record(window):
+    """Records every `dock_target`/`dock_drop` event's fields."""
+    seen = []
+    window.on("dock_target", lambda e: seen.append(("target", e.side)))
+    window.on("dock_drop", lambda e: seen.append(("drop", e.side, e.panel)))
+    return seen
 
+
+def test_a_drag_reports_the_zone_under_the_pointer_and_moves_the_panel():
+    window, left, right, panel = two_zones()
+    seen = record(window)
+
+    window.start_panel_drag(panel)
+    window.simulate("pointer_move", node=right)
+    window.simulate("pointer_up", node=right)
+
+    assert seen == [("target", "right"), ("drop", "right", panel)]
+    assert right.children() == [panel]
+    assert left.children() == []
+    # Attached and laid out in its new place: a click lands on it.
     calls = []
-    panel.set_on_click(lambda: calls.append("clicked"))
-
-    started = window.start_panel_drag(handle)
-    assert started is True
-
-    # Drop inside the right container's own real, computed bounds.
-    window.drop_panel_at(200.0, 50.0)
-
-    # The real, functional proof: the panel is now really attached
-    # under the right zone -- clicking it (a real dispatch, needing a
-    # real computed layout) must fire its own handler.
-    window.click(panel)
+    panel.on("click", lambda: calls.append("clicked"))
+    window.simulate("click", node=panel)
     assert calls == ["clicked"]
 
 
-def test_starting_a_drag_on_an_unregistered_node_is_a_safe_no_op():
-    window, handle, panel, right_container = build_two_zone_window()
-    plain = window.add_rect(background=(0, 0, 0, 0), width=10, height=10)
+def test_dock_target_fires_only_when_the_zone_changes():
+    window, left, right, panel = two_zones()
+    seen = record(window)
 
-    started = window.start_panel_drag(plain)
-    assert started is False
+    window.start_panel_drag(panel)
+    window.simulate("pointer_move", node=left)
+    window.simulate("pointer_move", node=left, x=10, y=10)  # same zone: no event
+    window.simulate("pointer_move", node=right)
+    window.simulate("pointer_move", x=-500, y=-500)  # over no zone
 
-
-def test_dropping_outside_any_zone_cancels_the_drag_without_moving_anything():
-    window, handle, panel, right_container = build_two_zone_window()
-
-    calls = []
-    panel.set_on_click(lambda: calls.append("clicked"))
-
-    window.start_panel_drag(handle)
-    window.drop_panel_at(-500.0, -500.0)  # nowhere near any real node
-
-    # The panel must still be exactly where it started -- clicking it
-    # must still work (it never left the Left zone).
-    window.click(panel)
-    assert calls == ["clicked"]
+    assert seen == [("target", "left"), ("target", "right"), ("target", None)]
 
 
-def test_dropping_back_into_the_same_zone_is_a_safe_no_op():
-    window, handle, panel, right_container = build_two_zone_window()
+def test_dropping_outside_every_zone_leaves_the_panel_where_it_was():
+    window, left, right, panel = two_zones()
+    seen = record(window)
 
-    calls = []
-    panel.set_on_click(lambda: calls.append("clicked"))
+    window.start_panel_drag(panel)
+    window.simulate("pointer_up", x=-500, y=-500)
 
-    window.start_panel_drag(handle)
-    window.drop_panel_at(50.0, 50.0)  # still inside the Left zone/handle area
-
-    window.click(panel)
-    assert calls == ["clicked"]
+    assert seen == [("drop", None, panel)]
+    assert left.children() == [panel]
 
 
-def test_dropping_with_no_drag_in_progress_does_not_raise():
-    window, handle, panel, right_container = build_two_zone_window()
-    window.drop_panel_at(200.0, 50.0)  # must not raise -- nothing was dragging
+def test_dropping_back_into_the_same_zone_changes_nothing():
+    window, left, right, panel = two_zones()
+
+    window.start_panel_drag(panel)
+    window.simulate("pointer_up", node=left)
+
+    assert left.children() == [panel]
+    assert right.children() == []
 
 
-def test_set_active_tab_switches_the_visible_panel():
+def test_without_a_drag_pointer_events_report_nothing():
+    window, left, right, panel = two_zones()
+    seen = record(window)
+
+    window.simulate("pointer_move", node=right)
+    window.simulate("pointer_up", node=right)
+
+    assert seen == []
+    assert left.children() == [panel]
+
+
+def test_a_secondary_release_does_not_end_the_drag():
+    window, left, right, panel = two_zones()
+    seen = record(window)
+
+    window.start_panel_drag(panel)
+    window.simulate("pointer_up", node=right, button="secondary")
+    assert seen == []
+    window.simulate("pointer_up", node=right)
+    assert seen == [("drop", "right", panel)]
+
+
+def test_a_handle_starts_the_drag_from_its_own_pointer_down():
+    """How a framework wires its handle: `start_panel_drag` from the
+    handle's `pointer_down`, then the press-move-release a user makes."""
+    window, left, right, panel = two_zones()
+    handle = add(window, "box", fill=(0x80, 0x80, 0x80, 0xFF), width=20, height=20)
+    handle.on("pointer_down", lambda: window.start_panel_drag(panel))
+    seen = record(window)
+
+    window.simulate("pointer_down", node=handle)
+    window.simulate("pointer_move", node=right)
+    window.simulate("pointer_up", node=right)
+
+    assert seen == [("target", "right"), ("drop", "right", panel)]
+    assert right.children() == [panel]
+
+
+def test_the_drag_ends_once_dropped():
+    window, left, right, panel = two_zones()
+    seen = record(window)
+
+    window.start_panel_drag(panel)
+    window.simulate("pointer_up", node=right)
+    window.simulate("pointer_move", node=left)
+    window.simulate("pointer_up", node=left)
+
+    assert len(seen) == 1
+    assert right.children() == [panel]
+
+
+def test_moving_the_active_panel_out_shows_the_next_one():
+    window, left, right, a = two_zones()
+    b = add(window, "box", fill=(0x00, 0xFF, 0x00, 0xFF), width=100, height=80)
+    window.dock_panel("left", b)  # b is now the active panel
+
+    window.start_panel_drag(b)
+    window.simulate("pointer_up", node=right)
+
+    assert left.children() == [a]
+    assert right.children() == [b]
+
+
+def test_start_panel_drag_needs_a_docked_panel():
+    window, left, right, panel = two_zones()
+    plain = add(window, "box", fill=(0, 0, 0, 0), width=10, height=10)
+
+    with pytest.raises(ValueError, match="isn't a docked panel"):
+        window.start_panel_drag(plain)
+
+
+def test_start_panel_drag_rejects_a_node_from_another_window():
+    window, left, right, panel = two_zones()
+    other = Window(width=100, height=100)
+    foreign = add(other, "box", fill=(0, 0, 0, 255), width=10, height=10)
+
+    with pytest.raises(ValueError, match="different Window"):
+        window.start_panel_drag(foreign)
+
+
+def test_set_active_panel_switches_the_visible_panel():
     window = Window(width=200, height=120)
-    container = window.add_rect(background=(0, 0, 0, 0), width=100, height=100)
+    container = add(window, "box", fill=(0, 0, 0, 0), width=100, height=100)
     window.add_dock_zone("left", container, 100.0)
-
-    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
-    b = window.add_rect(background=(0x00, 0xFF, 0x00, 0xFF), width=100, height=80)
+    a = add(window, "box", fill=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
+    b = add(window, "box", fill=(0x00, 0xFF, 0x00, 0xFF), width=100, height=80)
     window.dock_panel("left", a)
     window.dock_panel("left", b)
 
-    calls = []
-    a.set_on_click(lambda: calls.append("a"))
-    b.set_on_click(lambda: calls.append("b"))
+    window.set_active_panel("left", 0)
+    assert container.children() == [a]
+    window.set_active_panel("left", 1)
+    assert container.children() == [b]
 
-    window.set_active_tab("left", 0)
-    window.click(a)
-    assert calls == ["a"]
 
-    window.set_active_tab("left", 1)
-    window.click(b)
-    assert calls == ["a", "b"]
+def test_set_active_panel_rejects_an_index_out_of_range():
+    window, left, right, panel = two_zones()
+    with pytest.raises(ValueError, match="out of range"):
+        window.set_active_panel("left", 1)
 
 
 def test_an_unknown_dock_side_raises_value_error():
     window = Window(width=200, height=120)
-    container = window.add_rect(background=(0, 0, 0, 0), width=100, height=100)
-    try:
+    container = add(window, "box", fill=(0, 0, 0, 0), width=100, height=100)
+    with pytest.raises(ValueError, match="nowhere"):
         window.add_dock_zone("nowhere", container, 100.0)
-        raise AssertionError("expected a ValueError")
-    except ValueError as e:
-        assert "nowhere" in str(e)
 
 
-def test_set_dock_handle_rejects_a_handle_or_panel_from_a_different_window():
-    """M10 Phase 2 (§8): the same real `Rc::ptr_eq` same-tree guard
-    `Node.add_child`/`Node.set_context_menu` already have -- a `NodeId`
-    is only unique within the `Tree` that minted it.
-    """
-    window_a = Window(width=300, height=120)
-    window_b = Window(width=300, height=120)
-    container = window_a.add_rect(background=(0, 0, 0, 0), width=100, height=100)
-    window_a.add_dock_zone("left", container, 100.0)
-    panel = window_a.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
-    window_a.dock_panel("left", panel)
-    handle = window_a.add_rect(background=(0x80, 0x80, 0x80, 0xFF), width=100, height=20)
-    foreign = window_b.add_rect(background=(0, 0, 0, 255), width=10, height=10)
-
-    with pytest.raises(ValueError, match="different Window"):
-        window_a.set_dock_handle(foreign, panel)
-    with pytest.raises(ValueError, match="different Window"):
-        window_a.set_dock_handle(handle, foreign)
-
-
-def test_dragging_over_a_different_zone_shows_the_highlight_covering_it():
-    """M10 Phase 3 (§11.4): the real, functional proof that `drag_panel_
-    over` shows the registered highlight over whatever zone is really
-    under the pointer -- checked the only way there is to check it from
-    Python (no getter for internal `DockState`): clicking the highlight
-    itself, at its own real computed center, proves it's really
-    attached, laid out, and positioned to cover the Right zone's own
-    real bounds -- (160.0, 50.0) is confirmed (via `drop_panel_at`
-    actually moving the panel there in `test_dragging_a_registered_
-    handle_moves_its_panel_for_real`, above) to land inside the Right
-    zone's own real, computed container bounds, unlike (200.0, 50.0),
-    which sits exactly on its right edge (the container is flex-shrunk
-    to fit three 100px-wide root children into less available width) --
-    not inside it.
-    """
-    window, handle, panel, right_container = build_two_zone_window()
-    highlight = window.add_rect(background=(0x00, 0x80, 0xFF, 0x60), width=1, height=1)
-    window.set_drop_zone_highlight(highlight)
-
-    window.start_panel_drag(handle)
-    window.drag_panel_over(160.0, 50.0)  # inside the Right zone's real bounds
-
-    calls = []
-    highlight.set_on_click(lambda: calls.append("hit"))
-    window.click(highlight)
-    assert calls == ["hit"], "the highlight must be real, attached, and cover the Right zone"
-
-
-def test_dragging_outside_every_zone_hides_the_highlight():
-    window, handle, panel, right_container = build_two_zone_window()
-    highlight = window.add_rect(background=(0x00, 0x80, 0xFF, 0x60), width=1, height=1)
-    window.set_drop_zone_highlight(highlight)
-
-    window.start_panel_drag(handle)
-    window.drag_panel_over(160.0, 50.0)  # shows it over the Right zone first
-    window.drag_panel_over(-500.0, -500.0)  # nowhere near any registered zone
-
-    calls = []
-    highlight.set_on_click(lambda: calls.append("hit"))
-    window.click(highlight)
-    assert calls == [], "the highlight must be hidden once the pointer leaves every zone"
-
-
-def test_ending_a_drag_always_hides_the_highlight():
-    window, handle, panel, right_container = build_two_zone_window()
-    highlight = window.add_rect(background=(0x00, 0x80, 0xFF, 0x60), width=1, height=1)
-    window.set_drop_zone_highlight(highlight)
-
-    window.start_panel_drag(handle)
-    window.drag_panel_over(160.0, 50.0)
-    window.drop_panel_at(160.0, 50.0)
-
-    calls = []
-    highlight.set_on_click(lambda: calls.append("hit"))
-    window.click(highlight)
-    assert calls == [], "the highlight must be hidden once the drag has ended"
-
-
-def test_drag_panel_over_with_no_drag_in_progress_is_a_safe_no_op():
-    window, handle, panel, right_container = build_two_zone_window()
-    highlight = window.add_rect(background=(0x00, 0x80, 0xFF, 0x60), width=1, height=1)
-    window.set_drop_zone_highlight(highlight)
-
-    window.drag_panel_over(160.0, 50.0)  # must not raise -- nothing is dragging
-
-    calls = []
-    highlight.set_on_click(lambda: calls.append("hit"))
-    window.click(highlight)
-    assert calls == []
-
-
-def test_drag_panel_over_with_no_highlight_registered_is_a_safe_no_op():
-    window, handle, panel, right_container = build_two_zone_window()
-
-    window.start_panel_drag(handle)
-    window.drag_panel_over(200.0, 50.0)  # must not raise -- no highlight registered
-
-
-def test_set_drop_zone_highlight_rejects_content_from_a_different_window():
-    """M10 Phase 3 (§11.4): the same real `Rc::ptr_eq` same-tree guard
-    every other content-registering method on `Window`/`Node` already
-    has (`set_dock_handle`, `set_context_menu`).
-    """
-    window_a = Window(width=300, height=120)
-    window_b = Window(width=300, height=120)
-    foreign = window_b.add_rect(background=(0, 0, 0, 255), width=10, height=10)
-
-    with pytest.raises(ValueError, match="different Window"):
-        window_a.set_drop_zone_highlight(foreign)
+def test_the_dock_events_are_window_events():
+    window = Window(width=100, height=100)
+    window.on("dock_target", lambda: None)
+    window.on("dock_drop", lambda: None)
+    window.off("dock_target")
+    window.off("dock_drop")

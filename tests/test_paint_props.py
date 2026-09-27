@@ -1,8 +1,7 @@
-"""M95 Phase 2: the target API's paint names on every node, per-corner
-radii, shadows, easing, `get_target`/`stop_animation`, and the
-theme-free text-input, scroll-view, and terminal colors -- through
-`set`, `get`, and `animate`. What they paint is covered by
-`engine-render`'s own pixel tests.
+"""Paint properties on every node through `set`, `get`, and `animate`:
+per-corner radii, shadows, easing, `get_target`/`stop_animation`, and the
+text-input, scroll-view, and terminal colors. What they paint is covered by
+`engine-render`'s pixel tests.
 """
 
 from __future__ import annotations
@@ -12,6 +11,7 @@ from typing import Any
 import pytest
 
 import tre
+from helpers import add
 
 RED = (255, 0, 0, 255)
 
@@ -39,13 +39,6 @@ def test_corner_radius_is_one_number_or_four() -> None:
     box = w.create("box", corner_radius=(1, 2, 3, 4))
     box.set(corner_radius=8)
     assert box.get("corner_radius") == 8.0
-
-
-def test_fill_on_an_icon_is_its_tint() -> None:
-    w = window()
-    icon = w.add_icon("home", (0, 0, 0, 255), 24)
-    icon.set(fill=RED)
-    assert icon.get("fill") == RED
 
 
 def test_animate_targets_and_stop() -> None:
@@ -110,7 +103,7 @@ def test_paint_props_reject_bad_values(props: dict[str, Any], message: str) -> N
 
 def test_text_input_colors_placeholder_and_obscured() -> None:
     w = window()
-    field = w.add_text_field((255, 255, 255, 255), 150, 30)
+    field = add(w, "text_input", width=150, height=30)
     field.set(
         placeholder="Search",
         placeholder_fill=(1, 1, 1, 100),
@@ -128,18 +121,22 @@ def test_text_input_colors_placeholder_and_obscured() -> None:
 
 def test_an_obscured_field_never_copies_or_cuts() -> None:
     w = window()
-    field = w.add_text_field((255, 255, 255, 255), 150, 30)
+    field = add(w, "text_input", width=150, height=30)
     field.set(obscured=True)
     w.simulate("focus", node=field)
     w.simulate("input", text="secret")
-    w.select_all()
-    w.cut()
-    assert field.get_text() == "secret"
+    w.simulate("key_down", key="a", ctrl=True)
+    w.write_clipboard("untouched")
+    w.simulate("key_down", key="c", ctrl=True)
+    w.simulate("key_down", key="x", ctrl=True)
+    assert field.get("text") == "secret"
+    if w.read_clipboard() is not None:  # a reachable clipboard
+        assert w.read_clipboard() == "untouched"
 
 
 def test_scroll_view_scrollbar_props() -> None:
     w = window()
-    view = w.add_scroll_view(100, 100)
+    view = add(w, "scroll_view", width=100, height=100)
     view.set(scrollbar_fill=RED, scrollbar_width=8)
     assert (view.get("scrollbar_fill"), view.get("scrollbar_width")) == (RED, 8.0)
     view.set(scrollbar_fill=None)
@@ -148,7 +145,7 @@ def test_scroll_view_scrollbar_props() -> None:
 
 def test_terminal_palette_merges_the_given_keys() -> None:
     w = window()
-    terminal = w.add_terminal("/bin/sh", 20, 5, (0, 0, 0, 255))
+    terminal = add(w, "terminal", shell="/bin/sh", cols=20, rows=5, palette={"background": (0, 0, 0, 255)})
     before = terminal.get("palette")
     assert len(before["ansi"]) == 16
     terminal.set(palette={"foreground": RED, "ansi": [RED] * 16})

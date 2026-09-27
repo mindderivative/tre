@@ -1,5 +1,5 @@
-"""M96 Phase 1: `window.advance(ms)` -- deterministic headless time, so
-animated widgets are testable where `App.run()` renders no frames.
+"""`window.advance(ms)`: deterministic headless time, so animations and their
+completions are testable without `App.run()`.
 """
 
 from __future__ import annotations

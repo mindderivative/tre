@@ -2,7 +2,7 @@
 //! TextField` genuinely paints its own real box fill, real glyphs, and
 //! a real caret gated on the `Tree`'s own live focused node -- not just
 //! that the match arm compiles. Same headless render-to-texture-then-
-//! readback discipline as `checkbox_paint.rs`/`slider_paint.rs`.
+//! readback discipline as `border_paint.rs`.
 //!
 //! Two claims, kept deliberately separate:
 //!
@@ -152,7 +152,7 @@ fn build_tree(focus_field: bool) -> (Tree, engine_core::NodeId, engine_core::Nod
             },
             ..Default::default()
         },
-        PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        PaintProperties::new(BACKGROUND, 0.0, 1.0),
     );
 
     // Empty content -- the real caret then sits exactly at the field's
@@ -166,17 +166,12 @@ fn build_tree(focus_field: bool) -> (Tree, engine_core::NodeId, engine_core::Nod
             },
             ..Default::default()
         },
-        PaintProperties::new(FIELD_COLOR, 0.0, 0.0, 1.0),
+        PaintProperties::new(FIELD_COLOR, 0.0, 1.0),
     );
     tree.add_child(root, field);
 
     if focus_field {
-        tree.set_focus_to(
-            field,
-            1.0,
-            std::time::Duration::ZERO,
-            std::time::Instant::now(),
-        );
+        tree.set_focus_to(field);
     }
 
     let available = Size {
@@ -248,7 +243,7 @@ fn build_tree_with_state(
             },
             ..Default::default()
         },
-        PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        PaintProperties::new(BACKGROUND, 0.0, 1.0),
     );
     let field = tree.insert(
         NodeKind::TextField(state),
@@ -259,7 +254,7 @@ fn build_tree_with_state(
             },
             ..Default::default()
         },
-        PaintProperties::new(FIELD_COLOR, 0.0, 0.0, 1.0),
+        PaintProperties::new(FIELD_COLOR, 0.0, 1.0),
     );
     tree.add_child(root, field);
 
@@ -333,7 +328,7 @@ fn a_cleared_preedit_i_e_an_empty_string_paints_no_underline_same_as_none() {
 /// stub. No GPU/pixel readback needed at all (unlike every test above):
 /// `TextRenderer::new()` is pure CPU-side font/layout setup, and `hit_
 /// test_position` returns a plain `usize`, no `Scene`/`Resources`
-/// involved -- the same reason `checkbox_paint.rs`-style pixel tests
+/// involved -- the same reason `border_paint.rs`-style pixel tests
 /// exist for *painting* claims but a plain unit test suffices here.
 #[test]
 fn hit_test_position_at_the_very_start_of_the_field_returns_byte_offset_zero() {
@@ -642,7 +637,7 @@ fn a_genuinely_overflowing_multiline_field_clips_its_own_content_to_its_own_box(
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
         let field = tree.insert(
             NodeKind::TextField(state),
@@ -653,7 +648,7 @@ fn a_genuinely_overflowing_multiline_field_clips_its_own_content_to_its_own_box(
                 },
                 ..Default::default()
             },
-            PaintProperties::new(FIELD_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(FIELD_COLOR, 0.0, 1.0),
         );
         tree.add_child(root, field);
         tree.compute_layout(
@@ -709,7 +704,7 @@ fn a_nonzero_scroll_offset_paints_genuinely_different_pixels_than_unscrolled() {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+                PaintProperties::new(BACKGROUND, 0.0, 1.0),
             );
             let field = tree.insert(
                 NodeKind::TextField(state),
@@ -720,7 +715,7 @@ fn a_nonzero_scroll_offset_paints_genuinely_different_pixels_than_unscrolled() {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(FIELD_COLOR, 0.0, 0.0, 1.0),
+                PaintProperties::new(FIELD_COLOR, 0.0, 1.0),
             );
             tree.add_child(root, field);
             tree.compute_layout(
@@ -772,7 +767,7 @@ fn a_nonzero_horizontal_scroll_offset_paints_genuinely_different_pixels_than_uns
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+                PaintProperties::new(BACKGROUND, 0.0, 1.0),
             );
             let field = tree.insert(
                 NodeKind::TextField(state),
@@ -783,7 +778,7 @@ fn a_nonzero_horizontal_scroll_offset_paints_genuinely_different_pixels_than_uns
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(FIELD_COLOR, 0.0, 0.0, 1.0),
+                PaintProperties::new(FIELD_COLOR, 0.0, 1.0),
             );
             tree.add_child(root, field);
             tree.compute_layout(

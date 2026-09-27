@@ -8,11 +8,11 @@
 //! **Real correction:** this module originally sketched a generic
 //! `AppHandler` trait here for that hook (M4 Phase 1 step 1's own
 //! original plan) -- it was never actually implemented anywhere; the
-//! real mechanism that shipped instead is `engine-py::dispatch.rs`'s
-//! own `HandlerMap`/`call_handler`/`run_dispatch_outcome` (a real,
-//! per-`(NodeId, EventKind)` Python callback registry, reached directly
-//! from `App::run`'s own per-frame closure, no generic trait needed at
-//! all since only `engine-py` ever calls `Tree::dispatch` in practice).
+//! real mechanism is `engine-py::dispatch.rs`'s own `HandlerMap`/
+//! `run_dispatch_outcome` (a real per-`(NodeId, HandlerKey)` Python
+//! callback registry, delivered by `listeners.rs`), no generic trait
+//! needed at all since only `engine-py` ever calls `Tree::dispatch` in
+//! practice).
 //! The dead trait was removed once this was confirmed via grep -- kept
 //! stated here, not silently dropped, since a stale forward-reference
 //! is exactly the kind of drift this project's own doc comments are
@@ -34,7 +34,7 @@ use peniko::kurbo::Point;
 /// `Middle`/`Back`/`Forward`/`Other(u16)`), not three -- an earlier
 /// version of this doc comment claimed a 1:1 match, which was wrong,
 /// not verified against the real enum. `Back`/`Forward`/`Other` have no
-/// real MD3 desktop meaning yet (they're a browser-navigation
+/// real desktop meaning here yet (they're a browser-navigation
 /// convention) and translate to no `InputEvent` at all -- narrowed,
 /// stated, not silently dropped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,12 +245,9 @@ pub enum InputEvent {
     },
     /// M7 Phase 3 (§7.1): the OS-level light/dark appearance changed --
     /// `winit::WindowEvent::ThemeChanged`, translated in `engine-
-    /// platform`. `Tree::dispatch` is a true no-op for this event, the
-    /// same "plumbing only" shape `Scroll` above already established --
-    /// resolving a new theme color and pushing it into every node's
-    /// `InteractionState::tint` is `engine-py`'s own job (`Tree::
-    /// set_all_interaction_tints`), not something `Tree::dispatch`
-    /// itself has the MD3 context to do.
+    /// platform`. `Tree::dispatch` is a true no-op for this event --
+    /// `engine-py` only reports it to `window.on("color_scheme", ...)`
+    /// listeners; what it means is the framework's call (M99).
     ThemeChanged {
         dark: bool,
     },
@@ -261,8 +258,8 @@ pub enum InputEvent {
     /// conversion, matching `PointerMoved`'s own established
     /// precedent). Unlike `ThemeChanged`, `Tree::dispatch` is *not* a
     /// no-op here: resizing `root`'s own `layout_style.size` is a pure
-    /// taffy/layout concern `engine-core` fully owns already (no MD3
-    /// or platform knowledge needed), so the real mutation happens
+    /// taffy/layout concern `engine-core` fully owns already (no
+    /// platform knowledge needed), so the real mutation happens
     /// directly in `dispatch`'s own match, not deferred to `engine-py`.
     Resized {
         width: f32,
@@ -292,40 +289,23 @@ pub enum InputEvent {
     PointerLeft,
 }
 
-/// M4 Phase 6 (§16.2): the small, real vocabulary of named events a
-/// registered handler can be keyed on -- `Click` (already real since
-/// M4 Phase 1) plus `HoverEnter`/`HoverExit` (§7.3's own named pair,
-/// "fires... through the ordinary handler path... independent of
-/// whether the default MD3 visual [i.e. hover's own opt-in animation]
-/// handles it"). `Change` and `FocusEnter`/`FocusExit` (M55, below)
-/// round out §16.2's own originally-sketched set -- each added only
-/// once a real bound component needed it, matching Design Principle
-/// 6's own calibration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum EventKind {
-    Click,
-    HoverEnter,
-    HoverExit,
-    /// M14 Phase 3 (§16.7): a real, genuine edit -- a `Slider` drag
-    /// ending (mechanical, detected by `Tree::dispatch` itself, the
-    /// same way `HoverChanged` is), or `Node.set_checked` being called
-    /// on a `Checkbox` (not mechanical in the same sense -- `engine-
-    /// core` never touches `checked` itself, Design Principle 6 -- so
-    /// that firing happens directly in `engine-py`, not through `Tree::
-    /// dispatch` at all; see `Node.set_checked`'s own doc comment).
-    /// §16.7's own real "two-way binding" sugar is built on this.
-    Change,
-    /// M55 (§10, §16.2): keyboard focus arriving at/leaving this node --
-    /// real click-to-focus (M18/M30/M53), Tab/Shift-Tab navigation, a
-    /// real `Node.focus()`/`Window.focus()` call, or a real AccessKit
-    /// `Action::Focus` request all produce this pair the identical way
-    /// `HoverEnter`/`HoverExit` already do. A pair, not a single
-    /// `Focus` kind, for the identical real reason `Hover` is a pair:
-    /// `HandlerMap`'s own per-node key (`(NodeId, EventKind)`) can
-    /// never give one event two real sources, so the node losing focus
-    /// and the node gaining it each need their own kind to register on.
-    FocusEnter,
-    FocusExit,
+/// M100: what Ctrl+`letter` means, shared by the live keyboard path
+/// (`engine-platform`) and `window.simulate`, so both reach the same
+/// handling: `c`/`x`/`v` copy, cut, and paste; Ctrl+Shift+C is a
+/// terminal's copy; every other ASCII letter is a `ControlChar` (a
+/// terminal's control byte, or a text input's select-all for `a`).
+/// `None` for anything that isn't a single ASCII letter.
+pub fn ctrl_shortcut(letter: char, shift: bool) -> Option<InputEvent> {
+    if !letter.is_ascii_alphabetic() {
+        return None;
+    }
+    Some(match letter.to_ascii_lowercase() {
+        'c' if shift => InputEvent::TerminalCopyRequested,
+        'c' => InputEvent::Copy,
+        'x' => InputEvent::Cut,
+        'v' => InputEvent::PasteRequested,
+        other => InputEvent::ControlChar(other),
+    })
 }
 
 /// M54 Phase 1 (§8, §16.2): the real, exact set of value shapes a
@@ -333,39 +313,26 @@ pub enum EventKind {
 /// tracing every real `DispatchOutcome::Changed` producer in `tree.rs`
 /// before writing this, not assumed: a `TextField` edit (`Backspace`/
 /// `Delete`/`Space`/`Enter`/`Tab`/a real typed character) owns a
-/// `String`; a `Slider` drag/arrow-nudge owns an `f64`; a
-/// `TimePickerDial` drag owns its own `{hour, minute}` pair, not a
-/// single number at all. A generic/open-ended shape was deliberately
-/// rejected (`AskUserQuestion`, M54 scoping) in favor of this small,
-/// exact enum -- three real shapes, not a speculative fourth.
+/// `String`. M99 removed the slider's `Number` and the time picker
+/// dial's `Time` with their kinds; a text edit is the only producer.
 /// `new_value` is deliberately *not* a sibling field anywhere this
 /// type appears: unlike the old value (destroyed by the very mutation
 /// that produces this outcome, so it must be captured here, mechanically,
 /// or nowhere), the new value is genuinely still live in the `Tree`
 /// after `dispatch()` returns -- cheaply, correctly recoverable by
-/// `engine-py` reading it back (`get_text()`/`get_checked()`-style),
-/// the same real workaround this codebase's own examples already use
-/// today. Carrying it here too would just be a second copy of data the
+/// `engine-py` reading it back (`dispatch::read_new_changed_value`).
+/// Carrying it here too would just be a second copy of data the
 /// caller can already read for itself.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChangedValue {
     Text(String),
-    Number(f64),
-    Time { hour: u8, minute: u8 },
 }
 
 /// The one thing `Tree::dispatch` can't resolve by itself (§2 Design
 /// Principle 6: it's meaning-dependent, not mechanical) -- everything
-/// mechanical (hover, focus movement, ripple-spawn-on-press) already
-/// happened inside `dispatch` itself before this is ever produced.
+/// mechanical (hover, focus movement) already happened inside
+/// `dispatch` itself before this is ever produced.
 ///
-/// M54 Phase 1: dropped `Eq` from the derive below (kept `PartialEq`)
-/// -- `Changed`'s new `ChangedValue::Number(f64)` case can't derive
-/// `Eq` (`f64` only has `PartialEq`, the standard NaN-related reason).
-/// Confirmed via a full `grep` before this change: every real use of
-/// this derive across the workspace is `assert_eq!`/pattern matching,
-/// which only need `PartialEq`/`Debug` -- nothing hashes or `Eq`-bounds
-/// a `DispatchOutcome` anywhere.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DispatchOutcome {
     /// Nothing meaning-dependent happened this call.
@@ -373,23 +340,20 @@ pub enum DispatchOutcome {
     /// `NodeId` was activated -- a primary-button pointer click released
     /// over the same node it was pressed on, or `Enter`/`Space` while it
     /// was `Tree::focused()`. What activating a node actually *means*
-    /// (call a registered `on_click`, or nothing if none is registered)
-    /// is `engine-py::dispatch.rs`'s own `call_handler`'s job, not
-    /// `Tree`'s -- this module's own doc comment has the full real
+    /// (deliver `click` to its `node.on(...)` listeners) is
+    /// `engine-py::dispatch.rs`'s job, not `Tree`'s -- this module's own doc comment has the full real
     /// reason no generic trait mediates it.
     Activated(crate::NodeId),
     /// M4 Phase 7 (§11.3): the secondary-button (right-click) counterpart
     /// to `Activated` -- a secondary-button pointer click released over
     /// the same node it was pressed on. Separate from `Activated` since
-    /// a right-click's real meaning (open a registered context menu, or
-    /// nothing if none is registered) is a distinct action from a
-    /// left-click's, not a variant of the same one.
+    /// a right-click's real meaning (`secondary_click`, a context menu,
+    /// say) is a distinct action from a left-click's, not a variant of
+    /// the same one.
     SecondaryActivated(crate::NodeId),
     /// M4 Phase 6 (§7.3): the hovered node genuinely changed this call
-    /// -- `old`/`new` are whichever node was/is hovered, independent of
-    /// whether either one ever opted into `InteractionState` (§7.3's
-    /// own text: the event fires regardless of whether the default
-    /// visual is enabled). Only produced on a real transition, matching
+    /// -- `old`/`new` are whichever node was/is hovered. Only produced on
+    /// a real transition, matching
     /// `update_hover`'s own "repeated call, same result, is a no-op"
     /// contract -- an unchanged hover is not a new fact to report.
     HoverChanged {
@@ -397,19 +361,14 @@ pub enum DispatchOutcome {
         new: Option<crate::NodeId>,
     },
     /// M14 Phase 3 (§16.7), widened M54 Phase 1 (§8, §16.2): a real
-    /// mechanical edit `Tree::dispatch` itself can detect -- a `Slider`/
-    /// `TimePickerDial` drag genuinely ending, an arrow-key nudge, or a
-    /// real `TextField` keyboard edit. `old_value` is the value
+    /// mechanical edit `Tree::dispatch` itself can detect -- a real
+    /// `TextField` keyboard edit. `old_value` is the value
     /// immediately *before* this outcome's own mutation, snapshotted at
     /// the one real place that already knows it's about to be
     /// overwritten (see each producer site in `tree.rs`) -- the only
-    /// point it's still genuinely recoverable at all. What a real
-    /// `Change` means (call a registered handler, or nothing) is still
-    /// `call_handler`'s job (`engine-py::dispatch.rs`), not `Tree`'s --
-    /// `Node.set_checked`/`set_selected`/`set_on`/`set_text` fire the
-    /// identical `EventKind::Change` a different way entirely (Design
-    /// Principle 6: `engine-core` never touches that semantics), so
-    /// they never produce this variant at all.
+    /// point it's still genuinely recoverable at all. Delivering it as
+    /// a `change` event is `engine-py::dispatch.rs`'s job, not
+    /// `Tree`'s.
     Changed {
         node: crate::NodeId,
         old_value: ChangedValue,

@@ -1,7 +1,6 @@
 # Nodes and Properties
 
-*New in 0.3.4.* Every node the [target API](../../design/target-api.md) builds
-comes from `window.create(kind, **props)`, and every property is read and
+Every node comes from `window.create(kind, **props)`, and every property is read and
 written through [`node.set`, `node.get`, and `node.animate`](node.md#set-get-and-focus).
 This page lists them all. Paint, paths, shadows, and easing have their own page,
 [Paint, Paths, and Animation](paint.md); events are in
@@ -16,7 +15,7 @@ This page lists them all. Paint, paths, shadows, and easing have their own page,
 | `"text_input"` | — | Editable text: selection, clipboard, IME, syntax spans, folding, obscuring |
 | `"image"` | `rgba`, `pixel_width`, `pixel_height` | Decoded RGBA8 pixels; video is repeated `set(rgba=..., ...)` |
 | `"path"` | `data` | A vector path — see [Paths](paint.md#paths) |
-| `"canvas"` | `draw` | Immediate-mode drawing through a [painter](canvas-context.md) |
+| `"canvas"` | `draw` | Immediate-mode drawing through a [painter](painter.md) |
 | `"scroll_view"` | — | Clips and scrolls one child |
 | `"virtual_list"` | `item_count`, `materialize`, and `item_extent` or `size_hint` | Builds only the rows its viewport shows |
 | `"terminal"` | `shell`, `cols`, `rows` | A PTY-backed terminal emulator |
@@ -182,10 +181,11 @@ Plus `font_size` and the `palette` on
 
 | Property | Value |
 | --- | --- |
+| `kind` | The node's kind, by the name `create` takes — `"box"`, `"text"`, `"text_input"`, ... |
 | `focused` | Whether the node has keyboard focus |
 | `layer_placement` | A shown [layer](layers.md)'s side of its anchor — `"below"`, `"above"`, `"start"`, `"end"` — or `None` |
-| `layout_x`, `layout_y` | The node's computed position in the window |
-| `layout_width`, `layout_height` | Its computed size |
+| `layout_x`, `layout_y` | The node's position in the window, as drawn — its own and its ancestors' transforms included |
+| `layout_width`, `layout_height` | Its computed size, before any `scale` |
 
 Reading a `layout_*` value runs any pending layout first, so it always matches
 the tree as it is now. A detached subtree is laid out on its own, at its content

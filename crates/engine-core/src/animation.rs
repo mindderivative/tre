@@ -6,10 +6,9 @@
 
 use std::time::{Duration, Instant};
 
-/// Implemented by every type an `Animated<T>` can wrap -- `f64` and
-/// `peniko::Color` for now (this step's own scope). `kurbo::Affine` and
-/// `ShapeKey` (§5, §7.4) land whenever a later step first animates a
-/// transform or a shape morph.
+/// Implemented by every type an `Animated<T>` can wrap -- `f64`,
+/// `peniko::Color`, and `kurbo::Affine` here, plus `CornerRadii`,
+/// `Shadow`/`Shadows` (`node.rs`), and `PathData` (`path.rs`).
 pub trait Interpolate {
     fn interpolate(&self, other: &Self, t: f64) -> Self;
 }
@@ -61,8 +60,7 @@ impl Interpolate for peniko::kurbo::Affine {
 /// A single cubic Bézier segment, `P0`→`P1`→`P2`→`P3`, in arbitrary
 /// `(x, y)` space -- not the `(0,0)`→`(1,1)`-fixed, 2-control-point
 /// CSS `cubic-bezier()` shorthand, so the same type can also represent
-/// one segment of a real *compound* easing curve (M7 Phase 1's own
-/// `Emphasized`, below).
+/// one segment of a compound easing curve.
 #[derive(Clone, Copy)]
 struct CubicSegment {
     p0: (f64, f64),
@@ -115,52 +113,17 @@ impl CubicSegment {
     }
 }
 
-/// MD3 named easing curves (§7.5), as real cubic-bezier control points
-/// -- verified against Android's own `MotionTokens.kt` (generated
-/// directly from the official Material Design spec), not recalled from
-/// memory (`PLAN.md`): the single-segment curves are standard CSS-style
-/// `cubic-bezier(x1, y1, x2, y2)` values; `Emphasized` is a genuine
-/// two-segment compound curve (`M 0,0 C 0.05,0 0.133333,0.06 0.166666,
-/// 0.4 C 0.208333,0.82 0.25,1 1,1`), not a single 4-parameter curve --
-/// a common web/CSS approximation flattens it to `Standard`'s own
-/// value, which this implementation deliberately does not do.
+/// An animation's easing: linear, or a CSS-style cubic bezier. M99
+/// removed the MD3 named curves (`Standard`, `Emphasized`, ...); a
+/// framework passes their bezier values instead (`docs/design/
+/// md3-handover.md` records them, and `Emphasized`'s two segments).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MotionCurve {
     Linear,
     /// M95: any CSS-style cubic bezier `(x1, y1, x2, y2)` -- the curve a
-    /// framework passes as `easing`, recreating the MD3 named curves
-    /// below (which M99 removes) or any other.
+    /// framework passes as `easing`.
     Bezier(f64, f64, f64, f64),
-    Standard,
-    StandardDecelerate,
-    StandardAccelerate,
-    Emphasized,
-    EmphasizedDecelerate,
-    EmphasizedAccelerate,
 }
-
-/// `Emphasized`'s own two segments join at this real, documented `x`
-/// (`MotionTokens.kt`'s own path data) -- not an even split, and not a
-/// rounded fraction.
-const EMPHASIZED_SPLIT_X: f64 = 0.166666;
-
-const STANDARD: CubicSegment = CubicSegment::standard(0.2, 0.0, 0.0, 1.0);
-const STANDARD_DECELERATE: CubicSegment = CubicSegment::standard(0.0, 0.0, 0.0, 1.0);
-const STANDARD_ACCELERATE: CubicSegment = CubicSegment::standard(0.3, 0.0, 1.0, 1.0);
-const EMPHASIZED_DECELERATE: CubicSegment = CubicSegment::standard(0.05, 0.7, 0.1, 1.0);
-const EMPHASIZED_ACCELERATE: CubicSegment = CubicSegment::standard(0.3, 0.0, 0.8, 0.15);
-const EMPHASIZED_1: CubicSegment = CubicSegment {
-    p0: (0.0, 0.0),
-    p1: (0.05, 0.0),
-    p2: (0.133333, 0.06),
-    p3: (EMPHASIZED_SPLIT_X, 0.4),
-};
-const EMPHASIZED_2: CubicSegment = CubicSegment {
-    p0: (EMPHASIZED_SPLIT_X, 0.4),
-    p1: (0.208333, 0.82),
-    p2: (0.25, 1.0),
-    p3: (1.0, 1.0),
-};
 
 impl MotionCurve {
     fn ease(self, t: f64) -> f64 {
@@ -168,18 +131,6 @@ impl MotionCurve {
             MotionCurve::Linear => t,
             MotionCurve::Bezier(x1, y1, x2, y2) => {
                 CubicSegment::standard(x1, y1, x2, y2).solve_y_for_x(t)
-            }
-            MotionCurve::Standard => STANDARD.solve_y_for_x(t),
-            MotionCurve::StandardDecelerate => STANDARD_DECELERATE.solve_y_for_x(t),
-            MotionCurve::StandardAccelerate => STANDARD_ACCELERATE.solve_y_for_x(t),
-            MotionCurve::EmphasizedDecelerate => EMPHASIZED_DECELERATE.solve_y_for_x(t),
-            MotionCurve::EmphasizedAccelerate => EMPHASIZED_ACCELERATE.solve_y_for_x(t),
-            MotionCurve::Emphasized => {
-                if t <= EMPHASIZED_SPLIT_X {
-                    EMPHASIZED_1.solve_y_for_x(t)
-                } else {
-                    EMPHASIZED_2.solve_y_for_x(t)
-                }
             }
         }
     }
@@ -324,19 +275,18 @@ mod tests {
         assert_eq!(10.0_f64.interpolate(&20.0, 1.0), 20.0);
     }
 
-    /// M7 Phase 1 (§7.5): every real MD3 curve must start at `y=0` and
-    /// end at `y=1`, the same boundary condition every CSS/MD3 easing
-    /// curve is defined to satisfy.
+    /// M7 Phase 1 (§7.5): every curve -- here the MD3 values, as the
+    /// beziers a framework passes -- must start at `y=0` and end at
+    /// `y=1`, the boundary condition every CSS easing curve satisfies.
     #[test]
     fn every_motion_curve_satisfies_its_own_boundary_conditions() {
         for curve in [
             MotionCurve::Linear,
-            MotionCurve::Standard,
-            MotionCurve::StandardDecelerate,
-            MotionCurve::StandardAccelerate,
-            MotionCurve::Emphasized,
-            MotionCurve::EmphasizedDecelerate,
-            MotionCurve::EmphasizedAccelerate,
+            MotionCurve::Bezier(0.2, 0.0, 0.0, 1.0),
+            MotionCurve::Bezier(0.0, 0.0, 0.0, 1.0),
+            MotionCurve::Bezier(0.3, 0.0, 1.0, 1.0),
+            MotionCurve::Bezier(0.05, 0.7, 0.1, 1.0),
+            MotionCurve::Bezier(0.3, 0.0, 0.8, 0.15),
         ] {
             assert!(
                 (curve.ease(0.0) - 0.0).abs() < 1e-9,
@@ -349,50 +299,18 @@ mod tests {
         }
     }
 
-    /// Every real MD3 curve here is monotonically non-decreasing --
-    /// sampled, not proven analytically, but at a fine enough
-    /// resolution (200 points) to catch a real ordering bug (e.g. a
-    /// wrong segment split, a transposed control point).
-    #[test]
-    fn every_motion_curve_is_monotonically_non_decreasing() {
-        for curve in [
-            MotionCurve::Linear,
-            MotionCurve::Standard,
-            MotionCurve::StandardDecelerate,
-            MotionCurve::StandardAccelerate,
-            MotionCurve::Emphasized,
-            MotionCurve::EmphasizedDecelerate,
-            MotionCurve::EmphasizedAccelerate,
-        ] {
-            let mut previous = curve.ease(0.0);
-            for i in 1..=200 {
-                let t = f64::from(i) / 200.0;
-                let y = curve.ease(t);
-                assert!(
-                    y + 1e-9 >= previous,
-                    "{curve:?} must be non-decreasing: ease({t}) = {y} < previous {previous}"
-                );
-                previous = y;
-            }
-        }
-    }
-
-    /// The bisection solver's own round-trip consistency, the same
-    /// rigor `kurbo::Affine::inverse()`'s own tests use: forward-
-    /// evaluate a real `(x, y)` point on each single-segment curve at a
-    /// chosen `t` via `CubicSegment::eval`, then confirm `solve_y_for_x`
-    /// recovers the same `y` from that `x` -- validates the solver
-    /// against the curve's own forward math, not just plausibility.
+    /// Forward-evaluates a point on each curve at a chosen `t` via
+    /// `CubicSegment::eval`, then confirms `solve_y_for_x` recovers the
+    /// same `y` from that `x` -- the solver checked against the curve's
+    /// own forward math.
     #[test]
     fn cubic_segment_solve_y_for_x_round_trips_with_eval() {
         for segment in [
-            STANDARD,
-            STANDARD_DECELERATE,
-            STANDARD_ACCELERATE,
-            EMPHASIZED_DECELERATE,
-            EMPHASIZED_ACCELERATE,
-            EMPHASIZED_1,
-            EMPHASIZED_2,
+            CubicSegment::standard(0.2, 0.0, 0.0, 1.0),
+            CubicSegment::standard(0.0, 0.0, 0.0, 1.0),
+            CubicSegment::standard(0.3, 0.0, 1.0, 1.0),
+            CubicSegment::standard(0.05, 0.7, 0.1, 1.0),
+            CubicSegment::standard(0.3, 0.0, 0.8, 0.15),
         ] {
             for i in 1..10 {
                 let t = f64::from(i) / 10.0;
@@ -406,24 +324,31 @@ mod tests {
         }
     }
 
-    /// `Emphasized`'s own real, externally-verified landmark (`PLAN.md`):
-    /// its two segments join at `(0.166666, 0.4)`, confirmed directly
-    /// against Android's own `MotionTokens.kt` path data -- not a
-    /// rounded/guessed split, and continuous (no jump) across the join.
+    /// Every curve here is monotonically non-decreasing --
+    /// sampled, not proven analytically, but at a fine enough
+    /// resolution (200 points) to catch a real ordering bug (e.g. a
+    /// wrong segment split, a transposed control point).
     #[test]
-    fn emphasized_curve_matches_its_real_documented_split_point() {
-        let just_before = MotionCurve::Emphasized.ease(EMPHASIZED_SPLIT_X - 1e-6);
-        let at_split = MotionCurve::Emphasized.ease(EMPHASIZED_SPLIT_X);
-        let just_after = MotionCurve::Emphasized.ease(EMPHASIZED_SPLIT_X + 1e-6);
-
-        assert!(
-            (at_split - 0.4).abs() < 1e-4,
-            "Emphasized's real split-point y must be ~0.4 (MotionTokens.kt), got {at_split}"
-        );
-        assert!(
-            (just_before - just_after).abs() < 1e-4,
-            "Emphasized must be continuous across its segment join: {just_before} vs {just_after}"
-        );
+    fn every_motion_curve_is_monotonically_non_decreasing() {
+        for curve in [
+            MotionCurve::Linear,
+            MotionCurve::Bezier(0.2, 0.0, 0.0, 1.0),
+            MotionCurve::Bezier(0.0, 0.0, 0.0, 1.0),
+            MotionCurve::Bezier(0.3, 0.0, 1.0, 1.0),
+            MotionCurve::Bezier(0.05, 0.7, 0.1, 1.0),
+            MotionCurve::Bezier(0.3, 0.0, 0.8, 0.15),
+        ] {
+            let mut previous = curve.ease(0.0);
+            for i in 1..=200 {
+                let t = f64::from(i) / 200.0;
+                let y = curve.ease(t);
+                assert!(
+                    y + 1e-9 >= previous,
+                    "{curve:?} must be non-decreasing: ease({t}) = {y} < previous {previous}"
+                );
+                previous = y;
+            }
+        }
     }
 
     #[test]

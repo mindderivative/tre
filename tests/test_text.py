@@ -1,7 +1,7 @@
-"""M96 Phase 3: `window.measure_text` and a text node's line layout --
-`font_style`, `letter_spacing`, `wrap`, `max_lines`, and `overflow`.
-Measurement shares the painter's layout code (`engine-render`'s
-`build_text_layout`), whose pixels `m96_paint.rs` checks.
+"""`window.measure_text` and a text node's line layout -- `font_style`,
+`letter_spacing`, `wrap`, `max_lines`, and `overflow`. Measurement shares
+the painter's layout code (`engine-render`'s `build_text_layout`), whose
+pixels `m96_paint.rs` checks.
 """
 
 from __future__ import annotations

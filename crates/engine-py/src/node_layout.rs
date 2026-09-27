@@ -2,7 +2,7 @@
 //! flex layout, and a node's place as a flex child. Each property is one
 //! parser, producing an edit to the node's taffy `Style`, and one reader,
 //! giving the value back the way it was set. The vocabularies are tables
-//! read in both directions, shared with the legacy `set_layout`.
+//! read in both directions.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

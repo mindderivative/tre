@@ -41,7 +41,7 @@ fn two_row_children_paint_at_their_own_laid_out_positions() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            PaintProperties::new(TRANSPARENT, 0.0, 1.0),
         );
         let left = tree.insert(
             NodeKind::Rect,
@@ -52,7 +52,7 @@ fn two_row_children_paint_at_their_own_laid_out_positions() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(RED, 0.0, 0.0, 1.0),
+            PaintProperties::new(RED, 0.0, 1.0),
         );
         let right = tree.insert(
             NodeKind::Rect,
@@ -63,7 +63,7 @@ fn two_row_children_paint_at_their_own_laid_out_positions() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BLUE, 0.0, 0.0, 1.0),
+            PaintProperties::new(BLUE, 0.0, 1.0),
         );
         tree.add_child(root, left);
         tree.add_child(root, right);

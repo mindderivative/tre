@@ -12,7 +12,7 @@ use engine_core::{FocusDirection, NodeId, OverlayMeta, Placement};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::dispatch::{fire_focus_transition, interaction_config};
+use crate::dispatch::fire_focus_transition;
 use crate::error::EngineError;
 use crate::node::Node;
 use crate::node_handles;
@@ -46,10 +46,7 @@ impl PyWindow {
         dismissible: bool,
         py: Python<'_>,
     ) -> PyResult<()> {
-        let (tree, root) = {
-            let active = self.active.borrow();
-            (active.tree.clone(), active.root)
-        };
+        let (tree, root) = (self.tree.clone(), self.root);
         for handle in std::iter::once(&node).chain(anchor.as_ref()) {
             if !Rc::ptr_eq(&handle.tree, &tree) {
                 return Err(EngineError::ForeignNode.into());
@@ -73,14 +70,7 @@ impl PyWindow {
         }
         if modal {
             // Focus moves into the layer: Tab's scope is now the layer.
-            let config = interaction_config();
-            let transition = tree.borrow_mut().move_focus(
-                root,
-                FocusDirection::Next,
-                config.focus_ring_opacity,
-                config.focus_ring_duration,
-                crate::clock::now(&tree),
-            );
+            let transition = tree.borrow_mut().move_focus(root, FocusDirection::Next);
             self.fire_focus(transition, py);
         }
         Ok(())
@@ -90,10 +80,7 @@ impl PyWindow {
     /// it, and shown again with `show_layer` -- and focus inside it returns
     /// to the node that held it when the layer opened.
     fn hide_layer(&self, node: PyRef<'_, Node>, py: Python<'_>) -> PyResult<()> {
-        let (tree, handlers) = {
-            let active = self.active.borrow();
-            (active.tree.clone(), active.handlers.clone())
-        };
+        let (tree, handlers) = (self.tree.clone(), self.handlers.clone());
         if !Rc::ptr_eq(&node.tree, &tree) {
             return Err(EngineError::ForeignNode.into());
         }
@@ -108,24 +95,13 @@ impl PyWindow {
             ));
         };
         if focus_inside {
-            let config = interaction_config();
-            let now = crate::clock::now(&tree);
             let restore = meta.restore_focus.filter(|id| {
                 let tree = tree.borrow();
                 tree.get(*id).is_some() && !tree.ancestors(*id).any(|a| a == node.id)
             });
             let transition = match restore {
-                Some(id) => tree.borrow_mut().set_focus_to(
-                    id,
-                    config.focus_ring_opacity,
-                    config.focus_ring_duration,
-                    now,
-                ),
-                None => tree.borrow_mut().clear_focus(
-                    config.focus_ring_opacity,
-                    config.focus_ring_duration,
-                    now,
-                ),
+                Some(id) => tree.borrow_mut().set_focus_to(id),
+                None => tree.borrow_mut().clear_focus(),
             };
             self.fire_focus(transition, py);
         }
@@ -135,29 +111,13 @@ impl PyWindow {
 }
 
 impl PyWindow {
-    /// Fires `focus`/`unfocus` (and the legacy focus handlers) for a focus
-    /// change a layer made.
+    /// Fires `focus`/`unfocus` listeners for a focus change a layer
+    /// made.
     fn fire_focus(&self, transition: FocusTransition, py: Python<'_>) {
         let Some((old, new)) = transition else {
             return;
         };
-        let (tree, handlers, context_menus) = {
-            let active = self.active.borrow();
-            (
-                active.tree.clone(),
-                active.handlers.clone(),
-                active.context_menus.clone(),
-            )
-        };
-        fire_focus_transition(
-            &handlers,
-            &tree,
-            &context_menus,
-            &self.theme,
-            &self.completions,
-            old,
-            new,
-            py,
-        );
+        let (tree, handlers) = (self.tree.clone(), self.handlers.clone());
+        fire_focus_transition(&handlers, &tree, &self.completions, old, new, py);
     }
 }

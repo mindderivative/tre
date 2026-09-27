@@ -429,6 +429,14 @@ the ones not yet present.
 
 Every current public name, and what it becomes.
 
+To check a codebase against it, run its tests with `TRE_FORBID_REMOVED=1` set:
+every name below that 0.3.5 removes or renames then raises an `AttributeError`
+naming its replacement — old property names too, in `animate` and `get`, and
+`animate`'s old positional `on_complete`. `from tre import View` fails with
+Python's own `ImportError`. The list lives in `tre/_removed.py`, kept in step
+with this table by `tests/test_removed.py`; the file uses only names 0.3.4
+has, so a project pinned to 0.3.4 can copy it and call its `install()`.
+
 ### `Window` — creation
 
 | Today | Target |
@@ -505,6 +513,6 @@ Every current public name, and what it becomes.
 | `Theme` (`role`, `is_set`, `shape`, `elevation`, `typography`) | removed; theming is the framework's (D7) |
 | `Signal`, `Computed`, `Effect`, `ViewModel`, `batch`, `untrack` | Tesserae (D5) |
 | `CanvasContext` | `Painter` |
-| `Event.kind`, `Event.node` | `Event.type`, `Event.target` |
+| `Event.kind`, `Event.node`, `Event.source`, `Event.position` | `Event.type`, `Event.target`; `source` goes (use `target`), and `position` becomes `window_x`/`window_y` (M100) |
 | MD3 named motion curves | cubic bezier values (framework) |
 | `App`, `LoopHandle`, `register_font`, `MONOSPACE_FONT_FAMILY` | unchanged |

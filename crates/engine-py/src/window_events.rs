@@ -2,8 +2,8 @@
 //! `set`/`get` window properties, and `simulate`, the one headless-testing
 //! entry point (D9, R7). `simulate` runs node events through
 //! `dispatch::process_input`, the same pipeline `App.run()` uses for real
-//! input, so a simulated event reaches listeners and legacy handlers
-//! exactly as a real one would.
+//! input, so a simulated event reaches listeners exactly as a real one
+//! would.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -26,7 +26,7 @@ use taffy::prelude::{AvailableSpace, Size};
 
 use crate::clock;
 use crate::dispatch::{
-    fire_focus_transition, interaction_config, process_input, run_completions, wants_event,
+    WindowIo, fire_focus_transition, process_input, run_completions, wants_event,
 };
 use crate::error::EngineError;
 use crate::event::NodeContext;
@@ -223,17 +223,13 @@ impl PyWindow {
 
 #[pymethods]
 impl PyWindow {
-    /// The window's root node -- the box its content lives in (the
-    /// currently shown one, after `show_view`).
+    /// The window's root node -- the box its content lives in.
     #[getter]
     fn root(&self) -> Node {
-        let active = self.active.borrow();
         Node::from(NodeState {
-            id: active.root,
-            tree: active.tree.clone(),
-            handlers: active.handlers.clone(),
-            context_menus: active.context_menus.clone(),
-            theme: self.theme.clone(),
+            id: self.root,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
             completions: self.completions.clone(),
         })
     }
@@ -266,7 +262,7 @@ impl PyWindow {
             }
             Ok(())
         };
-        let transparent = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+        let transparent = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
         let mut paint = transparent;
         let mut session = None;
         let node_kind = match kind {
@@ -278,7 +274,7 @@ impl PyWindow {
             "text" => {
                 require(&["text"])?;
                 // A text's fill is its glyph color: opaque black, like CSS.
-                paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0);
+                paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0);
                 NodeKind::Text(TextState {
                     content: String::new(),
                     font_family: "Roboto".to_string(),
@@ -363,9 +359,8 @@ impl PyWindow {
             None => None,
         };
         let interactive = matches!(node_kind, NodeKind::TextField(_) | NodeKind::Terminal(_));
-        let active = self.active.borrow();
         let id = {
-            let mut tree = active.tree.borrow_mut();
+            let mut tree = self.tree.borrow_mut();
             let id = tree.insert(node_kind, Style::default(), paint);
             if interactive {
                 tree.set_access(
@@ -380,13 +375,10 @@ impl PyWindow {
         };
         let node = Node::from(NodeState {
             id,
-            tree: active.tree.clone(),
-            handlers: active.handlers.clone(),
-            context_menus: active.context_menus.clone(),
-            theme: self.theme.clone(),
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
             completions: self.completions.clone(),
         });
-        drop(active);
         if let Some(session) = session {
             self.terminals.borrow_mut().insert(id, session);
         }
@@ -546,10 +538,7 @@ impl PyWindow {
             )));
         }
         node_handles::reclaim();
-        let (tree, root, handlers) = {
-            let active = self.active.borrow();
-            (active.tree.clone(), active.root, active.handlers.clone())
-        };
+        let (tree, root, handlers) = (self.tree.clone(), self.root, self.handlers.clone());
         let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
         let (_, completed) = tree.borrow_mut().tick_all(now);
         run_completions(&self.completions, completed, py);
@@ -570,15 +559,7 @@ impl PyWindow {
         fields: Option<&Bound<'_, PyDict>>,
         py: Python<'_>,
     ) -> PyResult<()> {
-        let (tree, root, handlers, context_menus) = {
-            let active = self.active.borrow();
-            (
-                active.tree.clone(),
-                active.root,
-                active.handlers.clone(),
-                active.context_menus.clone(),
-            )
-        };
+        let (tree, root, handlers) = (self.tree.clone(), self.root, self.handlers.clone());
         let node_id = match &node {
             Some(node) if !Rc::ptr_eq(&node.tree, &tree) => {
                 return Err(EngineError::ForeignNode.into());
@@ -590,9 +571,12 @@ impl PyWindow {
         let ctx = NodeContext {
             tree: &tree,
             handlers: &handlers,
-            context_menus: &context_menus,
-            theme: &self.theme,
             completions: &self.completions,
+        };
+        let io = WindowIo {
+            dock: &self.dock,
+            listeners: &self.window_listeners,
+            terminals: &self.terminals,
         };
         let mut f = Fields::new(event, fields)?;
         let need_node = |f: &Fields<'_>| -> PyResult<NodeId> {
@@ -641,13 +625,13 @@ impl PyWindow {
                 f.done()?;
                 with_modifiers(modifiers, || {
                     for input in &inputs {
-                        process_input(&ctx, root, input, py);
+                        process_input(&ctx, &io, root, input, py);
                     }
                 });
             }
             "pointer_leave" => {
                 f.done()?;
-                process_input(&ctx, root, &InputEvent::PointerLeft, py);
+                process_input(&ctx, &io, root, &InputEvent::PointerLeft, py);
             }
             "key_down" | "key_up" => {
                 let modifiers = f.modifiers()?;
@@ -677,6 +661,14 @@ impl PyWindow {
                         }
                     });
                 } else if pressed
+                    && modifiers.ctrl
+                    && let (Some(letter), None) = (key.chars().next(), key.chars().nth(1))
+                    && let Some(shortcut) = engine_core::ctrl_shortcut(letter, modifiers.shift)
+                {
+                    // M100: Ctrl+letter means what it means live -- copy,
+                    // cut, paste, select all, a terminal's control byte.
+                    inputs.push(shortcut);
+                } else if pressed
                     && key.chars().count() == 1
                     && !(modifiers.ctrl || modifiers.alt || modifiers.meta)
                 {
@@ -684,7 +676,7 @@ impl PyWindow {
                 }
                 with_modifiers(modifiers, || {
                     for input in &inputs {
-                        process_input(&ctx, root, input, py);
+                        process_input(&ctx, &io, root, input, py);
                     }
                 });
             }
@@ -692,40 +684,20 @@ impl PyWindow {
                 let text = f.string("text")?;
                 let text = f.required("text", text)?;
                 f.done()?;
-                process_input(&ctx, root, &InputEvent::TextInput(text), py);
+                process_input(&ctx, &io, root, &InputEvent::TextInput(text), py);
             }
             "focus" | "unfocus" => {
                 let id = need_node(&f)?;
                 f.done()?;
-                let config = interaction_config();
-                let now = crate::clock::now(&tree);
                 let transition = if event == "focus" {
-                    tree.borrow_mut().set_focus_to(
-                        id,
-                        config.focus_ring_opacity,
-                        config.focus_ring_duration,
-                        now,
-                    )
+                    tree.borrow_mut().set_focus_to(id)
                 } else if tree.borrow().focused() == Some(id) {
-                    tree.borrow_mut().clear_focus(
-                        config.focus_ring_opacity,
-                        config.focus_ring_duration,
-                        now,
-                    )
+                    tree.borrow_mut().clear_focus()
                 } else {
                     None
                 };
                 if let Some((old, new)) = transition {
-                    fire_focus_transition(
-                        &handlers,
-                        &tree,
-                        &context_menus,
-                        &self.theme,
-                        &self.completions,
-                        old,
-                        new,
-                        py,
-                    );
+                    fire_focus_transition(&handlers, &tree, &self.completions, old, new, py);
                 }
             }
             "a11y_action" => {
@@ -761,7 +733,6 @@ impl PyWindow {
                         width: width as f32,
                         height: height as f32,
                     },
-                    &interaction_config(),
                     crate::clock::now(&tree),
                 );
                 listeners::deliver_window(
@@ -779,16 +750,6 @@ impl PyWindow {
                 let dark = f.required("dark", dark)?;
                 f.done()?;
                 // What `App.run()` does for a real OS light/dark switch.
-                let tint = {
-                    let mut theme = self.theme.borrow_mut();
-                    theme.set_dark(dark);
-                    theme.on_surface()
-                };
-                {
-                    let mut tree = tree.borrow_mut();
-                    tree.set_all_interaction_tints(tint);
-                    tree.set_all_component_tints(tint);
-                }
                 listeners::deliver_window(
                     &self.window_listeners,
                     py,

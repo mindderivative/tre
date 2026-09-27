@@ -1,9 +1,9 @@
 //! M30 Phase 1 Step 4 (§5, §7): proves `PaintProperties.
 //! corner_radii_override` genuinely paints independent per-corner
 //! rounding, not just that the field compiles and threads through as
-//! inert data -- the real prerequisite `Segmented Button`'s first/
-//! last segments need (rounded on their own outer edge, square on the
-//! edge touching the next segment). Same headless render-to-texture-
+//! inert data -- what a segmented group's first/last segments need
+//! (rounded on their own outer edge, square on the edge touching the
+//! next segment). Same headless render-to-texture-
 //! then-readback discipline as `border_paint.rs`.
 
 use engine_core::{NodeKind, PaintProperties, Tree};
@@ -21,7 +21,7 @@ const ROUND_RADIUS: f64 = 30.0;
 
 async fn render(radii: Option<[f64; 4]>) -> (Vec<u8>, u32) {
     let mut tree = Tree::new();
-    let mut paint = PaintProperties::new(FILL, 0.0, 0.0, 1.0);
+    let mut paint = PaintProperties::new(FILL, 0.0, 1.0);
     paint.corner_radii_override =
         radii.map(|r| engine_core::Animated::new(engine_core::CornerRadii(r)));
     let root = tree.insert(

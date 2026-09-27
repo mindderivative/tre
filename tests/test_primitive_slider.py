@@ -1,14 +1,14 @@
-"""M94 Phase 3: the proof widget -- a slider built only from a box and the
-M94 building blocks (listeners, pointer capture, keys, accessibility
-properties, `a11y_action`), with no built-in slider behind it. It has to
-do what the built-in one does: set its value from a press, follow a drag
-even off the track, clamp, step with the arrow keys, and expose its value
+"""A slider built only from a box and the building blocks -- listeners,
+pointer capture, keys, accessibility properties, `a11y_action` -- with no
+built-in slider behind it: it sets its value from a press, follows a drag
+even off the track, clamps, steps with the arrow keys, and exposes its value
 and range to assistive technology.
 """
 
 from __future__ import annotations
 
 import tre
+from helpers import add
 
 TRACK_WIDTH = 200.0
 STEP = 0.1
@@ -16,7 +16,7 @@ STEP = 0.1
 
 class PrimitiveSlider:
     def __init__(self, window: tre.Window) -> None:
-        self.track = window.add_rect((200, 200, 200, 255), TRACK_WIDTH, 20)
+        self.track = add(window, "box", fill=(200, 200, 200, 255), width=TRACK_WIDTH, height=20)
         self.value = 0.0
         self.dragging = False
         self.committed: list[float] = []

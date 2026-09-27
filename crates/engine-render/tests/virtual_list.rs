@@ -41,7 +41,7 @@ fn materialize(idx: usize) -> (NodeKind, Style, PaintProperties) {
             },
             ..Default::default()
         },
-        PaintProperties::new(color_for(idx), 0.0, 0.0, 1.0),
+        PaintProperties::new(color_for(idx), 0.0, 1.0),
     )
 }
 
@@ -198,7 +198,7 @@ fn virtual_list_paints_only_its_materialized_window_at_each_items_real_position(
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         let available = Size {

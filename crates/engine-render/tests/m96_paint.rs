@@ -12,7 +12,7 @@ fn rect(tree: &mut Tree, parent: NodeId, x: f32, y: f32, w: f32, h: f32, fill: C
     let id = tree.insert(
         NodeKind::Rect,
         placed(x, y, w, h),
-        PaintProperties::new(fill, 0.0, 0.0, 1.0),
+        PaintProperties::new(fill, 0.0, 1.0),
     );
     tree.add_child(parent, id);
     id
@@ -79,7 +79,7 @@ fn text(tree: &mut Tree, parent: NodeId, style: Style, content: &str) -> NodeId 
             options: engine_core::TextOptions::default(),
         }),
         style,
-        PaintProperties::new(WHITE, 0.0, 0.0, 1.0),
+        PaintProperties::new(WHITE, 0.0, 1.0),
     );
     tree.add_child(parent, id);
     id

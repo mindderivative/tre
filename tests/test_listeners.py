@@ -1,6 +1,7 @@
-"""M94 Phase 1: `node.on`/`window.on` listeners, the M93 propagation model,
-pointer capture, keys, text, and window events -- all driven headlessly
-through `Window.simulate`, which shares `App.run()`'s own input pipeline.
+"""`node.on`/`window.on` listeners: registration, bubbling and `stop()`,
+pointer capture, the pointer, wheel, key, text, change, and focus events and
+their fields, and window events -- driven by `window.simulate`, which feeds
+the same input pipeline `App.run()` does.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 
 import tre
+from helpers import add
 
 BLACK = (0, 0, 0, 255)
 WHITE = (255, 255, 255, 255)
@@ -20,8 +22,8 @@ def window() -> tre.Window:
 
 
 def nested(w: tre.Window) -> tuple[tre.Node, tre.Node]:
-    outer = w.add_rect(BLACK, 200, 150)
-    inner = w.add_rect(WHITE, 50, 50)
+    outer = add(w, "box", fill=BLACK, width=200, height=150)
+    inner = add(w, "box", fill=WHITE, width=50, height=50)
     outer.add_child(inner)
     return outer, inner
 
@@ -31,14 +33,14 @@ def nested(w: tre.Window) -> tuple[tre.Node, tre.Node]:
 
 def test_on_rejects_an_unknown_event_listing_the_valid_ones() -> None:
     w = window()
-    node = w.add_rect(BLACK, 10, 10)
+    node = add(w, "box", fill=BLACK, width=10, height=10)
     with pytest.raises(ValueError, match="valid events: pointer_enter"):
         node.on("tap", lambda: None)
 
 
 def test_off_removes_a_listener() -> None:
     w = window()
-    node = w.add_rect(BLACK, 40, 40)
+    node = add(w, "box", fill=BLACK, width=40, height=40)
     hits: list[str] = []
     node.on("click", lambda: hits.append("click"))
     node.off("click")
@@ -48,20 +50,11 @@ def test_off_removes_a_listener() -> None:
 
 def test_a_zero_argument_listener_is_called_without_an_event() -> None:
     w = window()
-    node = w.add_rect(BLACK, 40, 40)
+    node = add(w, "box", fill=BLACK, width=40, height=40)
     hits: list[str] = []
     node.on("click", lambda: hits.append("click"))
     w.simulate("click", node=node)
     assert hits == ["click"]
-
-
-def test_legacy_handlers_keep_their_non_bubbling_behavior() -> None:
-    w = window()
-    outer, inner = nested(w)
-    legacy: list[str] = []
-    outer.set_on_click(lambda: legacy.append("outer"))
-    w.simulate("click", node=inner)
-    assert legacy == []
 
 
 # --- bubbling ---------------------------------------------------------------
@@ -126,7 +119,7 @@ def test_pointer_events_report_coordinates_local_to_the_current_node() -> None:
 
 def test_pointer_events_carry_button_and_modifiers() -> None:
     w = window()
-    node = w.add_rect(BLACK, 40, 40)
+    node = add(w, "box", fill=BLACK, width=40, height=40)
     seen: list[tuple[str | None, bool | None, bool | None]] = []
     node.on("pointer_down", lambda e: seen.append((e.button, e.shift, e.ctrl)))
     w.simulate("pointer_down", node=node, button="secondary", shift=True)
@@ -142,9 +135,15 @@ def test_secondary_click_bubbles() -> None:
     assert seen == ["secondary_click"]
 
 
+def test_secondary_click_with_no_listener_is_a_safe_no_op() -> None:
+    w = window()
+    anchor = add(w, "box", fill=WHITE, width=80, height=40)
+    w.simulate("secondary_click", node=anchor)  # must not raise
+
+
 def test_pointer_up_precedes_click() -> None:
     w = window()
-    node = w.add_rect(BLACK, 40, 40)
+    node = add(w, "box", fill=BLACK, width=40, height=40)
     order: list[str] = []
     for name in ("pointer_down", "pointer_up", "click"):
         node.on(name, lambda e: order.append(e.type))
@@ -177,11 +176,11 @@ def test_pointer_enter_and_leave_are_subtree_events() -> None:
     assert seen == [("outer", "pointer_leave")]
 
 
-def test_pointer_leaving_the_window_fires_the_legacy_hover_exit() -> None:
+def test_pointer_leaving_the_window_fires_pointer_leave_with_no_position() -> None:
     w = window()
-    node = w.add_rect(BLACK, 40, 40)
+    node = add(w, "box", fill=BLACK, width=40, height=40)
     exits: list[object] = []
-    node.set_on_hover_exit(lambda e: exits.append(e.position))
+    node.on("pointer_leave", lambda e: exits.append(e.window_x))
     w.simulate("pointer_move", node=node)
     w.simulate("pointer_leave")
     assert exits == [None]
@@ -192,8 +191,8 @@ def test_pointer_leaving_the_window_fires_the_legacy_hover_exit() -> None:
 
 def test_captured_pointer_events_stay_on_the_capturing_node() -> None:
     w = window()
-    a = w.add_rect(BLACK, 40, 40)
-    b = w.add_rect(WHITE, 40, 40)
+    a = add(w, "box", fill=BLACK, width=40, height=40)
+    b = add(w, "box", fill=WHITE, width=40, height=40)
     seen: list[str] = []
     a.on("pointer_down", lambda e: a.capture_pointer())
     a.on("pointer_move", lambda e: seen.append("a move"))
@@ -210,8 +209,8 @@ def test_captured_pointer_events_stay_on_the_capturing_node() -> None:
 
 def test_release_pointer_ends_capture() -> None:
     w = window()
-    a = w.add_rect(BLACK, 40, 40)
-    b = w.add_rect(WHITE, 40, 40)
+    a = add(w, "box", fill=BLACK, width=40, height=40)
+    b = add(w, "box", fill=WHITE, width=40, height=40)
     seen: list[str] = []
     a.on("pointer_down", lambda e: a.capture_pointer())
     b.on("pointer_move", lambda e: seen.append("b move"))
@@ -238,8 +237,8 @@ def test_wheel_bubbles_in_pixels_positive_down() -> None:
 
 def test_key_events_go_to_the_focused_node_and_bubble() -> None:
     w = window()
-    box = w.add_rect(BLACK, 200, 150)
-    field = w.add_text_field(WHITE, 150, 30)
+    box = add(w, "box", fill=BLACK, width=200, height=150)
+    field = add(w, "text_input", width=150, height=30)
     box.add_child(field)
     seen: list[tuple[str, str | None, bool | None, bool | None]] = []
     box.on("key_down", lambda e: seen.append((e.type, e.key, e.shift, e.repeat)))
@@ -258,10 +257,19 @@ def test_key_events_reach_the_root_when_nothing_is_focused() -> None:
     assert seen == ["escape"]
 
 
+def test_key_events_carry_alt_and_meta() -> None:
+    w = window()
+    seen: list[tuple[bool | None, bool | None, bool | None, bool | None]] = []
+    w.root.on("key_down", lambda e: seen.append((e.alt, e.meta, e.shift, e.ctrl)))
+    w.simulate("key_down", key="a", alt=True, meta=True)
+    w.simulate("key_down", key="a")
+    assert seen == [(True, True, False, False), (False, False, False, False)]
+
+
 def test_input_and_change_for_typing() -> None:
     w = window()
-    box = w.add_rect(BLACK, 200, 150)
-    field = w.add_text_field(WHITE, 150, 30)
+    box = add(w, "box", fill=BLACK, width=200, height=150)
+    field = add(w, "text_input", width=150, height=30)
     box.add_child(field)
     seen: list[tuple[Any, ...]] = []
     box.on("input", lambda e: seen.append(("input", e.text)))
@@ -278,13 +286,44 @@ def test_input_and_change_for_typing() -> None:
         ("change", "h", "hi!"),
         ("change", "hi!", "hi"),
     ]
-    assert field.get_text() == "hi"
+    assert field.get("text") == "hi"
+
+
+def test_change_is_for_user_edits_never_a_programmatic_set() -> None:
+    """tre#12: a framework applying a bound value -- new or the same --
+    mustn't look like the user editing the field."""
+    w = window()
+    field = w.create("text_input", width=150, height=30)
+    w.root.add_child(field)
+    seen: list[tuple[Any, Any]] = []
+    field.on("change", lambda e: seen.append((e.old_value, e.new_value)))
+    field.set(text="hello")
+    field.set(text="hello")
+    assert seen == []
+    field.focus()
+    w.simulate("input", text="!")
+    assert seen == [("hello", "hello!")]
+
+
+def test_a_backspace_change_reports_the_text_before_and_after() -> None:
+    """`old_value` is the text the edit destroyed, snapshotted before it."""
+    w = window()
+    field = add(w, "text_input", width=200, height=40, text="hello")
+    seen: list[tuple[Any, Any]] = []
+    field.on("change", lambda e: seen.append((e.old_value, e.new_value)))
+
+    field.set(text="goodbye")
+    assert seen == []
+
+    w.simulate("click", node=field)  # focus it
+    w.simulate("key_down", key="backspace")
+    assert seen == [("goodbye", "goodby")]
 
 
 def test_focus_and_unfocus_bubble_for_focus_within() -> None:
     w = window()
-    box = w.add_rect(BLACK, 200, 150)
-    field = w.add_text_field(WHITE, 150, 30)
+    box = add(w, "box", fill=BLACK, width=200, height=150)
+    field = add(w, "text_input", width=150, height=30)
     box.add_child(field)
     seen: list[tuple[str, bool]] = []
 
@@ -301,8 +340,8 @@ def test_focus_and_unfocus_bubble_for_focus_within() -> None:
 
 def test_tab_moves_focus_and_fires_focus_listeners() -> None:
     w = window()
-    a = w.add_text_field(WHITE, 100, 30)
-    b = w.add_text_field(WHITE, 100, 30)
+    a = add(w, "text_input", width=100, height=30)
+    b = add(w, "text_input", width=100, height=30)
     seen: list[str] = []
     a.on("unfocus", lambda e: seen.append("a unfocus"))
     b.on("focus", lambda e: seen.append("b focus"))
@@ -313,9 +352,9 @@ def test_tab_moves_focus_and_fires_focus_listeners() -> None:
 
 def test_focus_and_unfocus_name_the_node_on_the_other_side() -> None:
     w = window()
-    bar = w.add_rect(BLACK, 300, 40)
-    field = w.add_text_field(WHITE, 200, 30)
-    clear = w.add_text_field(WHITE, 30, 30)
+    bar = add(w, "box", fill=BLACK, width=300, height=40)
+    field = add(w, "text_input", width=200, height=30)
+    clear = add(w, "text_input", width=30, height=30)
     bar.add_child(field)
     bar.add_child(clear)
     seen: list[tuple[str, tre.Node | None]] = []
@@ -329,8 +368,8 @@ def test_focus_and_unfocus_name_the_node_on_the_other_side() -> None:
 
 def test_focus_visible_follows_the_input_that_moved_focus() -> None:
     w = window()
-    a = w.add_text_field(WHITE, 100, 30)
-    b = w.add_text_field(WHITE, 100, 30)
+    a = add(w, "text_input", width=100, height=30)
+    b = add(w, "text_input", width=100, height=30)
     visible: list[bool | None] = []
     a.on("focus", lambda e: visible.append(e.focus_visible))
     b.on("focus", lambda e: visible.append(e.focus_visible))
@@ -346,7 +385,7 @@ def test_focus_visible_follows_the_input_that_moved_focus() -> None:
 
 def test_a_shortcut_doesnt_count_as_keyboard_navigation() -> None:
     w = window()
-    field = w.add_text_field(WHITE, 100, 30)
+    field = add(w, "text_input", width=100, height=30)
     visible: list[bool | None] = []
     field.on("focus", lambda e: visible.append(e.focus_visible))
     w.simulate("pointer_down", node=field)
@@ -416,8 +455,6 @@ def test_a_window_event_has_no_node() -> None:
     w.simulate("closed")
     (event,) = seen
     assert event.target is None
-    with pytest.raises(AttributeError, match="window events have no target"):
-        event.node  # noqa: B018
 
 
 def test_window_title_is_settable_and_the_rest_read_only() -> None:
@@ -444,7 +481,7 @@ def test_window_on_rejects_node_events() -> None:
 
 def test_simulate_reports_unknown_events_and_fields() -> None:
     w = window()
-    node = w.add_rect(BLACK, 40, 40)
+    node = add(w, "box", fill=BLACK, width=40, height=40)
     with pytest.raises(ValueError, match="valid events: pointer_down"):
         w.simulate("tap")
     with pytest.raises(ValueError, match="unexpected field"):
@@ -457,8 +494,8 @@ def test_simulate_reports_unknown_events_and_fields() -> None:
 
 def test_node_handles_compare_and_hash_by_identity() -> None:
     w = window()
-    a = w.add_rect(BLACK, 40, 40)
-    b = w.add_rect(BLACK, 40, 40)
+    a = add(w, "box", fill=BLACK, width=40, height=40)
+    b = add(w, "box", fill=BLACK, width=40, height=40)
     targets: list[tre.Node] = []
     a.on("click", lambda e: targets.append(e.target))
     w.simulate("click", node=a)
@@ -471,6 +508,6 @@ def test_node_handles_compare_and_hash_by_identity() -> None:
 def test_simulate_rejects_a_node_from_another_window() -> None:
     w = window()
     other = window()
-    stranger = other.add_rect(BLACK, 40, 40)
+    stranger = add(other, "box", fill=BLACK, width=40, height=40)
     with pytest.raises(Exception, match="(?i)another|foreign|window"):
         w.simulate("click", node=stranger)

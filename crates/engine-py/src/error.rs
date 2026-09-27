@@ -9,36 +9,15 @@ use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EngineError {
-    #[error("{kind} has no property '{property}'")]
-    UnknownProperty {
-        kind: &'static str,
-        property: String,
-    },
     #[error("property '{property}' expects {expected}, got {actual}")]
     TypeMismatch {
         property: String,
         expected: &'static str,
         actual: String,
     },
-    /// §14 step 15 (§11.7): `Window.set_virtual_list_window` was called
-    /// on a `Node` that either isn't a `VirtualList` at all, or is one
-    /// this particular `Window` didn't create (so it has no recorded
-    /// materializer callback for it).
-    #[error("this Node is not a VirtualList added via Window.add_virtual_list on this Window")]
-    NotAVirtualList,
-    /// M5 Phase 3 (§11.10/§11.11): `Window.redraw_canvas` was called on
-    /// a `Node` that either isn't a `Canvas` at all, or is one this
-    /// particular `Window` didn't create (so it has no recorded `draw`
-    /// callback for it) -- the exact same shape as `NotAVirtualList`.
-    #[error("this Node is not a Canvas added via Window.add_canvas on this Window")]
+    /// `Node.redraw()` on a node that isn't a canvas.
+    #[error("redraw() applies only to a canvas node")]
     NotACanvas,
-    /// M33 Phase 1 (§4, §5, §8): `Window.resize_terminal` was called on
-    /// a `Node` that either isn't a `Terminal` at all, or is one this
-    /// particular `Window` didn't create (so it has no recorded real
-    /// `TerminalSession` for it) -- the exact same shape as `NotA
-    /// VirtualList`/`NotACanvas`.
-    #[error("this Node is not a Terminal added via Window.add_terminal on this Window")]
-    NotATerminal,
     /// M6 Phase 1 (§8): `Node.add_child` would attach a node as a child
     /// of its own descendant -- `Tree::try_add_child` rejected it rather
     /// than corrupting the tree into a cycle. Message verbatim from
@@ -57,17 +36,9 @@ pub enum EngineError {
     /// or an ancestor's).
     #[error("this Node was destroyed")]
     Destroyed,
-    /// M22 Phase 1 (§5): `Window.add_image` couldn't read or decode
-    /// the file at `path` -- a real I/O/format failure, not a value or
-    /// type mismatch the way the two variants above represent, so this
-    /// maps to `PyIOError` rather than `PyValueError`/`PyTypeError`.
-    #[error("failed to load image '{path}': {reason}")]
-    ImageLoadFailed { path: String, reason: String },
-    /// M30 Phase 9 Step 4 (§5, §8, §10): `Window.add_terminal` couldn't
-    /// open a real PTY or spawn `shell` on it -- a real process/OS-
-    /// integration failure, the same real "not a value/type mismatch"
-    /// shape `ImageLoadFailed` already established for a different
-    /// real I/O failure.
+    /// `Window.create("terminal", ...)` couldn't open a PTY or spawn
+    /// `shell` on it -- an OS failure, not a bad value, so it maps to
+    /// `PyIOError`.
     #[error("failed to start terminal shell '{shell}': {reason}")]
     TerminalSpawnFailed { shell: String, reason: String },
 }
@@ -75,17 +46,12 @@ pub enum EngineError {
 impl From<EngineError> for PyErr {
     fn from(e: EngineError) -> PyErr {
         match e {
-            EngineError::UnknownProperty { .. }
-            | EngineError::NotAVirtualList
-            | EngineError::NotACanvas
-            | EngineError::NotATerminal
+            EngineError::NotACanvas
             | EngineError::CycleRejected
             | EngineError::ForeignNode
             | EngineError::Destroyed => PyValueError::new_err(e.to_string()),
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
-            EngineError::ImageLoadFailed { .. } | EngineError::TerminalSpawnFailed { .. } => {
-                PyIOError::new_err(e.to_string())
-            }
+            EngineError::TerminalSpawnFailed { .. } => PyIOError::new_err(e.to_string()),
         }
     }
 }

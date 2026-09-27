@@ -14,9 +14,7 @@
 //! confirmed via a shared counter the window's own `on_frame`
 //! increments), not that it improves idle CPU usage -- that's a real
 //! performance property, better suited to profiling than a pass/fail
-//! test, the same honest distinction this codebase already draws
-//! elsewhere (e.g. `Carousel`'s own stated-not-benchmarked extra
-//! layout-pass cost).
+//! test.
 //!
 //! `harness = false`, same reasoning as `access_button.rs`/
 //! `multi_window.rs`: `winit` permits constructing an `EventLoop` only

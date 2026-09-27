@@ -1,9 +1,9 @@
 //! M32 Phase 3 (§5, §7, §11.7/§11.8): the standalone pixel-level proof
 //! that `PaintProperties.clip_children` genuinely clips an oversized
 //! child to its own parent's real box -- the real, general form of the
-//! clip `VirtualList`/`Carousel` each already have, proven the
-//! identical headless render-to-texture-then-readback way
-//! `virtual_list_scroll.rs` already proves theirs. Also proves the
+//! clip `VirtualList` already has, proven the identical headless
+//! render-to-texture-then-readback way `virtual_list_scroll.rs`
+//! already proves its own. Also proves the
 //! real, necessary negative: `clip_children: false` (every existing
 //! node, unchanged) must still let an oversized child paint past its
 //! own parent's box exactly as it always did -- a true no-op, not a
@@ -142,7 +142,7 @@ fn pixel_at(data: &[u8], bytes_per_row: u32, x: u32, y: u32) -> [u8; 4] {
 /// `PaintProperties.clip_children` on the parent.
 fn build_scene(clip_container: bool) -> (Tree, engine_core::NodeId) {
     let mut tree = Tree::new();
-    let mut paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+    let mut paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
     paint.clip_children = clip_container;
     let parent = tree.insert(
         NodeKind::Container,
@@ -164,7 +164,7 @@ fn build_scene(clip_container: bool) -> (Tree, engine_core::NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+        PaintProperties::new(CHIP, 0.0, 1.0),
     );
     tree.add_child(parent, child);
     tree.compute_layout(

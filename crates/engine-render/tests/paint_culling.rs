@@ -180,7 +180,7 @@ fn an_off_screen_parent_skips_its_whole_subtree_even_when_a_child_transforms_bac
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
 
         // Positioned 10,000px away -- nowhere near the 100x100
@@ -188,7 +188,7 @@ fn an_off_screen_parent_skips_its_whole_subtree_even_when_a_child_transforms_bac
         let offscreen_parent = tree.insert(
             NodeKind::Container,
             absolute(10_000.0, 10_000.0, 40.0, 40.0),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(root, offscreen_parent);
 
@@ -204,7 +204,7 @@ fn an_off_screen_parent_skips_its_whole_subtree_even_when_a_child_transforms_bac
                 },
                 ..Default::default()
             },
-            PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+            PaintProperties::new(CHIP, 0.0, 1.0),
         );
         tree.add_child(offscreen_parent, child);
         tree.get_mut(child).unwrap().paint.transform.current =
@@ -242,7 +242,7 @@ fn a_node_only_partially_overlapping_the_viewport_still_paints_its_visible_porti
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
 
         // Straddles the right edge: x in [80, 120) -- half on-screen,
@@ -251,7 +251,7 @@ fn a_node_only_partially_overlapping_the_viewport_still_paints_its_visible_porti
         let straddling = tree.insert(
             NodeKind::Rect,
             absolute(80.0, 40.0, 40.0, 20.0),
-            PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+            PaintProperties::new(CHIP, 0.0, 1.0),
         );
         tree.add_child(root, straddling);
 

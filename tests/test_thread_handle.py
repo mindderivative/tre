@@ -1,4 +1,4 @@
-"""M87 (tre issue #6): `App.thread_handle()` / `LoopHandle.call_soon`.
+"""`App.thread_handle()` / `LoopHandle.call_soon` (tre issue #6).
 
 A background thread queues a callable; the event-loop thread runs it
 inside `App.run()`. This is what lets a file watcher thread drive hot
@@ -29,7 +29,8 @@ import threading
 from tre import App, Window
 
 window = Window(width=120, height=80)
-rect = window.add_rect(background=(255, 0, 0, 255), width=40, height=40)
+rect = window.create("box", fill=(255, 0, 0, 255), width=40, height=40)
+window.root.add_child(rect)
 app = App()
 app.add_window(window)
 handle = app.thread_handle()
@@ -148,7 +149,7 @@ def test_call_soon_works_from_a_background_thread_without_raising():
 def test_app_itself_is_rejected_from_a_background_thread():
     # Why LoopHandle exists: App is single-threaded. Every tre object
     # refuses use from another thread with a PanicException, which derives
-    # from BaseException, not Exception (M96: `thread_bound`).
+    # from BaseException, not Exception (`thread_bound`).
     app = App()
     errors = []
 

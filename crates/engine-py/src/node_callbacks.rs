@@ -16,7 +16,7 @@ use engine_core::{ItemExtent, NodeId, NodeKind, Tree};
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 
-use crate::canvas::CanvasContext;
+use crate::canvas::Painter;
 use crate::dispatch::{HandlerKey, HandlerMap, log_uncaught_exception};
 use crate::error::EngineError;
 use crate::node::Node;
@@ -52,7 +52,7 @@ pub(crate) fn redraw(
         return Err(EngineError::NotACanvas.into());
     }
     let draw = callback(handlers, canvas, HandlerKey::Draw, py).ok_or(EngineError::NotACanvas)?;
-    let painter = Py::new(py, CanvasContext::default())?;
+    let painter = Py::new(py, Painter::default())?;
     draw.call1(py, (painter.clone_ref(py),))?;
     let painter = painter.borrow(py);
     tree.borrow_mut().set_canvas_content(

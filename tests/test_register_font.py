@@ -1,4 +1,4 @@
-"""M86: `tre.register_font(data)` -- fonts handed to `tre` as bytes.
+"""`tre.register_font(data)` -- fonts handed to `tre` as bytes.
 
 `tre` never reads a font file itself; the caller loads the bytes and
 registers them. The render-level proof that a registered family is

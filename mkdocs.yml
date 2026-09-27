@@ -1,7 +1,7 @@
 site_name: tre
 site_description: >-
-  Python-facing GUI framework backend: Rust-native rendering, layout,
-  animation, and accessibility engine with Material Design 3 components.
+  A GPU-rendered retained-mode UI engine for Python, written in Rust --
+  the building blocks of a desktop UI.
 site_url: https://mindderivative.github.io/tre/
 repo_url: https://github.com/mindderivative/tre
 repo_name: mindderivative/tre
@@ -47,16 +47,19 @@ markdown_extensions:
 nav:
   - Overview: index.md
   - Installation: installation.md
-  - Migrating to 0.3.3: migrating-0.3.3.md
   - Getting Started: getting-started.md
   - Guide:
-      - Imperative API: guide/imperative-api.md
-      - Declarative Views (YAML): guide/declarative-views.md
-      - MD3 Components: guide/components.md
-      - Docking & Shell Layout: guide/docking-and-shell.md
-      - Canvas & Virtualized Lists: guide/canvas-and-lists.md
-      - Theming & Accessibility: guide/theming-and-accessibility.md
-      - Working with Files: guide/working-with-files.md
+      - Nodes and Layout: guide/nodes-and-layout.md
+      - Painting: guide/painting.md
+      - Animation: guide/animation.md
+      - Events and Input: guide/events-and-input.md
+      - Text: guide/text.md
+      - Accessibility: guide/accessibility.md
+      - Layers: guide/layers.md
+      - Threading: guide/threading.md
+      - Docking: guide/docking.md
+      - Building a Widget: guide/building-a-widget.md
+  - Examples: examples.md
   - Python API Reference:
       - Overview: api/python/index.md
       - App: api/python/app.md
@@ -66,11 +69,19 @@ nav:
       - Events and Listeners: api/python/events.md
       - Layers: api/python/layers.md
       - Paint, Paths, and Animation: api/python/paint.md
-      - View: api/python/view.md
-      - Reactivity (Signal, Computed, Effect, ViewModel): api/python/signal-and-viewmodel.md
-      - CanvasContext: api/python/canvas-context.md
+      - Painter: api/python/painter.md
   - Rust Crates: api/rust.md
   - Architecture: architecture.md
+  - Migrating:
+      - To 0.3.5: migrating-0.3.5.md
+      - To 0.3.3: migrating-0.3.3.md
   - Design:
       - Target API: design/target-api.md
+      - Legacy widget reference: design/legacy-widgets.md
+      - Legacy widget behavior: design/legacy-behavior.md
+      - MD3 handover: design/md3-handover.md
+      - Binding and cascade audit: design/binding-cascade-audit.md
   - Contributing: contributing.md
+
+validation:
+  anchors: warn

@@ -1,129 +1,77 @@
 # tre
 
-**Python-facing GUI framework backend, Rust-native rendering engine.**
+**A GPU-rendered retained-mode UI engine for Python, written in Rust.**
 
-`tre` is the rendering, layout, animation, and accessibility engine
-behind a Material Design 3 desktop GUI framework. Application authors
-write Python — this project never asks them to touch Rust, WGPU, or
-Vello directly. The engine itself is a purpose-built retained-tree
-renderer (GPU-accelerated via [`vello_hybrid`](https://github.com/linebender/vello),
-layout via [`taffy`](https://github.com/DioxusLabs/taffy), text via
-[`parley`](https://github.com/linebender/parley), accessibility via
-[`AccessKit`](https://github.com/AccessKit/accesskit)) exposed through
-a thin, stable [PyO3](https://pyo3.rs/) boundary.
+`tre` gives Python the building blocks of a desktop UI — nodes, flexbox
+layout, paint, animation, input and events, text, accessibility, layers,
+and threading — and renders them on the GPU with
+[`vello_hybrid`](https://github.com/linebender/vello), laid out by
+[`taffy`](https://github.com/DioxusLabs/taffy), shaped by
+[`parley`](https://github.com/linebender/parley), and exposed to screen
+readers through [`AccessKit`](https://github.com/AccessKit/accesskit).
 
-This is a from-scratch second iteration of an earlier project (`TRE`,
-a Vulkan-based 2D rendering engine), archived in full under
-[`archive/`](archive/) along with its own lessons-learned document
-that shaped several of this project's own design decisions.
-
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design
-reference and [`BUILD_TRACKER.md`](BUILD_TRACKER.md) for a complete,
-phase-by-phase build history.
-
-Full documentation — overview, installation, getting started, guides,
-and a complete Python API reference — lives under [`docs/`](docs/),
-built with [MkDocs](https://www.mkdocs.org/):
-
-```bash
-pip install mkdocs mkdocs-material
-mkdocs serve   # live preview at http://127.0.0.1:8000
-```
-
-## What's built
-
-- **A real, retained node tree** — layout via `taffy`, a uniform,
-  centrally-ticked animation system (`Animated<T>` on every animatable
-  property), and real per-frame GPU rendering.
-- **Material Design 3 visual language** — dynamic color (full HCT/
-  tonal-palette scheme resolution), elevation shadows, hover/press
-  state layers with real ripple, shape morphing, and MD3 motion
-  curves.
-- **A real, wide MD3 component catalog** — 56 `Window.add_*` factories
-  spanning buttons, selection controls, cards, chips, navigation,
-  overlays (dialogs, menus, snackbars), a real PTY-backed `Terminal`,
-  and a `CodeEditor` with folding and syntax highlighting — not just a
-  handful of samples. See `docs/guide/components.md` for the full
-  catalog.
-- **Full theming, not just color** — MD3 dynamic color (HCT/tonal-
-  palette resolution), a named shape/elevation token system
-  (`corner_radius: small`, `elevation: level_2`), and a real,
-  Flutter-sourced MD3 type scale apps can reference by role instead of
-  literal font values.
-- **Desktop shell primitives** — multi-window apps, a fixed-zone
-  docking system, splitters, virtualized/variable-height lists,
-  context menus and other overlays, an `AppShell` navigation pattern,
-  and MD3's container-transform choreography.
-- **A real, wide layout/styling surface** — per-side padding/margin,
-  flex-grow/shrink/basis, align/justify, and border kwargs across the
-  catalog, both from Python and from declarative YAML `style:` blocks.
-- **Two authoring paths, one engine** — build a UI imperatively from
-  Python, or declaratively from YAML view files (`engine-spec`), with
-  a real stylesheet cascade, hot-reload, `include:`-based composition,
-  and one- and two-way data binding against a plain Python
-  `ViewModel`.
-- **Accessibility from day one** — a real AccessKit tree built fresh
-  every frame from the same node tree, keyboard focus/Tab order, and
-  screen-reader-driven actions routed through the same input pipeline
-  as pointer/keyboard events.
-- **Real cross-platform packaging** — a manylinux-repaired, portable
-  wheel, built and verified end-to-end (not just `maturin develop`),
-  with CI producing Linux/macOS/Windows wheels across supported Python
-  versions on every tagged release.
-
-## Getting started
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install maturin
-maturin develop --release
-```
-
-Then run any script under [`examples/`](examples/) — each one is a
-small, self-contained, real proof of one real mechanism (e.g.
-`examples/slider.py` for keyboard-driven `Slider` control,
-`examples/docking.py` for the docking system, `examples/
-view_composition.py` for declarative YAML composition):
-
-```bash
-python examples/checkbox.py
-```
-
-For a consolidated, all-in-one tour instead, run
-[`demo/showcase.py`](demo/showcase.py) — one running app combining MD3
-components and live theming, real animation and custom `Canvas`
-drawing, a virtualized list, docking, and a declarative `View` panel,
-all in one shell with keyboard navigation:
-
-```bash
-python demo/showcase.py
-```
-
-A minimal imperative app looks like this:
+It has no widgets and no theme of its own. A framework built on it —
+[Tesserae](https://github.com/mindderivative/tesserae) is the first — turns
+the blocks into buttons, dialogs, and design systems.
 
 ```python
 from tre import App, Window
 
-window = Window(width=400, height=200, title="tre")
-window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=300, height=48)
+window = Window(width=320, height=120, title="Hello")
+button = window.create("box", width=120, height=40, corner_radius=20,
+                       fill=(0x67, 0x50, 0xA4, 0xFF), role="button",
+                       label="Say hello", focusable=True)
+button.on("click", lambda: print("hello"))
+window.root.add_child(button)
 
 app = App()
 app.add_window(window)
 app.run()
 ```
 
+## Documentation
+
+The guide, API reference, and migration notes are in [`docs/`](docs/),
+built with MkDocs:
+
+```bash
+pip install mkdocs mkdocs-material
+mkdocs serve   # http://127.0.0.1:8000
+```
+
+Start with Getting Started, then the guide's page for each building block;
+[Building a Widget](docs/guide/building-a-widget.md) puts them together.
+Upgrading from 0.3.4? See [Migrating to 0.3.5](docs/migrating-0.3.5.md).
+
+## Building from source
+
+```bash
+python -m venv .venv
+source .venv/bin/activate          # .venv\Scripts\activate on Windows
+pip install maturin
+maturin develop --release -m crates/engine-py/Cargo.toml
+python examples/switch.py
+```
+
+Each script in [`examples/`](examples/) is a small, runnable demonstration
+of one building block.
+
 ## Development
 
 ```bash
 cargo test --workspace --release
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --check
+cargo clippy --workspace --all-targets --release -- -D warnings
+cargo fmt --all --check
+pytest tests/
+mkdocs build --strict
+mypy --strict python/tre
 ```
 
-Every real engine capability has its own headless, GPU-backed pixel
-test under `crates/engine-render/tests/` proving it actually paints
-what it claims to, not just that the code compiles — see
-`BUILD_TRACKER.md` for the discipline this project holds itself to
-end to end (investigate → plan → implement → test → document →
-commit, every phase).
+Every rendering capability has a headless, GPU-backed pixel test under
+`crates/engine-render/tests/`, and the Python suite drives input and time
+headlessly through `window.simulate` and `window.advance`.
+
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is the design reference, and
+[`BUILD_TRACKER.md`](BUILD_TRACKER.md) the milestone-by-milestone history.
+`tre` is a from-scratch second iteration of an earlier Vulkan engine,
+archived under [`archive/`](archive/) with its lessons learned.

@@ -41,12 +41,9 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 - `max_frames`, when given, is a **per-window** budget, not a whole-app
   one — useful for headless/CI runs with no real display loop end.
 - Raises `RuntimeError` if called with zero registered windows.
-- Internally drives real input dispatch (pointer press/move/release,
-  theme changes, clipboard copy/cut/paste, dock drag-and-drop, text-field
-  click-to-position and drag-selection) and invokes any handlers
-  registered via `Node.set_on_click`/`set_on_hover_enter`/
-  `set_on_hover_exit`/`set_on_change`, plus accessibility-driven actions
-  from a screen reader.
+- Delivers real input — pointer, wheel, keyboard, text and input-method
+  composition, window events, and screen-reader requests — through the
+  same pipeline `window.simulate` uses, invoking the listeners it reaches.
 - If no GPU adapter is reachable, or no display is available, the process
   exits cleanly (not treated as an error) rather than raising.
 - Installs a `tracing` log subscriber as early as possible — set
@@ -79,13 +76,13 @@ app.run()
 
 Queues `callback` (called with no arguments) to run on the `App`'s
 event-loop thread and wakes the loop — including an idle one waiting
-for input. There it can touch `View`/`Window`/`Node` exactly like an
+for input. There it can touch a `Window` and its `Node`s exactly like an
 input handler can:
 
 ```python
 # on a background thread, after detecting a file change:
 text = path.read_text()                              # I/O off the UI thread
-handle.call_soon(lambda: view.reconcile(source=text))
+handle.call_soon(lambda: rebuild_screen(text))           # on the loop
 ```
 
 - Safe from any thread, before, during, or after `run()`.

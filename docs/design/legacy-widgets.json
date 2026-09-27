@@ -1,0 +1,4380 @@
+[
+ {
+  "factory": "add_rect",
+  "args": {
+   "background": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "width": 100,
+   "height": 40
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      100.0,
+      40.0
+     ],
+     "props": {
+      "width": 100.0,
+      "height": 40.0,
+      "fill": [
+       255,
+       255,
+       255,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_text",
+  "args": {
+   "content": "Label",
+   "foreground": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "width": 100,
+   "height": 20
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "text",
+     "box": [
+      16.0,
+      16.0,
+      100.0,
+      20.0
+     ],
+     "props": {
+      "width": 100.0,
+      "height": 20.0,
+      "fill": [
+       0,
+       0,
+       0,
+       255
+      ],
+      "text": "Label",
+      "font_family": "Roboto",
+      "font_weight": 400.0,
+      "font_size": 16.0,
+      "line_height": null,
+      "text_align": "start",
+      "font_style": "normal",
+      "letter_spacing": 0.0,
+      "wrap": "word",
+      "max_lines": null,
+      "overflow": "clip"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_button",
+  "args": {
+   "label": "Button",
+   "width": 120,
+   "height": 40
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      120.0,
+      40.0
+     ],
+     "props": {
+      "width": 120.0,
+      "height": 40.0,
+      "align_items": "center",
+      "fill": [
+       103,
+       80,
+       164,
+       255
+      ],
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        16.0,
+        26.0,
+        72.0,
+        20.0
+       ],
+       "props": {
+        "width": 72.0,
+        "height": 20.0,
+        "fill": [
+         255,
+         255,
+         255,
+         255
+        ],
+        "text": "Button",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_icon_button",
+  "args": {
+   "icon": "settings"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "icon",
+       "box": [
+        24.0,
+        24.0,
+        24.0,
+        24.0
+       ],
+       "props": {
+        "width": 24.0,
+        "height": 24.0,
+        "fill": [
+         103,
+         80,
+         164,
+         255
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_fab",
+  "args": {
+   "icon": "add"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      56.0,
+      56.0
+     ],
+     "props": {
+      "width": 56.0,
+      "height": 56.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "fill": [
+       236,
+       230,
+       240,
+       255
+      ],
+      "corner_radius": 16.0
+     },
+     "legacy_numbers": {
+      "elevation": 3.0
+     },
+     "children": [
+      {
+       "kind": "icon",
+       "box": [
+        32.0,
+        32.0,
+        24.0,
+        24.0
+       ],
+       "props": {
+        "width": 24.0,
+        "height": 24.0,
+        "fill": [
+         103,
+         80,
+         164,
+         255
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_extended_fab",
+  "args": {
+   "label": "Compose",
+   "width": 140
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      140.0,
+      56.0
+     ],
+     "props": {
+      "width": 140.0,
+      "height": 56.0,
+      "align_items": "center",
+      "gap": 8.0,
+      "padding": [
+       0.0,
+       20.0,
+       0.0,
+       20.0
+      ],
+      "padding_right": 20.0,
+      "padding_left": 20.0,
+      "fill": [
+       234,
+       221,
+       255,
+       255
+      ],
+      "corner_radius": 16.0
+     },
+     "legacy_numbers": {
+      "elevation": 3.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        36.0,
+        34.0,
+        100.0,
+        20.0
+       ],
+       "props": {
+        "width": 100.0,
+        "height": 20.0,
+        "fill": [
+         33,
+         0,
+         93,
+         255
+        ],
+        "text": "Compose",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_segmented_button",
+  "args": {
+   "labels": [
+    "Day",
+    "Week"
+   ],
+   "width": 200
+  },
+  "returns": [
+   "content:0/0",
+   "content:0/2"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      200.0,
+      40.0
+     ],
+     "props": {
+      "width": 200.0,
+      "height": 40.0,
+      "stroke_color": [
+       121,
+       116,
+       126,
+       255
+      ],
+      "stroke_width": 1.0,
+      "corner_radius": 20.0
+     },
+     "legacy_numbers": {
+      "border_width": 1.0
+     },
+     "children": [
+      {
+       "kind": "box",
+       "box": [
+        16.0,
+        16.0,
+        100.0,
+        40.0
+       ],
+       "props": {
+        "width": 99.5,
+        "height": 40.0,
+        "position": "absolute",
+        "x": 0.0,
+        "y": 0.0,
+        "align_items": "center",
+        "justify_content": "center",
+        "gap": 4.0,
+        "corner_radius": [
+         20.0,
+         0.0,
+         0.0,
+         20.0
+        ]
+       },
+       "children": [
+        {
+         "kind": "text",
+         "box": [
+          28.0,
+          26.0,
+          76.0,
+          20.0
+         ],
+         "props": {
+          "width": 75.5,
+          "height": 20.0,
+          "fill": [
+           0,
+           0,
+           0,
+           255
+          ],
+          "text": "Day",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 14.0,
+          "line_height": null,
+          "text_align": "center",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      },
+      {
+       "kind": "box",
+       "box": [
+        116.0,
+        16.0,
+        1.0,
+        40.0
+       ],
+       "props": {
+        "width": 1.0,
+        "height": 40.0,
+        "position": "absolute",
+        "x": 99.5,
+        "y": 0.0,
+        "fill": [
+         121,
+         116,
+         126,
+         255
+        ]
+       }
+      },
+      {
+       "kind": "box",
+       "box": [
+        117.0,
+        16.0,
+        99.0,
+        40.0
+       ],
+       "props": {
+        "width": 99.5,
+        "height": 40.0,
+        "position": "absolute",
+        "x": 100.5,
+        "y": 0.0,
+        "align_items": "center",
+        "justify_content": "center",
+        "gap": 4.0,
+        "corner_radius": [
+         0.0,
+         20.0,
+         20.0,
+         0.0
+        ]
+       },
+       "children": [
+        {
+         "kind": "text",
+         "box": [
+          129.0,
+          26.0,
+          75.0,
+          20.0
+         ],
+         "props": {
+          "width": 75.5,
+          "height": 20.0,
+          "fill": [
+           0,
+           0,
+           0,
+           255
+          ],
+          "text": "Week",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 14.0,
+          "line_height": null,
+          "text_align": "center",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_chip",
+  "args": {
+   "label": "Chip",
+   "width": 100
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      100.0,
+      32.0
+     ],
+     "props": {
+      "width": 100.0,
+      "height": 32.0,
+      "align_items": "center",
+      "gap": 8.0,
+      "padding": [
+       0.0,
+       16.0,
+       0.0,
+       16.0
+      ],
+      "padding_right": 16.0,
+      "padding_left": 16.0,
+      "stroke_color": [
+       121,
+       116,
+       126,
+       255
+      ],
+      "stroke_width": 1.0,
+      "corner_radius": 8.0
+     },
+     "legacy_numbers": {
+      "border_width": 1.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        32.0,
+        22.0,
+        68.0,
+        20.0
+       ],
+       "props": {
+        "width": 68.0,
+        "height": 20.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "text": "Chip",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_menu_item",
+  "args": {
+   "label": "Item"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      200.0,
+      56.0
+     ],
+     "props": {
+      "width": 200.0,
+      "height": 56.0,
+      "align_items": "center",
+      "gap": 12.0,
+      "padding": [
+       0.0,
+       16.0,
+       0.0,
+       16.0
+      ],
+      "padding_right": 16.0,
+      "padding_left": 16.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        32.0,
+        34.0,
+        168.0,
+        20.0
+       ],
+       "props": {
+        "width": 168.0,
+        "height": 20.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "text": "Item",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_badge",
+  "args": {},
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      6.0,
+      6.0
+     ],
+     "props": {
+      "width": 6.0,
+      "height": 6.0,
+      "fill": [
+       179,
+       38,
+       30,
+       255
+      ],
+      "corner_radius": 3.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_linear_progress",
+  "args": {
+   "width": 200
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "linear_progress",
+     "box": [
+      16.0,
+      16.0,
+      200.0,
+      4.0
+     ],
+     "props": {
+      "width": 200.0,
+      "height": 4.0
+     },
+     "legacy_numbers": {
+      "value": 0.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_circular_progress",
+  "args": {},
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "circular_progress",
+     "box": [
+      16.0,
+      16.0,
+      48.0,
+      48.0
+     ],
+     "props": {
+      "width": 48.0,
+      "height": 48.0
+     },
+     "legacy_numbers": {
+      "value": 0.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_loading_indicator",
+  "args": {},
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "loading_indicator",
+     "box": [
+      16.0,
+      16.0,
+      48.0,
+      48.0
+     ],
+     "props": {
+      "width": 48.0,
+      "height": 48.0,
+      "fill": [
+       103,
+       80,
+       164,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_time_picker_dial",
+  "args": {},
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "time_picker_dial",
+     "box": [
+      16.0,
+      16.0,
+      256.0,
+      256.0
+     ],
+     "props": {
+      "width": 256.0,
+      "height": 256.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_card",
+  "args": {
+   "width": 200,
+   "height": 120
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      200.0,
+      120.0
+     ],
+     "props": {
+      "width": 200.0,
+      "height": 120.0,
+      "fill": [
+       247,
+       242,
+       250,
+       255
+      ],
+      "corner_radius": 12.0
+     },
+     "legacy_numbers": {
+      "elevation": 1.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_divider",
+  "args": {
+   "length": 200
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      200.0,
+      1.0
+     ],
+     "props": {
+      "width": 200.0,
+      "height": 1.0,
+      "fill": [
+       202,
+       196,
+       208,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_tooltip",
+  "args": {
+   "text": "Tip",
+   "width": 80
+  },
+  "returns": [
+   "layer0:"
+  ],
+  "trees": {
+   "content": [],
+   "layer0": [
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      0.0,
+      80.0,
+      24.0
+     ],
+     "props": {
+      "width": 80.0,
+      "height": 24.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "padding": [
+       0.0,
+       8.0,
+       0.0,
+       8.0
+      ],
+      "padding_right": 8.0,
+      "padding_left": 8.0,
+      "fill": [
+       49,
+       48,
+       51,
+       255
+      ],
+      "corner_radius": 4.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        8.0,
+        5.0,
+        64.0,
+        14.0
+       ],
+       "props": {
+        "width": 64.0,
+        "height": 14.0,
+        "fill": [
+         244,
+         239,
+         244,
+         255
+        ],
+        "text": "Tip",
+        "font_family": "Roboto",
+        "font_weight": 400.0,
+        "font_size": 12.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_dialog",
+  "args": {
+   "headline": "Title",
+   "supporting_text": "Body",
+   "width": 300,
+   "height": 200
+  },
+  "returns": [
+   "layer0:"
+  ],
+  "trees": {
+   "content": [],
+   "layer0": [
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      0.0,
+      800.0,
+      600.0
+     ],
+     "props": {
+      "width": 800.0,
+      "height": 600.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "fill": [
+       0,
+       0,
+       0,
+       82
+      ]
+     },
+     "children": [
+      {
+       "kind": "box",
+       "box": [
+        250.0,
+        200.0,
+        300.0,
+        200.0
+       ],
+       "props": {
+        "width": 300.0,
+        "height": 200.0,
+        "flex_direction": "vertical",
+        "padding": 24.0,
+        "padding_top": 24.0,
+        "padding_right": 24.0,
+        "padding_bottom": 24.0,
+        "padding_left": 24.0,
+        "fill": [
+         236,
+         230,
+         240,
+         255
+        ],
+        "corner_radius": 28.0
+       },
+       "legacy_numbers": {
+        "elevation": 3.0
+       },
+       "children": [
+        {
+         "kind": "text",
+         "box": [
+          274.0,
+          224.0,
+          252.0,
+          28.0
+         ],
+         "props": {
+          "width": 252.0,
+          "height": 28.0,
+          "fill": [
+           0,
+           0,
+           0,
+           255
+          ],
+          "text": "Title",
+          "font_family": "Roboto",
+          "font_weight": 400.0,
+          "font_size": 24.0,
+          "line_height": null,
+          "text_align": "start",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        },
+        {
+         "kind": "text",
+         "box": [
+          274.0,
+          268.0,
+          252.0,
+          108.0
+         ],
+         "props": {
+          "width": 252.0,
+          "height": 108.0,
+          "fill": [
+           73,
+           69,
+           79,
+           255
+          ],
+          "text": "Body",
+          "font_family": "Roboto",
+          "font_weight": 400.0,
+          "font_size": 14.0,
+          "line_height": null,
+          "text_align": "start",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_snackbar",
+  "args": {
+   "text": "Saved",
+   "width": 300
+  },
+  "returns": [
+   "layer0:"
+  ],
+  "trees": {
+   "content": [],
+   "layer0": [
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      0.0,
+      300.0,
+      48.0
+     ],
+     "props": {
+      "width": 300.0,
+      "height": 48.0,
+      "align_items": "center",
+      "gap": 8.0,
+      "padding": [
+       0.0,
+       16.0,
+       0.0,
+       16.0
+      ],
+      "padding_right": 16.0,
+      "padding_left": 16.0,
+      "fill": [
+       49,
+       48,
+       51,
+       255
+      ],
+      "corner_radius": 4.0
+     },
+     "legacy_numbers": {
+      "elevation": 3.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        16.0,
+        15.0,
+        268.0,
+        18.0
+       ],
+       "props": {
+        "height": 18.0,
+        "flex_grow": 1.0,
+        "fill": [
+         244,
+         239,
+         244,
+         255
+        ],
+        "text": "Saved",
+        "font_family": "Roboto",
+        "font_weight": 400.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_side_sheet",
+  "args": {},
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      360.0,
+      600.0
+     ],
+     "props": {
+      "width": 360.0,
+      "height": 600.0,
+      "fill": [
+       255,
+       251,
+       254,
+       255
+      ],
+      "corner_radius": [
+       16.0,
+       0.0,
+       0.0,
+       16.0
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_navigation_rail",
+  "args": {
+   "labels": [
+    "Home",
+    "Search"
+   ],
+   "icons": [
+    "home",
+    "search"
+   ]
+  },
+  "returns": [
+   "content:0/0",
+   "content:0/1"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      80.0,
+      160.0
+     ],
+     "props": {
+      "width": 80.0,
+      "height": 160.0,
+      "flex_direction": "vertical",
+      "align_items": "center",
+      "padding": [
+       44.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "padding_top": 44.0,
+      "fill": [
+       255,
+       251,
+       254,
+       255
+      ]
+     },
+     "children": [
+      {
+       "kind": "box",
+       "box": [
+        16.0,
+        60.0,
+        80.0,
+        52.0
+       ],
+       "props": {
+        "width": 80.0,
+        "height": 52.0,
+        "flex_direction": "vertical",
+        "align_items": "center"
+       },
+       "children": [
+        {
+         "kind": "box",
+         "box": [
+          28.0,
+          60.0,
+          56.0,
+          32.0
+         ],
+         "props": {
+          "width": 56.0,
+          "height": 32.0,
+          "align_items": "center",
+          "justify_content": "center",
+          "corner_radius": 16.0,
+          "hit_testable": false
+         },
+         "children": [
+          {
+           "kind": "icon",
+           "box": [
+            44.0,
+            64.0,
+            24.0,
+            24.0
+           ],
+           "props": {
+            "width": 24.0,
+            "height": 24.0,
+            "fill": [
+             73,
+             69,
+             79,
+             255
+            ]
+           }
+          }
+         ]
+        },
+        {
+         "kind": "text",
+         "box": [
+          16.0,
+          96.0,
+          80.0,
+          16.0
+         ],
+         "props": {
+          "width": 80.0,
+          "height": 16.0,
+          "fill": [
+           73,
+           69,
+           79,
+           255
+          ],
+          "text": "Home",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 12.0,
+          "line_height": null,
+          "text_align": "center",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      },
+      {
+       "kind": "box",
+       "box": [
+        16.0,
+        124.0,
+        80.0,
+        52.0
+       ],
+       "props": {
+        "width": 80.0,
+        "height": 52.0,
+        "flex_direction": "vertical",
+        "align_items": "center"
+       },
+       "children": [
+        {
+         "kind": "box",
+         "box": [
+          28.0,
+          124.0,
+          56.0,
+          32.0
+         ],
+         "props": {
+          "width": 56.0,
+          "height": 32.0,
+          "align_items": "center",
+          "justify_content": "center",
+          "corner_radius": 16.0,
+          "hit_testable": false
+         },
+         "children": [
+          {
+           "kind": "icon",
+           "box": [
+            44.0,
+            128.0,
+            24.0,
+            24.0
+           ],
+           "props": {
+            "width": 24.0,
+            "height": 24.0,
+            "fill": [
+             73,
+             69,
+             79,
+             255
+            ]
+           }
+          }
+         ]
+        },
+        {
+         "kind": "text",
+         "box": [
+          16.0,
+          160.0,
+          80.0,
+          16.0
+         ],
+         "props": {
+          "width": 80.0,
+          "height": 16.0,
+          "fill": [
+           73,
+           69,
+           79,
+           255
+          ],
+          "text": "Search",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 12.0,
+          "line_height": null,
+          "text_align": "center",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_navigation_drawer",
+  "args": {
+   "labels": [
+    "Home",
+    "Search"
+   ],
+   "icons": [
+    "home",
+    "search"
+   ]
+  },
+  "returns": [
+   "content:0",
+   "content:0/0",
+   "content:0/1"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      360.0,
+      600.0
+     ],
+     "props": {
+      "width": 360.0,
+      "height": 600.0,
+      "flex_direction": "vertical",
+      "align_items": "center",
+      "padding": [
+       12.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      "padding_top": 12.0,
+      "fill": [
+       255,
+       251,
+       254,
+       255
+      ],
+      "corner_radius": [
+       0.0,
+       16.0,
+       16.0,
+       0.0
+      ]
+     },
+     "children": [
+      {
+       "kind": "box",
+       "box": [
+        28.0,
+        28.0,
+        336.0,
+        56.0
+       ],
+       "props": {
+        "width": 336.0,
+        "height": 56.0,
+        "align_items": "center",
+        "gap": 12.0,
+        "padding": [
+         0.0,
+         16.0,
+         0.0,
+         16.0
+        ],
+        "padding_right": 16.0,
+        "padding_left": 16.0,
+        "corner_radius": 28.0
+       },
+       "children": [
+        {
+         "kind": "icon",
+         "box": [
+          44.0,
+          44.0,
+          24.0,
+          24.0
+         ],
+         "props": {
+          "width": 24.0,
+          "height": 24.0,
+          "fill": [
+           73,
+           69,
+           79,
+           255
+          ]
+         }
+        },
+        {
+         "kind": "text",
+         "box": [
+          80.0,
+          46.0,
+          268.0,
+          20.0
+         ],
+         "props": {
+          "width": 268.0,
+          "height": 20.0,
+          "fill": [
+           73,
+           69,
+           79,
+           255
+          ],
+          "text": "Home",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 14.0,
+          "line_height": null,
+          "text_align": "start",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      },
+      {
+       "kind": "box",
+       "box": [
+        28.0,
+        88.0,
+        336.0,
+        56.0
+       ],
+       "props": {
+        "width": 336.0,
+        "height": 56.0,
+        "align_items": "center",
+        "gap": 12.0,
+        "padding": [
+         0.0,
+         16.0,
+         0.0,
+         16.0
+        ],
+        "padding_right": 16.0,
+        "padding_left": 16.0,
+        "corner_radius": 28.0
+       },
+       "children": [
+        {
+         "kind": "icon",
+         "box": [
+          44.0,
+          104.0,
+          24.0,
+          24.0
+         ],
+         "props": {
+          "width": 24.0,
+          "height": 24.0,
+          "fill": [
+           73,
+           69,
+           79,
+           255
+          ]
+         }
+        },
+        {
+         "kind": "text",
+         "box": [
+          80.0,
+          106.0,
+          268.0,
+          20.0
+         ],
+         "props": {
+          "width": 268.0,
+          "height": 20.0,
+          "fill": [
+           73,
+           69,
+           79,
+           255
+          ],
+          "text": "Search",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 14.0,
+          "line_height": null,
+          "text_align": "start",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_top_app_bar",
+  "args": {
+   "title": "Title"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      768.0,
+      64.0
+     ],
+     "props": {
+      "width": 800.0,
+      "height": 64.0,
+      "align_items": "center",
+      "padding": [
+       0.0,
+       4.0,
+       0.0,
+       4.0
+      ],
+      "padding_right": 4.0,
+      "padding_left": 4.0,
+      "fill": [
+       255,
+       251,
+       254,
+       255
+      ]
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        36.0,
+        35.0,
+        744.0,
+        26.0
+       ],
+       "props": {
+        "height": 26.0,
+        "flex_grow": 1.0,
+        "margin": [
+         0.0,
+         0.0,
+         0.0,
+         16.0
+        ],
+        "margin_left": 16.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "text": "Title",
+        "font_family": "Roboto",
+        "font_weight": 400.0,
+        "font_size": 22.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_toolbar",
+  "args": {},
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      768.0,
+      64.0
+     ],
+     "props": {
+      "width": 800.0,
+      "height": 64.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "gap": 32.0,
+      "padding": 16.0,
+      "padding_top": 16.0,
+      "padding_right": 16.0,
+      "padding_bottom": 16.0,
+      "padding_left": 16.0,
+      "fill": [
+       243,
+       237,
+       247,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_split_button",
+  "args": {
+   "label": "Send",
+   "width": 120,
+   "height": 40
+  },
+  "returns": [
+   "content:0",
+   "content:1",
+   "content:1/0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      120.0,
+      40.0
+     ],
+     "props": {
+      "width": 120.0,
+      "height": 40.0,
+      "align_items": "center",
+      "fill": [
+       103,
+       80,
+       164,
+       255
+      ],
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        16.0,
+        26.0,
+        72.0,
+        20.0
+       ],
+       "props": {
+        "width": 72.0,
+        "height": 20.0,
+        "fill": [
+         255,
+         255,
+         255,
+         255
+        ],
+        "text": "Send",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    },
+    {
+     "kind": "box",
+     "box": [
+      152.0,
+      16.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "fill": [
+       103,
+       80,
+       164,
+       255
+      ],
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "icon",
+       "box": [
+        161.0,
+        25.0,
+        22.0,
+        22.0
+       ],
+       "props": {
+        "width": 22.0,
+        "height": 22.0,
+        "fill": [
+         255,
+         255,
+         255,
+         255
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_button_group",
+  "args": {
+   "labels": [
+    "A",
+    "B"
+   ],
+   "width": 200,
+   "height": 40
+  },
+  "returns": [
+   "content:0",
+   "content:0/0",
+   "content:0/1"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "container",
+     "box": [
+      16.0,
+      16.0,
+      408.0,
+      40.0
+     ],
+     "props": {
+      "width": 408.0,
+      "height": 40.0
+     },
+     "children": [
+      {
+       "kind": "box",
+       "box": [
+        16.0,
+        16.0,
+        200.0,
+        40.0
+       ],
+       "props": {
+        "width": 200.0,
+        "height": 40.0,
+        "position": "absolute",
+        "x": 0.0,
+        "y": 0.0,
+        "align_items": "center",
+        "fill": [
+         103,
+         80,
+         164,
+         255
+        ],
+        "corner_radius": 20.0
+       },
+       "children": [
+        {
+         "kind": "text",
+         "box": [
+          16.0,
+          26.0,
+          152.0,
+          20.0
+         ],
+         "props": {
+          "width": 152.0,
+          "height": 20.0,
+          "fill": [
+           255,
+           255,
+           255,
+           255
+          ],
+          "text": "A",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 14.0,
+          "line_height": null,
+          "text_align": "center",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      },
+      {
+       "kind": "box",
+       "box": [
+        224.0,
+        16.0,
+        200.0,
+        40.0
+       ],
+       "props": {
+        "width": 200.0,
+        "height": 40.0,
+        "position": "absolute",
+        "x": 208.0,
+        "y": 0.0,
+        "align_items": "center",
+        "fill": [
+         103,
+         80,
+         164,
+         255
+        ],
+        "corner_radius": 20.0
+       },
+       "children": [
+        {
+         "kind": "text",
+         "box": [
+          224.0,
+          26.0,
+          152.0,
+          20.0
+         ],
+         "props": {
+          "width": 152.0,
+          "height": 20.0,
+          "fill": [
+           255,
+           255,
+           255,
+           255
+          ],
+          "text": "B",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 14.0,
+          "line_height": null,
+          "text_align": "center",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_tabs",
+  "args": {
+   "labels": [
+    "One",
+    "Two"
+   ]
+  },
+  "returns": [
+   "content:0/0",
+   "content:0/1"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      800.0,
+      48.0
+     ],
+     "props": {
+      "width": 800.0,
+      "height": 48.0,
+      "fill": [
+       255,
+       251,
+       254,
+       255
+      ]
+     },
+     "children": [
+      {
+       "kind": "box",
+       "box": [
+        16.0,
+        16.0,
+        400.0,
+        48.0
+       ],
+       "props": {
+        "width": 400.0,
+        "height": 48.0,
+        "flex_direction": "vertical"
+       },
+       "children": [
+        {
+         "kind": "box",
+         "box": [
+          16.0,
+          16.0,
+          400.0,
+          45.0
+         ],
+         "props": {
+          "width": 400.0,
+          "flex_direction": "vertical",
+          "align_items": "center",
+          "justify_content": "center",
+          "flex_grow": 1.0,
+          "hit_testable": false
+         },
+         "children": [
+          {
+           "kind": "text",
+           "box": [
+            16.0,
+            30.0,
+            400.0,
+            18.0
+           ],
+           "props": {
+            "width": 400.0,
+            "height": 18.0,
+            "fill": [
+             73,
+             69,
+             79,
+             255
+            ],
+            "text": "One",
+            "font_family": "Roboto",
+            "font_weight": 500.0,
+            "font_size": 14.0,
+            "line_height": null,
+            "text_align": "center",
+            "font_style": "normal",
+            "letter_spacing": 0.0,
+            "wrap": "word",
+            "max_lines": null,
+            "overflow": "clip"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "box",
+         "box": [
+          16.0,
+          61.0,
+          400.0,
+          3.0
+         ],
+         "props": {
+          "width": 400.0,
+          "height": 3.0,
+          "corner_radius": [
+           3.0,
+           3.0,
+           0.0,
+           0.0
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "kind": "box",
+       "box": [
+        416.0,
+        16.0,
+        400.0,
+        48.0
+       ],
+       "props": {
+        "width": 400.0,
+        "height": 48.0,
+        "flex_direction": "vertical"
+       },
+       "children": [
+        {
+         "kind": "box",
+         "box": [
+          416.0,
+          16.0,
+          400.0,
+          45.0
+         ],
+         "props": {
+          "width": 400.0,
+          "flex_direction": "vertical",
+          "align_items": "center",
+          "justify_content": "center",
+          "flex_grow": 1.0,
+          "hit_testable": false
+         },
+         "children": [
+          {
+           "kind": "text",
+           "box": [
+            416.0,
+            30.0,
+            400.0,
+            18.0
+           ],
+           "props": {
+            "width": 400.0,
+            "height": 18.0,
+            "fill": [
+             73,
+             69,
+             79,
+             255
+            ],
+            "text": "Two",
+            "font_family": "Roboto",
+            "font_weight": 500.0,
+            "font_size": 14.0,
+            "line_height": null,
+            "text_align": "center",
+            "font_style": "normal",
+            "letter_spacing": 0.0,
+            "wrap": "word",
+            "max_lines": null,
+            "overflow": "clip"
+           }
+          }
+         ]
+        },
+        {
+         "kind": "box",
+         "box": [
+          416.0,
+          61.0,
+          400.0,
+          3.0
+         ],
+         "props": {
+          "width": 400.0,
+          "height": 3.0,
+          "corner_radius": [
+           3.0,
+           3.0,
+           0.0,
+           0.0
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_search_bar",
+  "args": {
+   "placeholder": "Search",
+   "width": 300
+  },
+  "returns": [
+   "content:0",
+   "content:0/0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      300.0,
+      56.0
+     ],
+     "props": {
+      "width": 300.0,
+      "height": 56.0,
+      "align_items": "center",
+      "padding": [
+       0.0,
+       4.0,
+       0.0,
+       4.0
+      ],
+      "padding_right": 4.0,
+      "padding_left": 4.0,
+      "fill": [
+       236,
+       230,
+       240,
+       255
+      ],
+      "corner_radius": 28.0
+     },
+     "legacy_numbers": {
+      "elevation": 3.0
+     },
+     "children": [
+      {
+       "kind": "text_input",
+       "box": [
+        20.0,
+        34.0,
+        292.0,
+        20.0
+       ],
+       "props": {
+        "width": 292.0,
+        "height": 20.0,
+        "flex_grow": 1.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "role": "textbox",
+        "focusable": true,
+        "placeholder": "",
+        "placeholder_fill": null,
+        "caret_color": null,
+        "selection_fill": null,
+        "obscured": false,
+        "text": "Search",
+        "font_family": "Roboto",
+        "font_weight": 400.0,
+        "font_size": 16.0,
+        "multiline": false,
+        "selection": [
+         6,
+         6
+        ],
+        "show_whitespace": false,
+        "syntax_spans": [],
+        "folded_ranges": []
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_search_view",
+  "args": {
+   "width": 300,
+   "height": 400
+  },
+  "returns": [
+   "layer0:"
+  ],
+  "trees": {
+   "content": [],
+   "layer0": [
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      0.0,
+      300.0,
+      400.0
+     ],
+     "props": {
+      "width": 300.0,
+      "height": 400.0,
+      "fill": [
+       236,
+       230,
+       240,
+       255
+      ],
+      "corner_radius": 28.0
+     },
+     "legacy_numbers": {
+      "elevation": 3.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_list_item",
+  "args": {
+   "headline": "Headline"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      360.0,
+      56.0
+     ],
+     "props": {
+      "width": 360.0,
+      "height": 56.0,
+      "align_items": "center",
+      "gap": 12.0,
+      "padding": [
+       0.0,
+       16.0,
+       0.0,
+       16.0
+      ],
+      "padding_right": 16.0,
+      "padding_left": 16.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        32.0,
+        34.0,
+        328.0,
+        20.0
+       ],
+       "props": {
+        "width": 328.0,
+        "height": 20.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "text": "Headline",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_list",
+  "args": {
+   "items": [
+    "<box 100x20>"
+   ]
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "container",
+     "box": [
+      16.0,
+      16.0,
+      360.0,
+      568.0
+     ],
+     "props": {
+      "width": 360.0,
+      "flex_direction": "vertical"
+     },
+     "children": [
+      {
+       "kind": "box",
+       "box": [
+        16.0,
+        16.0,
+        100.0,
+        20.0
+       ],
+       "props": {
+        "width": 100.0,
+        "height": 20.0
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_accordion_header",
+  "args": {
+   "title": "Section"
+  },
+  "returns": [
+   "content:0",
+   "content:0/1"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      360.0,
+      56.0
+     ],
+     "props": {
+      "width": 360.0,
+      "height": 56.0,
+      "align_items": "center",
+      "gap": 12.0,
+      "padding": [
+       0.0,
+       16.0,
+       0.0,
+       16.0
+      ],
+      "padding_right": 16.0,
+      "padding_left": 16.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        32.0,
+        34.0,
+        292.0,
+        20.0
+       ],
+       "props": {
+        "width": 292.0,
+        "height": 20.0,
+        "flex_grow": 1.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "text": "Section",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      },
+      {
+       "kind": "icon",
+       "box": [
+        336.0,
+        32.0,
+        24.0,
+        24.0
+       ],
+       "props": {
+        "width": 24.0,
+        "height": 24.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_tree_node",
+  "args": {
+   "title": "Node"
+  },
+  "returns": [
+   "content:0",
+   "content:0/0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      360.0,
+      56.0
+     ],
+     "props": {
+      "width": 360.0,
+      "height": 56.0,
+      "align_items": "center",
+      "gap": 12.0,
+      "padding": [
+       0.0,
+       16.0,
+       0.0,
+       16.0
+      ],
+      "padding_right": 16.0,
+      "padding_left": 16.0
+     },
+     "children": [
+      {
+       "kind": "icon",
+       "box": [
+        32.0,
+        32.0,
+        24.0,
+        24.0
+       ],
+       "props": {
+        "width": 24.0,
+        "height": 24.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ]
+       }
+      },
+      {
+       "kind": "text",
+       "box": [
+        68.0,
+        34.0,
+        292.0,
+        20.0
+       ],
+       "props": {
+        "width": 292.0,
+        "height": 20.0,
+        "flex_grow": 1.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "text": "Node",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_date_picker_day",
+  "args": {
+   "day": 1
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      48.0,
+      48.0
+     ],
+     "props": {
+      "width": 48.0,
+      "height": 48.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 24.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        16.0,
+        30.0,
+        48.0,
+        20.0
+       ],
+       "props": {
+        "width": 48.0,
+        "height": 20.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "text": "1",
+        "font_family": "Roboto",
+        "font_weight": 400.0,
+        "font_size": 16.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_time_input_field",
+  "args": {
+   "value": "12"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "text_input",
+     "box": [
+      16.0,
+      16.0,
+      96.0,
+      72.0
+     ],
+     "props": {
+      "width": 96.0,
+      "height": 72.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "fill": [
+       28,
+       27,
+       31,
+       255
+      ],
+      "corner_radius": 8.0,
+      "role": "textbox",
+      "focusable": true,
+      "placeholder": "",
+      "placeholder_fill": null,
+      "caret_color": null,
+      "selection_fill": null,
+      "obscured": false,
+      "text": "12",
+      "font_family": "Roboto",
+      "font_weight": 400.0,
+      "font_size": 45.0,
+      "multiline": false,
+      "selection": [
+       2,
+       2
+      ],
+      "show_whitespace": false,
+      "syntax_spans": [],
+      "folded_ranges": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_period_selector",
+  "args": {},
+  "returns": [
+   "content:0",
+   "content:1"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      0.0,
+      52.0,
+      36.0
+     ],
+     "props": {
+      "width": 52.0,
+      "height": 36.0,
+      "position": "absolute",
+      "x": 0.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "fill": [
+       255,
+       216,
+       228,
+       255
+      ],
+      "corner_radius": 8.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        0.0,
+        8.0,
+        52.0,
+        20.0
+       ],
+       "props": {
+        "width": 52.0,
+        "height": 20.0,
+        "fill": [
+         49,
+         17,
+         29,
+         255
+        ],
+        "text": "AM",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    },
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      36.0,
+      52.0,
+      36.0
+     ],
+     "props": {
+      "width": 52.0,
+      "height": 36.0,
+      "position": "absolute",
+      "x": 0.0,
+      "y": 36.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 8.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        0.0,
+        44.0,
+        52.0,
+        20.0
+       ],
+       "props": {
+        "width": 52.0,
+        "height": 20.0,
+        "fill": [
+         0,
+         0,
+         0,
+         255
+        ],
+        "text": "PM",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_popover",
+  "args": {
+   "subhead": "Subhead",
+   "supporting_text": "Body",
+   "width": 300,
+   "height": 150
+  },
+  "returns": [
+   "layer0:"
+  ],
+  "trees": {
+   "content": [],
+   "layer0": [
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      0.0,
+      300.0,
+      150.0
+     ],
+     "props": {
+      "width": 300.0,
+      "height": 150.0,
+      "flex_direction": "vertical",
+      "padding": 16.0,
+      "padding_top": 16.0,
+      "padding_right": 16.0,
+      "padding_bottom": 16.0,
+      "padding_left": 16.0,
+      "fill": [
+       243,
+       237,
+       247,
+       255
+      ],
+      "corner_radius": 12.0
+     },
+     "legacy_numbers": {
+      "elevation": 2.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        16.0,
+        16.0,
+        268.0,
+        18.0
+       ],
+       "props": {
+        "width": 268.0,
+        "height": 18.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ],
+        "text": "Subhead",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      },
+      {
+       "kind": "text",
+       "box": [
+        16.0,
+        42.0,
+        268.0,
+        92.0
+       ],
+       "props": {
+        "width": 268.0,
+        "height": 92.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ],
+        "text": "Body",
+        "font_family": "Roboto",
+        "font_weight": 400.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_link",
+  "args": {
+   "content": "Link",
+   "width": 80
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "link",
+     "box": [
+      16.0,
+      16.0,
+      80.0,
+      20.0
+     ],
+     "props": {
+      "width": 80.0,
+      "height": 20.0,
+      "fill": [
+       103,
+       80,
+       164,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_spin_box",
+  "args": {
+   "value": "1"
+  },
+  "returns": [
+   "content:2",
+   "content:0",
+   "content:1"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      0.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "position": "absolute",
+      "x": 0.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "icon",
+       "box": [
+        8.0,
+        8.0,
+        24.0,
+        24.0
+       ],
+       "props": {
+        "width": 24.0,
+        "height": 24.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "kind": "box",
+     "box": [
+      112.0,
+      0.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "position": "absolute",
+      "x": 112.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "icon",
+       "box": [
+        120.0,
+        8.0,
+        24.0,
+        24.0
+       ],
+       "props": {
+        "width": 24.0,
+        "height": 24.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "kind": "text_input",
+     "box": [
+      44.0,
+      0.0,
+      64.0,
+      40.0
+     ],
+     "props": {
+      "width": 64.0,
+      "height": 40.0,
+      "position": "absolute",
+      "x": 44.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "fill": [
+       0,
+       0,
+       0,
+       255
+      ],
+      "corner_radius": 8.0,
+      "role": "textbox",
+      "focusable": true,
+      "placeholder": "",
+      "placeholder_fill": null,
+      "caret_color": null,
+      "selection_fill": null,
+      "obscured": false,
+      "text": "1",
+      "font_family": "Roboto",
+      "font_weight": 400.0,
+      "font_size": 14.0,
+      "multiline": false,
+      "selection": [
+       1,
+       1
+      ],
+      "show_whitespace": false,
+      "syntax_spans": [],
+      "folded_ranges": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_pagination",
+  "args": {
+   "page_count": 3
+  },
+  "returns": [
+   "content:0",
+   "content:1",
+   "content:2",
+   "content:3",
+   "content:4"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      0.0,
+      0.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "position": "absolute",
+      "x": 0.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "icon",
+       "box": [
+        8.0,
+        8.0,
+        24.0,
+        24.0
+       ],
+       "props": {
+        "width": 24.0,
+        "height": 24.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "kind": "box",
+     "box": [
+      44.0,
+      0.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "position": "absolute",
+      "x": 44.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "fill": [
+       103,
+       80,
+       164,
+       255
+      ],
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        44.0,
+        10.0,
+        40.0,
+        20.0
+       ],
+       "props": {
+        "width": 40.0,
+        "height": 20.0,
+        "fill": [
+         255,
+         255,
+         255,
+         255
+        ],
+        "text": "1",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    },
+    {
+     "kind": "box",
+     "box": [
+      88.0,
+      0.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "position": "absolute",
+      "x": 88.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        88.0,
+        10.0,
+        40.0,
+        20.0
+       ],
+       "props": {
+        "width": 40.0,
+        "height": 20.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ],
+        "text": "2",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    },
+    {
+     "kind": "box",
+     "box": [
+      132.0,
+      0.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "position": "absolute",
+      "x": 132.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        132.0,
+        10.0,
+        40.0,
+        20.0
+       ],
+       "props": {
+        "width": 40.0,
+        "height": 20.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ],
+        "text": "3",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 14.0,
+        "line_height": null,
+        "text_align": "center",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    },
+    {
+     "kind": "box",
+     "box": [
+      176.0,
+      0.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "position": "absolute",
+      "x": 176.0,
+      "y": 0.0,
+      "align_items": "center",
+      "justify_content": "center",
+      "corner_radius": 20.0
+     },
+     "children": [
+      {
+       "kind": "icon",
+       "box": [
+        184.0,
+        8.0,
+        24.0,
+        24.0
+       ],
+       "props": {
+        "width": 24.0,
+        "height": 24.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ]
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_status_bar",
+  "args": {
+   "text": "Ready"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      800.0,
+      24.0
+     ],
+     "props": {
+      "width": 800.0,
+      "height": 24.0,
+      "align_items": "center",
+      "padding": [
+       0.0,
+       8.0,
+       0.0,
+       8.0
+      ],
+      "padding_right": 8.0,
+      "padding_left": 8.0,
+      "flex_shrink": 0.0,
+      "fill": [
+       243,
+       237,
+       247,
+       255
+      ]
+     },
+     "children": [
+      {
+       "kind": "text",
+       "box": [
+        24.0,
+        22.0,
+        784.0,
+        13.0
+       ],
+       "props": {
+        "width": 784.0,
+        "height": 13.0,
+        "fill": [
+         73,
+         69,
+         79,
+         255
+        ],
+        "text": "Ready",
+        "font_family": "Roboto",
+        "font_weight": 500.0,
+        "font_size": 11.0,
+        "line_height": null,
+        "text_align": "start",
+        "font_style": "normal",
+        "letter_spacing": 0.0,
+        "wrap": "word",
+        "max_lines": null,
+        "overflow": "clip"
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_checkbox",
+  "args": {
+   "background": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "width": 18,
+   "height": 18
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "checkbox",
+     "box": [
+      16.0,
+      16.0,
+      18.0,
+      18.0
+     ],
+     "props": {
+      "width": 18.0,
+      "height": 18.0,
+      "fill": [
+       255,
+       255,
+       255,
+       255
+      ]
+     },
+     "legacy_numbers": {
+      "check_progress": 0.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_radio_button",
+  "args": {},
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "radio_button",
+     "box": [
+      16.0,
+      16.0,
+      20.0,
+      20.0
+     ],
+     "props": {
+      "width": 20.0,
+      "height": 20.0
+     },
+     "legacy_numbers": {
+      "select_progress": 0.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_switch",
+  "args": {},
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "switch",
+     "box": [
+      16.0,
+      16.0,
+      52.0,
+      32.0
+     ],
+     "props": {
+      "width": 52.0,
+      "height": 32.0
+     },
+     "legacy_numbers": {
+      "toggle_progress": 0.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_slider",
+  "args": {
+   "background": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "width": 200,
+   "height": 20
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "slider",
+     "box": [
+      16.0,
+      16.0,
+      200.0,
+      20.0
+     ],
+     "props": {
+      "width": 200.0,
+      "height": 20.0,
+      "fill": [
+       255,
+       255,
+       255,
+       255
+      ],
+      "role": "slider",
+      "focusable": true
+     },
+     "legacy_numbers": {
+      "value": 0.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_image",
+  "args": {
+   "path": "/tmp/tre_dump_widget_4x4.png",
+   "width": 40,
+   "height": 40
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "image",
+     "box": [
+      16.0,
+      16.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "rgba": {
+       "bytes": 64,
+       "sha256": "550f384859b5"
+      },
+      "pixel_width": 4,
+      "pixel_height": 4,
+      "fit": "fill"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_image_from_bytes",
+  "args": {
+   "rgba": {
+    "bytes": 16,
+    "sha256": "374708fff771"
+   },
+   "pixel_width": 2,
+   "pixel_height": 2,
+   "width": 40,
+   "height": 40
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "image",
+     "box": [
+      16.0,
+      16.0,
+      40.0,
+      40.0
+     ],
+     "props": {
+      "width": 40.0,
+      "height": 40.0,
+      "rgba": {
+       "bytes": 16,
+       "sha256": "374708fff771"
+      },
+      "pixel_width": 2,
+      "pixel_height": 2,
+      "fit": "fill"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_video",
+  "args": {
+   "width": 160,
+   "height": 90
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "image",
+     "box": [
+      16.0,
+      16.0,
+      160.0,
+      90.0
+     ],
+     "props": {
+      "width": 160.0,
+      "height": 90.0,
+      "rgba": {
+       "bytes": 4,
+       "sha256": "df3f619804a9"
+      },
+      "pixel_width": 1,
+      "pixel_height": 1,
+      "fit": "fill"
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_node_graph",
+  "args": {
+   "width": 400,
+   "height": 300
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      400.0,
+      300.0
+     ],
+     "props": {
+      "width": 400.0,
+      "height": 300.0,
+      "fill": [
+       247,
+       242,
+       250,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_graph_node",
+  "args": {
+   "label": "Node",
+   "x": 10,
+   "y": 10,
+   "width": 120,
+   "height": 60,
+   "graph": "<add_node_graph(width=400, height=300)>"
+  },
+  "returns": [
+   "content:0/0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "box",
+     "box": [
+      16.0,
+      16.0,
+      400.0,
+      300.0
+     ],
+     "props": {
+      "width": 400.0,
+      "height": 300.0,
+      "fill": [
+       247,
+       242,
+       250,
+       255
+      ]
+     },
+     "children": [
+      {
+       "kind": "box",
+       "box": [
+        26.0,
+        26.0,
+        120.0,
+        60.0
+       ],
+       "props": {
+        "width": 120.0,
+        "height": 60.0,
+        "position": "absolute",
+        "x": 10.0,
+        "y": 10.0,
+        "fill": [
+         243,
+         237,
+         247,
+         255
+        ],
+        "corner_radius": 12.0
+       },
+       "children": [
+        {
+         "kind": "box",
+         "box": [
+          26.0,
+          26.0,
+          120.0,
+          32.0
+         ],
+         "props": {
+          "width": 120.0,
+          "height": 32.0,
+          "position": "absolute",
+          "x": 0.0,
+          "y": 0.0,
+          "fill": [
+           236,
+           230,
+           240,
+           255
+          ],
+          "hit_testable": false
+         }
+        },
+        {
+         "kind": "text",
+         "box": [
+          38.0,
+          35.0,
+          96.0,
+          16.0
+         ],
+         "props": {
+          "width": 96.0,
+          "height": 16.0,
+          "position": "absolute",
+          "x": 12.0,
+          "y": 9.0,
+          "fill": [
+           73,
+           69,
+           79,
+           255
+          ],
+          "text": "Node",
+          "font_family": "Roboto",
+          "font_weight": 500.0,
+          "font_size": 14.0,
+          "line_height": null,
+          "text_align": "start",
+          "font_style": "normal",
+          "letter_spacing": 0.0,
+          "wrap": "word",
+          "max_lines": null,
+          "overflow": "clip"
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_icon",
+  "args": {
+   "name": "home",
+   "foreground": [
+    0,
+    0,
+    0,
+    255
+   ],
+   "size": 24
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "icon",
+     "box": [
+      16.0,
+      16.0,
+      24.0,
+      24.0
+     ],
+     "props": {
+      "width": 24.0,
+      "height": 24.0,
+      "fill": [
+       0,
+       0,
+       0,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_text_field",
+  "args": {
+   "background": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "width": 200,
+   "height": 56
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "text_input",
+     "box": [
+      16.0,
+      16.0,
+      200.0,
+      56.0
+     ],
+     "props": {
+      "width": 200.0,
+      "height": 56.0,
+      "fill": [
+       28,
+       27,
+       31,
+       255
+      ],
+      "role": "textbox",
+      "focusable": true,
+      "placeholder": "",
+      "placeholder_fill": null,
+      "caret_color": null,
+      "selection_fill": null,
+      "obscured": false,
+      "text": "",
+      "font_family": "Roboto",
+      "font_weight": 400.0,
+      "font_size": 16.0,
+      "multiline": false,
+      "selection": [
+       0,
+       0
+      ],
+      "show_whitespace": false,
+      "syntax_spans": [],
+      "folded_ranges": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_code_editor",
+  "args": {
+   "content": "x = 1",
+   "background": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "width": 300,
+   "height": 200
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "text_input",
+     "box": [
+      16.0,
+      16.0,
+      300.0,
+      200.0
+     ],
+     "props": {
+      "width": 300.0,
+      "height": 200.0,
+      "fill": [
+       28,
+       27,
+       31,
+       255
+      ],
+      "role": "textbox",
+      "focusable": true,
+      "placeholder": "",
+      "placeholder_fill": null,
+      "caret_color": null,
+      "selection_fill": null,
+      "obscured": false,
+      "text": "x = 1",
+      "font_family": "Hack Nerd Font Mono",
+      "font_weight": 400.0,
+      "font_size": 14.0,
+      "multiline": true,
+      "selection": [
+       5,
+       5
+      ],
+      "show_whitespace": true,
+      "syntax_spans": [],
+      "folded_ranges": []
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_terminal",
+  "args": {
+   "shell": "/bin/sh",
+   "cols": 20,
+   "rows": 4,
+   "background": [
+    0,
+    0,
+    0,
+    255
+   ]
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "terminal",
+     "box": [
+      16.0,
+      16.0,
+      169.0,
+      65.0
+     ],
+     "props": {
+      "width": 168.5742,
+      "height": 65.1875,
+      "fill": [
+       0,
+       0,
+       0,
+       255
+      ],
+      "role": "textbox",
+      "focusable": true,
+      "palette": {
+       "ansi": [
+        [
+         28,
+         28,
+         33,
+         255
+        ],
+        [
+         222,
+         89,
+         89,
+         255
+        ],
+        [
+         140,
+         191,
+         102,
+         255
+        ],
+        [
+         217,
+         178,
+         89,
+         255
+        ],
+        [
+         102,
+         153,
+         230,
+         255
+        ],
+        [
+         191,
+         128,
+         217,
+         255
+        ],
+        [
+         102,
+         191,
+         204,
+         255
+        ],
+        [
+         204,
+         204,
+         209,
+         255
+        ],
+        [
+         102,
+         107,
+         117,
+         255
+        ],
+        [
+         242,
+         115,
+         115,
+         255
+        ],
+        [
+         166,
+         217,
+         128,
+         255
+        ],
+        [
+         242,
+         204,
+         115,
+         255
+        ],
+        [
+         140,
+         178,
+         242,
+         255
+        ],
+        [
+         217,
+         153,
+         242,
+         255
+        ],
+        [
+         140,
+         217,
+         230,
+         255
+        ],
+        [
+         242,
+         242,
+         247,
+         255
+        ]
+       ],
+       "foreground": [
+        28,
+        27,
+        31,
+        255
+       ],
+       "background": [
+        0,
+        0,
+        0,
+        0
+       ],
+       "cursor": [
+        28,
+        27,
+        31,
+        128
+       ],
+       "selection": [
+        28,
+        27,
+        31,
+        77
+       ]
+      },
+      "font_size": 14.0,
+      "selection": null,
+      "cols": 20,
+      "rows": 4
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_carousel",
+  "args": {
+   "layout": "uncontained",
+   "width": 300,
+   "height": 200,
+   "background": [
+    255,
+    255,
+    255,
+    255
+   ]
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "carousel",
+     "box": [
+      16.0,
+      16.0,
+      300.0,
+      200.0
+     ],
+     "props": {
+      "width": 300.0,
+      "height": 200.0,
+      "fill": [
+       255,
+       255,
+       255,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_scroll_view",
+  "args": {
+   "width": 200,
+   "height": 200
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "scroll_view",
+     "box": [
+      16.0,
+      16.0,
+      200.0,
+      200.0
+     ],
+     "props": {
+      "width": 200.0,
+      "height": 200.0,
+      "scrollbar_fill": null,
+      "scrollbar_width": 4.0,
+      "orientation": "vertical",
+      "scroll_offset": 0.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_splitter",
+  "args": {
+   "background": [
+    255,
+    255,
+    255,
+    255
+   ],
+   "width": 300,
+   "height": 200
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "splitter",
+     "box": [
+      16.0,
+      16.0,
+      300.0,
+      200.0
+     ],
+     "props": {
+      "width": 300.0,
+      "height": 200.0,
+      "fill": [
+       255,
+       255,
+       255,
+       255
+      ]
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_virtual_list",
+  "args": {
+   "item_count": 3,
+   "item_extent": 20,
+   "materialize": "<callable>"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "virtual_list",
+     "box": [
+      16.0,
+      16.0,
+      768.0,
+      600.0
+     ],
+     "props": {
+      "width": 800.0,
+      "height": 600.0,
+      "item_count": 3,
+      "item_extent": 20.0
+     }
+    }
+   ]
+  }
+ },
+ {
+  "factory": "add_canvas",
+  "args": {
+   "width": 100,
+   "height": 100,
+   "draw": "<callable>"
+  },
+  "returns": [
+   "content:0"
+  ],
+  "trees": {
+   "content": [
+    {
+     "kind": "canvas",
+     "box": [
+      16.0,
+      16.0,
+      100.0,
+      100.0
+     ],
+     "props": {
+      "width": 100.0,
+      "height": 100.0,
+      "draw": "<callable>"
+     }
+    }
+   ]
+  }
+ }
+]
