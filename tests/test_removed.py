@@ -109,6 +109,22 @@ GONE = {
 }  # fmt: skip
 
 
+PAGE = SPEC.parent.parent / "migrating-0.3.5.md"
+
+
+def test_the_published_migration_page_names_every_forbidden_name() -> None:
+    """M100: the migration page users read covers everything the switch
+    forbids."""
+    page = PAGE.read_text()
+    for owner, members in _removed.REMOVED.items():
+        for name in members:
+            assert f"`{name}" in page or f", {name}" in page or f"`{owner}.{name}`" in page, (
+                f"{owner}.{name} is forbidden but not on docs/migrating-0.3.5.md"
+            )
+    for name in _removed.PROPERTIES:
+        assert f"`{name}`" in page, f"property {name!r} is not on docs/migrating-0.3.5.md"
+
+
 def test_every_forbidden_name_exists_today_or_is_already_gone() -> None:
     """A typo'd table entry would forbid nothing."""
     classes = {"tre": tre, "Window": _core.Window, "Node": _core.Node, "Event": _core.Event}

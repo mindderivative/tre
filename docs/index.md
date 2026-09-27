@@ -58,6 +58,8 @@ project's design decisions.
 
 - **[Installation](installation.md)** — install a released wheel, or
   build from source with `maturin`.
+- **[Migrating to 0.3.5](migrating-0.3.5.md)** — upgrading from 0.3.4: what
+  moved to the framework, every rename, and behavior changes.
 - **[Migrating to 0.3.3](migrating-0.3.3.md)** — upgrading from 0.3.2:
   the property renames, a view-file migration script, and behavior
   changes.

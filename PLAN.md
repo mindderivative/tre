@@ -38,4 +38,4 @@ memory.
 
 ## Status
 
-Steps 1–2 done (2026-09-27). Step 3, the migration page and Tesserae's `_removed.py`, next.
+Steps 1–2 done, Step 3's page done (2026-09-27); Tesserae gets `_removed.py` after the next push.
