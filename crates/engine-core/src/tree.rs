@@ -261,7 +261,22 @@ impl Tree {
     /// this `Tree` -- an internal bookkeeping bug, not a recoverable
     /// runtime condition (unlike the GPU/display absence this codebase
     /// exits gracefully for elsewhere).
+    ///
+    /// A `child` that's already attached is *moved* (`try_add_child`),
+    /// never left under two parents -- the "`add_child` has no dedup"
+    /// bug class found three times (overlays, M4; docking, M4; docking
+    /// again, issue #14), closed here rather than per caller.
     pub fn add_child(&mut self, parent: NodeId, child: NodeId) {
+        if self
+            .nodes
+            .get(child)
+            .expect("add_child: child NodeId not found in this Tree")
+            .parent
+            .is_some()
+        {
+            self.try_add_child(parent, child);
+            return;
+        }
         // M96: below any open overlay, so content never paints over one.
         let index = self.content_len(parent);
         self.attach_at(parent, index, child);
@@ -3702,6 +3717,32 @@ mod tests {
 
     /// M6 Phase 1 (§8): the trivial cycle case -- a node can't become
     /// its own child.
+    /// Issue #14: `add_child` of a node attached elsewhere moves it --
+    /// one parent, in both `children` lists and taffy -- rather than
+    /// leaving it under two parents.
+    #[test]
+    fn add_child_moves_an_already_attached_child() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let first = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let second = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+
+        tree.add_child(first, child);
+        tree.add_child(second, child);
+        assert_eq!(tree.get(child).unwrap().parent, Some(second));
+        assert!(tree.get(first).unwrap().children.is_empty());
+        assert_eq!(tree.get(second).unwrap().children, vec![child]);
+        let taffy_children = |tree: &Tree, id| tree.taffy.children(tree.taffy_nodes[id]).unwrap();
+        assert!(taffy_children(&tree, first).is_empty());
+        assert_eq!(taffy_children(&tree, second).len(), 1);
+
+        tree.add_child(second, child); // onto its own parent: no duplicate
+        assert_eq!(tree.get(second).unwrap().children, vec![child]);
+    }
+
     #[test]
     fn try_add_child_rejects_a_node_as_its_own_child() {
         let mut tree = Tree::new();

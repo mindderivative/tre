@@ -12,12 +12,9 @@
 //! Drags run inside `dispatch::process_input`, so a real pointer and
 //! `window.simulate` drive them identically.
 //!
-//! **A real bug found and fixed when this was first written:**
-//! `Tree::apply_active_tab` only checks whether its *target* container
-//! already lists the panel -- never whether the panel is still attached
-//! elsewhere. Moving a panel between zones naively would `add_child` an
-//! attached node and corrupt the tree, so both `dock_panel` and `drop`
-//! detach the panel from its old parent first.
+//! `dock_panel` and a drag's drop move a panel through one path,
+//! `move_panel`, which keeps every zone's panel list in step with the
+//! tree: a panel is listed in exactly one zone (issue #14).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -85,6 +82,10 @@ pub(crate) fn add_dock_zone(dock: &SharedDockState, side: DockSide, container: N
     dock.containers.push((side, container));
 }
 
+/// Docks `panel` into `side`'s zone and shows it. A panel already docked
+/// in another zone is moved -- taken out of that zone's panels, whose
+/// shown panel is re-picked -- exactly as a drag's drop moves it (issue
+/// #14: it used to stay listed in its old zone).
 pub(crate) fn dock_panel(
     dock: &SharedDockState,
     tree: &Rc<RefCell<Tree>>,
@@ -92,22 +93,27 @@ pub(crate) fn dock_panel(
     panel: NodeId,
 ) -> PyResult<()> {
     let container = container_for(dock, side)?;
-    {
-        let mut tree_mut = tree.borrow_mut();
-        if let Some(old_parent) = tree_mut.get(panel).and_then(|n| n.parent) {
-            tree_mut.detach(old_parent, panel);
+    if dock.borrow().layout.zone(side).is_none() {
+        return Err(PyValueError::new_err(format!(
+            "no dock zone registered for {side:?}"
+        )));
+    }
+    let source = zone_holding(&dock.borrow(), panel);
+    if source == Some(side) {
+        let mut dock = dock.borrow_mut();
+        let zone = dock.layout.zone_mut(side).expect("checked above");
+        zone.active_tab = zone.panels.iter().position(|&p| p == panel).unwrap_or(0);
+        tree.borrow_mut().apply_active_tab(container, zone);
+        return Ok(());
+    }
+    if source.is_none() {
+        // Not docked: take it from wherever the framework attached it.
+        let mut tree = tree.borrow_mut();
+        if let Some(old_parent) = tree.get(panel).and_then(|n| n.parent) {
+            tree.detach(old_parent, panel);
         }
     }
-    let mut dock = dock.borrow_mut();
-    let zone = dock
-        .layout
-        .zone_mut(side)
-        .ok_or_else(|| PyValueError::new_err(format!("no dock zone registered for {side:?}")))?;
-    if !zone.panels.contains(&panel) {
-        zone.panels.push(panel);
-    }
-    zone.active_tab = zone.panels.iter().position(|&p| p == panel).unwrap_or(0);
-    tree.borrow_mut().apply_active_tab(container, zone);
+    move_panel(dock, tree, panel, side);
     Ok(())
 }
 

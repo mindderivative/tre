@@ -1,13 +1,10 @@
-# LOG — Branch `0.3.5`: Milestone 103
+# LOG — Branch `0.3.5.1`: Milestone 104
 
-- M102 complete, pushed at `8608e6a`. The user: "Finish up M102, then push
-  and move onto M103, then push and do the release. Once done let Tesserae
-  know you are done with the release and to start M46."
-- PR #13 opened, `0.3.5` → `main`.
-- CI green on all three platforms; merged as `2e4ed35`; `main`
-  re-verified; tagged `v0.3.5`; Wheels published 24 assets; release note
-  set.
+- Tesserae filed issue #14. The user: "tesserae submitted an issue about the
+  dock_panel", then "lets use 0.3.5.1 as this i a minor bug fix".
+- `dock_panel` routes a docked panel through `move_panel`; `Tree::add_child`
+  moves an already-attached child. 5 pytest + 1 cargo tests; 3 fail unfixed.
 
 ## Status
 
-**Complete (2026-09-27).** Tesserae's M46 moved it onto `v0.3.5`, CI green.
+**Complete (2026-09-27).** Push and release wait on the user.

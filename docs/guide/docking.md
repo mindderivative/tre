@@ -33,9 +33,20 @@ A zone holds any number of panels and shows one at a time.
 | Method | Purpose |
 | --- | --- |
 | `add_dock_zone(side, container, size)` | Registers `container` as `side`'s dock zone, seeding its extent |
-| `dock_panel(side, panel)` | Docks `panel` into `side`'s zone and shows it |
+| `dock_panel(side, panel)` | Docks `panel` into `side`'s zone and shows it — moving it, if it's docked in another zone |
 | `set_active_panel(side, index)` | Shows the zone's `index`th panel |
 | `start_panel_drag(panel)` | Starts dragging `panel`, which must be docked |
+
+## Moving a panel without a drag
+
+`dock_panel` on a panel that's docked in another zone moves it, exactly as
+a drop would: the old zone stops listing it and shows another of its
+panels. That's how a "Move to" menu moves a panel for someone who can't
+drag:
+
+```python
+window.dock_panel("right", panel)   # from wherever it's docked now
+```
 
 ## Dragging a panel
 
