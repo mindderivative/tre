@@ -2,6 +2,8 @@
 
 Updated after every milestone/phase/stage/step completion, kept in sync with `ARCHITECTURE.md`. Status legend: ✅ done · 🚧 in progress · ⬜ not started.
 
+**Artifact:** generate with `python3 tools/generate_tracker_artifact.py --project "tre 0.4.0" --out tools/build-tracker-0.4.0.generated.html` (after committing the tracker, so the stamp names the commit) and publish to [the 0.4.0 tracker page](https://claude.ai/artifact/PTt1sBpABbM2XxTrL7xdFb). The [0.3 line's page](https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty) stays the record of `main`'s tracker and its `0.3.5.x` fixes.
+
 **This tracker is the `0.4.0` line** -- the `vello_hybrid` fork for real GPU-level partial redraw ([issue #4](https://github.com/mindderivative/tre/issues/4)) -- and its milestones restart at 1. Earlier history is archived: `v0.1.0`–`v0.3.5.1` (M1–M104) in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md), and M1–M49 of that line in [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Fixes to the released `0.3.5` stay on the 0.3.x line as `0.3.5.x` patch releases, tracked on `main`'s `BUILD_TRACKER.md` (continuing its numbering after M104), as `0.3.5.1` was.
 
 ---

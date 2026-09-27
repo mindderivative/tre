@@ -2,7 +2,7 @@
 **/*.rs.bk
 /.venv/
 /site/
-/tools/build-tracker-artifact.generated.html
+/tools/build-tracker-*.generated.html
 # §14 step 6: Python/maturin build + test artifacts.
 __pycache__/
 *.pyc
