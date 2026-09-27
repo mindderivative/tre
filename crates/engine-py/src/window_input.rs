@@ -37,10 +37,7 @@ impl PyWindow {
         // got. `self.width`/`height.set()` above stay window-level,
         // correctly unaffected -- a real, shared `SharedSize` regardless
         // of which View is currently active.
-        let (tree, root, handlers) = {
-            let active = self.active.borrow();
-            (active.tree.clone(), active.root, active.handlers.clone())
-        };
+        let (tree, root, handlers) = (self.tree.clone(), self.root, self.handlers.clone());
         let outcome = tree.borrow_mut().dispatch(
             root,
             InputEvent::Resized {

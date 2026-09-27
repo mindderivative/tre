@@ -292,42 +292,6 @@ pub enum InputEvent {
     PointerLeft,
 }
 
-/// M4 Phase 6 (§16.2): the small, real vocabulary of named events a
-/// registered handler can be keyed on -- `Click` (already real since
-/// M4 Phase 1) plus `HoverEnter`/`HoverExit` (§7.3's own named pair,
-/// "fires... through the ordinary handler path... independent of
-/// whether the default MD3 visual [i.e. hover's own opt-in animation]
-/// handles it"). `Change` and `FocusEnter`/`FocusExit` (M55, below)
-/// round out §16.2's own originally-sketched set -- each added only
-/// once a real bound component needed it, matching Design Principle
-/// 6's own calibration.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum EventKind {
-    Click,
-    HoverEnter,
-    HoverExit,
-    /// M14 Phase 3 (§16.7): a real, genuine edit -- a `Slider` drag
-    /// ending (mechanical, detected by `Tree::dispatch` itself, the
-    /// same way `HoverChanged` is), or `Node.set_checked` being called
-    /// on a `Checkbox` (not mechanical in the same sense -- `engine-
-    /// core` never touches `checked` itself, Design Principle 6 -- so
-    /// that firing happens directly in `engine-py`, not through `Tree::
-    /// dispatch` at all; see `Node.set_checked`'s own doc comment).
-    /// §16.7's own real "two-way binding" sugar is built on this.
-    Change,
-    /// M55 (§10, §16.2): keyboard focus arriving at/leaving this node --
-    /// real click-to-focus (M18/M30/M53), Tab/Shift-Tab navigation, a
-    /// real `Node.focus()`/`Window.focus()` call, or a real AccessKit
-    /// `Action::Focus` request all produce this pair the identical way
-    /// `HoverEnter`/`HoverExit` already do. A pair, not a single
-    /// `Focus` kind, for the identical real reason `Hover` is a pair:
-    /// `HandlerMap`'s own per-node key (`(NodeId, EventKind)`) can
-    /// never give one event two real sources, so the node losing focus
-    /// and the node gaining it each need their own kind to register on.
-    FocusEnter,
-    FocusExit,
-}
-
 /// M100: what Ctrl+`letter` means, shared by the live keyboard path
 /// (`engine-platform`) and `window.simulate`, so both reach the same
 /// handling: `c`/`x`/`v` copy, cut, and paste; Ctrl+Shift+C is a

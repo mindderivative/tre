@@ -1845,11 +1845,6 @@ impl Tree {
         self.focused
     }
 
-    pub fn set_focused(&mut self, id: Option<NodeId>) {
-        self.dirty = true;
-        self.focused = id;
-    }
-
     /// §11.10: pointer-to-node resolution, reverse paint order (topmost
     /// first -- the last child in `children`-list order paints on top,
     /// §6, so it's tested first here too; this is exactly what naturally
@@ -6710,7 +6705,7 @@ mod tests {
         );
 
         // Enter/Space on the currently-focused node also activates it.
-        tree.set_focused(Some(b));
+        tree.set_focus_to(b);
         let outcome = tree.dispatch(
             root,
             InputEvent::KeyPressed {
@@ -7136,7 +7131,7 @@ mod tests {
         let mut tree = Tree::new();
         let (k, s, p) = leaf(10.0, 10.0);
         let real = tree.insert(k, s, p);
-        tree.set_focused(Some(real));
+        tree.set_focus_to(real);
         let (k, s, p) = leaf(10.0, 10.0);
         let ghost = tree.insert(k, s, p);
         tree.remove(ghost);

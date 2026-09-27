@@ -34,7 +34,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use engine_core::{ChangedValue, EventKind, NodeId, PointerButton, Tree};
+use engine_core::{ChangedValue, NodeId, PointerButton, Tree};
 use pyo3::prelude::*;
 
 use crate::dispatch::{HandlerMap, SharedCompletions};
@@ -57,21 +57,6 @@ pub(crate) struct NodeContext<'a> {
     pub(crate) tree: &'a Rc<RefCell<Tree>>,
     pub(crate) handlers: &'a HandlerMap,
     pub(crate) completions: &'a SharedCompletions,
-}
-
-/// `EventKind`'s own real Python-facing name -- lowercase, unprefixed
-/// (`"click"`, not `"on_click"` -- that prefix is `view.rs`'s own YAML
-/// *attribute name* convention, a different real thing: which
-/// declarative binding this maps to, not the event's own kind).
-fn kind_name(kind: EventKind) -> &'static str {
-    match kind {
-        EventKind::Click => "click",
-        EventKind::HoverEnter => "hover_enter",
-        EventKind::HoverExit => "hover_exit",
-        EventKind::Change => "change",
-        EventKind::FocusEnter => "focus_enter",
-        EventKind::FocusExit => "focus_exit",
-    }
 }
 
 /// `PointerButton`'s own real Python-facing name, lowercased from its
@@ -269,19 +254,6 @@ impl Event {
         }
     }
 
-    /// M94: a legacy event, `type` equal to its legacy `kind`.
-    fn legacy(
-        py: Python<'_>,
-        kind: EventKind,
-        node: NodeId,
-        ctx: &NodeContext<'_>,
-    ) -> PyResult<Self> {
-        Ok(Self::blank(
-            kind_name(kind),
-            Some(Self::build_node(py, node, ctx)?),
-        ))
-    }
-
     /// M94: a `node.on(...)` listener event aimed at `target`.
     pub(crate) fn for_node(
         py: Python<'_>,
@@ -298,50 +270,5 @@ impl Event {
     /// M94: a `window.on(...)` listener event -- no node at all.
     pub(crate) fn for_window(event_type: &str) -> Self {
         Self::blank(event_type, None)
-    }
-
-    pub(crate) fn click(
-        py: Python<'_>,
-        node: NodeId,
-        ctx: &NodeContext<'_>,
-        button: Option<PointerButton>,
-    ) -> PyResult<Self> {
-        let mut event = Self::legacy(py, EventKind::Click, node, ctx)?;
-        event.button = button.map(button_name).map(str::to_string);
-        Ok(event)
-    }
-
-    pub(crate) fn hover(
-        py: Python<'_>,
-        kind: EventKind,
-        node: NodeId,
-        ctx: &NodeContext<'_>,
-    ) -> PyResult<Self> {
-        debug_assert!(matches!(kind, EventKind::HoverEnter | EventKind::HoverExit));
-        Self::legacy(py, kind, node, ctx)
-    }
-
-    pub(crate) fn change(
-        py: Python<'_>,
-        node: NodeId,
-        ctx: &NodeContext<'_>,
-        old_value: Option<Py<PyAny>>,
-        new_value: Option<Py<PyAny>>,
-    ) -> PyResult<Self> {
-        let mut event = Self::legacy(py, EventKind::Change, node, ctx)?;
-        event.old_value = old_value;
-        event.new_value = new_value;
-        Ok(event)
-    }
-
-    /// M55 (§10, §16.2): `Event::hover`'s own real `Focus` sibling.
-    pub(crate) fn focus_transition(
-        py: Python<'_>,
-        kind: EventKind,
-        node: NodeId,
-        ctx: &NodeContext<'_>,
-    ) -> PyResult<Self> {
-        debug_assert!(matches!(kind, EventKind::FocusEnter | EventKind::FocusExit));
-        Self::legacy(py, kind, node, ctx)
     }
 }

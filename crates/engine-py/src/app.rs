@@ -41,7 +41,7 @@ use crate::listeners::{self, WindowEventType, WindowListenerMap};
 use crate::terminal::TerminalSession;
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
-use crate::window::{PyWindow, SharedActiveTree, SharedOsWindow, SharedSize};
+use crate::window::{PyWindow, SharedOsWindow, SharedSize};
 
 #[pyclass]
 pub struct App(ThreadBound<AppState>);
@@ -93,14 +93,6 @@ struct WindowSetup {
     /// `WindowRuntime`'s own per-frame closure needs to mutate it
     /// (draining real PTY output each tick).
     terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
-    /// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): the same shared,
-    /// atomically-swappable bundle `PyWindow.active` holds (`window::
-    /// ActiveTree`/`SharedActiveTree`) -- extracted the same way as
-    /// every other field here, so `WindowRuntime` can re-sync its own
-    /// `tree`/`root`/`handlers`/`context_menus` from it every real
-    /// frame/input, picking up a `Window.show_view` call made from a
-    /// Python handler while `App.run()` is already blocking.
-    active: SharedActiveTree,
     /// M94: see `PyWindow::window_listeners`/`os_window`.
     window_listeners: WindowListenerMap,
     os_window: SharedOsWindow,
@@ -403,14 +395,6 @@ struct WindowRuntime {
     /// table `PyWindow.terminals` owns -- see `WindowSetup.terminals`'s
     /// own doc comment.
     terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
-    /// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): see `WindowSetup.active`'s
-    /// own doc comment. `tree`/`root`/`handlers`/`context_menus` above
-    /// stay as plain fields (not replaced by this) -- every real
-    /// closure below that reads them re-syncs from `active` at its own
-    /// top, right after obtaining `runtime`, so none of this file's
-    /// dozens of pre-existing `runtime.tree`/`.root`/`.handlers`/
-    /// `.context_menus` call sites need to change at all.
-    active: SharedActiveTree,
     /// M94: see `PyWindow::window_listeners`/`os_window`.
     window_listeners: WindowListenerMap,
     os_window: SharedOsWindow,
@@ -468,7 +452,7 @@ impl App {
         for window in &self.windows {
             let window = window.borrow(py);
             crate::clock::unpin(&window.tree);
-            crate::clock::unpin(&window.active.borrow().tree);
+            crate::clock::unpin(&window.tree);
         }
 
         // Extracted once, up front, while `py` is already held --
@@ -489,7 +473,6 @@ impl App {
                     dock: window.dock.clone(),
                     completions: window.completions.clone(),
                     terminals: window.terminals.clone(),
-                    active: window.active.clone(),
                     window_listeners: window.window_listeners.clone(),
                     os_window: window.os_window.clone(),
                 }
@@ -559,7 +542,6 @@ impl App {
                         terminal_drag: None,
                         cursor: Cursor::Default,
                         terminals: setup.terminals.clone(),
-                        active: setup.active.clone(),
                         window_listeners: setup.window_listeners.clone(),
                         os_window: setup.os_window.clone(),
                     },
@@ -567,9 +549,8 @@ impl App {
             },
             move |window_id, _frame| -> bool {
                 // M87: run anything a background thread queued via
-                // `LoopHandle.call_soon` first -- before the `active`
-                // re-sync below, so a queued `show_view`/`reconcile`
-                // is what this very frame ticks and paints. No borrow of
+                // `LoopHandle.call_soon` first, so a queued change is
+                // what this very frame ticks and paints. No borrow of
                 // `runtimes` or any tree is held here, so the callable
                 // is free to touch any window's tree.
                 calls_for_frame.drain(py);
@@ -580,23 +561,6 @@ impl App {
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return false;
                 };
-                // M42 Phase 2 (§4, §5, §8, §16.2, §16.4): re-sync from
-                // `active` at the top of every real frame -- a real
-                // `Window.show_view` call (from a Python handler,
-                // possibly fired by `run_dispatch_outcome`/`run_
-                // completions` below on a *previous* frame) writes a new
-                // bundle into this same shared `RefCell`; this is where
-                // that change actually becomes what gets ticked/laid-
-                // out/painted next. A no-op read+clone on every ordinary
-                // frame where nothing switched (`Rc::clone` is cheap,
-                // the same real cost `SharedSize`'s own per-frame `.get
-                // ()` already accepts).
-                {
-                    let active = runtime.active.borrow();
-                    runtime.tree = active.tree.clone();
-                    runtime.root = active.root;
-                    runtime.handlers = active.handlers.clone();
-                }
 
                 let now = crate::clock::now(&runtime.tree);
                 let (any_active, completed) = runtime.tree.borrow_mut().tick_all(now);
@@ -773,16 +737,14 @@ impl App {
                 // holds a shared `&runtime` (via `.borrow()`, not
                 // `.borrow_mut()`), so it can't refresh `runtime`'s own
                 // plain fields in place the way `frame`/`input` do.
-                let active = runtime.active.borrow();
-                active.tree.borrow().build_access_update(active.root)
+                runtime.tree.borrow().build_access_update(runtime.root)
             },
             // M4 Phase 1 step 3: the real "meaning-dependent" half
             // `Tree::dispatch` leaves for its own caller (§2 Design
             // Principle 6) -- every mechanical consequence (hover, focus
             // movement, ripple-spawn-on-press) already happened inside
-            // `dispatch` itself; this closure's only job is to look up
-            // and call a registered `Node.set_on_click` handler when
-            // `dispatch` reports a real activation.
+            // `dispatch` itself; this closure hands each input to
+            // `dispatch::process_input`, which delivers the listeners.
             move |window_id, event| {
                 // M18 Phase 1 (§8, §10, §11.9, §11.10): widened from
                 // `.borrow()` to `.borrow_mut()` -- a real click-to-
@@ -797,18 +759,6 @@ impl App {
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return;
                 };
-                // M42 Phase 2: see the identical prelude in the `frame`
-                // closure above for the full real reasoning -- a real
-                // `Window.show_view` call, made from a Python handler
-                // this very closure may have just invoked on a prior
-                // input, must be visible to every dispatch this closure
-                // does from here on.
-                {
-                    let active = runtime.active.borrow();
-                    runtime.tree = active.tree.clone();
-                    runtime.root = active.root;
-                    runtime.handlers = active.handlers.clone();
-                }
 
                 // M94: modifier state is shared by every window's event
                 // routing (`listeners::modifiers`), nothing more to do.
@@ -817,8 +767,8 @@ impl App {
                     return;
                 }
 
-                // M94: dispatch, `node.on(...)` listeners, legacy handlers,
-                // (M99) docking drags, and (M100) terminal keys and the
+                // M94: dispatch, `node.on(...)` listeners, (M99) docking
+                // drags, and (M100) terminal keys and the
                 // clipboard shortcuts -- one pipeline shared with
                 // `Window.simulate` (`dispatch::process_input`). `event`
                 // itself is still needed below, for the text-field and
@@ -1065,22 +1015,7 @@ impl App {
                 let Some(runtime) = runtimes.get(&window_id) else {
                     return;
                 };
-                // M42 Phase 2: reads through `active` directly, cloned
-                // out and dropped immediately -- unlike the `access`
-                // closure above (a pure read, never calls a handler),
-                // this one calls `run_dispatch_outcome` below, which can
-                // synchronously invoke a real Python handler that itself
-                // calls `Window.show_view` (a genuine, expected pattern
-                // -- a screen reader activating a nav control). Holding
-                // `runtime.active`'s own `Ref` across that call would
-                // panic on `show_view`'s `borrow_mut()` -- the identical
-                // real bug caught and fixed in `window_input.rs`'s
-                // `click`/`hover`/`scroll`/`right_click`, for the
-                // identical reason.
-                let (tree_rc, handlers) = {
-                    let active = runtime.active.borrow();
-                    (active.tree.clone(), active.handlers.clone())
-                };
+                let (tree_rc, handlers) = (runtime.tree.clone(), runtime.handlers.clone());
                 let node = from_access_id(request.target_node);
                 let mut tree = tree_rc.borrow_mut();
                 match request.action {

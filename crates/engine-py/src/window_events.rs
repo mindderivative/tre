@@ -2,8 +2,8 @@
 //! `set`/`get` window properties, and `simulate`, the one headless-testing
 //! entry point (D9, R7). `simulate` runs node events through
 //! `dispatch::process_input`, the same pipeline `App.run()` uses for real
-//! input, so a simulated event reaches listeners and legacy handlers
-//! exactly as a real one would.
+//! input, so a simulated event reaches listeners exactly as a real one
+//! would.
 
 use std::rc::Rc;
 use std::time::Duration;
@@ -223,15 +223,13 @@ impl PyWindow {
 
 #[pymethods]
 impl PyWindow {
-    /// The window's root node -- the box its content lives in (the
-    /// currently shown one, after `show_view`).
+    /// The window's root node -- the box its content lives in.
     #[getter]
     fn root(&self) -> Node {
-        let active = self.active.borrow();
         Node::from(NodeState {
-            id: active.root,
-            tree: active.tree.clone(),
-            handlers: active.handlers.clone(),
+            id: self.root,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
             completions: self.completions.clone(),
         })
     }
@@ -361,9 +359,8 @@ impl PyWindow {
             None => None,
         };
         let interactive = matches!(node_kind, NodeKind::TextField(_) | NodeKind::Terminal(_));
-        let active = self.active.borrow();
         let id = {
-            let mut tree = active.tree.borrow_mut();
+            let mut tree = self.tree.borrow_mut();
             let id = tree.insert(node_kind, Style::default(), paint);
             if interactive {
                 tree.set_access(
@@ -378,11 +375,10 @@ impl PyWindow {
         };
         let node = Node::from(NodeState {
             id,
-            tree: active.tree.clone(),
-            handlers: active.handlers.clone(),
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
             completions: self.completions.clone(),
         });
-        drop(active);
         if let Some(session) = session {
             self.terminals.borrow_mut().insert(id, session);
         }
@@ -542,10 +538,7 @@ impl PyWindow {
             )));
         }
         node_handles::reclaim();
-        let (tree, root, handlers) = {
-            let active = self.active.borrow();
-            (active.tree.clone(), active.root, active.handlers.clone())
-        };
+        let (tree, root, handlers) = (self.tree.clone(), self.root, self.handlers.clone());
         let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
         let (_, completed) = tree.borrow_mut().tick_all(now);
         run_completions(&self.completions, completed, py);
@@ -566,10 +559,7 @@ impl PyWindow {
         fields: Option<&Bound<'_, PyDict>>,
         py: Python<'_>,
     ) -> PyResult<()> {
-        let (tree, root, handlers) = {
-            let active = self.active.borrow();
-            (active.tree.clone(), active.root, active.handlers.clone())
-        };
+        let (tree, root, handlers) = (self.tree.clone(), self.root, self.handlers.clone());
         let node_id = match &node {
             Some(node) if !Rc::ptr_eq(&node.tree, &tree) => {
                 return Err(EngineError::ForeignNode.into());

@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{
-    CompletionHandle, DispatchOutcome, EventKind, InputEvent, NodeId, NodeKind, PointerButton, Tree,
+    CompletionHandle, DispatchOutcome, InputEvent, NodeId, NodeKind, PointerButton, Tree,
 };
 use pyo3::prelude::*;
 
@@ -104,29 +104,20 @@ pub(crate) fn log_uncaught_exception(err: &PyErr, py: Python<'_>) {
     tracing::error!(%traceback, "uncaught exception in a Python callback");
 }
 
-/// The one real shape shared by `Node`/`PyWindow`/`View`'s handler
-/// storage -- named here (clippy's own `type_complexity` lint, not just
-/// convenience) since this module is the one place that actually
-/// interprets it.
-///
-/// M54 Phase 2 (§8, §16.2): the stored value widened from a bare
-/// `Py<PyAny>` to `(Py<PyAny>, bool)` -- the `bool` is `wants_event_
-/// payload`'s own real, one-time answer for this handler, arity-
-/// sniffed once at registration (`Node.set_on_click`/etc.), not
-/// re-inspected on every real call. Backward compatible with every
-/// pre-existing zero-argument handler by construction: `call_handler`
-/// only ever calls `handler.call1(py, (event,))` when this is `true`.
+/// A window's stored Python callbacks, shared by its `Node` handles --
+/// named here (clippy's `type_complexity` lint) since this module is the
+/// one place that interprets it. The `bool` is `wants_event`'s answer for
+/// the callback, arity-sniffed once at registration: a listener that
+/// declares a parameter gets the `Event`, one that doesn't is called
+/// plain.
 pub(crate) type HandlerMap = Rc<RefCell<HashMap<(NodeId, HandlerKey), (Py<PyAny>, bool)>>>;
 
-/// M94: what a `HandlerMap` entry is registered for -- a legacy
-/// `set_on_*` handler (`Legacy`, non-bubbling, fired exactly as before) or
-/// a `node.on(...)` listener (`Listener`, routed by `listeners.rs` with the
-/// M93 propagation model). One map for both, so no `Node` needed a new
-/// field and every existing GC traversal already covers listeners. M100
-/// deletes `Legacy`.
+/// M94: what a `HandlerMap` entry is registered for -- a `node.on(...)`
+/// listener (`Listener`, routed by `listeners.rs` with the M93
+/// propagation model) or one of a node's own callbacks. M100 removed the
+/// legacy, non-bubbling `set_on_*` handlers that shared this map.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum HandlerKey {
-    Legacy(EventKind),
     Listener(EventType),
     /// M96: a node's own callbacks -- a canvas's `draw`, a virtual list's
     /// `materialize` and `size_hint` -- stored here for the same GC and
@@ -301,17 +292,7 @@ pub(crate) fn run_dispatch_outcome(
     };
     match outcome {
         DispatchOutcome::Activated(node) => {
-            let node = *node;
-            let button = match event {
-                Some(InputEvent::PointerReleased { button, .. }) => Some(*button),
-                // A keyboard `Enter`/`Space` activation, or an AccessKit
-                // one, has no button to report.
-                _ => None,
-            };
-            call_handler(handlers, node, EventKind::Click, py, |py| {
-                Event::click(py, node, &ctx, button)
-            });
-            deliver_click(&ctx, EventType::Click, node, event, py);
+            deliver_click(&ctx, EventType::Click, *node, event, py);
         }
         DispatchOutcome::HoverChanged { old, new } => {
             let (old, new) = (*old, *new);
@@ -321,33 +302,13 @@ pub(crate) fn run_dispatch_outcome(
                 Some(InputEvent::PointerMoved { position }) => Some(*position),
                 _ => None,
             };
-            if let Some(old) = old {
-                call_handler(handlers, old, EventKind::HoverExit, py, |py| {
-                    Event::hover(py, EventKind::HoverExit, old, &ctx)
-                });
-            }
-            if let Some(new) = new {
-                call_handler(handlers, new, EventKind::HoverEnter, py, |py| {
-                    Event::hover(py, EventKind::HoverEnter, new, &ctx)
-                });
-            }
             listeners::route_hover(&ctx, old, new, point, py);
         }
-        // M14 Phase 3 (§16.7), widened M54 Phase 2: a real `Slider`/
-        // `TextField`/`TimePickerDial` edit `Tree::dispatch` itself
-        // detected -- reuses the same real `call_handler` every other
-        // mechanical outcome already does, registered via `Node.
-        // set_on_change`. `old_value` comes straight from `engine-
-        // core`'s own real snapshot (Phase 1); `new_value` is read
-        // fresh from `tree` here, after `dispatch()` has already
-        // returned.
+        // M14 Phase 3, M54 Phase 2: a text input edit `Tree::dispatch`
+        // detected -- `old_value` comes from `engine-core`'s snapshot;
+        // `deliver_change` reads the new value fresh from `tree`.
         DispatchOutcome::Changed { node, old_value } => {
             let node = *node;
-            call_handler(handlers, node, EventKind::Change, py, |py| {
-                let old = Some(changed_value_to_py(py, old_value)?);
-                let new = read_new_changed_value(&tree.borrow(), node, py)?;
-                Event::change(py, node, &ctx, old, new)
-            });
             match changed_value_to_py(py, old_value) {
                 Ok(old) => deliver_change(&ctx, node, Some(old), py),
                 Err(err) => log_uncaught_exception(&err, py),
@@ -395,8 +356,8 @@ fn deliver_click(
 }
 
 /// M94: the `change` listener on a `text_input` whose text the user just
-/// changed -- text-only, per M93 (the MD3 slider and dial keep their
-/// legacy `set_on_change`), and non-bubbling. `old` is the text before.
+/// changed -- text-only, per M93, and non-bubbling. `old` is the text
+/// before.
 pub(crate) fn deliver_change(
     ctx: &NodeContext<'_>,
     node: NodeId,
@@ -437,8 +398,7 @@ pub(crate) type SharedTerminals = Rc<RefCell<HashMap<NodeId, TerminalSession>>>;
 /// M94: the one input pipeline, shared by `App.run()`'s live loop and
 /// `Window.simulate`: resolve the listener target before dispatch, let
 /// `Tree::dispatch` do everything mechanical, deliver the raw event to
-/// `node.on(...)` listeners, then the outcome to legacy handlers and
-/// listeners alike. The caller has already computed layout. M99: a
+/// `node.on(...)` listeners, then the outcome to listeners. The caller has already computed layout. M99: a
 /// docking drag rides the same pipeline -- the pointer's moves report
 /// `dock_target` and the primary button's release drops the panel and
 /// reports `dock_drop`. M100: so do a focused terminal's keys, which go
@@ -634,16 +594,6 @@ pub(crate) fn fire_focus_transition(
         handlers,
         completions,
     };
-    if let Some(old) = old {
-        call_handler(handlers, old, EventKind::FocusExit, py, |py| {
-            Event::focus_transition(py, EventKind::FocusExit, old, &ctx)
-        });
-    }
-    if let Some(new) = new {
-        call_handler(handlers, new, EventKind::FocusEnter, py, |py| {
-            Event::focus_transition(py, EventKind::FocusEnter, new, &ctx)
-        });
-    }
     listeners::route_focus(&ctx, old, new, py);
 }
 
@@ -668,62 +618,6 @@ pub(crate) fn run_completions(
         {
             log_uncaught_exception(&err, py);
         }
-    }
-}
-
-/// M14 Phase 3 (§16.7): widened to `pub(crate)` -- `Node.set_checked`
-/// reuses this directly, since a real `Checkbox` edit isn't mechanical
-/// the way a `Slider` drag is (Design Principle 6: `engine-core` never
-/// touches `checked` itself), so it has no `Tree::dispatch` outcome to
-/// resolve through `run_dispatch_outcome` at all; calling this exact
-/// same real lookup-and-invoke helper directly is the one real,
-/// consistent way both components' own `Change` firing ends up going
-/// through the identical mechanism, not two divergent ones.
-/// M54 Phase 2 (§8, §16.2): widened with `make_event` -- called only
-/// when a handler is genuinely found *and* it arity-sniffed as wanting
-/// one (`wants_event_payload`, at registration) -- so building a real
-/// `Event` (which can itself borrow `tree`, `read_new_changed_value`)
-/// never happens on a dispatch nothing is even listening for. Returns
-/// `PyResult<Event>` rather than a bare `Event`: constructing one can
-/// itself fail (`changed_value_to_py`'s own `into_pyobject` calls are
-/// fallible in principle, matching pyo3's own general contract) -- a
-/// construction failure is logged the identical "uncaught exception,
-/// non-fatal" way any other callback failure already is here, not a
-/// silent swallow or a panic.
-pub(crate) fn call_handler(
-    handlers: &HandlerMap,
-    node: NodeId,
-    kind: EventKind,
-    py: Python<'_>,
-    make_event: impl FnOnce(Python<'_>) -> PyResult<Event>,
-) {
-    // Cloned out and the borrow dropped *before* calling the handler: a
-    // handler that itself registers a new handler (a real, plausible
-    // pattern -- rebinding a button's own click behavior from inside a
-    // click) would otherwise panic on a re-entrant `RefCell` borrow of
-    // this same `handlers` map.
-    let handler = handlers
-        .borrow()
-        .get(&(node, HandlerKey::Legacy(kind)))
-        .map(|(handler, wants_event)| (handler.clone_ref(py), *wants_event));
-    let Some((handler, wants_event)) = handler else {
-        return;
-    };
-    let result = if wants_event {
-        match make_event(py).and_then(|event| Py::new(py, event)) {
-            Ok(event) => handler.call1(py, (event,)),
-            Err(err) => Err(err),
-        }
-    } else {
-        handler.call0(py)
-    };
-    if let Err(err) = result {
-        // §9's own stated policy: "unhandled exceptions from a callback
-        // are caught, logged via `tracing::error!`, and non-fatal" --
-        // `log_uncaught_exception` (M16 Phase 2) carries the same full
-        // real traceback `PyErr::print` used to write straight to
-        // stderr, now as a real structured `tracing` event instead.
-        log_uncaught_exception(&err, py);
     }
 }
 
@@ -841,11 +735,6 @@ pub(crate) fn cut_focused_selection_to_clipboard(
         .ok()
         .and_then(|o| o.as_ref().map(|v| v.clone_ref(py)));
     tree.borrow_mut().cut_text_field_selection(field);
-    call_handler(handlers, field, EventKind::Change, py, |py| {
-        let old = old?;
-        let new = read_new_changed_value(&tree.borrow(), field, py)?;
-        Event::change(py, field, &ctx, old, new)
-    });
     deliver_change(&ctx, field, old_for_listeners, py);
     true
 }

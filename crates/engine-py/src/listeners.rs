@@ -1,7 +1,6 @@
 //! M94: `node.on(event, handler)` and `window.on(event, handler)` -- the
-//! M93 target API's event model (`docs/design/target-api.md`), beside the
-//! legacy `set_on_*` handlers, which keep their exact non-bubbling
-//! behavior until M100 removes them.
+//! M93 target API's event model (`docs/design/target-api.md`). M100
+//! removed the legacy, non-bubbling `set_on_*` handlers it replaced.
 //!
 //! Delivery happens in two places, both after `Tree::dispatch`:
 //!
@@ -11,10 +10,9 @@
 //!   pointer, and the event belongs to where it happened.
 //! - **Outcomes** (`dispatch::run_dispatch_outcome`,
 //!   `dispatch::fire_focus_transition`): `click`, `secondary_click`,
-//!   `pointer_enter`/`pointer_leave`, `focus`/`unfocus`, `change` -- the same
-//!   places the legacy handlers fire, so every path that already reaches
-//!   those (live input, accessibility requests, the synthetic
-//!   `Window.click` family) reaches listeners too.
+//!   `pointer_enter`/`pointer_leave`, `focus`/`unfocus`, `change` -- so
+//!   every path that produces an outcome (live input, accessibility
+//!   requests, `Window.simulate`) reaches listeners.
 //!
 //! Callers deliver raw input before the outcome, so `pointer_up` precedes
 //! `click`, as in the DOM.
@@ -226,8 +224,7 @@ impl WindowEventType {
     }
 }
 
-/// A window's own listeners -- not per-node, and independent of which
-/// tree the window currently shows (`show_view` swaps trees).
+/// A window's own listeners -- not per-node.
 pub(crate) type WindowListenerMap = Rc<RefCell<HashMap<WindowEventType, (Py<PyAny>, bool)>>>;
 
 /// The node a raw input event is aimed at, resolved before `Tree::dispatch`

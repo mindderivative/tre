@@ -33,8 +33,8 @@ pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, Mo
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
 pub use input::{
-    ChangedValue, DispatchOutcome, EventKind, InputEvent, Key, Modifiers, PointerButton,
-    ScrollDelta, ctrl_shortcut,
+    ChangedValue, DispatchOutcome, InputEvent, Key, Modifiers, PointerButton, ScrollDelta,
+    ctrl_shortcut,
 };
 pub use node::{
     CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Node, NodeId, NodeKind,
