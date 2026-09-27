@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""A variable-height virtualized list (§11.7, M12): `size_hint(index)`
-gives each row its own height in place of `item_extent`'s single value
--- here a repeating five-step pattern of 500 rows. As with
-`scrollable_list.py`, `tre` builds only the rows its viewport shows.
+"""A virtual list whose rows differ in height: `size_hint(index)` gives each
+row its own height in place of `item_extent`. As in `scrollable_list.py`,
+only the rows in view are built.
 
-Headless-CI-safe: it renders `max_frames=60` and exits. The proof that
-each row's position and height really differ is
-`crates/engine-core/src/tree.rs`'s M12 tests.
+Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
+without a display or GPU.
 """
 
 from tre import App, Window

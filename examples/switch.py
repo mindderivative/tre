@@ -71,40 +71,45 @@ class Switch:
             self.node.animate("shadows", [(RING, 0, 0, 0, 3)], 100)
 
 
-window = Window(width=320, height=120, title="tre -- switch")
-window.root.set(align_items="center", gap=12)
-caption = window.create("text", text="Wi-Fi", font_size=16, width=60, height=20)
-changes = []
-wifi = Switch(window, "Wi-Fi", on_change=changes.append)
-window.root.add_child(caption)
-window.root.add_child(wifi.node)
+def main():
+    window = Window(width=320, height=120, title="tre -- switch")
+    window.root.set(align_items="center", gap=12)
+    caption = window.create("text", text="Wi-Fi", font_size=16, width=60, height=20)
+    changes = []
+    wifi = Switch(window, "Wi-Fi", on_change=changes.append)
+    window.root.add_child(caption)
+    window.root.add_child(wifi.node)
 
-# -- headless checks ---------------------------------------------------------
-window.advance(0)  # pin the clock so animations run on `advance`
+    # -- headless checks ---------------------------------------------------------
+    window.advance(0)  # pin the clock so animations run on `advance`
 
-window.simulate("click", node=wifi.thumb)  # a press on the thumb bubbles up
-window.advance(200)
-assert wifi.node.get("checked") is True and changes == [True]
-assert wifi.thumb.get("translate_x") == TRAVEL
-assert wifi.node.get("fill") == TRACK_ON
-assert wifi.node.get("focused"), "a click focuses the nearest focusable node"
-assert wifi.node.get("shadows")[0][0] == NO_RING, "no ring after a pointer press"
+    window.simulate("click", node=wifi.thumb)  # a press on the thumb bubbles up
+    window.advance(200)
+    assert wifi.node.get("checked") is True and changes == [True]
+    assert wifi.thumb.get("translate_x") == TRAVEL
+    assert wifi.node.get("fill") == TRACK_ON
+    assert wifi.node.get("focused"), "a click focuses the nearest focusable node"
+    assert wifi.node.get("shadows")[0][0] == NO_RING, "no ring after a pointer press"
 
-window.simulate("key_down", key="space")  # Space activates the focused node
-window.advance(200)
-assert changes == [True, False] and wifi.thumb.get("translate_x") == 0.0
+    window.simulate("key_down", key="space")  # Space activates the focused node
+    window.advance(200)
+    assert changes == [True, False] and wifi.thumb.get("translate_x") == 0.0
 
-window.simulate("unfocus", node=wifi.node)
-window.simulate("key_down", key="tab")  # back in by keyboard
-window.advance(100)
-assert wifi.node.get("shadows")[0][0] == RING, "keyboard focus shows the ring"
+    window.simulate("unfocus", node=wifi.node)
+    window.simulate("key_down", key="tab")  # back in by keyboard
+    window.advance(100)
+    assert wifi.node.get("shadows")[0][0] == RING, "keyboard focus shows the ring"
 
-window.simulate("pointer_move", node=wifi.node)
-window.advance(100)
-assert wifi.thumb.get("scale") == 1.1
-print(f"switch.py: toggled {len(changes)} times, checks passed")
+    window.simulate("pointer_move", node=wifi.node)
+    window.advance(100)
+    assert wifi.thumb.get("scale") == 1.1
+    print(f"switch.py: toggled {len(changes)} times, checks passed")
 
-app = App()
-app.add_window(window)
-app.run(max_frames=120)
-print("switch.py: exited cleanly")
+    app = App()
+    app.add_window(window)
+    app.run(max_frames=120)
+    print("switch.py: exited cleanly")
+
+
+if __name__ == "__main__":
+    main()

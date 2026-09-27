@@ -59,6 +59,7 @@ nav:
       - Threading: guide/threading.md
       - Docking: guide/docking.md
       - Building a Widget: guide/building-a-widget.md
+  - Examples: examples.md
   - Python API Reference:
       - Overview: api/python/index.md
       - App: api/python/app.md

@@ -54,7 +54,7 @@ button.set(shadows=[((0x67, 0x50, 0xA4, 0xFF), 0, 0, 0, 3)])
 `opacity` fades a node **and its whole subtree together**, as one layer, so
 overlapping children don't show through each other. `translate_x`,
 `translate_y`, `scale` (about the center), and `rotation_deg` (clockwise
-about the center) move what's painted without touching layout — the pointer
+about the center) move what's painted without moving any other node — the pointer
 still finds the node where it's drawn. Each animates on its own.
 
 ## Paths

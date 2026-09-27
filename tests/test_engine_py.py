@@ -2,7 +2,7 @@
 node creation, the one property setter (`Node.animate`), and its two
 `EngineError` paths (`UnknownProperty` -> `ValueError`, `TypeMismatch` ->
 `TypeError`, §8's own design). `App.run()` itself isn't exercised here
-(it blocks and opens a real window) -- `examples/animate_rect.py` and
+(it blocks and opens a real window) -- `examples/animation.py` and
 `examples/two_windows.py` are that proof; this file is the fast,
 no-window-needed regression coverage that should never need a display
 to run.
@@ -125,7 +125,7 @@ def test_animate_accepts_a_real_on_complete_callback():
     itself (§8's own design rule). The definitive proof it actually
     *fires* needs a real, running `App.run()` loop (this file's own
     docstring: that needs a real display, so it isn't exercised here,
-    `examples/animation_completion.py` is that real, live proof) --
+    `examples/animation.py` is that real, live proof) --
     `engine-core`'s own tests (M9 Phase 1) already proved the tick-level
     mechanics exhaustively; this is the FFI boundary's own smoke test.
     """

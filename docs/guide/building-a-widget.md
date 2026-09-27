@@ -161,9 +161,10 @@ The same pieces build the rest of a widget set:
 - **A slider** captures the pointer on `pointer_down` so a drag keeps
   tracking off the track, steps on `arrow_left`/`arrow_right` in `key_down`,
   and answers `increment`, `decrement`, and `set_value` in `a11y_action` —
-  `tests/test_primitive_slider.py` is one.
-- **A button's ripple** is a circle `path` inside a `clip_children` box,
-  scaled up and faded out from the press point.
+  `examples/slider.py` is one.
+- **A button's ripple** is a round box inside a `clip_children` button,
+  scaled up and faded out from the press point, destroying itself from its
+  `on_complete` — `examples/ripple.py`.
 - **A menu or dialog** is a [layer](layers.md).
 - **A text field** is a `text_input` inside a box that paints the field's
   background, border, and label — see [Text](text.md#text-input).

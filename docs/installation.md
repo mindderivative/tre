@@ -69,7 +69,7 @@ for local development. Run any script under
 to confirm it worked:
 
 ```bash
-python examples/checkbox.py
+python examples/showcase.py
 ```
 
 ### Building a portable wheel yourself

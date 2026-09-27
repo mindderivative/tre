@@ -203,7 +203,7 @@ flowchart TD
 
 ## 7. Material Design 3 — moved to the framework
 
-Until 0.3.5 this section specified `engine-md3`: dynamic color, elevation levels, state layers and ripple, shape morphing, motion tokens, and the container transform. M99 removed all of it. What survives in the engine is design-neutral: layered `shadows` (an elevation level is a shadow list), path morphing (§5), cubic-bezier easing, group opacity, and `clip_children` (a ripple is a clipped, scaled circle path). The MD3 reference data Tesserae ported — elevation shadows, motion curves, component behavior — is in `docs/design/`.
+Until 0.3.5 this section specified `engine-md3`: dynamic color, elevation levels, state layers and ripple, shape morphing, motion tokens, and the container transform. M99 removed all of it. What survives in the engine is design-neutral: layered `shadows` (an elevation level is a shadow list), path morphing (§5), cubic-bezier easing, group opacity, and `clip_children` (a ripple is a round box scaled up inside a clipping button). The MD3 reference data Tesserae ported — elevation shadows, motion curves, component behavior — is in `docs/design/`.
 
 ---
 

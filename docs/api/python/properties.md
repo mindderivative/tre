@@ -184,8 +184,8 @@ Plus `font_size` and the `palette` on
 | `kind` | The node's kind, by the name `create` takes — `"box"`, `"text"`, `"text_input"`, ... |
 | `focused` | Whether the node has keyboard focus |
 | `layer_placement` | A shown [layer](layers.md)'s side of its anchor — `"below"`, `"above"`, `"start"`, `"end"` — or `None` |
-| `layout_x`, `layout_y` | The node's computed position in the window |
-| `layout_width`, `layout_height` | Its computed size |
+| `layout_x`, `layout_y` | The node's position in the window, as drawn — its own and its ancestors' transforms included |
+| `layout_width`, `layout_height` | Its computed size, before any `scale` |
 
 Reading a `layout_*` value runs any pending layout first, so it always matches
 the tree as it is now. A detached subtree is laid out on its own, at its content

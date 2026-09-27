@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""M87 (tre issue #6): hot reload *inside* `App.run()`, driven by a
-background file-watcher thread.
+"""Hot reload inside `App.run()`, driven by a background file-watcher
+thread.
 
 `App` and `Window` may only be touched from the thread that created them,
 and once `App.run()` takes over the main thread, nothing else runs there.
@@ -12,9 +12,8 @@ The watcher does the file I/O on its own thread and hands the loop only
 the part that must run there: applying the new settings to the tree. It
 polls `os.stat` to stay dependency-free; a framework would use an
 event-driven watcher (`watchfiles`, `watchdog`) in exactly the same shape
--- one `call_soon` per detected change. (Until M98 this example reloaded
-a declarative `View`; a framework's own screen rebuild goes in the same
-`call_soon`.)
+-- one `call_soon` per detected change, and a framework's screen
+rebuild goes in the same `call_soon`.
 
 What this script proves automatically (headless-CI-safe): a callable
 queued before `run()` edits the settings file on the first frame,

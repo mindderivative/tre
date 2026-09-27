@@ -114,8 +114,10 @@ print(panel.get("layout_x"), panel.get("layout_width"))
 ```
 
 A detached subtree is laid out on its own at its content size, so you can
-measure a node before attaching it. Transforms (`translate_x`, `scale`, ...)
-move what's painted, not the layout box.
+measure a node before attaching it. `layout_x` and `layout_y` include the
+node's transforms (`translate_x`, `scale`, ...) and its ancestors', so they
+say where it's drawn; `layout_width` and `layout_height` are its size before
+scaling. A transform never moves any other node.
 
 ## Changing the tree
 

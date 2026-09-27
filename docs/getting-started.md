@@ -83,5 +83,4 @@ button.on("pointer_leave", lambda: button.animate("opacity", 1.0, 120))
 
 - The [Guide](guide/nodes-and-layout.md) covers each building block in turn;
   [Building a Widget](guide/building-a-widget.md) makes a complete switch.
-- [`examples/`](https://github.com/mindderivative/tre/tree/main/examples)
-  has a small runnable script for each one.
+- [Examples](examples.md) lists a small, runnable script for each one.

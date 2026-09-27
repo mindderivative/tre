@@ -1,45 +1,68 @@
 #!/usr/bin/env python3
-"""M5 Phase 3's real `NodeKind::Canvas` (§11.10, §11.11): a real, live
-window with a small custom-drawn scene -- two circular "nodes" joined by
-a stroked "edge," the same shape M5 Phase 4's own node-graph validation
-example builds on. Proves the real end-to-end path: a Python `draw`
-callback populates a `Painter` -- on creation and on each `canvas.redraw()` -- resolved
-into real `CanvasState`, and `engine-render` paints it through the same
-pipeline every other `NodeKind` uses.
+"""A canvas: a small line chart drawn with a `Painter` -- a background,
+a curve through the samples, and a dot on each. The canvas narrows its
+hit test to the newest sample's dot with `set_hit_test_circle`, so only a
+click on that point reaches its `click` listener. Changing the data and
+calling `redraw()` repaints it; nothing redraws a canvas on its own.
 
-What this script proves automatically (headless-CI-safe, no human
-needed): the `draw` callback runs, `Painter`'s drawing/hit-test
-methods accept real arguments, and the whole layout renders through the
-real pipeline for real frames, exiting cleanly. The definitive pixel-
-level proof that the drawn content lands at the right on-screen
-position is `crates/engine-render/tests/canvas_paint.rs`, not this
-script -- matching this workspace's own established split (e.g.
-`resizable_panes.py`/`splitter_drag_dispatch.rs`).
+The script checks the hit test and a redraw with `window.simulate`, then
+opens the window. Headless-CI-safe: `App.run()` renders `max_frames=60`
+and returns quietly without a display or GPU. See
+docs/guide/painting.md.
 """
 
 from tre import App, Window
 
-window = Window(width=240, height=140, title="tre v2 -- canvas")
+W, H, R = 240, 120, 5
+BACKGROUND = (0xF7, 0xF2, 0xFA, 0xFF)
+LINE = (0x67, 0x50, 0xA4, 0xFF)
+
+window = Window(width=280, height=160, title="tre -- canvas")
+samples = [30, 55, 40, 80, 65, 90]
+draws = []
 
 
-def draw(ctx):
-    # The "edge" first, so the two node circles paint on top of it.
-    ctx.stroke_path(points=[(30, 30), (150, 90)], color=(0x63, 0x50, 0xA4, 0xFF), width=3.0)
-
-    ctx.fill_circle(cx=30, cy=30, radius=16, color=(0xFF, 0xA5, 0x00, 0xFF))
-    ctx.fill_circle(cx=150, cy=90, radius=16, color=(0x03, 0xDA, 0xC6, 0xFF))
-
-    # A precise custom hit-test on the second node's own circle (§11.10's
-    # "a specific plotted data point" example) -- clicking anywhere in
-    # the canvas's wider bounding box, other than this circle, misses.
-    ctx.set_hit_test_circle(cx=150, cy=90, radius=16)
+def points():
+    step = (W - 2 * R) / (len(samples) - 1)
+    return [(R + i * step, H - R - v) for i, v in enumerate(samples)]
 
 
-canvas = window.create("canvas", width=200, height=120, draw=draw)
-window.root.add_child(canvas)
-canvas.redraw()
+def draw(painter):
+    draws.append(len(samples))
+    painter.fill_rect(0, 0, W, H, BACKGROUND)
+    pts = points()
+    path = [list(pts[0])]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):  # a smooth curve: cubic segments
+        mid = (x0 + x1) / 2
+        path.append([mid, y0, mid, y1, x1, y1])
+    painter.stroke_path(path, LINE, 2.0)
+    for x, y in pts:
+        painter.fill_circle(x, y, R, LINE)
+    x, y = pts[-1]
+    painter.set_hit_test_circle(x, y, R + 3)  # only the newest point is clickable
+
+
+chart = window.create("canvas", width=W, height=H, draw=draw)
+window.root.add_child(chart)
+clicked = []
+chart.on("click", lambda: clicked.append(samples[-1]))
+
+# -- checks ------------------------------------------------------------------
+assert draws == [6], "a canvas draws once when it's created"
+x, y = points()[-1]
+window.simulate("click", node=chart, x=x, y=y)
+window.simulate("click", node=chart, x=10, y=10)  # inside the box, off the point
+assert clicked == [90]
+
+samples.append(70)
+chart.redraw()
+assert draws == [6, 7]
+x, y = points()[-1]
+window.simulate("click", node=chart, x=x, y=y)
+assert clicked == [90, 70], "the hit test moved with the redraw"
+print("canvas.py: checks passed")
 
 app = App()
 app.add_window(window)
-app.run(max_frames=180)
-print("canvas.py: exited cleanly after 180 frames")
+app.run(max_frames=60)
+print("canvas.py: exited cleanly")

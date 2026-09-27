@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""A scrollable, virtualized list (§11.7): 1,000 rows, of which `tre`
-builds only the few its 200px viewport shows -- `materialize(index)`
-returns a node for a row as it comes into view, and rows scrolled away
-are released. A wheel gesture scrolls it three rows; a scrollbar thumb
-paints on its right edge, since the rows overflow the viewport.
+"""A virtual list of 1,000 rows, of which `tre` builds only the few its
+200px viewport shows: `materialize(index)` returns a node for each row as
+it scrolls into view, and rows scrolled away are released. A wheel
+scrolls it; the scrollbar thumb paints on its right edge.
 
-Headless-CI-safe: it renders `max_frames=60` and exits. Drag the thumb
-with a real mouse to see it live; the pixel proofs are
-`crates/engine-render/tests/virtual_list_scroll.rs` and the thumb math
-`crates/engine-core/src/tree.rs`'s `virtual_list_thumb_*` tests.
+The script counts the rows actually built, then opens the window.
+Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
+without a display or GPU. See docs/guide/nodes-and-layout.md.
 """
 
 from tre import App, Window
@@ -19,7 +17,11 @@ ROW_COUNT = 1_000
 ROW_HEIGHT = 24.0
 
 
+built = []
+
+
 def materialize(idx):
+    built.append(idx)
     shade = (idx * 37) % 200
     return window.create("box", fill=(shade, shade, 0xFF, 0xFF))
 
@@ -30,6 +32,9 @@ rows = window.create(
 )
 window.root.add_child(rows)
 window.simulate("wheel", node=rows, delta_y=ROW_HEIGHT * 3)  # scroll down three rows
+assert len(rows.children()) < 12, "only the visible rows exist"
+assert max(built) < 12 and rows.children()[0].get("layout_y") < rows.get("layout_y")
+print(f"scrollable_list.py: built {len(built)} of {ROW_COUNT} rows")
 
 app = App()
 app.add_window(window)

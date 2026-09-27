@@ -13,7 +13,9 @@
    rewritten; `_core.pyi` docstrings fixed; anchors validated.
 3. Phase 1 Step 2: ARCHITECTURE.md, README, and docs/architecture.md
    rewritten; stale comments in 40 Rust files corrected.
+4. Phase 2 Step 1: 21 self-checking examples, six new (layout, layers,
+   slider, ripple, reorder, showcase), a docs Examples page.
 
 ## Status
 
-**Started (2026-09-27).** Phase 2 Step 1 next.
+**Started (2026-09-27).** Phase 2 Step 2 next.
