@@ -198,6 +198,14 @@ pub struct Event {
     /// rather than a pointer press (`listeners::note_input_modality`).
     #[pyo3(get)]
     pub(crate) focus_visible: Option<bool>,
+    /// M99: `dock_target`/`dock_drop`: the dock zone -- `"left"`,
+    /// `"right"`, `"top"`, `"bottom"`, or `"center"` -- or `None` when the
+    /// pointer is over no zone.
+    #[pyo3(get)]
+    pub(crate) side: Option<String>,
+    /// M99: `dock_drop`: the panel whose drag ended.
+    #[pyo3(get)]
+    pub(crate) panel: Option<Py<Node>>,
     pub(crate) stopped: bool,
     pub(crate) cancelled: bool,
     pub(crate) cancellable: bool,
@@ -303,6 +311,8 @@ impl Event {
             scale_factor: None,
             related_target: None,
             focus_visible: None,
+            side: None,
+            panel: None,
             stopped: false,
             cancelled: false,
             cancellable: false,

@@ -37,7 +37,7 @@ use crate::dispatch::{
     cut_focused_selection_to_clipboard, interaction_config, paste_clipboard_into_focused,
     process_input, run_completions, run_dispatch_outcome,
 };
-use crate::dock::{self, SharedDockState};
+use crate::dock::SharedDockState;
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType, WindowListenerMap};
 use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
@@ -874,16 +874,18 @@ impl App {
                     return;
                 }
                 // M94: dispatch, `node.on(...)` listeners, legacy handlers,
-                // and the context menu a right-click opens -- one pipeline
-                // shared with `Window.simulate` (`dispatch::process_input`).
-                // `event` itself is still needed below, for the
-                // winit-driven dock-drag/theme-switch match.
+                // and (M99) docking drags -- one pipeline shared with
+                // `Window.simulate` (`dispatch::process_input`). `event`
+                // itself is still needed below, for the text-field and
+                // terminal pointer handling.
                 process_input(
                     &NodeContext {
                         tree: &runtime.tree,
                         handlers: &runtime.handlers,
                         completions: &runtime.completions,
                     },
+                    &runtime.dock,
+                    &runtime.window_listeners,
                     runtime.root,
                     &event,
                     py,
@@ -902,15 +904,8 @@ impl App {
                         runtime.cursor = wanted;
                     }
                 }
-                // M4 Phase 9 (§11.4): the real, winit-driven path a
-                // genuine panel drag reaches -- `Window.start_panel_drag`/
-                // `drop_panel_at` are the no-live-window-needed test
-                // entry points, this is where an actual mouse arrives.
-                // Inspects the raw `event` directly (not `outcome`) --
-                // "which node is a drag handle" is meaning-dependent
-                // bookkeeping only `engine-py`'s own `dock` module
-                // knows, not something `Tree::dispatch` has any reason
-                // to report through `DispatchOutcome`.
+                // Text-field and terminal pointer handling that needs the
+                // text renderer, which `process_input` has no access to.
                 match event {
                     InputEvent::PointerPressed {
                         position,
@@ -919,13 +914,10 @@ impl App {
                         // M18 Phase 1 (§8, §10, §11.9, §11.10): widened
                         // from `hit_test` to `hit_test_local` -- the
                         // extra local-space point is exactly what a
-                        // real click-to-position hit-test needs below;
-                        // `dock::start_drag`'s own existing use only
-                        // ever needed the `NodeId`, unaffected.
+                        // real click-to-position hit-test needs below.
                         if let Some((hit, local_point)) =
                             runtime.tree.borrow().hit_test_local(runtime.root, position)
                         {
-                            dock::start_drag(&runtime.dock, hit);
                             if let Some(offset) = text_field_hit_offset(
                                 &runtime.tree,
                                 &mut runtime.gpu.text_renderer,
@@ -1021,10 +1013,9 @@ impl App {
                         }
                     }
                     InputEvent::PointerReleased {
-                        position,
                         button: PointerButton::Primary,
+                        ..
                     } => {
-                        dock::end_drag_at(&runtime.dock, &runtime.tree, runtime.root, position);
                         // M18 Phase 2 (§8, §10): a real mouse-up always
                         // ends any in-progress text drag, wherever it
                         // happens -- the same "not conditioned on still

@@ -46,4 +46,4 @@ follow, the tracker, a local commit, memory.
 
 ## Status
 
-Phase 1 Step 1 done (2026-09-26). Step 2, docking, next.
+Phase 1 Steps 1–2 done (2026-09-26). Step 3, `engine-md3`, next.

@@ -630,13 +630,20 @@ impl PyWindow {
                 f.done()?;
                 with_modifiers(modifiers, || {
                     for input in &inputs {
-                        process_input(&ctx, root, input, py);
+                        process_input(&ctx, &self.dock, &self.window_listeners, root, input, py);
                     }
                 });
             }
             "pointer_leave" => {
                 f.done()?;
-                process_input(&ctx, root, &InputEvent::PointerLeft, py);
+                process_input(
+                    &ctx,
+                    &self.dock,
+                    &self.window_listeners,
+                    root,
+                    &InputEvent::PointerLeft,
+                    py,
+                );
             }
             "key_down" | "key_up" => {
                 let modifiers = f.modifiers()?;
@@ -673,7 +680,7 @@ impl PyWindow {
                 }
                 with_modifiers(modifiers, || {
                     for input in &inputs {
-                        process_input(&ctx, root, input, py);
+                        process_input(&ctx, &self.dock, &self.window_listeners, root, input, py);
                     }
                 });
             }
@@ -681,7 +688,14 @@ impl PyWindow {
                 let text = f.string("text")?;
                 let text = f.required("text", text)?;
                 f.done()?;
-                process_input(&ctx, root, &InputEvent::TextInput(text), py);
+                process_input(
+                    &ctx,
+                    &self.dock,
+                    &self.window_listeners,
+                    root,
+                    &InputEvent::TextInput(text),
+                    py,
+                );
             }
             "focus" | "unfocus" => {
                 let id = need_node(&f)?;

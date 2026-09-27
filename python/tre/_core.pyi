@@ -163,6 +163,12 @@ class Event:
     """`focus`: `True` when focus arrived by keyboard or an assistive
     technology (or programmatically, after keyboard input), `False` after
     a pointer press -- whether to show a focus indicator."""
+    side: str | None
+    """`dock_target`/`dock_drop`: the dock zone under the pointer
+    (`"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`), or `None`
+    when it's over no zone."""
+    panel: Node | None
+    """`dock_drop`: the panel that was dragged."""
     def stop(self) -> None:
         """Ends propagation: no listener on a further ancestor runs."""
         ...
@@ -560,7 +566,8 @@ class Window:
     def on(self, event: str, handler: Callable[..., object]) -> None:
         """M94: registers `handler` for a window event -- `resize`,
         `color_scheme`, `scale_factor`, `close_requested` (cancellable
-        with `event.cancel()`), or `closed` -- replacing any earlier one.
+        with `event.cancel()`), `closed`, or (M99) the docking drag's
+        `dock_target`/`dock_drop` -- replacing any earlier one.
         Raises `ValueError` for an unknown event.
         """
         ...
@@ -1047,26 +1054,22 @@ class Window:
         `"center"`.
         """
         ...
-    def dock_panel(self, side: str, panel: Node) -> None: ...
-    def set_active_tab(self, side: str, index: int) -> None: ...
-    def set_dock_handle(self, handle: Node, panel: Node) -> None:
-        """Registers `handle` as `panel`'s real drag handle -- pressing
-        `handle` starts tracking a drag of `panel`.
+    def dock_panel(self, side: str, panel: Node) -> None:
+        """Docks `panel` into `side`'s zone and shows it."""
+        ...
+    def set_active_panel(self, side: str, index: int) -> None:
+        """M99: shows the `index`th panel docked in `side`'s zone (was
+        `set_active_tab`). Raises `ValueError` for an index out of range.
         """
         ...
-    def set_drop_zone_highlight(self, content: Node) -> None:
-        """Registers `content` as this window's single drop-zone
-        highlight overlay, shown/positioned automatically during a real
-        panel drag.
+    def start_panel_drag(self, panel: Node) -> None:
+        """M99: starts dragging `panel`, a docked panel -- call it from the
+        framework's own drag handle's `pointer_down`. While the pointer
+        moves, the `dock_target` window event reports the zone under it;
+        the primary button's release moves the panel there and reports
+        `dock_drop`. Raises `ValueError` if `panel` isn't docked.
         """
         ...
-    def drag_panel_over(self, x: float, y: float) -> None: ...
-    def start_panel_drag(self, handle: Node) -> bool:
-        """Returns whether a drag actually started -- `handle` must
-        already be registered via `set_dock_handle`.
-        """
-        ...
-    def drop_panel_at(self, x: float, y: float) -> None: ...
 
     # -- virtual list / canvas plumbing -----------------------------------
     def set_virtual_list_window(self, list: Node, start: int, end: int) -> None:

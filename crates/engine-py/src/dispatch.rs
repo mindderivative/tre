@@ -25,14 +25,15 @@ use std::rc::Rc;
 
 use engine_core::{
     CompletionHandle, DispatchOutcome, EventKind, InputEvent, InteractionConfig, NodeId, NodeKind,
-    Tree,
+    PointerButton, Tree,
 };
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 
+use crate::dock::{self, SharedDockState};
 use crate::event::{Event, NodeContext, changed_value_to_py};
-use crate::listeners::{self, EventType};
+use crate::listeners::{self, EventType, WindowEventType, WindowListenerMap};
 
 /// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
 /// `App::run`'s own top is *not* the one guaranteed place a `tracing`
@@ -510,9 +511,14 @@ fn deliver_change(ctx: &NodeContext<'_>, node: NodeId, old: Option<Py<PyAny>>, p
 /// `Tree::dispatch` do everything mechanical, deliver the raw event to
 /// `node.on(...)` listeners, then the outcome to legacy handlers and
 /// listeners alike, then open whatever context menu a right-click
-/// requested. The caller has already computed layout.
+/// requested. The caller has already computed layout. M99: a docking
+/// drag rides the same pipeline -- the pointer's moves report
+/// `dock_target` and the primary button's release drops the panel and
+/// reports `dock_drop` (window events, hence `window_listeners`).
 pub(crate) fn process_input(
     ctx: &NodeContext<'_>,
+    dock: &SharedDockState,
+    window_listeners: &WindowListenerMap,
     root: NodeId,
     event: &InputEvent,
     py: Python<'_>,
@@ -531,6 +537,7 @@ pub(crate) fn process_input(
     for layer in dismissed {
         listeners::deliver(ctx, py, listeners::EventType::Dismiss, layer, None, |_| {});
     }
+    dock_drag(ctx, dock, window_listeners, root, event, py);
     run_dispatch_outcome(
         ctx.handlers,
         ctx.tree,
@@ -540,6 +547,45 @@ pub(crate) fn process_input(
         py,
     );
     outcome
+}
+
+/// M99: moves a docking drag along with the pointer -- see `dock.rs`.
+fn dock_drag(
+    ctx: &NodeContext<'_>,
+    dock: &SharedDockState,
+    window_listeners: &WindowListenerMap,
+    root: NodeId,
+    event: &InputEvent,
+    py: Python<'_>,
+) {
+    match *event {
+        InputEvent::PointerMoved { position } => {
+            if let Some(side) = dock::drag_to(dock, ctx.tree, root, position) {
+                listeners::deliver_window(window_listeners, py, WindowEventType::DockTarget, |e| {
+                    e.side = side.map(|s| dock::side_name(s).to_string());
+                });
+            }
+        }
+        InputEvent::PointerReleased {
+            position,
+            button: PointerButton::Primary,
+        } => {
+            if let Some((panel, side)) = dock::drop(dock, ctx.tree, root, position) {
+                let panel = match Event::build_node(py, panel, ctx) {
+                    Ok(panel) => Some(panel),
+                    Err(err) => {
+                        log_uncaught_exception(&err, py);
+                        None
+                    }
+                };
+                listeners::deliver_window(window_listeners, py, WindowEventType::DockDrop, |e| {
+                    e.panel = panel;
+                    e.side = side.map(|s| dock::side_name(s).to_string());
+                });
+            }
+        }
+        _ => {}
+    }
 }
 
 /// M55 (§10, §16.2): the real `FocusEnter`/`FocusExit` firing logic,

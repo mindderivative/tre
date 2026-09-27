@@ -150,7 +150,7 @@ Returns whether a terminal was focused to receive it; it never touches a
 ## Events, properties, and `simulate` (0.3.4)
 
 `window.on`/`off` for window events (`resize`, `color_scheme`,
-`scale_factor`, `close_requested`, `closed`), `window.set(title=...)`,
+`scale_factor`, `close_requested`, `closed`, `dock_target`, `dock_drop`), `window.set(title=...)`,
 `window.get(name)`, `window.root`, and `window.simulate(event, node=None,
 **fields)` for headless tests — see [Events and Listeners](events.md).
 `window.create(kind, **props)` makes detached nodes — see
@@ -199,7 +199,7 @@ dispatches at the target node's real, current center point.
 | `click(node)` | A primary-button press + release |
 | `hover(node)` | The pointer moving over `node` (fires `HoverEnter`/`HoverExit`) |
 | `scroll(node, delta_y)` | A mouse wheel scroll (bubbles to the nearest `VirtualList` ancestor) |
-| `right_click(node)` | A secondary-button press + release (opens a registered context menu, if any) |
+| `right_click(node)` | A secondary-button press + release |
 | `press_key(key, shift=False)` | A keypress — see accepted keys below |
 | `type_text(text)` | A produced text-input event (affects the currently focused `TextField` only) |
 | `copy()` | Ctrl+C — returns the focused field's selected text, or `None` (hermetic, no real OS clipboard) |
@@ -232,17 +232,12 @@ content may only be served while the process that wrote it is running.
 | Method | Purpose |
 | --- | --- |
 | `add_dock_zone(side, container, size)` | Registers `container` as `side`'s dock zone |
-| `dock_panel(side, panel)` | Attaches `panel` as `side`'s active tab |
-| `set_active_tab(side, index)` | Switches which docked panel is active |
-| `set_dock_handle(handle, panel)` | Makes `handle` the drag grip for `panel` |
-| `set_drop_zone_highlight(content)` | Registers the drag-over highlight node |
-| `start_panel_drag(handle) -> bool` | Starts a drag; returns whether it did |
-| `drag_panel_over(x, y)` | Updates the highlight during a drag |
-| `drop_panel_at(x, y)` | Ends the drag, reparenting into the enclosing zone |
+| `dock_panel(side, panel)` | Docks `panel` into `side`'s zone and shows it |
+| `set_active_panel(side, index)` | Shows the zone's `index`th panel *(was `set_active_tab`)* |
+| `start_panel_drag(panel)` | Starts dragging a docked panel; the drag reports through the `dock_target`/`dock_drop` window events |
 
 `side` is one of `"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`.
-See [Docking & Shell Layout](../../guide/docking-and-shell.md#docking) for
-a full walkthrough.
+See [Docking](../../guide/docking-and-shell.md) for a full walkthrough.
 
 ## Canvas
 

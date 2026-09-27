@@ -182,15 +182,22 @@ pub(crate) enum WindowEventType {
     ScaleFactor,
     CloseRequested,
     Closed,
+    /// M99: while a panel drag is in progress, the zone under the pointer
+    /// changed.
+    DockTarget,
+    /// M99: a panel drag ended.
+    DockDrop,
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 5] = [
+    const ALL: [WindowEventType; 7] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
         Self::CloseRequested,
         Self::Closed,
+        Self::DockTarget,
+        Self::DockDrop,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -200,6 +207,8 @@ impl WindowEventType {
             Self::ScaleFactor => "scale_factor",
             Self::CloseRequested => "close_requested",
             Self::Closed => "closed",
+            Self::DockTarget => "dock_target",
+            Self::DockDrop => "dock_drop",
         }
     }
 

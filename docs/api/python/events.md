@@ -103,6 +103,8 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `scale_factor` | The window moved to a display with a different scale factor | `scale_factor` |
 | `close_requested` | The user asked to close the window; `event.cancel()` keeps it open | — |
 | `closed` | The window closed — by the user or by reaching `max_frames` | — |
+| `dock_target` | During a docking drag, the pointer moved into another dock zone, or out of every zone | `side` |
+| `dock_drop` | A docking drag ended with the primary button's release; the panel has moved to the zone there, if any | `panel`, `side` |
 
 A window event has no node: `event.target` is `None`.
 
@@ -136,6 +138,8 @@ is the window's root node.
 | `related_target` | `focus`, `unfocus` — the node on the other side of the move |
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
+| `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |
+| `panel` | `dock_drop` — the dragged panel |
 
 Methods: `stop()` ends propagation; `cancel()` prevents `close_requested`'s
 default (any other event raises `ValueError`).

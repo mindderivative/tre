@@ -75,6 +75,9 @@ GONE = {
         "open_snackbar", "close_snackbar", "open_side_sheet", "close_side_sheet",
         "open_navigation_drawer", "close_navigation_drawer", "build_shell",
         "begin_container_transform", "end_container_transform", "set_theme", "theme",
+        # M99 Phase 1 Step 2: docking's bare bones.
+        "set_active_tab", "set_dock_handle", "set_drop_zone_highlight", "drag_panel_over",
+        "drop_panel_at",
     },
     "Node": {"set_context_menu"},
 }  # fmt: skip
