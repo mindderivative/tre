@@ -14,7 +14,10 @@
    pytest 435, 15 examples, docs clean.
 2. Phase 1 Step 2: `raw-window-handle`, the test-only `smallvec`, and
    `vello_hybrid`'s `text` feature removed; every test still passes.
+3. Phase 2: against `v0.3.4` -- Rust source 59,691 → 27,483 lines, public
+   API 193 → 46 members, wheel 11.70 → 10.32 MB, build 81 → 67 s; frame
+   budget unchanged within noise.
 
 ## Status
 
-**In progress.** Phase 2 (measurement) next.
+**Complete (2026-09-27).** M102 next.

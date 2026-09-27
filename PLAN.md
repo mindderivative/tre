@@ -35,4 +35,4 @@ Each step: the full standing chain, the tracker, a local commit, memory.
 
 ## Status
 
-Phase 1 done (2026-09-27). Phase 2, the measurement, next.
+**M101 complete (2026-09-27).** M102, the docs, examples, and tests rewrite, is next.
