@@ -916,8 +916,6 @@ dependencies = [
  "parley",
  "peniko",
  "pollster",
- "raw-window-handle",
- "smallvec",
  "taffy",
  "vello_common",
  "vello_hybrid",

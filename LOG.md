@@ -12,7 +12,9 @@
 1. Phase 1 Step 1: the legacy handler path, `EventKind`, `ActiveTree`,
    the `materializers` map, and `Tree::set_focused` removed; cargo 326,
    pytest 435, 15 examples, docs clean.
+2. Phase 1 Step 2: `raw-window-handle`, the test-only `smallvec`, and
+   `vello_hybrid`'s `text` feature removed; every test still passes.
 
 ## Status
 
-**In progress.** Phase 1 Step 2 (dependencies) next.
+**In progress.** Phase 2 (measurement) next.

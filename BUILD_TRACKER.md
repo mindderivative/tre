@@ -65,7 +65,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M98 — Remove the Declarative Layer | `██████████` 100% | ✅ Complete (2026-09-25) — `engine-spec`, `View`, `Component`, bindings, and reactivity removed |
 | M99 — Remove MD3 Components, Kinds, and Theming | `██████████` 100% | ✅ Complete (2026-09-26) — the MD3 factories, theming, `engine-md3`, kinds, engine behavior, and file conveniences removed; docking reduced to bare bones |
 | M100 — Apply the Naming Convention | `██████████` 100% | ✅ Complete (2026-09-27) — every surviving name in its target form, `simulate` the one testing surface, the migration page published, Tesserae sent the updated `_removed.py` |
-| M101 — Consolidation and Size Pass | `███░░░░░░░` 33% | 🚧 In progress — Phase 1 Step 1 done: unreachable code removed (2026-09-27) |
+| M101 — Consolidation and Size Pass | `███████░░░` 67% | 🚧 In progress — Phase 1 done: unreachable code and unused dependencies removed (2026-09-27) |
 | M102 — Docs, Examples, and Tests Rewrite | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M103 — Release | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 
@@ -1475,9 +1475,9 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 **Status: 🚧 In progress (2026-09-27).** User: "Push and send Tesserae the update, then start M101". Baseline for Phase 2: `v0.3.4`, the last release before the removals. The "no duplicate code" goal, measured rather than asserted.
 
-### Phase 1 — Dead Code and Duplication 🚧
+### Phase 1 — Dead Code and Duplication ✅
 - Step 1: remove code paths and helpers left unreachable by M98–M100, and fold duplicated logic -- in particular `tree.rs`, which carries per-kind branches for kinds that no longer exist — ✅ (the per-kind branches themselves went with their kinds in M99, so what remained was the machinery around them: the legacy handler path -- `HandlerKey::Legacy`, `call_handler` and its seven call sites, the legacy `Event` constructors, and `engine_core::EventKind`, which existed only to key it; `ActiveTree`, the swappable tree-root-handlers bundle `show_view` needed, folded into the window's own fields, which it always equalled once M98 removed `show_view` -- with it the per-frame and per-input re-sync in `app.rs` and a GC traversal special case; the window's `materializers` map, only ever traversed and cleared since M96 moved callbacks into `HandlerMap`; and `Tree::set_focused`, which set focus without the transition events and only two tests called; comments describing the removed machinery corrected; `v0.3.4` baseline measured first, before any change: an 81 s from-scratch release wheel build, an 11.70 MB wheel, a 0.493 ms frame-budget median; 12 files, 473 lines out; cargo 326 passed; pytest 435 passed, 1 skipped; 15/15 examples; mkdocs strict clean)
-- Step 2: prune unused Cargo dependencies and features — ⬜
+- Step 2: prune unused Cargo dependencies and features — ✅ (every crate's dependencies checked against its code by script -- no `cargo-machete` installed: `engine-render` drops `raw-window-handle`, reserved "once windowing is wired" but never used since windowing lives in `engine-platform`/`engine-py`, and its test-only `smallvec`, which served `tests/docking.rs` until M99; `vello_hybrid`'s default `text` feature is off in `engine-render` and `engine-py` -- it only adds `Scene::glyph_run` and its glyph-atlas caches, which `tre` never calls, drawing text through `glifo`/`parley` itself, so every `Resources` sheds two unused caches; checked in `vello_hybrid` 0.2.0's source that the feature gates nothing else; every other dependency and feature is in use (`pyo3`'s `multiple-pymethods`, `tracing-subscriber`'s `env-filter`); cargo 326 passed including every text pixel test; pytest 435 passed, 1 skipped; 15/15 examples)
 
 ### Phase 2 — Measurement ⬜
 - Step 1: record before and after figures -- lines of Rust, public API count, wheel size, build time -- and rerun the frame-budget benchmark to confirm no performance regression — ⬜

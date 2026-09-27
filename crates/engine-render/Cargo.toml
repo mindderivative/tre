@@ -6,7 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "Vello Scene building and GPU rendering. Depends on engine-core (to walk Node/PaintProperties for painting); no winit/engine-platform dependency, only raw-window-handle once windowing is wired. See ARCHITECTURE.md §4, §6."
+description = "Vello Scene building and GPU rendering. Depends on engine-core (to walk Node/PaintProperties for painting); no winit/engine-platform dependency: the caller owns the window and its surface. See ARCHITECTURE.md §4, §6."
 
 [dependencies]
 engine-core = { path = "../engine-core" }
@@ -32,7 +32,6 @@ kurbo = "0.13.1"
 # re-check the same way before ever bumping parley independently.
 parley = "0.11.1"
 peniko = "0.6.1"
-raw-window-handle = "0.6.2"
 # M22 Phase 1 (§5): the real `ImageSource::from_peniko_image_data`
 # conversion (`peniko::ImageData` -> a paintable `vello_common::paint::
 # Image`) that `vello_hybrid` itself never re-exports (confirmed via
@@ -57,17 +56,13 @@ vello_common = { version = "0.2.0", default-features = false, features = ["std"]
 # hypothetical form of the Linebender-family version-coupling risk
 # ARCHITECTURE.md §3 already flagged -- found by trying to actually build
 # this, not by review.
-vello_hybrid = { version = "0.2.0", features = ["wgpu", "wgpu_default", "text"] }
+vello_hybrid = { version = "0.2.0", features = ["wgpu", "wgpu_default"] }
 wgpu = "29.0.3"
 
 [dev-dependencies]
 accesskit = "0.25.0"
 engine-platform = { path = "../engine-platform" }
 pollster = "1.0.1"
-# Test-only, for docking.rs's DockZone.panels: SmallVec<[NodeId; 4]> --
-# already resolved at the same version transitively (engine-core's own
-# InteractionState/DockZone use it), zero new dependency-graph cost.
-smallvec = "1"
 # Test-only: builds taffy::Style values directly for the layout_tree/
 # rect_window tests. engine-render's own lib.rs never names taffy --
 # it only ever sees the already-computed taffy::Layout via engine-core's
