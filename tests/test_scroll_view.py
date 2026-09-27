@@ -37,7 +37,6 @@ def test_a_real_click_on_content_composed_into_a_scroll_view_reaches_its_own_han
     view.add_child(content)
 
     clicked = []
-    content.enable_interaction()
     content.set_on_click(lambda: clicked.append(True))
     window.click(content)
     assert clicked == [True]

@@ -16,7 +16,7 @@ use pyo3::types::PyDict;
 use taffy::prelude::{AvailableSpace, Dimension};
 use taffy::style::ExpandedDimension;
 
-use crate::dispatch::{HandlerKey, fire_focus_transition, interaction_config};
+use crate::dispatch::{HandlerKey, fire_focus_transition};
 use crate::node::Node;
 use crate::node_kind_props::{KIND_PROPS, KindChange, parse_kind_prop, read_kind_prop};
 use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
@@ -966,13 +966,7 @@ impl Node {
     /// Moves keyboard focus to this node, firing `unfocus` and `focus` (and
     /// the legacy focus handlers) as any focus change does.
     fn focus(&self, py: Python<'_>) {
-        let config = interaction_config();
-        let transition = self.tree.borrow_mut().set_focus_to(
-            self.id,
-            config.focus_ring_opacity,
-            config.focus_ring_duration,
-            crate::clock::now(&self.tree),
-        );
+        let transition = self.tree.borrow_mut().set_focus_to(self.id);
         if let Some((old, new)) = transition {
             fire_focus_transition(&self.handlers, &self.tree, &self.completions, old, new, py);
         }

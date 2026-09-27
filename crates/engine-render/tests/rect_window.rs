@@ -147,7 +147,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         let rects_row = tree.insert(
@@ -171,10 +171,10 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         for i in 0..RECT_COUNT {
-            let mut paint = PaintProperties::new(START_COLOR, 12.0, 0.0, 1.0);
+            let mut paint = PaintProperties::new(START_COLOR, 12.0, 1.0);
             paint.background.animate_to(
                 TARGET_COLOR,
                 Duration::from_millis(600 + i as u64 * 200),
@@ -217,7 +217,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         let body = tree.insert(
             NodeKind::Text(TextState {
@@ -236,7 +236,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         let headline = tree.insert(
             NodeKind::Text(TextState {
@@ -255,7 +255,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         let arabic = tree.insert(
             NodeKind::Text(TextState {
@@ -274,7 +274,7 @@ impl GpuState {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         tree.add_child(text_block, body);
         tree.add_child(text_block, headline);

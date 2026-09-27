@@ -161,7 +161,7 @@ fn build_scene(with_selection: bool) -> (Tree, engine_core::NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 1.0),
     );
     (tree, terminal)
 }

@@ -242,7 +242,7 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
             );
 
             let mut cache = ImageTextureCache::new();
@@ -310,7 +310,7 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
             );
 
             let mut cache = ImageTextureCache::new();

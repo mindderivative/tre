@@ -117,10 +117,9 @@ crashes the app.
 Tab order once it's actually given behavior — see
 [Theming & Accessibility](theming-and-accessibility.md).
 
-Call `node.enable_interaction()` to opt a node into the default MD3
-ripple/hover state-layer animation — this is independent of whether the
-node has any handlers at all; a purely-hoverable, non-clickable node is a
-real, supported case.
+Hover and press feedback is the framework's to draw, from the
+`pointer_enter`/`pointer_leave`/`pointer_down` listeners — `tre` 0.3.5
+removed the built-in MD3 ripple and state layer (`enable_interaction`).
 
 ### Driving events without a live window
 
@@ -161,10 +160,8 @@ Universal properties (every node kind):
 | --- | --- | --- |
 | `"opacity"` | `float` | 0.0–1.0 |
 | `"corner_radius"` | `float` | pixels |
-| `"elevation"` | `float` | shadow elevation |
 | `"background"` | `(r, g, b, a)` tuple of ints 0–255 | fill color |
 | `"transform"` | `(translate_x, translate_y, scale)` tuple of floats | pan + zoom |
-| `"shape"` | `list[(x, y)]` float tuples | morphs to the closed polygon these vertices describe |
 
 Read a property's current (possibly still-animating) value back with
 `node.get(property)`.

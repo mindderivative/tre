@@ -189,7 +189,7 @@ fn a_containers_animated_transform_propagates_to_an_untouched_child() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
 
         // The "camera" node: full-canvas Container whose own `transform`
@@ -198,7 +198,7 @@ fn a_containers_animated_transform_propagates_to_an_untouched_child() {
         let camera = tree.insert(
             NodeKind::Container,
             absolute(0.0, 0.0, f32::from(width), f32::from(height)),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(root, camera);
 
@@ -208,7 +208,7 @@ fn a_containers_animated_transform_propagates_to_an_untouched_child() {
         let chip = tree.insert(
             NodeKind::Rect,
             absolute(20.0, 20.0, 40.0, 40.0),
-            PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+            PaintProperties::new(CHIP, 0.0, 1.0),
         );
         tree.add_child(camera, chip);
 

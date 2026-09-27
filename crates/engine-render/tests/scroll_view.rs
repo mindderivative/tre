@@ -148,7 +148,7 @@ fn build_scene(scroll_by: f64) -> (Tree, NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
     let content = tree.insert(
         NodeKind::Container,
@@ -159,7 +159,7 @@ fn build_scene(scroll_by: f64) -> (Tree, NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
     tree.add_child(view, content);
 
@@ -172,7 +172,7 @@ fn build_scene(scroll_by: f64) -> (Tree, NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(MARKER, 0.0, 0.0, 1.0),
+        PaintProperties::new(MARKER, 0.0, 1.0),
     );
     let mut marker_style = tree.get(marker).unwrap().layout_style.clone();
     marker_style.position = Position::Absolute;
@@ -291,7 +291,7 @@ fn a_scroll_view_that_fits_its_own_content_paints_no_thumb() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         // Content exactly as tall as the viewport -- nothing to scroll.
         let content = tree.insert(
@@ -303,7 +303,7 @@ fn a_scroll_view_that_fits_its_own_content_paints_no_thumb() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(view, content);
         tree.compute_layout(

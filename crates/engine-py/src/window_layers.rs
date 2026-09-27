@@ -12,7 +12,7 @@ use engine_core::{FocusDirection, NodeId, OverlayMeta, Placement};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-use crate::dispatch::{fire_focus_transition, interaction_config};
+use crate::dispatch::fire_focus_transition;
 use crate::error::EngineError;
 use crate::node::Node;
 use crate::node_handles;
@@ -73,14 +73,7 @@ impl PyWindow {
         }
         if modal {
             // Focus moves into the layer: Tab's scope is now the layer.
-            let config = interaction_config();
-            let transition = tree.borrow_mut().move_focus(
-                root,
-                FocusDirection::Next,
-                config.focus_ring_opacity,
-                config.focus_ring_duration,
-                crate::clock::now(&tree),
-            );
+            let transition = tree.borrow_mut().move_focus(root, FocusDirection::Next);
             self.fire_focus(transition, py);
         }
         Ok(())
@@ -108,24 +101,13 @@ impl PyWindow {
             ));
         };
         if focus_inside {
-            let config = interaction_config();
-            let now = crate::clock::now(&tree);
             let restore = meta.restore_focus.filter(|id| {
                 let tree = tree.borrow();
                 tree.get(*id).is_some() && !tree.ancestors(*id).any(|a| a == node.id)
             });
             let transition = match restore {
-                Some(id) => tree.borrow_mut().set_focus_to(
-                    id,
-                    config.focus_ring_opacity,
-                    config.focus_ring_duration,
-                    now,
-                ),
-                None => tree.borrow_mut().clear_focus(
-                    config.focus_ring_opacity,
-                    config.focus_ring_duration,
-                    now,
-                ),
+                Some(id) => tree.borrow_mut().set_focus_to(id),
+                None => tree.borrow_mut().clear_focus(),
             };
             self.fire_focus(transition, py);
         }

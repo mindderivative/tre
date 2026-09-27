@@ -64,7 +64,7 @@ async fn render(align: TextAlign) -> Readback {
             },
             ..Default::default()
         },
-        PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+        PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
     );
     tree.compute_layout(
         root,

@@ -172,7 +172,7 @@ fn build_tree() -> (Tree, engine_core::NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        PaintProperties::new(BACKGROUND, 0.0, 1.0),
     );
 
     let image = tree.insert(
@@ -188,7 +188,7 @@ fn build_tree() -> (Tree, engine_core::NodeId) {
         // fill (mirroring `add_canvas`) -- irrelevant to this test since
         // the image itself fully covers its own node, but kept
         // byte-for-byte the same as the real construction path.
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
     tree.add_child(root, image);
 
@@ -238,7 +238,7 @@ fn build_tree_with_fit(content_fit: ContentFit) -> (Tree, engine_core::NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        PaintProperties::new(BACKGROUND, 0.0, 1.0),
     );
 
     let mut state = ImageState::new(solid_image_data(4, 4, GREEN));
@@ -252,7 +252,7 @@ fn build_tree_with_fit(content_fit: ContentFit) -> (Tree, engine_core::NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
     tree.add_child(root, image);
 
@@ -359,7 +359,7 @@ fn an_image_node_compounds_with_the_nodes_own_real_opacity() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
 
         let image = tree.insert(
@@ -372,7 +372,7 @@ fn an_image_node_compounds_with_the_nodes_own_real_opacity() {
                 ..Default::default()
             },
             // opacity = 0.5, the fourth positional field.
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 0.5),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.5),
         );
         tree.add_child(root, image);
 

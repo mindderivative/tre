@@ -49,7 +49,7 @@ fn main() {
             },
             ..Default::default()
         },
-        PaintProperties::new(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF), 8.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF), 8.0, 1.0),
     );
     tree.set_access(
         button,

@@ -79,7 +79,7 @@ fn insert_image_node(
             x,
             y,
         ),
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
     tree.add_child(root, id);
     id
@@ -122,7 +122,7 @@ impl PyWindow {
     ) -> Node {
         let (r, g, b, a) = background;
         let mut tree = self.tree.borrow_mut();
-        let mut paint = PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0);
+        let mut paint = PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 1.0);
         if let Some((br, bg, bb, ba)) = border_color {
             paint.border_color = Animated::new(Color::from_rgba8(br, bg, bb, ba));
         }
@@ -204,7 +204,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 1.0),
         );
         tree.add_child(self.root, id);
         Ok(self.wrap_node(id))
@@ -364,7 +364,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(self.root, id);
         Ok(self.wrap_node(id))
@@ -438,7 +438,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 1.0),
         );
         tree.set_access(
             id,
@@ -564,7 +564,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 1.0),
         );
         tree.set_access(
             id,
@@ -648,7 +648,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 1.0),
         );
         tree.set_access(
             id,
@@ -769,7 +769,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            PaintProperties::new(TRANSPARENT, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
         Ok(self.wrap_node(id))

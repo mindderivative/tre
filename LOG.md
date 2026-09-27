@@ -20,7 +20,10 @@
 4. Phase 2 Step 1: the 12 MD3 kinds deleted from `engine-core`,
    `engine-render`, and `engine-py`, with their `Node` methods; cargo 363,
    pytest 468, 15 examples, docs clean.
+5. Phase 2 Step 2: the state layer and ripple, elevation, the shape
+   library, and the MD3 curves deleted; two examples rewritten on shadows
+   and path morphing; cargo 326, pytest 465, 15 examples, docs clean.
 
 ## Status
 
-**In progress.** Phase 2 Step 2 (the MD3 behavior) next.
+**In progress.** Phase 2 Step 3 (the file conveniences) next.

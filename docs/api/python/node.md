@@ -61,13 +61,15 @@ node.animate("opacity", 0.0, duration_ms=300, on_complete=lambda: print("faded")
 | --- | --- | --- |
 | `"opacity"` | `float` (0.0–1.0) | every node |
 | `"corner_radius"` | `float` | every node |
-| `"elevation"` | `float` | every node |
 | `"background"` | `(r, g, b, a)` int tuple | every node with a fill — not `Text` |
 | `"foreground"` | `(r, g, b, a)` int tuple | `Text` — the glyph color |
 | `"border_color"` | `(r, g, b, a)` int tuple | every node |
 | `"border_width"` | `float` | every node |
 | `"transform"` | `(translate_x, translate_y, scale)` float tuple | every node |
-| `"shape"` | `list[(x, y)]` float tuples | every node — morphs to the closed polygon these vertices describe |
+
+*0.3.5 removed* `elevation` (use `shadows`) and `shape`, the MD3 shape
+library (use a `path` node's `data`) — see
+[Paint, Paths, and Animation](paint.md).
 
 Raises `ValueError` for an unknown property name, or `TypeError` if `to`
 doesn't match the property's expected shape. `on_complete`, when given,
@@ -80,8 +82,7 @@ finishes — drained by `App.run()`'s per-frame loop, or by
 **`get(property) -> float`**
 
 Reads a numeric property's current (possibly still-animating) value.
-Supports `"opacity"`, `"corner_radius"`, `"elevation"`, and
-`"border_width"`. Raises `ValueError`
+Supports `"opacity"`, `"corner_radius"`, and `"border_width"`. Raises `ValueError`
 for an unknown/inapplicable property. Colors (`"background"`,
 `"foreground"`, `"border_color"`) aren't readable this way — they aren't
 a single `float`.
@@ -123,7 +124,7 @@ accessibility action if it doesn't already have one.
 **`set_on_hover_enter(callback)`** / **`set_on_hover_exit(callback)`**
 
 Fire when the node becomes/stops being the hovered node — independent of
-whether `enable_interaction()` was ever called.
+whether the node has any other handlers.
 
 ### `set_on_change`
 
@@ -161,16 +162,6 @@ node.set_on_click(on_any_click)
 ```
 
 An exception raised inside any handler is caught, logged, and non-fatal.
-
-## Interaction visuals
-
-### `enable_interaction`
-
-**`enable_interaction()`**
-
-Opts this node into the default ripple/hover state-layer animation, in
-black. Independent of whether the node has any event handlers — a purely-
-hoverable, non-clickable node is a supported case.
 
 ## Tree structure
 

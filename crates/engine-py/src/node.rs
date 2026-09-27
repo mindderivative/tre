@@ -26,9 +26,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use engine_core::{Action, EventKind, MotionCurve, NodeId, NodeKind, ShapeKey, Tree};
+use engine_core::{Action, EventKind, MotionCurve, NodeId, NodeKind, Tree};
 use peniko::Color;
-use peniko::kurbo::{Affine, BezPath};
+use peniko::kurbo::Affine;
 use pyo3::prelude::*;
 use taffy::prelude::{AlignItems, FlexDirection, JustifyContent, Rect as TaffyRect, Size, length};
 
@@ -82,12 +82,7 @@ impl NodeState {
         if !inside {
             return;
         }
-        let config = crate::dispatch::interaction_config();
-        let transition = self.tree.borrow_mut().clear_focus(
-            config.focus_ring_opacity,
-            config.focus_ring_duration,
-            crate::clock::now(&self.tree),
-        );
+        let transition = self.tree.borrow_mut().clear_focus();
         if let Some((old, new)) = transition {
             crate::dispatch::fire_focus_transition(
                 &self.handlers,
@@ -326,18 +321,6 @@ impl Node {
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                 animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
             }
-            "elevation" => {
-                let value = extract_f64(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(
-                    &mut node.paint.elevation,
-                    value,
-                    duration,
-                    curve,
-                    now,
-                    handle,
-                );
-            }
             "background" => {
                 if is_glyph_kind(&node.kind) {
                     return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -430,31 +413,6 @@ impl Node {
                     now,
                     handle,
                 );
-            }
-            // M7 Phase 4 (§7.4): a list of `(x, y)` vertices, since
-            // Python has no `BezPath` type to hand over directly --
-            // `extract_shape_points` builds one (closed, straight-line
-            // segments between each point, matching `ShapeKey`'s own
-            // "vertices only" scope), then `ShapeKey::from_path` does
-            // the real extraction. The interpolation itself (real
-            // correspondence-search-then-lerp, not naive per-index
-            // pairing) is `Interpolate for ShapeKey`'s own job, already
-            // real and unit-tested since M3 step 10 -- this arm only
-            // ever supplies the *target* shape.
-            "shape" => {
-                let points = extract_shape_points(&to, property)?;
-                let mut path = BezPath::new();
-                let mut points = points.into_iter();
-                if let Some(first) = points.next() {
-                    path.move_to(first);
-                    for point in points {
-                        path.line_to(point);
-                    }
-                    path.close_path();
-                }
-                let value = ShapeKey::from_path(&path);
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.shape, value, duration, curve, now, handle);
             }
             // M30 Phase 3 Step 2 (§8): the progress indicators' own
             // arm. M90: `Slider` joins it -- a slider's position was
@@ -780,36 +738,6 @@ impl Node {
             callback,
             py,
         )
-    }
-
-    /// M4 Phase 5 (§7.3): opts this node into ripple/hover state-layer
-    /// animation -- a thin call into `Tree::interaction_mut`, the same
-    /// real, already-correctly-wired mechanism `Tree::dispatch`'s
-    /// `PointerPressed` (ripple spawn) and `update_hover` (hover
-    /// animation) have used since M3 Phase 5 step 9 and M4 Phase 1
-    /// respectively. Nothing was missing at the dispatch level -- only
-    /// that no `engine-py` call site ever opted a real Python-created
-    /// node in at all, confirmed via grep before this method existed.
-    ///
-    /// M7 Phase 3 (§7.1) additionally applies this `Window`'s current
-    /// theme's real "on-surface" color immediately, so a node enabled
-    /// *after* `Window.set_theme` doesn't paint the plain-black default
-    /// until the next live theme change -- `Window.set_theme` itself
-    /// (§7.1 Step 1) is the counterpart for a node already enabled
-    /// *before* the theme was set.
-    ///
-    /// Deliberately a separate method, not folded into `set_on_click`:
-    /// a purely-hoverable, non-clickable node is a real, independent
-    /// case §7.3 itself describes (hover is specified separately from
-    /// click), and implicitly paying the extra per-frame animation cost
-    /// just because a node got a click handler would be a surprising
-    /// side effect for a caller who only wanted the click -- Design
-    /// Principle 6's "only a node that opts in pays the cost" applies
-    /// to each independently.
-    fn enable_interaction(&self) {
-        // Opts in with the default black tint: M99 removed theming, and
-        // M99 Phase 2 removes the state layer itself (D8).
-        self.tree.borrow_mut().interaction_mut(self.id);
     }
 
     /// M6 Phase 1 (§8): attaches `child` under this node, rejecting a
@@ -1223,7 +1151,7 @@ impl Node {
 /// M9 Phase 2 (§5): `animate()`'s own shared "start this field
 /// animating, optionally with a real completion handle" dispatch --
 /// generic over every `T: Interpolate + Clone` an `Animated<T>` can
-/// wrap (`f64`, `Color`, `Affine`, `ShapeKey`), so each of `animate()`'s
+/// wrap (`f64`, `Color`, `Affine`), so each of `animate()`'s
 /// six match arms needs one call, not its own copy of this branch.
 /// `MotionCurve::Linear` matches every one of those arms' own existing,
 /// unchanged choice.
@@ -1420,23 +1348,6 @@ fn extract_translate_scale(
         })
 }
 
-/// M7 Phase 4 (§7.4): `"shape"`'s own real, narrower shape -- a plain
-/// list of `(x, y)` vertices, since Python has no `BezPath` type to
-/// hand over directly. Mirrors `extract_translate_scale`'s own role:
-/// convert Python's plain tuples into the real value `ShapeKey::
-/// from_path` needs, nothing more.
-fn extract_shape_points(
-    to: &Bound<'_, PyAny>,
-    property: &str,
-) -> Result<Vec<(f64, f64)>, EngineError> {
-    to.extract::<Vec<(f64, f64)>>()
-        .map_err(|_| EngineError::TypeMismatch {
-            property: property.to_string(),
-            expected: "a list of (x, y) float tuples",
-            actual: type_name_of(to),
-        })
-}
-
 impl Node {
     /// Reads a numeric property's current (possibly still-animating)
     /// M94: no longer a Python method itself -- `Node.get`
@@ -1457,7 +1368,6 @@ impl Node {
         match property {
             "opacity" => Ok(node.paint.opacity.current),
             "corner_radius" => Ok(node.paint.corner_radius.current),
-            "elevation" => Ok(node.paint.elevation.current),
             // M48: `border_width` is a plain `Animated<f64>`, the same
             // shape as `corner_radius`/`elevation` above -- `border_
             // color` stays excluded, the same real reason `background`

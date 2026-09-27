@@ -51,7 +51,6 @@ def test_a_click_dispatched_after_a_real_resize_still_works():
     """
     window = Window(width=400, height=300)
     rect = window.add_rect(background=(255, 0, 0, 255), width=50, height=50)
-    rect.enable_interaction()
     clicked = []
     rect.set_on_click(lambda: clicked.append(True))
 

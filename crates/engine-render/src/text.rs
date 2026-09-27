@@ -1701,7 +1701,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         )
     }
 
@@ -1720,7 +1720,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         )
     }
 
@@ -1850,7 +1850,7 @@ mod tests {
                 options: Default::default(),
             }),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         let base_spans: Vec<(Range<usize>, Color)> =

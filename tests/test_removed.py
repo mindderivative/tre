@@ -86,6 +86,8 @@ GONE = {
         # M99 Phase 2 Step 1: the MD3 kinds' state.
         *_removed._WIDGET_STATE,
         "set_checked", "set_selected", "get_checked", "get_selected",
+        # M99 Phase 2 Step 2: the state layer and ripple (D8).
+        "enable_interaction",
     },
 }  # fmt: skip
 

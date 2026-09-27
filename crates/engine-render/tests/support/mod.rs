@@ -198,7 +198,7 @@ pub fn scene() -> (Tree, NodeId) {
             },
             ..Default::default()
         },
-        PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        PaintProperties::new(BACKGROUND, 0.0, 1.0),
     );
     (tree, root)
 }

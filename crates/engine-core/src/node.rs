@@ -1142,7 +1142,6 @@ impl Interpolate for Shadows {
 pub struct PaintProperties {
     pub background: Animated<Color>,
     pub corner_radius: Animated<f64>,
-    pub elevation: Animated<f64>,
     pub opacity: Animated<f64>,
     /// §11.9 (M5 Phase 1): composed down the tree during the paint walk
     /// -- a node's effective transform is its parent's effective
@@ -1153,14 +1152,6 @@ pub struct PaintProperties {
     /// `PaintProperties` field's own "off unless a caller opts in"
     /// shape.
     pub transform: Animated<peniko::kurbo::Affine>,
-    /// M7 Phase 4 (§7.4): the real MD3 shape-morph target -- defaults
-    /// to `ShapeKey::empty()` (no shape ever set), which `paint_node`
-    /// treats as a true no-op, matching every other additive field's
-    /// "off unless a caller opts in" contract. See `shape_morph.rs`'s
-    /// own module doc comment for why this lives here, in
-    /// `engine-core`, and not `engine-md3` (where it was originally
-    /// built, M3 step 10).
-    pub shape: Animated<crate::shape_morph::ShapeKey>,
     /// M30 Phase 1 (§5, §7): a real stroked border, painted inside the
     /// node's own fill edge (never expanding its layout box) -- MD3's
     /// Outlined button variant is the real consumer that surfaced this
@@ -1215,92 +1206,21 @@ pub struct PaintProperties {
     /// this catalog needs a *smooth transition* into/out of clipping,
     /// only a static per-node choice.
     pub clip_children: bool,
-    /// M35 Phase 3 (§5, §7, §11.7): the real MD3 Standard Button
-    /// Group's own distinctive mechanic -- "pressing a button also
-    /// affects the width of adjacent buttons" (`COMPONENT_BUTTON_
-    /// GROUPS.md`) -- `None` (every existing node, unchanged) is a
-    /// true no-op; `Some((grow_px, gap_px))` marks this node as a real
-    /// button-group container and gives `Tree::
-    /// sync_button_group_layouts` (mirroring `Carousel`'s own `sync_
-    /// carousel_layouts` shape: a container-level marker driving every
-    /// child's own real `layout_style`, recomputed and pushed via
-    /// `Tree::set_layout_style` each layout pass) the two real numbers
-    /// it needs: `grow_px` is how much the currently-pressed child
-    /// (read from the already-existing, already-tracked `Tree.
-    /// pressed` field, the identical real "read live interaction
-    /// state to drive computed layout" technique `update_slider_drag`/
-    /// `update_splitter_drag` already establish) grows by, split
-    /// evenly back out of its own immediate neighbors so the row's own
-    /// total width stays constant -- real MD3's own stated behavior
-    /// ("briefly changes the width of itself and adjacent buttons"),
-    /// not raw growth with no compensation; `gap_px` is the real,
-    /// constant horizontal gap between every child, MD3's own "inner
-    /// padding" anatomy. A plain `PaintProperties` field, not a new
-    /// `NodeKind`, since (unlike `Carousel`) a button group needs no
-    /// other real per-instance data -- the identical "a universal flag
-    /// any `NodeKind` can opt into" shape `clip_children` already
-    /// establishes just above, not `Carousel`'s heavier dedicated-
-    /// `NodeKind` pattern.
-    pub button_group_reflow: Option<(f64, f64)>,
-    /// M38 Phase 4 (§5, §7): real MD3 "the shape changes while
-    /// hovered/pressed" behavior (`Split Button`'s own real inner-
-    /// corner shape-tightening being the first real consumer) --
-    /// `Some((relaxed, tightened))` opts this node into `Tree::
-    /// update_hover` automatically retargeting `shape` (already a
-    /// real, general `Animated<ShapeKey>` field, M7 Phase 4) to
-    /// `tightened` while this node is the currently-hovered one, and
-    /// back to `relaxed` otherwise -- the identical real "read live
-    /// interaction state to drive a paint property" technique
-    /// `hover_opacity`'s own transition in that same method already
-    /// establishes, just targeting `shape` instead of an opacity
-    /// scalar. `None` (every existing node, unchanged) is a true
-    /// no-op. **Real, deliberate v1 scope choice, stated directly:**
-    /// tied to `hovered` only, not `focused`/`pressed` separately --
-    /// a real mouse press can only ever land on an already-hovered
-    /// node (`Tree::hit_test`'s own contract), so `hovered` already
-    /// covers the entire press gesture for this purely cosmetic
-    /// corner effect; keyboard-only focus is intentionally left out,
-    /// since this catalog's own dedicated `focus_ring` mechanism
-    /// already signals keyboard focus distinctly and doesn't need a
-    /// second, redundant visual cue riding along with it.
-    pub interactive_shape: Option<(crate::shape_morph::ShapeKey, crate::shape_morph::ShapeKey)>,
-    /// M38 Phase 5 (§5, §7): `interactive_shape`'s own real `pressed`-
-    /// driven sibling -- real MD3 Expressive "buttons reshape as you
-    /// press them" (`Button Group`'s own per-child press morph being
-    /// the first real consumer, distinct from Split Button's hover-
-    /// driven *inner-corner* tightening, M38 Phase 4). `Some((relaxed,
-    /// tightened))` opts this node into `Tree::set_pressed` (the
-    /// single real chokepoint every `self.pressed` mutation now goes
-    /// through) retargeting `shape` toward `tightened` while this node
-    /// is the currently-pressed one, back to `relaxed` otherwise --
-    /// deliberately a *separate* field from `interactive_shape` rather
-    /// than one field reacting to both `hovered`/`pressed`: a real
-    /// Button Group child must not visually tighten on a mere hover,
-    /// only a genuine press, the opposite real trigger Split Button's
-    /// own inner corners need. `None` (every existing node) is a true
-    /// no-op.
-    pub press_interactive_shape:
-        Option<(crate::shape_morph::ShapeKey, crate::shape_morph::ShapeKey)>,
 }
 
 impl PaintProperties {
-    pub fn new(background: Color, corner_radius: f64, elevation: f64, opacity: f64) -> Self {
+    pub fn new(background: Color, corner_radius: f64, opacity: f64) -> Self {
         Self {
             background: Animated::new(background),
             corner_radius: Animated::new(corner_radius),
-            elevation: Animated::new(elevation),
             opacity: Animated::new(opacity),
             transform: Animated::new(peniko::kurbo::Affine::IDENTITY),
-            shape: Animated::new(crate::shape_morph::ShapeKey::empty()),
             border_color: Animated::new(Color::from_rgba8(0, 0, 0, 0)),
             border_width: Animated::new(0.0),
             corner_radii_override: None,
             shadows: Animated::new(Shadows::default()),
             node_transform: NodeTransform::default(),
             clip_children: false,
-            button_group_reflow: None,
-            interactive_shape: None,
-            press_interactive_shape: None,
         }
     }
 
@@ -1322,10 +1242,8 @@ impl PaintProperties {
     pub fn tick(&mut self, now: Instant, completed: &mut Vec<crate::CompletionHandle>) -> bool {
         let background = self.background.tick(now, completed);
         let corner_radius = self.corner_radius.tick(now, completed);
-        let elevation = self.elevation.tick(now, completed);
         let opacity = self.opacity.tick(now, completed);
         let transform = self.transform.tick(now, completed);
-        let shape = self.shape.tick(now, completed);
         let border_color = self.border_color.tick(now, completed);
         let border_width = self.border_width.tick(now, completed);
         let radii = self
@@ -1339,10 +1257,8 @@ impl PaintProperties {
             || node_transform
             || background
             || corner_radius
-            || elevation
             || opacity
             || transform
-            || shape
             || border_color
             || border_width
     }
@@ -1366,11 +1282,6 @@ pub struct Node {
     /// label/actions) unless a caller opts a node in via
     /// `Tree::set_access`.
     pub access: crate::access::AccessNodeData,
-    /// §14 step 9 (§7.3): `None` until a caller opts a node into
-    /// pointer interaction via `Tree::interaction_mut` -- most nodes
-    /// (plain rects, text, containers) never touch this and pay nothing
-    /// for it.
-    pub interaction: Option<crate::interaction::InteractionState>,
     /// M30 Phase 5 Step 1 (§5, §7): a real, confirmed gap this step's
     /// own `Navigation Rail` surfaced -- `Tree::hit_test_at`'s own
     /// "children checked first, no ancestor bubbling" contract (M30

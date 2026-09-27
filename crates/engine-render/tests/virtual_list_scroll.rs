@@ -29,7 +29,7 @@ fn materialize(_idx: usize) -> (NodeKind, Style, PaintProperties) {
             },
             ..Default::default()
         },
-        PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+        PaintProperties::new(CHIP, 0.0, 1.0),
     )
 }
 
@@ -167,7 +167,7 @@ fn build_list(
             },
             ..Default::default()
         },
-        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
     tree.set_virtual_list_window(list, materialized, materialize);
     let available = Size {
@@ -324,7 +324,7 @@ fn a_virtual_list_that_fits_its_own_content_paints_no_thumb() {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+                PaintProperties::new(CHIP, 0.0, 1.0),
             )
         }
 
@@ -340,7 +340,7 @@ fn a_virtual_list_that_fits_its_own_content_paints_no_thumb() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.set_virtual_list_window(list, 0..3, narrow_item);
         let available = Size {

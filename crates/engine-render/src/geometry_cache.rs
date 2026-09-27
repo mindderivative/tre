@@ -232,7 +232,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(peniko::Color::from_rgba8(255, 0, 0, 255), 8.0, 0.0, 1.0),
+            PaintProperties::new(peniko::Color::from_rgba8(255, 0, 0, 255), 8.0, 1.0),
         )
     }
 

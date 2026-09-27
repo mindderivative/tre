@@ -12,7 +12,7 @@
 //! that.
 
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap, SlotMap};
 use taffy::prelude::{
@@ -20,12 +20,11 @@ use taffy::prelude::{
 };
 
 use crate::access::AccessNodeData;
-use crate::animation::{CompletionHandle, MotionCurve};
+use crate::animation::CompletionHandle;
 #[cfg(test)]
 use crate::canvas::CanvasState;
 use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{ChangedValue, DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
-use crate::interaction::InteractionState;
 use crate::node::{
     ImageState, Node, NodeId, NodeKind, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
     SCROLLBAR_THICKNESS, TextFieldState,
@@ -42,24 +41,6 @@ use peniko::kurbo::{Affine, ParamCurveNearest, Point, Rect};
 pub enum FocusDirection {
     Next,
     Previous,
-}
-
-/// `Tree::dispatch`'s own MD3-value inputs, kept entirely out of
-/// `engine-core` itself (§1 Locked Decisions: "keep `engine-core`
-/// MD3-agnostic") -- a caller (eventually `engine-md3`'s own named
-/// presets, the same `MotionCurve`/`engine_md3::motion::STANDARD` split
-/// already used elsewhere) supplies the actual numbers; `Tree` only
-/// knows how to animate toward whatever it's given. No `Default` impl,
-/// deliberately -- a caller/test must state real values, not inherit an
-/// implicit one that would itself be an unstated MD3 opinion.
-pub struct InteractionConfig {
-    pub hover_opacity: f64,
-    pub hover_duration: Duration,
-    pub focus_ring_opacity: f64,
-    pub focus_ring_duration: Duration,
-    pub ripple_radius: f64,
-    pub ripple_opacity: f64,
-    pub ripple_duration: Duration,
 }
 
 pub struct Tree {
@@ -108,7 +89,6 @@ pub struct Tree {
     /// the very first frame always paints. Read via `take_dirty`, never
     /// this field directly, so "read" and "reset" can never drift apart.
     dirty: bool,
-    button_group_reflow_count: usize,
     scroll_view_count: usize,
     virtual_list_count: usize,
     /// M94: the node holding pointer capture (`set_pointer_capture`).
@@ -154,7 +134,6 @@ impl Tree {
             overlays: Vec::new(),
             dismissals: Vec::new(),
             dirty: true,
-            button_group_reflow_count: 0,
             scroll_view_count: 0,
             virtual_list_count: 0,
             pointer_capture: None,
@@ -243,9 +222,6 @@ impl Tree {
             NodeKind::VirtualList(_) => self.virtual_list_count += 1,
             _ => {}
         }
-        if paint.button_group_reflow.is_some() {
-            self.button_group_reflow_count += 1;
-        }
         let taffy_node = self
             .taffy
             .new_leaf(layout_style.clone())
@@ -258,7 +234,6 @@ impl Tree {
             layout_style,
             paint,
             access: AccessNodeData::default(),
-            interaction: None,
             hit_testable: true,
             cursor: None,
             visible: true,
@@ -525,9 +500,6 @@ impl Tree {
             NodeKind::VirtualList(_) => self.virtual_list_count -= 1,
             _ => {}
         }
-        if node.paint.button_group_reflow.is_some() {
-            self.button_group_reflow_count -= 1;
-        }
 
         for child in children {
             self.remove(child);
@@ -579,18 +551,6 @@ impl Tree {
         self.taffy
             .compute_layout(root_taffy, available_space)
             .expect("compute_layout: taffy layout computation failed");
-        // M35 Phase 3 (§5, §7, §11.7): the identical real "container-
-        // level state drives every child's own real layout_style, then
-        // taffy runs once more so it actually lands" shape, applied to a real Standard
-        // Button Group's own live press-driven width reflow. A no-op
-        // call (`false`) whenever no node has `PaintProperties.
-        // button_group_reflow` set -- every other real `compute_layout`
-        // caller pays nothing extra.
-        if self.sync_button_group_layouts() {
-            self.taffy
-                .compute_layout(root_taffy, available_space)
-                .expect("compute_layout: taffy layout computation failed (button group sync pass)");
-        }
         // M36 Phase 1 (§5, §7, §11.7): the identical real "container-
         // level state drives one real child's own real layout_style,
         // then taffy runs once more so it actually lands" shape the
@@ -621,103 +581,6 @@ impl Tree {
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (layer placement pass)");
         }
-    }
-
-    /// M35 Phase 3 (§5, §7, §11.7): the real Standard Button Group's
-    /// own distinctive mechanic -- "pressing a button also affects the
-    /// width of adjacent buttons" (`COMPONENT_BUTTON_GROUPS.md`).
-    /// Mirrors `sync_carousel_layouts`'s own exact shape: a container-
-    /// level marker (`PaintProperties.button_group_reflow`, its own
-    /// doc comment has the full real design reasoning) drives every
-    /// child's own real `layout_style`, pushed via `Tree::
-    /// set_layout_style` so it actually lands. **Real, deliberately
-    /// simple formula, since no discrete numeric token for the reflow
-    /// amount exists in the scraped spec (stated honestly, not
-    /// invented as if verified):** the currently-pressed child (read
-    /// from the already-existing, already-tracked `self.pressed`
-    /// field -- no new interaction wiring needed) grows by its own
-    /// group's real `grow` value; that amount is split evenly back out
-    /// of its immediate left/right neighbors (clamped at `0.0`), so
-    /// the row's own total width stays constant -- a real, bounded
-    /// reflow, matching MD3's own stated "briefly changes the width of
-    /// itself and adjacent buttons," not raw growth with no
-    /// compensation. A group with fewer than 2 real children is a true
-    /// no-op (nothing to reflow against).
-    fn sync_button_group_layouts(&mut self) -> bool {
-        // M65 (§5, §6): the real O(1) check -- the full scan below now
-        // only ever runs when at least one real `button_group_reflow`
-        // marker is set.
-        if self.button_group_reflow_count == 0 {
-            return false;
-        }
-        let groups: Vec<NodeId> = self
-            .nodes
-            .iter()
-            .filter(|(_, node)| node.paint.button_group_reflow.is_some())
-            .map(|(id, _)| id)
-            .collect();
-        let pressed_id = self.pressed.map(|(_, id)| id);
-
-        for group in groups {
-            let children = self.nodes[group].children.clone();
-            if children.len() < 2 {
-                continue;
-            }
-            let (grow, gap) = self.nodes[group]
-                .paint
-                .button_group_reflow
-                .expect("checked by the filter above");
-
-            let resting: Vec<f64> = children
-                .iter()
-                .map(|&c| {
-                    self.nodes[c]
-                        .layout_style
-                        .size
-                        .width
-                        .into_option()
-                        .map(f64::from)
-                        .unwrap_or(0.0)
-                })
-                .collect();
-
-            let widths = match pressed_id.and_then(|id| children.iter().position(|&c| c == id)) {
-                Some(idx) => {
-                    let n = children.len();
-                    let mut w = resting.clone();
-                    w[idx] += grow;
-                    let neighbors: Vec<usize> =
-                        [idx.checked_sub(1), (idx + 1 < n).then_some(idx + 1)]
-                            .into_iter()
-                            .flatten()
-                            .collect();
-                    if !neighbors.is_empty() {
-                        let shrink_each = grow / neighbors.len() as f64;
-                        for &j in &neighbors {
-                            w[j] = (w[j] - shrink_each).max(0.0);
-                        }
-                    }
-                    w
-                }
-                None => resting,
-            };
-
-            let mut cursor = 0.0f32;
-            for (i, &child) in children.iter().enumerate() {
-                let mut style = self.nodes[child].layout_style.clone();
-                style.position = Position::Absolute;
-                style.inset = TaffyRect {
-                    left: length(cursor),
-                    top: length(0.0),
-                    right: auto(),
-                    bottom: auto(),
-                };
-                style.size.width = length(widths[i] as f32);
-                self.set_layout_style(child, style);
-                cursor += widths[i] as f32 + gap as f32;
-            }
-        }
-        true
     }
 
     /// M36 Phase 1 (§5, §7, §11.7): the real, general scrollable-
@@ -1894,11 +1757,6 @@ impl Tree {
             if node.paint.tick(now, &mut completed) {
                 any_active = true;
             }
-            if let Some(interaction) = &mut node.interaction
-                && interaction.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
             // M35 Phase 2 (§5, §8): `Icon.rotation`'s own real central-
             // ticking need, mirrored a fourth time -- `Split Button`'s
             // own real "menu icon rotates inwards 180°" need. M92: its
@@ -1941,35 +1799,6 @@ impl Tree {
         self.dirty = true;
         if let Some(node) = self.nodes.get_mut(id) {
             node.access = access;
-        }
-    }
-
-    /// Opts one node into interaction state (ripple/hover/focus, §7.3),
-    /// lazily creating it on first use -- mirrors `set_access`'s "every
-    /// node defaults to nothing until a caller opts in" shape. Returns
-    /// `None` only if `id` doesn't exist in this `Tree`.
-    pub fn interaction_mut(&mut self, id: NodeId) -> Option<&mut InteractionState> {
-        self.dirty = true;
-        let node = self.nodes.get_mut(id)?;
-        Some(node.interaction.get_or_insert_with(InteractionState::new))
-    }
-
-    /// M7 Phase 3 (§7.1/§7.3): updates every already-opted-in node's
-    /// `InteractionState::tint` to `tint` -- the real "apply a newly
-    /// (re)resolved theme color to whatever's already on screen"
-    /// mechanism both `engine-py::Window.set_theme` (a node that opted
-    /// in before the theme was set) and real live theme switching (a
-    /// node that was already themed, now needs the *other* scheme's
-    /// color) share. A node that never opted into `InteractionState`
-    /// (`interaction: None`) is left untouched, matching `interaction_
-    /// mut`'s own "only a node that opts in pays the cost" contract --
-    /// this never lazily creates one.
-    pub fn set_all_interaction_tints(&mut self, tint: peniko::Color) {
-        self.dirty = true;
-        for node in self.nodes.values_mut() {
-            if let Some(interaction) = node.interaction.as_mut() {
-                interaction.tint = tint;
-            }
         }
     }
 
@@ -2165,71 +1994,18 @@ impl Tree {
     /// Returns the newly-hovered node (`None` if the pointer left every
     /// hit-testable node). A repeated call with the same result is a
     /// no-op -- it doesn't retrigger the same animation every frame.
-    pub fn update_hover(
-        &mut self,
-        root: NodeId,
-        point: Point,
-        hover_opacity: f64,
-        duration: Duration,
-        now: Instant,
-    ) -> Option<NodeId> {
+    pub fn update_hover(&mut self, root: NodeId, point: Point) -> Option<NodeId> {
         let hit = self.hit_test_input(root, point);
-        self.set_hovered(hit, hover_opacity, duration, now)
+        self.set_hovered(hit)
     }
 
     /// M94: `update_hover`'s own transition half, split out so
     /// `InputEvent::PointerLeft` can clear hover without a hit-test.
     /// Returns `hit`.
-    pub fn set_hovered(
-        &mut self,
-        hit: Option<NodeId>,
-        hover_opacity: f64,
-        duration: Duration,
-        now: Instant,
-    ) -> Option<NodeId> {
+    pub fn set_hovered(&mut self, hit: Option<NodeId>) -> Option<NodeId> {
         self.dirty = true;
         if hit == self.hovered {
             return hit;
-        }
-        if let Some(old) = self.hovered
-            && let Some(node) = self.nodes.get_mut(old)
-            && let Some(state) = node.interaction.as_mut()
-        {
-            state
-                .hover_opacity
-                .animate_to(0.0, duration, MotionCurve::Linear, now);
-        }
-        if let Some(new) = hit
-            && let Some(node) = self.nodes.get_mut(new)
-            && let Some(state) = node.interaction.as_mut()
-        {
-            state
-                .hover_opacity
-                .animate_to(hover_opacity, duration, MotionCurve::Linear, now);
-        }
-        // M38 Phase 4 (§5, §7): `PaintProperties.interactive_shape`'s
-        // own real "shape tightens while hovered" retarget -- the
-        // identical shape (pun intended) as `hover_opacity`'s own two
-        // blocks just above, just targeting `shape` back to `relaxed`
-        // for the node losing hover and to `tightened` for the one
-        // gaining it, both real `ShapeKey`s already cloned once at
-        // construction rather than rebuilt from a `BezPath` every
-        // hover transition.
-        if let Some(old) = self.hovered
-            && let Some(node) = self.nodes.get_mut(old)
-            && let Some((relaxed, _)) = node.paint.interactive_shape.clone()
-        {
-            node.paint
-                .shape
-                .animate_to(relaxed, duration, MotionCurve::Linear, now);
-        }
-        if let Some(new) = hit
-            && let Some(node) = self.nodes.get_mut(new)
-            && let Some((_, tightened)) = node.paint.interactive_shape.clone()
-        {
-            node.paint
-                .shape
-                .animate_to(tightened, duration, MotionCurve::Linear, now);
         }
         self.hovered = hit;
         hit
@@ -2247,32 +2023,11 @@ impl Tree {
     /// left-click is somehow still recorded) is not a real visual
     /// press *transition* for this node, so it must not needlessly
     /// restart the shape animation.
-    fn set_pressed(
-        &mut self,
-        new: Option<(PointerButton, NodeId)>,
-        duration: Duration,
-        now: Instant,
-    ) {
+    fn set_pressed(&mut self, new: Option<(PointerButton, NodeId)>) {
         let old = self.pressed;
         if old.map(|(_, id)| id) == new.map(|(_, id)| id) {
             self.pressed = new;
             return;
-        }
-        if let Some((_, old_id)) = old
-            && let Some(node) = self.nodes.get_mut(old_id)
-            && let Some((relaxed, _)) = node.paint.press_interactive_shape.clone()
-        {
-            node.paint
-                .shape
-                .animate_to(relaxed, duration, MotionCurve::Linear, now);
-        }
-        if let Some((_, new_id)) = new
-            && let Some(node) = self.nodes.get_mut(new_id)
-            && let Some((_, tightened)) = node.paint.press_interactive_shape.clone()
-        {
-            node.paint
-                .shape
-                .animate_to(tightened, duration, MotionCurve::Linear, now);
         }
         self.pressed = new;
     }
@@ -2292,9 +2047,6 @@ impl Tree {
         &mut self,
         root: NodeId,
         direction: FocusDirection,
-        focus_ring_opacity: f64,
-        duration: Duration,
-        now: Instant,
     ) -> Option<(Option<NodeId>, Option<NodeId>)> {
         self.dirty = true;
         let mut order = Vec::new();
@@ -2323,7 +2075,7 @@ impl Tree {
             };
             Some(order[next_index])
         };
-        self.transition_focus(new, focus_ring_opacity, duration, now)
+        self.transition_focus(new)
     }
 
     /// M4 Phase 2 (§10): the direct-target counterpart to `move_focus`'s
@@ -2349,31 +2101,20 @@ impl Tree {
     /// `Tree::dispatch`'s own callers get theirs a different way, via
     /// `DispatchOutcome::FocusChanged`, since this method's own return
     /// only reaches a direct caller, not `dispatch`'s own outcome.
-    pub fn set_focus_to(
-        &mut self,
-        node: NodeId,
-        focus_ring_opacity: f64,
-        duration: Duration,
-        now: Instant,
-    ) -> Option<(Option<NodeId>, Option<NodeId>)> {
+    pub fn set_focus_to(&mut self, node: NodeId) -> Option<(Option<NodeId>, Option<NodeId>)> {
         self.dirty = true;
         if !self.nodes.contains_key(node) {
             return None;
         }
-        self.transition_focus(Some(node), focus_ring_opacity, duration, now)
+        self.transition_focus(Some(node))
     }
 
     /// M94: `set_focus_to`'s counterpart that leaves nothing focused --
     /// how a simulated `blur` clears focus through the same transition
     /// (and `(old, new)` report) as every other focus change.
-    pub fn clear_focus(
-        &mut self,
-        focus_ring_opacity: f64,
-        duration: Duration,
-        now: Instant,
-    ) -> Option<(Option<NodeId>, Option<NodeId>)> {
+    pub fn clear_focus(&mut self) -> Option<(Option<NodeId>, Option<NodeId>)> {
         self.dirty = true;
-        self.transition_focus(None, focus_ring_opacity, duration, now)
+        self.transition_focus(None)
     }
 
     /// Shared by `move_focus`/`set_focus_to`: animates the previously-
@@ -2390,30 +2131,11 @@ impl Tree {
     fn transition_focus(
         &mut self,
         new: Option<NodeId>,
-        focus_ring_opacity: f64,
-        duration: Duration,
-        now: Instant,
     ) -> Option<(Option<NodeId>, Option<NodeId>)> {
         let old = self.focused;
         self.focused = new;
         if old == new {
             return None;
-        }
-        if let Some(old) = old
-            && let Some(node) = self.nodes.get_mut(old)
-            && let Some(state) = node.interaction.as_mut()
-        {
-            state
-                .focus_ring
-                .animate_to(0.0, duration, MotionCurve::Linear, now);
-        }
-        if let Some(new) = new
-            && let Some(node) = self.nodes.get_mut(new)
-            && let Some(state) = node.interaction.as_mut()
-        {
-            state
-                .focus_ring
-                .animate_to(focus_ring_opacity, duration, MotionCurve::Linear, now);
         }
         Some((old, new))
     }
@@ -3246,13 +2968,7 @@ impl Tree {
     /// upgrading to real two-phase press/hold/release timing is a real,
     /// separate scope (PLAN.md), not bundled into "make real events
     /// reach the tree at all."
-    pub fn dispatch(
-        &mut self,
-        root: NodeId,
-        event: InputEvent,
-        config: &InteractionConfig,
-        now: Instant,
-    ) -> DispatchOutcome {
+    pub fn dispatch(&mut self, root: NodeId, event: InputEvent, now: Instant) -> DispatchOutcome {
         self.dirty = true;
         match event {
             InputEvent::PointerMoved { position } => {
@@ -3261,13 +2977,7 @@ impl Tree {
                 // only the new value, so the *old* value has to be read
                 // here to report a real transition afterward.
                 let old_hovered = self.hovered;
-                let new_hovered = self.update_hover(
-                    root,
-                    position,
-                    config.hover_opacity,
-                    config.hover_duration,
-                    now,
-                );
+                let new_hovered = self.update_hover(root, position);
                 // M4 Phase 3 (§11.5): live-follows-the-cursor while a
                 // splitter drag is active -- a no-op otherwise.
                 if self.dragging.is_some() {
@@ -3286,7 +2996,7 @@ impl Tree {
                 // M96: a press outside dismissible layers asks them to be
                 // dismissed, and is consumed like a legacy outside press.
                 if self.report_outside_press(position) {
-                    self.set_pressed(None, config.hover_duration, now);
+                    self.set_pressed(None);
                     return DispatchOutcome::None;
                 }
                 // M10 Phase 1 (§11.3): a real press outside every open
@@ -3296,7 +3006,7 @@ impl Tree {
                 // Android's own real "outside touch dismisses, doesn't
                 // pass through" convention (`PLAN.md`).
                 if self.dismiss_overlays_outside(position) {
-                    self.set_pressed(None, config.hover_duration, now);
+                    self.set_pressed(None);
                     return DispatchOutcome::None;
                 }
                 // M30 Phase 4 Step 1 (§11.3): the real modal-blocking
@@ -3307,7 +3017,7 @@ impl Tree {
                 // registration below entirely" outcome the dismiss
                 // case already has.
                 if self.press_blocked_by_modal_overlay(position) {
-                    self.set_pressed(None, config.hover_duration, now);
+                    self.set_pressed(None);
                     return DispatchOutcome::None;
                 }
                 let hit = self.hit_test_input(root, position);
@@ -3347,7 +3057,7 @@ impl Tree {
                             let scroll = state.scroll.current;
                             state.thumb_drag_anchor = Some((coord, scroll));
                             self.dragging = Some(id);
-                            self.set_pressed(None, config.hover_duration, now);
+                            self.set_pressed(None);
                             return DispatchOutcome::None;
                         }
                         // M47 (§5, §7, §11.7): the identical real grab-
@@ -3364,14 +3074,14 @@ impl Tree {
                             let scroll = state.scroll_offset.current;
                             state.thumb_drag_anchor = Some((position.y, scroll));
                             self.dragging = Some(id);
-                            self.set_pressed(None, config.hover_duration, now);
+                            self.set_pressed(None);
                             return DispatchOutcome::None;
                         }
                         current = self.nodes[id].parent;
                     }
                 }
                 if let Some(node) = hit {
-                    self.set_pressed(Some((button, node)), config.hover_duration, now);
+                    self.set_pressed(Some((button, node)));
                     // M18 Phase 1 (§8, §10): a real click-to-focus,
                     // scoped specifically to `TextField` -- before this,
                     // `PointerPressed` never touched `self.focused` at
@@ -3432,29 +3142,14 @@ impl Tree {
                         } else {
                             self.focusable_ancestor(node)
                         };
-                    let focus_transition = focus_target.and_then(|target| {
-                        self.set_focus_to(
-                            target,
-                            config.focus_ring_opacity,
-                            config.focus_ring_duration,
-                            now,
-                        )
-                    });
-                    if let Some(state) = self.interaction_mut(node) {
-                        state.spawn_ripple(
-                            Point::new(position.x, position.y),
-                            config.ripple_radius,
-                            config.ripple_opacity,
-                            config.ripple_duration,
-                            now,
-                        );
-                    }
+                    let focus_transition =
+                        focus_target.and_then(|target| self.set_focus_to(target));
                     match focus_transition {
                         Some((old, new)) => DispatchOutcome::FocusChanged { old, new },
                         None => DispatchOutcome::None,
                     }
                 } else {
-                    self.set_pressed(None, config.hover_duration, now);
+                    self.set_pressed(None);
                     DispatchOutcome::None
                 }
             }
@@ -3481,7 +3176,7 @@ impl Tree {
                     }
                     _ => DispatchOutcome::None,
                 };
-                self.set_pressed(None, config.hover_duration, now);
+                self.set_pressed(None);
 
                 // M4 Phase 3 (§11.5): a real mouse-up always ends a
                 // drag, wherever it happens -- not conditioned on still
@@ -3551,13 +3246,7 @@ impl Tree {
                         // `DispatchOutcome::None` silently discarding
                         // it -- mirrors the identical real fix at the
                         // `PointerPressed` click-to-focus site above.
-                        match self.move_focus(
-                            root,
-                            direction,
-                            config.focus_ring_opacity,
-                            config.focus_ring_duration,
-                            now,
-                        ) {
+                        match self.move_focus(root, direction) {
                             Some((old, new)) => DispatchOutcome::FocusChanged { old, new },
                             None => DispatchOutcome::None,
                         }
@@ -3787,7 +3476,7 @@ impl Tree {
             // moves off every node.
             InputEvent::PointerLeft => {
                 let old_hovered = self.hovered;
-                self.set_hovered(None, config.hover_opacity, config.hover_duration, now);
+                self.set_hovered(None);
                 if old_hovered.is_some() {
                     DispatchOutcome::HoverChanged {
                         old: old_hovered,
@@ -3983,8 +3672,10 @@ pub fn node_id_as_u64(id: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::animation::MotionCurve;
     use crate::node::ScrollViewState;
     use peniko::Color;
+    use std::time::Duration;
     use taffy::prelude::{FlexDirection, length};
 
     fn leaf(width: f32, height: f32) -> (NodeKind, Style, PaintProperties) {
@@ -3997,7 +3688,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(255, 0, 0, 255), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(255, 0, 0, 255), 0.0, 1.0),
         )
     }
 
@@ -4034,15 +3725,6 @@ mod tests {
         // mutation (Node.animate/set_checked/set_text/etc.) goes through.
         tree.get_mut(id).unwrap().paint.opacity.current = 0.5;
         assert!(tree.take_dirty(), "get_mut must mark the tree dirty");
-        assert!(!tree.take_dirty());
-
-        // Interaction: interaction_mut (auto-vivifying, per its own doc
-        // comment) is the one other raw-state chokepoint besides get_mut.
-        tree.interaction_mut(id);
-        assert!(
-            tree.take_dirty(),
-            "interaction_mut must mark the tree dirty"
-        );
         assert!(!tree.take_dirty());
 
         // Animation-tick: a real mid-flight animation must report dirty
@@ -4334,7 +4016,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         let available = Size {
             width: AvailableSpace::Definite(50.0),
@@ -4864,18 +4546,6 @@ mod tests {
         (tree, root, anchor, menu)
     }
 
-    fn dispatch_config() -> InteractionConfig {
-        InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        }
-    }
-
     /// M94: a root with one 50x50 child at (20, 30), laid out.
     fn one_child_scene() -> (Tree, NodeId, NodeId) {
         let mut tree = Tree::new();
@@ -4930,15 +4600,9 @@ mod tests {
             InputEvent::PointerMoved {
                 position: Point::new(25.0, 40.0),
             },
-            &dispatch_config(),
             Instant::now(),
         );
-        let outcome = tree.dispatch(
-            root,
-            InputEvent::PointerLeft,
-            &dispatch_config(),
-            Instant::now(),
-        );
+        let outcome = tree.dispatch(root, InputEvent::PointerLeft, Instant::now());
         assert_eq!(
             outcome,
             DispatchOutcome::HoverChanged {
@@ -4947,12 +4611,7 @@ mod tests {
             }
         );
         // Nothing hovered any more, so a second leave reports nothing.
-        let outcome = tree.dispatch(
-            root,
-            InputEvent::PointerLeft,
-            &dispatch_config(),
-            Instant::now(),
-        );
+        let outcome = tree.dispatch(root, InputEvent::PointerLeft, Instant::now());
         assert_eq!(outcome, DispatchOutcome::None);
     }
 
@@ -4972,7 +4631,7 @@ mod tests {
             InputEvent::ScaleFactorChanged { scale_factor: 2.0 },
         ] {
             assert_eq!(
-                tree.dispatch(root, event, &dispatch_config(), Instant::now()),
+                tree.dispatch(root, event, Instant::now()),
                 DispatchOutcome::None
             );
         }
@@ -5006,16 +4665,9 @@ mod tests {
         let (mut tree, root, [a, b, c]) = three_focusable();
         tree.get_mut(c).unwrap().access.tab_index = 1;
         tree.get_mut(b).unwrap().access.tab_index = -1;
-        let now = Instant::now();
         let mut visited = Vec::new();
         for _ in 0..3 {
-            tree.move_focus(
-                root,
-                FocusDirection::Next,
-                1.0,
-                Duration::from_millis(1),
-                now,
-            );
+            tree.move_focus(root, FocusDirection::Next);
             visited.push(tree.focused().unwrap());
         }
         assert_eq!(visited, vec![c, a, c]);
@@ -5041,7 +4693,6 @@ mod tests {
                 position: Point::new(x + 5.0, y + 5.0),
                 button: PointerButton::Primary,
             },
-            &dispatch_config(),
             Instant::now(),
         );
         assert_eq!(
@@ -5113,13 +4764,9 @@ mod tests {
     #[test]
     fn clear_focus_reports_the_transition_once() {
         let (mut tree, _, child) = one_child_scene();
-        let now = Instant::now();
-        tree.set_focus_to(child, 1.0, Duration::from_millis(1), now);
-        assert_eq!(
-            tree.clear_focus(1.0, Duration::from_millis(1), now),
-            Some((Some(child), None))
-        );
-        assert_eq!(tree.clear_focus(1.0, Duration::from_millis(1), now), None);
+        tree.set_focus_to(child);
+        assert_eq!(tree.clear_focus(), Some((Some(child), None)));
+        assert_eq!(tree.clear_focus(), None);
     }
 
     #[test]
@@ -5131,7 +4778,6 @@ mod tests {
                 position: Point::new(250.0, 250.0), // well outside the menu's own (0,20)-(120,80)
                 button: PointerButton::Primary,
             },
-            &dispatch_config(),
             Instant::now(),
         );
         assert_eq!(outcome, DispatchOutcome::None);
@@ -5154,7 +4800,6 @@ mod tests {
                 position: Point::new(50.0, 50.0), // inside the menu's own (0,20)-(120,80)
                 button: PointerButton::Primary,
             },
-            &dispatch_config(),
             Instant::now(),
         );
         assert_eq!(outcome, DispatchOutcome::None);
@@ -5192,7 +4837,6 @@ mod tests {
                 position: anchor_center,
                 button: PointerButton::Secondary,
             },
-            &dispatch_config(),
             Instant::now(),
         );
         assert!(
@@ -5210,7 +4854,6 @@ mod tests {
                 position: Point::new(250.0, 250.0),
                 button: PointerButton::Primary,
             },
-            &dispatch_config(),
             Instant::now(),
         );
         assert!(
@@ -5288,7 +4931,6 @@ mod tests {
                 position: Point::new(20.0, 20.0),
                 button: PointerButton::Primary,
             },
-            &dispatch_config(),
             Instant::now(),
         );
 
@@ -5369,7 +5011,6 @@ mod tests {
                 position: Point::new(20.0, 20.0),
                 button: PointerButton::Primary,
             },
-            &dispatch_config(),
             Instant::now(),
         );
 
@@ -5390,7 +5031,6 @@ mod tests {
                 key: Key::Escape,
                 shift: false,
             },
-            &dispatch_config(),
             Instant::now(),
         );
         assert_eq!(outcome, DispatchOutcome::None);
@@ -5413,7 +5053,6 @@ mod tests {
                 key: Key::Escape,
                 shift: false,
             },
-            &dispatch_config(),
             Instant::now(),
         );
         assert!(
@@ -5438,7 +5077,6 @@ mod tests {
                 key: Key::Escape,
                 shift: false,
             },
-            &dispatch_config(),
             Instant::now(),
         );
         assert!(
@@ -5578,7 +5216,6 @@ mod tests {
                 position: Point::new(60.0, 70.0), // inside submenu's (0,40)-(120,100), outside parent_menu's (0,20)-(120,40)
                 button: PointerButton::Primary,
             },
-            &dispatch_config(),
             Instant::now(),
         );
 
@@ -5710,12 +5347,7 @@ mod tests {
             // test elsewhere could tell items apart -- not exercised by
             // these engine-core unit tests, which only check `NodeId`/
             // position bookkeeping, not paint.
-            PaintProperties::new(
-                Color::from_rgba8((idx % 256) as u8, 0, 0, 255),
-                0.0,
-                0.0,
-                1.0,
-            ),
+            PaintProperties::new(Color::from_rgba8((idx % 256) as u8, 0, 0, 255), 0.0, 1.0),
         )
     }
 
@@ -5728,7 +5360,7 @@ mod tests {
         let list = tree.insert(
             NodeKind::VirtualList(VirtualListState::new(100_000, ItemExtent::Fixed(20.0))),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         tree.set_virtual_list_window(list, 0..5, virtual_list_materializer);
@@ -5781,7 +5413,7 @@ mod tests {
         let list = tree.insert(
             NodeKind::VirtualList(VirtualListState::new(100_000, ItemExtent::Fixed(20.0))),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         tree.set_virtual_list_window(list, 0..5, virtual_list_materializer);
@@ -5836,7 +5468,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.compute_layout(
             list,
@@ -5933,7 +5565,7 @@ mod tests {
         let list = tree.insert(
             NodeKind::VirtualList(VirtualListState::new(4, ItemExtent::Variable)),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.set_virtual_list_resolved_offsets(list, variable_offsets());
 
@@ -5972,7 +5604,7 @@ mod tests {
         let list = tree.insert(
             NodeKind::VirtualList(VirtualListState::new(4, ItemExtent::Variable)),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.set_virtual_list_resolved_offsets(list, variable_offsets());
 
@@ -6009,7 +5641,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.compute_layout(
             list,
@@ -6162,7 +5794,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.compute_layout(
             list,
@@ -6209,15 +5841,6 @@ mod tests {
             },
         );
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         // Item 1's own real slot (y in [20, 40)) -- a real scroll
         // gesture over a materialized *child*, not the list's own root
         // pixel, must still bubble up to the list's own scroll offset.
@@ -6227,7 +5850,6 @@ mod tests {
                 delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(100.0, 30.0),
             },
-            &config,
             Instant::now(),
         );
 
@@ -6305,15 +5927,6 @@ mod tests {
             },
         );
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         // Hits `root` itself (a plain Rect, no VirtualList ancestor at
         // all) -- must not panic, and there's nothing real to assert
         // changed, since nothing in this tree can scroll.
@@ -6323,7 +5936,6 @@ mod tests {
                 delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(25.0, 25.0),
             },
-            &config,
             Instant::now(),
         );
         assert_eq!(outcome, DispatchOutcome::None);
@@ -6398,92 +6010,6 @@ mod tests {
         assert_eq!(tree.get(id).unwrap().paint.opacity.current, 0.0);
     }
 
-    /// Proves `interaction_mut`/`tick_all` actually compose (§14 step
-    /// 9) -- not just that `InteractionState::tick` works in isolation
-    /// (already covered in `interaction.rs`'s own tests), but that
-    /// `Tree::tick_all` genuinely reaches a node's interaction state
-    /// during its whole-tree walk, the same claim
-    /// `tick_all_reports_active_and_advances_every_node` proves for
-    /// `PaintProperties`.
-    #[test]
-    fn tick_all_also_advances_a_nodes_interaction_state() {
-        use std::time::Duration;
-
-        let mut tree = Tree::new();
-        let (kind, style, paint) = leaf(10.0, 10.0);
-        let id = tree.insert(kind, style, paint);
-        let start = Instant::now();
-
-        tree.interaction_mut(id).unwrap().spawn_ripple(
-            peniko::kurbo::Point::new(5.0, 5.0),
-            50.0,
-            1.0,
-            Duration::from_millis(200),
-            start,
-        );
-
-        let (still_active, _completed) = tree.tick_all(start + Duration::from_millis(100));
-        assert!(
-            still_active,
-            "a mid-flight ripple should keep tick_all reporting active"
-        );
-        let radius = tree.get(id).unwrap().interaction.as_ref().unwrap().ripples[0]
-            .radius
-            .current;
-        assert!(
-            (radius - 25.0).abs() < 0.01,
-            "ripple radius should be ~halfway to 50.0, got {radius}"
-        );
-
-        let (still_active, _completed) = tree.tick_all(start + Duration::from_secs(1));
-        assert!(!still_active);
-        assert!(
-            tree.get(id)
-                .unwrap()
-                .interaction
-                .as_ref()
-                .unwrap()
-                .ripples
-                .is_empty(),
-            "the finished ripple should have been pruned by tick_all"
-        );
-    }
-
-    /// M7 Phase 3 (§7.1): `set_all_interaction_tints` must update every
-    /// node that already opted into `InteractionState`, and must leave
-    /// a node that never opted in exactly as `None` -- never lazily
-    /// creating one just to give it a tint, matching `interaction_mut`'s
-    /// own "only a node that opts in pays the cost" contract.
-    #[test]
-    fn set_all_interaction_tints_updates_only_already_opted_in_nodes() {
-        let mut tree = Tree::new();
-        let (kind, style, paint) = leaf(10.0, 10.0);
-        let opted_in = tree.insert(kind, style, paint);
-        tree.interaction_mut(opted_in);
-
-        let (kind, style, paint) = leaf(10.0, 10.0);
-        let never_opted_in = tree.insert(kind, style, paint);
-
-        let real_color = peniko::Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
-        tree.set_all_interaction_tints(real_color);
-
-        assert_eq!(
-            tree.get(opted_in)
-                .unwrap()
-                .interaction
-                .as_ref()
-                .unwrap()
-                .tint,
-            real_color,
-            "an already-opted-in node must pick up the new tint"
-        );
-        assert!(
-            tree.get(never_opted_in).unwrap().interaction.is_none(),
-            "a node that never opted into InteractionState must not have one lazily created \
-             just to give it a tint"
-        );
-    }
-
     /// M7 Phase 3 (§7.1): `ThemeChanged` is plumbing only, the identical
     /// "true no-op" contract `Scroll` already established -- `engine-py`
     /// handles the real color-resolution/tint-push side effect directly
@@ -6493,32 +6019,14 @@ mod tests {
         let mut tree = Tree::new();
         let (kind, style, paint) = leaf(10.0, 10.0);
         let root = tree.insert(kind, style, paint);
-        tree.interaction_mut(root);
-        let tint_before = tree.get(root).unwrap().interaction.as_ref().unwrap().tint;
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let outcome = tree.dispatch(
             root,
             InputEvent::ThemeChanged { dark: true },
-            &config,
             Instant::now(),
         );
 
         assert_eq!(outcome, DispatchOutcome::None);
-        assert_eq!(
-            tree.get(root).unwrap().interaction.as_ref().unwrap().tint,
-            tint_before,
-            "Tree::dispatch itself must never touch a tint on ThemeChanged -- that's \
-             engine-py's own job, via set_all_interaction_tints"
-        );
     }
 
     /// M32 Phase 2 (§4, §5): the real gap this phase closes -- "nothing
@@ -6544,22 +6052,12 @@ mod tests {
         assert_eq!(tree.layout(root).size.width, 100.0);
         assert_eq!(tree.layout(root).size.height, 100.0);
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let outcome = tree.dispatch(
             root,
             InputEvent::Resized {
                 width: 300.0,
                 height: 250.0,
             },
-            &config,
             Instant::now(),
         );
         assert_eq!(outcome, DispatchOutcome::None);
@@ -6882,7 +6380,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.compute_layout(
             canvas,
@@ -6931,7 +6429,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.compute_layout(
             canvas,
@@ -6984,7 +6482,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.compute_layout(
             canvas,
@@ -7018,330 +6516,7 @@ mod tests {
     }
 
     #[test]
-    fn update_hover_only_animates_nodes_that_already_opted_into_interaction_state() {
-        use std::time::Duration;
-
-        let mut tree = Tree::new();
-        let root_style = Style {
-            display: taffy::Display::Flex,
-            size: Size {
-                width: length(100.0),
-                height: length(50.0),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
-        let (k, s, p) = leaf(50.0, 50.0);
-        let opted_in = tree.insert(k, s, p);
-        tree.add_child(root, opted_in);
-        tree.interaction_mut(opted_in); // opts in, per `InteractionState::new`'s own 0.0 default
-
-        let (k, s, p) = leaf(50.0, 50.0);
-        let never_opted_in = tree.insert(k, s, p);
-        tree.add_child(root, never_opted_in);
-
-        tree.compute_layout(
-            root,
-            Size {
-                width: AvailableSpace::Definite(100.0),
-                height: AvailableSpace::Definite(50.0),
-            },
-        );
-
-        let now = Instant::now();
-        tree.update_hover(
-            root,
-            Point::new(25.0, 25.0),
-            0.08,
-            Duration::from_millis(100),
-            now,
-        );
-        let hover_target = tree
-            .get(opted_in)
-            .unwrap()
-            .interaction
-            .as_ref()
-            .unwrap()
-            .hover_opacity
-            .active
-            .as_ref()
-            .map(|a| a.to);
-        assert_eq!(
-            hover_target,
-            Some(0.08),
-            "the opted-in hovered node must have a real hover animation registered toward 0.08"
-        );
-
-        tree.update_hover(
-            root,
-            Point::new(75.0, 25.0),
-            0.08,
-            Duration::from_millis(100),
-            now,
-        );
-        assert!(
-            tree.get(never_opted_in).unwrap().interaction.is_none(),
-            "hovering a node that never opted into InteractionState must not create one -- \
-             Design Principle 6, only a node that opts in pays the cost"
-        );
-    }
-
-    #[test]
-    fn update_hover_fades_the_old_node_out_and_the_new_one_in_on_a_real_change() {
-        use std::time::Duration;
-
-        let mut tree = Tree::new();
-        let root_style = Style {
-            display: taffy::Display::Flex,
-            size: Size {
-                width: length(100.0),
-                height: length(50.0),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
-        let (k, s, p) = leaf(50.0, 50.0);
-        let a = tree.insert(k, s, p);
-        tree.add_child(root, a);
-        tree.interaction_mut(a);
-
-        let (k, s, p) = leaf(50.0, 50.0);
-        let b = tree.insert(k, s, p);
-        tree.add_child(root, b);
-        tree.interaction_mut(b);
-
-        tree.compute_layout(
-            root,
-            Size {
-                width: AvailableSpace::Definite(100.0),
-                height: AvailableSpace::Definite(50.0),
-            },
-        );
-
-        let start = Instant::now();
-        let hover = tree.update_hover(
-            root,
-            Point::new(25.0, 25.0),
-            0.08,
-            Duration::from_millis(100),
-            start,
-        );
-        assert_eq!(hover, Some(a));
-        tree.tick_all(start + Duration::from_millis(100));
-        let a_hover_after_settling = tree
-            .get(a)
-            .unwrap()
-            .interaction
-            .as_ref()
-            .unwrap()
-            .hover_opacity
-            .current;
-        assert!(
-            (a_hover_after_settling - 0.08).abs() < 0.001,
-            "A must have settled at the real hover target, got {a_hover_after_settling}"
-        );
-
-        let now = start + Duration::from_millis(200);
-        let hover = tree.update_hover(
-            root,
-            Point::new(75.0, 25.0),
-            0.08,
-            Duration::from_millis(100),
-            now,
-        );
-        assert_eq!(hover, Some(b));
-        tree.tick_all(now + Duration::from_millis(100));
-
-        let a_hover = tree
-            .get(a)
-            .unwrap()
-            .interaction
-            .as_ref()
-            .unwrap()
-            .hover_opacity
-            .current;
-        let b_hover = tree
-            .get(b)
-            .unwrap()
-            .interaction
-            .as_ref()
-            .unwrap()
-            .hover_opacity
-            .current;
-        assert!(
-            a_hover.abs() < 0.001,
-            "A must have faded back out once the pointer left it, got {a_hover}"
-        );
-        assert!(
-            (b_hover - 0.08).abs() < 0.001,
-            "B must have faded in to the real hover target, got {b_hover}"
-        );
-    }
-
-    #[test]
-    fn update_hover_retargets_a_real_interactive_shape_toward_tightened_then_relaxed() {
-        // M38 Phase 4 (§5, §7): `PaintProperties.interactive_shape`'s
-        // own real hover-driven retarget -- `Split Button`'s own inner-
-        // corner shape-tightening. Proven directly at the `Tree` level
-        // (mirrors `update_hover_fades_the_old_node_out_and_the_new_
-        // one_in_on_a_real_change`'s own exact shape, just for `shape`
-        // instead of `hover_opacity`), not via the Python FFI: there is
-        // no Python getter for a `Node`'s own raw `shape` animation
-        // target, the same real verification-surface limit M37/M38
-        // Phase 2/3 already established for other cases.
-        use std::time::Duration;
-
-        use peniko::kurbo::Shape;
-
-        use crate::shape_morph::ShapeKey;
-
-        let mut tree = Tree::new();
-        let root_style = Style {
-            display: taffy::Display::Flex,
-            size: Size {
-                width: length(100.0),
-                height: length(50.0),
-            },
-            ..Default::default()
-        };
-        let (_, _, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
-        let relaxed = ShapeKey::from_path(&Rect::new(0.0, 0.0, 50.0, 50.0).to_path(0.1));
-        let tightened = ShapeKey::from_path(&Rect::new(4.0, 4.0, 46.0, 46.0).to_path(0.1));
-        let (k, s, mut p) = leaf(50.0, 50.0);
-        p.interactive_shape = Some((relaxed.clone(), tightened.clone()));
-        let node = tree.insert(k, s, p);
-        tree.add_child(root, node);
-
-        tree.compute_layout(
-            root,
-            Size {
-                width: AvailableSpace::Definite(100.0),
-                height: AvailableSpace::Definite(50.0),
-            },
-        );
-
-        let now = Instant::now();
-        tree.update_hover(
-            root,
-            Point::new(25.0, 25.0),
-            0.08,
-            Duration::from_millis(100),
-            now,
-        );
-        let target = tree
-            .get(node)
-            .unwrap()
-            .paint
-            .shape
-            .active
-            .as_ref()
-            .map(|a| a.to.clone());
-        assert_eq!(
-            target,
-            Some(tightened),
-            "hovering a node with a real interactive_shape must retarget its own shape \
-             animation toward the tightened silhouette"
-        );
-
-        tree.update_hover(
-            root,
-            Point::new(75.0, 25.0),
-            0.08,
-            Duration::from_millis(100),
-            now + Duration::from_millis(200),
-        );
-        let target = tree
-            .get(node)
-            .unwrap()
-            .paint
-            .shape
-            .active
-            .as_ref()
-            .map(|a| a.to.clone());
-        assert_eq!(
-            target,
-            Some(relaxed),
-            "moving the pointer away must retarget shape back toward the relaxed silhouette"
-        );
-    }
-
-    #[test]
-    fn set_pressed_retargets_a_real_press_interactive_shape_toward_tightened_then_relaxed() {
-        // M38 Phase 5 (§5, §7): `PaintProperties.press_interactive_
-        // shape`'s own real press-driven retarget -- `Button Group`'s
-        // own per-child press morph, the real `set_pressed` sibling of
-        // `update_hover_retargets_a_real_interactive_shape_toward_
-        // tightened_then_relaxed` just above. `set_pressed` is a
-        // private `Tree` method, directly callable here since `mod
-        // tests` is a child module of the one that declares it --
-        // exercised directly rather than through a full `dispatch`
-        // event, the identical "test the real mechanism, not its
-        // dispatch plumbing" shape `update_hover`'s own test already
-        // uses (it also isn't reached through `dispatch` there).
-        use std::time::Duration;
-
-        use peniko::kurbo::Shape;
-
-        use crate::shape_morph::ShapeKey;
-
-        let mut tree = Tree::new();
-        let relaxed = ShapeKey::from_path(&Rect::new(0.0, 0.0, 50.0, 50.0).to_path(0.1));
-        let tightened = ShapeKey::from_path(&Rect::new(6.0, 6.0, 44.0, 44.0).to_path(0.1));
-        let (k, s, mut p) = leaf(50.0, 50.0);
-        p.press_interactive_shape = Some((relaxed.clone(), tightened.clone()));
-        let node = tree.insert(k, s, p);
-
-        let now = Instant::now();
-        tree.set_pressed(
-            Some((PointerButton::Primary, node)),
-            Duration::from_millis(100),
-            now,
-        );
-        let target = tree
-            .get(node)
-            .unwrap()
-            .paint
-            .shape
-            .active
-            .as_ref()
-            .map(|a| a.to.clone());
-        assert_eq!(
-            target,
-            Some(tightened),
-            "pressing a node with a real press_interactive_shape must retarget its own shape \
-             animation toward the tightened silhouette"
-        );
-
-        tree.set_pressed(
-            None,
-            Duration::from_millis(100),
-            now + Duration::from_millis(200),
-        );
-        let target = tree
-            .get(node)
-            .unwrap()
-            .paint
-            .shape
-            .active
-            .as_ref()
-            .map(|a| a.to.clone());
-        assert_eq!(
-            target,
-            Some(relaxed),
-            "releasing the press must retarget shape back toward the relaxed silhouette"
-        );
-    }
-
-    #[test]
     fn move_focus_cycles_only_through_interactive_nodes_in_tree_order_wrapping_at_both_ends() {
-        use std::time::Duration;
-
         use crate::access::{AccessNodeData, Action, Role};
 
         let mut tree = Tree::new();
@@ -7371,40 +6546,33 @@ mod tests {
         tree.add_child(root, button_b);
 
         assert_eq!(tree.focused(), None);
-        let now = Instant::now();
-        let duration = Duration::from_millis(100);
 
-        tree.move_focus(root, FocusDirection::Next, 1.0, duration, now);
+        tree.move_focus(root, FocusDirection::Next);
         assert_eq!(
             tree.focused(),
             Some(button_a),
             "Tab from nothing focused lands on the first interactive node"
         );
 
-        tree.move_focus(root, FocusDirection::Next, 1.0, duration, now);
+        tree.move_focus(root, FocusDirection::Next);
         assert_eq!(
             tree.focused(),
             Some(button_b),
             "Tab skips the non-interactive decoration node entirely"
         );
 
-        tree.move_focus(root, FocusDirection::Next, 1.0, duration, now);
+        tree.move_focus(root, FocusDirection::Next);
         assert_eq!(
             tree.focused(),
             Some(button_a),
             "Tab wraps back to the first interactive node at the end"
         );
 
-        tree.move_focus(root, FocusDirection::Previous, 1.0, duration, now);
+        tree.move_focus(root, FocusDirection::Previous);
         assert_eq!(
             tree.focused(),
             Some(button_b),
             "Shift-Tab wraps backward past the first node to the last"
-        );
-
-        assert!(
-            tree.get(decoration).unwrap().interaction.is_none(),
-            "the non-interactive node must never be touched by focus movement at all"
         );
     }
 
@@ -7437,15 +6605,6 @@ mod tests {
             },
         );
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let now = Instant::now();
 
         // Press and release over the same node (A) -- a real click.
@@ -7455,7 +6614,6 @@ mod tests {
                 position: Point::new(25.0, 25.0),
                 button: PointerButton::Primary,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7469,7 +6627,6 @@ mod tests {
                 position: Point::new(25.0, 25.0),
                 button: PointerButton::Primary,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7485,7 +6642,6 @@ mod tests {
                 position: Point::new(25.0, 25.0),
                 button: PointerButton::Primary,
             },
-            &config,
             now,
         );
         let outcome = tree.dispatch(
@@ -7494,7 +6650,6 @@ mod tests {
                 position: Point::new(75.0, 25.0),
                 button: PointerButton::Primary,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7514,7 +6669,6 @@ mod tests {
                 position: Point::new(25.0, 25.0),
                 button: PointerButton::Secondary,
             },
-            &config,
             now,
         );
         let outcome = tree.dispatch(
@@ -7523,7 +6677,6 @@ mod tests {
                 position: Point::new(25.0, 25.0),
                 button: PointerButton::Secondary,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7541,7 +6694,6 @@ mod tests {
                 position: Point::new(25.0, 25.0),
                 button: PointerButton::Middle,
             },
-            &config,
             now,
         );
         let outcome = tree.dispatch(
@@ -7550,7 +6702,6 @@ mod tests {
                 position: Point::new(25.0, 25.0),
                 button: PointerButton::Middle,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7567,7 +6718,6 @@ mod tests {
                 key: Key::Enter,
                 shift: false,
             },
-            &config,
             now,
         );
         assert_eq!(outcome, DispatchOutcome::Activated(b));
@@ -7602,15 +6752,6 @@ mod tests {
             },
         );
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let now = Instant::now();
 
         // Moving onto A for the first time: None -> Some(a).
@@ -7619,7 +6760,6 @@ mod tests {
             InputEvent::PointerMoved {
                 position: Point::new(25.0, 25.0),
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7637,7 +6777,6 @@ mod tests {
             InputEvent::PointerMoved {
                 position: Point::new(30.0, 30.0),
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7652,7 +6791,6 @@ mod tests {
             InputEvent::PointerMoved {
                 position: Point::new(75.0, 25.0),
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7670,7 +6808,6 @@ mod tests {
             InputEvent::PointerMoved {
                 position: Point::new(500.0, 500.0),
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7709,7 +6846,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 1.0),
         );
         tree.add_child(root, field);
         tree.compute_layout(
@@ -7720,15 +6857,6 @@ mod tests {
             },
         );
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let now = Instant::now();
 
         let outcome = tree.dispatch(
@@ -7737,7 +6865,6 @@ mod tests {
                 position: Point::new(10.0, 10.0),
                 button: PointerButton::Primary,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7756,7 +6883,6 @@ mod tests {
                 position: Point::new(10.0, 10.0),
                 button: PointerButton::Primary,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7800,15 +6926,6 @@ mod tests {
             },
         );
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let now = Instant::now();
 
         let outcome = tree.dispatch(
@@ -7817,7 +6934,6 @@ mod tests {
                 key: Key::Tab,
                 shift: false,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7857,15 +6973,6 @@ mod tests {
             },
         );
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let now = Instant::now();
 
         let outcome = tree.dispatch(
@@ -7874,7 +6981,6 @@ mod tests {
                 position: Point::new(25.0, 25.0),
                 button: PointerButton::Primary,
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7910,15 +7016,6 @@ mod tests {
             },
         );
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let now = Instant::now();
 
         // M4 Phase 8 (§11.7/§11.8 groundwork): real translation reaches
@@ -7932,7 +7029,6 @@ mod tests {
                 delta: ScrollDelta::Lines(0.0, -3.0),
                 position: Point::new(25.0, 25.0),
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -7951,7 +7047,6 @@ mod tests {
                 delta: ScrollDelta::Pixels(0.0, 40.0),
                 position: Point::new(25.0, 25.0),
             },
-            &config,
             now,
         );
         assert_eq!(
@@ -8015,73 +7110,30 @@ mod tests {
     }
 
     #[test]
-    fn set_focus_to_jumps_directly_to_the_named_node_and_animates_focus_ring() {
-        use std::time::Duration;
-
+    fn set_focus_to_jumps_directly_to_the_named_node() {
         let mut tree = Tree::new();
         let (k, s, p) = leaf(10.0, 10.0);
         let a = tree.insert(k, s, p);
-        tree.interaction_mut(a);
         let (k, s, p) = leaf(10.0, 10.0);
         let b = tree.insert(k, s, p);
-        tree.interaction_mut(b);
-
-        let now = Instant::now();
-        let duration = Duration::from_millis(100);
 
         // Unlike move_focus, set_focus_to doesn't need `a`/`b` to have
         // any access.actions at all -- it's a direct target, the same
         // way a mouse click names its target regardless of that node's
         // own access.actions.
-        tree.set_focus_to(a, 1.0, duration, now);
+        assert_eq!(tree.set_focus_to(a), Some((None, Some(a))));
         assert_eq!(tree.focused(), Some(a));
-        tree.tick_all(now + duration);
-        assert_eq!(
-            tree.get(a)
-                .unwrap()
-                .interaction
-                .as_ref()
-                .unwrap()
-                .focus_ring
-                .current,
-            1.0
-        );
-
-        tree.set_focus_to(b, 1.0, duration, now);
+        assert_eq!(tree.set_focus_to(b), Some((Some(a), Some(b))));
         assert_eq!(
             tree.focused(),
             Some(b),
             "set_focus_to must jump straight to the named node, not compute a \
              tab-order neighbor"
         );
-        tree.tick_all(now + duration + duration);
-        let a_ring = tree
-            .get(a)
-            .unwrap()
-            .interaction
-            .as_ref()
-            .unwrap()
-            .focus_ring
-            .current;
-        let b_ring = tree
-            .get(b)
-            .unwrap()
-            .interaction
-            .as_ref()
-            .unwrap()
-            .focus_ring
-            .current;
-        assert_eq!(
-            a_ring, 0.0,
-            "the previously-focused node's ring must animate out"
-        );
-        assert_eq!(b_ring, 1.0, "the newly-focused node's ring must animate in");
     }
 
     #[test]
     fn set_focus_to_an_unknown_node_is_a_safe_no_op() {
-        use std::time::Duration;
-
         let mut tree = Tree::new();
         let (k, s, p) = leaf(10.0, 10.0);
         let real = tree.insert(k, s, p);
@@ -8090,7 +7142,7 @@ mod tests {
         let ghost = tree.insert(k, s, p);
         tree.remove(ghost);
 
-        tree.set_focus_to(ghost, 1.0, Duration::from_millis(100), Instant::now());
+        tree.set_focus_to(ghost);
         assert_eq!(
             tree.focused(),
             Some(real),
@@ -8222,10 +7274,10 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 1.0),
         );
         tree.add_child(root, field);
-        tree.set_focus_to(field, 1.0, Duration::ZERO, Instant::now());
+        tree.set_focus_to(field);
         (tree, root, field)
     }
 
@@ -8237,19 +7289,9 @@ mod tests {
     }
 
     fn dispatch_key(tree: &mut Tree, root: NodeId, key: Key) -> DispatchOutcome {
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         tree.dispatch(
             root,
             InputEvent::KeyPressed { key, shift: false },
-            &config,
             Instant::now(),
         )
     }
@@ -8257,19 +7299,9 @@ mod tests {
     /// M15 Phase 3 (§16.7): `dispatch_key`'s own real `shift`-held
     /// sibling, for selection-extension tests.
     fn dispatch_shift_key(tree: &mut Tree, root: NodeId, key: Key) -> DispatchOutcome {
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         tree.dispatch(
             root,
             InputEvent::KeyPressed { key, shift: true },
-            &config,
             Instant::now(),
         )
     }
@@ -8279,21 +7311,7 @@ mod tests {
         let mut tree = Tree::new();
         let (_, root_style, root_paint) = leaf(0.0, 0.0);
         let root = tree.insert(NodeKind::Container, root_style, root_paint);
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let outcome = tree.dispatch(
-            root,
-            InputEvent::TextInput("a".to_string()),
-            &config,
-            Instant::now(),
-        );
+        let outcome = tree.dispatch(root, InputEvent::TextInput("a".to_string()), Instant::now());
         assert_eq!(outcome, DispatchOutcome::None);
     }
 
@@ -8307,21 +7325,7 @@ mod tests {
         dispatch_key(&mut tree, root, Key::Home);
         dispatch_key(&mut tree, root, Key::ArrowRight);
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
-        let outcome = tree.dispatch(
-            root,
-            InputEvent::TextInput("e".to_string()),
-            &config,
-            Instant::now(),
-        );
+        let outcome = tree.dispatch(root, InputEvent::TextInput("e".to_string()), Instant::now());
         assert_eq!(
             outcome,
             DispatchOutcome::Changed {
@@ -8960,19 +7964,9 @@ mod tests {
         dispatch_shift_key(&mut tree, root, Key::ArrowRight);
         dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he"
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let outcome = tree.dispatch(
             root,
             InputEvent::TextInput("HI".to_string()),
-            &config,
             Instant::now(),
         );
         assert_eq!(
@@ -9077,19 +8071,9 @@ mod tests {
     }
 
     fn dispatch_ime_preedit(tree: &mut Tree, root: NodeId, text: &str) -> DispatchOutcome {
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         tree.dispatch(
             root,
             InputEvent::ImePreedit(text.to_string()),
-            &config,
             Instant::now(),
         )
     }
@@ -9140,19 +8124,9 @@ mod tests {
         dispatch_ime_preedit(&mut tree, root, "n");
         assert_eq!(field_state(&tree, field).preedit, Some("n".to_string()));
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         tree.dispatch(
             root,
             InputEvent::TextInput("\u{5462}".to_string()),
-            &config,
             Instant::now(),
         );
         let state = field_state(&tree, field);
@@ -9188,7 +8162,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 1.0),
         );
         tree.add_child(root, field);
         tree.compute_layout(
@@ -9200,22 +8174,12 @@ mod tests {
         );
         assert_eq!(tree.focused(), None, "must start genuinely unfocused");
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         tree.dispatch(
             root,
             InputEvent::PointerPressed {
                 position: Point::new(10.0, 10.0),
                 button: PointerButton::Primary,
             },
-            &config,
             Instant::now(),
         );
         assert_eq!(
@@ -9252,7 +8216,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 1.0),
         );
         tree.add_child(root, field);
         tree.compute_layout(
@@ -9264,22 +8228,12 @@ mod tests {
         );
         assert_eq!(tree.focused(), None, "must start genuinely unfocused");
 
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         tree.dispatch(
             root,
             InputEvent::PointerPressed {
                 position: Point::new(10.0, 10.0),
                 button: PointerButton::Secondary,
             },
-            &config,
             Instant::now(),
         );
         assert_eq!(
@@ -9295,22 +8249,12 @@ mod tests {
         let mut tree = Tree::new();
         let (k, s, p) = leaf(100.0, 100.0);
         let root = tree.insert(k, s, p);
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         tree.dispatch(
             root,
             InputEvent::PointerPressed {
                 position: Point::new(10.0, 10.0),
                 button: PointerButton::Primary,
             },
-            &config,
             Instant::now(),
         );
         assert_eq!(
@@ -9440,7 +8384,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 1.0),
         );
         tree.compute_layout(
             field,
@@ -9449,7 +8393,7 @@ mod tests {
                 height: AvailableSpace::Definite(100.0),
             },
         );
-        tree.set_focus_to(field, 1.0, Duration::ZERO, Instant::now());
+        tree.set_focus_to(field);
         (tree, field, field)
     }
 
@@ -9544,7 +8488,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 1.0),
         );
         tree.compute_layout(
             field,
@@ -9553,7 +8497,7 @@ mod tests {
                 height: AvailableSpace::Definite(100.0),
             },
         );
-        tree.set_focus_to(field, 1.0, Duration::ZERO, Instant::now());
+        tree.set_focus_to(field);
         (tree, field, field)
     }
 
@@ -9731,7 +8675,7 @@ mod tests {
         let terminal = tree.insert(
             NodeKind::Terminal(state),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 1.0),
         );
         (tree, terminal)
     }
@@ -9879,7 +8823,7 @@ mod tests {
         let term = tree.insert(
             NodeKind::Terminal(state),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 1.0),
         );
         tree.set_terminal_selection_start(term, 0, 0);
         tree.extend_terminal_selection(term, 0, 10);
@@ -9931,7 +8875,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         let (kind, mut outer_style, paint) = leaf(100.0, 100.0);
@@ -9995,26 +8939,20 @@ mod tests {
         let mut tree = Tree::new();
         assert_eq!(tree.scroll_view_count, 0);
         assert_eq!(tree.virtual_list_count, 0);
-        assert_eq!(tree.button_group_reflow_count, 0);
 
         let scroll_view = tree.insert(
             NodeKind::ScrollView(ScrollViewState::new(false)),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         assert_eq!(tree.scroll_view_count, 1);
 
         let virtual_list = tree.insert(
             NodeKind::VirtualList(VirtualListState::new(10, ItemExtent::Fixed(20.0))),
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         assert_eq!(tree.virtual_list_count, 1);
-
-        let mut group_paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
-        group_paint.button_group_reflow = Some((12.0, 8.0));
-        let group = tree.insert(NodeKind::Container, Style::default(), group_paint);
-        assert_eq!(tree.button_group_reflow_count, 1);
 
         // Inserting an ordinary node of no tracked kind must not move
         // any counter -- the real "only what's actually relevant"
@@ -10022,18 +8960,15 @@ mod tests {
         let plain = tree.insert(
             NodeKind::Container,
             Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         assert_eq!(tree.scroll_view_count, 1);
         assert_eq!(tree.virtual_list_count, 1);
-        assert_eq!(tree.button_group_reflow_count, 1);
 
         tree.remove(scroll_view);
         assert_eq!(tree.scroll_view_count, 0);
         tree.remove(virtual_list);
         assert_eq!(tree.virtual_list_count, 0);
-        tree.remove(group);
-        assert_eq!(tree.button_group_reflow_count, 0);
         tree.remove(plain);
     }
 
@@ -10044,7 +8979,7 @@ mod tests {
     #[test]
     fn existence_counters_decrement_correctly_through_recursive_removal() {
         let mut tree = Tree::new();
-        let paint = || PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+        let paint = || PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
         let root = tree.insert(NodeKind::Container, Style::default(), paint());
         let middle = tree.insert(NodeKind::Container, Style::default(), paint());
         let scroll_view = tree.insert(
@@ -10061,125 +8996,6 @@ mod tests {
             tree.scroll_view_count, 0,
             "a ScrollView removed only as a side effect of an ancestor's own removal must still \
              decrement the real counter, not leave it stale"
-        );
-    }
-
-    /// M35 Phase 3 (§5, §7, §11.7): real regression coverage for the
-    /// Standard Button Group's own real "nothing pressed" case -- every
-    /// child must keep its own real, unmodified resting width.
-    #[test]
-    fn sync_button_group_layouts_leaves_widths_unchanged_when_nothing_is_pressed() {
-        let mut tree = Tree::new();
-        let mut group_paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
-        group_paint.button_group_reflow = Some((12.0, 8.0));
-        let group = tree.insert(
-            NodeKind::Container,
-            Style {
-                size: Size {
-                    width: length(300.0),
-                    height: length(40.0),
-                },
-                ..Default::default()
-            },
-            group_paint,
-        );
-        let (a_kind, a_style, a_paint) = leaf(80.0, 40.0);
-        let a = tree.insert(a_kind, a_style, a_paint);
-        let (b_kind, b_style, b_paint) = leaf(80.0, 40.0);
-        let b = tree.insert(b_kind, b_style, b_paint);
-        let (c_kind, c_style, c_paint) = leaf(80.0, 40.0);
-        let c = tree.insert(c_kind, c_style, c_paint);
-        tree.add_child(group, a);
-        tree.add_child(group, b);
-        tree.add_child(group, c);
-
-        let available = Size {
-            width: AvailableSpace::Definite(300.0),
-            height: AvailableSpace::Definite(40.0),
-        };
-        tree.compute_layout(group, available);
-
-        for (id, expected) in [(a, 80.0), (b, 80.0), (c, 80.0)] {
-            assert!(
-                (tree.layout(id).size.width - expected).abs() < 0.01,
-                "with nothing pressed, every real child must keep its own resting width, \
-                 got {} for expected {expected}",
-                tree.layout(id).size.width
-            );
-        }
-    }
-
-    /// M35 Phase 3 (§5, §7, §11.7): the real, decisive proof of the
-    /// Standard Button Group's own distinctive mechanic -- pressing a
-    /// child grows it by the group's own real `grow` amount, and
-    /// shrinks its real immediate neighbors by an even split of that
-    /// same amount, so the row's own total width is provably
-    /// unchanged (real MD3's own stated "briefly changes the width of
-    /// itself and adjacent buttons," a bounded reflow, not raw
-    /// growth).
-    #[test]
-    fn sync_button_group_layouts_grows_the_pressed_child_and_shrinks_its_real_neighbors() {
-        let mut tree = Tree::new();
-        let mut group_paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
-        group_paint.button_group_reflow = Some((12.0, 8.0));
-        let group = tree.insert(
-            NodeKind::Container,
-            Style {
-                size: Size {
-                    width: length(300.0),
-                    height: length(40.0),
-                },
-                ..Default::default()
-            },
-            group_paint,
-        );
-        let (a_kind, a_style, a_paint) = leaf(80.0, 40.0);
-        let a = tree.insert(a_kind, a_style, a_paint);
-        let (b_kind, b_style, b_paint) = leaf(80.0, 40.0);
-        let b = tree.insert(b_kind, b_style, b_paint);
-        let (c_kind, c_style, c_paint) = leaf(80.0, 40.0);
-        let c = tree.insert(c_kind, c_style, c_paint);
-        tree.add_child(group, a);
-        tree.add_child(group, b);
-        tree.add_child(group, c);
-
-        // Press the middle child directly -- the real, already-tracked
-        // interaction state `sync_button_group_layouts` reads, the
-        // identical technique a real `PointerPressed` dispatch would
-        // set, without needing a full synthetic hit-test round trip
-        // for this pure layout-math test.
-        tree.pressed = Some((PointerButton::Primary, b));
-
-        let available = Size {
-            width: AvailableSpace::Definite(300.0),
-            height: AvailableSpace::Definite(40.0),
-        };
-        tree.compute_layout(group, available);
-
-        let a_width = tree.layout(a).size.width;
-        let b_width = tree.layout(b).size.width;
-        let c_width = tree.layout(c).size.width;
-
-        assert!(
-            (b_width - 92.0).abs() < 0.01,
-            "the pressed middle child must grow by the real grow amount (80 + 12 = 92), got \
-             {b_width}"
-        );
-        assert!(
-            (a_width - 74.0).abs() < 0.01,
-            "the pressed child's real left neighbor must shrink by its even share (80 - 6 = \
-             74), got {a_width}"
-        );
-        assert!(
-            (c_width - 74.0).abs() < 0.01,
-            "the pressed child's real right neighbor must shrink by its even share (80 - 6 = \
-             74), got {c_width}"
-        );
-        assert!(
-            (a_width + b_width + c_width - 240.0).abs() < 0.01,
-            "the row's own real total width must stay constant (a bounded reflow, not raw \
-             growth) -- got {}",
-            a_width + b_width + c_width
         );
     }
 
@@ -10203,7 +9019,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         let (content_w, content_h) = if horizontal {
             (400.0, 50.0)
@@ -10349,7 +9165,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         let (k, s, p) = leaf(100.0, 200.0);
         let content = tree.insert(k, s, p);
@@ -10375,15 +9191,6 @@ mod tests {
     #[test]
     fn dispatch_scroll_over_a_scroll_views_child_updates_its_real_scroll_offset() {
         let (mut tree, view, content) = scrollable_view(false);
-        let config = InteractionConfig {
-            hover_opacity: 0.08,
-            hover_duration: Duration::from_millis(100),
-            focus_ring_opacity: 1.0,
-            focus_ring_duration: Duration::from_millis(100),
-            ripple_radius: 50.0,
-            ripple_opacity: 0.12,
-            ripple_duration: Duration::from_millis(300),
-        };
         let _ = content;
         // A real wheel notch over the scrolled content itself (not the
         // view's own root pixel) must still bubble up to the view's own
@@ -10395,7 +9202,6 @@ mod tests {
                 delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(50.0, 50.0),
             },
-            &config,
             Instant::now(),
         );
         assert_eq!(outcome, DispatchOutcome::None);

@@ -69,9 +69,9 @@ app.run()
 - [`Node.set_on_click`](api/python/node.md#set_on_click) registers a
   Python callback fired on a real click (mouse or keyboard activation —
   see [Accessibility & Fonts](guide/theming-and-accessibility.md)).
-- [`Node.enable_interaction`](api/python/node.md#enable_interaction) opts
-  the node into the default MD3 ripple/hover visual — without it, the
-  click still fires, just with no visual feedback.
+- Hover and press feedback is the framework's to draw: listen for
+  `pointer_enter`/`pointer_leave`/`pointer_down` and change the node's
+  paint (`tre` 0.3.5 removed the built-in MD3 ripple).
 
 ## Animating a property
 

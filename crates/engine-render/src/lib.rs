@@ -114,44 +114,6 @@ pub fn build_shadow_scene(
     scene
 }
 
-/// §14 build-order step 9: standalone spike proving `vello_hybrid`
-/// 0.2.0's real `Scene::push_layer(clip_path, blend_mode, opacity,
-/// mask, filter)` genuinely does both things §7.3's ripple model needs
-/// from it -- clips a fill to an arbitrary path (here, a growing
-/// circle) *and* applies an opacity multiplier to everything painted
-/// inside the layer -- not just that the call compiles. One ripple over
-/// one solid "button" background; no `Tree`, no `InteractionState`
-/// wiring, no MD3 ripple-color token (see this step's own `LOG.md` for
-/// why: real dispatch and a real color scheme don't exist yet).
-pub fn build_ripple_scene(
-    width: u16,
-    height: u16,
-    base_color: Color,
-    ripple_color: Color,
-    origin: Point,
-    radius: f64,
-    opacity: f64,
-) -> Scene {
-    let mut scene = Scene::new(width, height);
-    let bounds = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
-    scene.set_transform(Affine::IDENTITY);
-
-    // The "button" background the ripple plays over.
-    scene.set_paint(base_color);
-    scene.fill_path(&bounds.to_path(0.1));
-
-    // The ripple itself: push_layer's `clip_path` is what actually
-    // confines the fill below to the circle -- the fill call itself
-    // still covers the whole `bounds` rect, same as the background did.
-    let circle = Circle::new(origin, radius).to_path(0.1);
-    scene.push_layer(Some(&circle), None, Some(opacity as f32), None, None);
-    scene.set_paint(ripple_color);
-    scene.fill_path(&bounds.to_path(0.1));
-    scene.pop_layer();
-
-    scene
-}
-
 /// Walks `tree` from `root` (which must already have a computed layout --
 /// call `Tree::compute_layout` first) and paints every `NodeKind::Rect`/
 /// `NodeKind::Text` at its absolute on-screen position:
@@ -198,89 +160,11 @@ pub fn build_tree_scene(
     scene
 }
 
-/// §11.9 (M5 Phase 1): `parent_transform` is the caller's own composed
-/// (canvas-space) transform for this node's *parent*; this call folds in
-/// this node's taffy-computed layout position and its own
-/// `PaintProperties.transform` in one product --
-/// `parent * translate(layout.location) * own_transform` -- exactly
-/// like nested `<g transform>` in SVG, "just ordinary matrix
-/// multiplication during the paint walk" (§11.9's own text). Every
-/// node's own content (and any recursive call for its children) is then
-/// painted/positioned in **local, node-relative coordinates**
-/// (`(0, 0)` to `(w, h)`), with `scene.set_transform(composed)` doing
-/// the mapping into canvas space -- both `Scene::fill_path` and
-/// `Scene::glyph_run` genuinely respect the scene's current transform
-/// (confirmed directly in `vello_hybrid = "0.2.0"`'s vendored source),
-/// so this needs no per-`NodeKind` special-casing. When every node's own
-/// `transform` is the default `Affine::IDENTITY` (true for every node
-/// before this phase), `composed` reduces to exactly the same
-/// accumulated pure translation this function used to compute by hand
-/// via `offset_x`/`offset_y` -- purely additive, no behavior change for
-/// any existing content.
-/// M7 Phase 2 (§7.2): the real MD3 "key" shadow layer's own `(offset_y,
-/// blur)`, in px, at a real (possibly fractional -- `elevation` is a
-/// real `Animated<f64>`, not a discrete 0-5 enum) elevation level.
-/// Transcribed directly from Material Web's own `elevation/internal/
-/// _elevation.scss` (the real, current, production CSS Google ships --
-/// verified via its own documented per-integer-level comments, not
-/// recalled or guessed, `PLAN.md`), preserving its exact piecewise-
-/// linear formula so a fractional `elevation` (a card animating its own
-/// lift) interpolates smoothly rather than snapping between integer
-/// levels. Each term below reproduces one documented level's own real
-/// value -- hand-checked against all 6 before trusting it.
-fn key_shadow_geometry(level: f64) -> (f32, f32) {
-    // level1: 0,1,2,0 -- level2: 0,1,2,0 -- level3: 0,1,3,0
-    // level4: 0,2,3,0 -- level5: 0,4,4,0
-    let level1_y = level.clamp(0.0, 1.0);
-    let level4_y = (level - 3.0).clamp(0.0, 1.0);
-    let level5_y = 2.0 * (level - 4.0).clamp(0.0, 1.0);
-    let y = level1_y + level4_y + level5_y;
-
-    let level1_blur = 2.0 * level.clamp(0.0, 1.0);
-    let level3_blur = (level - 2.0).clamp(0.0, 1.0);
-    let level5_blur = (level - 4.0).clamp(0.0, 1.0);
-    let blur = level1_blur + level3_blur + level5_blur;
-
-    (y as f32, blur as f32)
-}
-
-/// The real MD3 "ambient" shadow layer's own `(offset_y, blur,
-/// spread)`, in px -- same real source and same "matches every
-/// documented integer level" verification as `key_shadow_geometry`.
-/// level1: 0,1,3,1 -- level2: 0,2,6,2 -- level3: 0,4,8,3
-/// level4: 0,6,10,4 -- level5: 0,8,12,6
-fn ambient_shadow_geometry(level: f64) -> (f32, f32, f32) {
-    let level1_y = level.clamp(0.0, 1.0);
-    let level2_y = (level - 1.0).clamp(0.0, 1.0);
-    let level3to5_y = 2.0 * (level - 2.0).clamp(0.0, 3.0);
-    let y = level1_y + level2_y + level3to5_y;
-
-    let level1to2_blur = 3.0 * level.clamp(0.0, 2.0);
-    let level3to5_blur = 2.0 * (level - 2.0).clamp(0.0, 3.0);
-    let blur = level1to2_blur + level3to5_blur;
-
-    let level1to4_spread = level.clamp(0.0, 4.0);
-    let level5_spread = 2.0 * (level - 4.0).clamp(0.0, 1.0);
-    let spread = level1to4_spread + level5_spread;
-
-    (y as f32, blur as f32, spread as f32)
-}
-
 /// CSS Backgrounds and Borders Module Level 3's own real conversion,
 /// verified directly (`PLAN.md`): "a Gaussian blur with a standard
 /// deviation equal to half the blur radius."
 fn blur_to_std_dev(blur_px: f32) -> f32 {
     blur_px / 2.0
-}
-
-/// MD3's real `shadow` color role -- the neutral palette's own tone-0
-/// (blackest) position, constant regardless of the active theme's seed
-/// color (verified via search, `PLAN.md`), so this doesn't need to wait
-/// for M7 Phase 3's dynamic-color wiring the way ripple/hover's own
-/// tint does; `opacity` is each layer's own real, documented alpha
-/// (key: 0.3, ambient: 0.15).
-fn shadow_color(opacity: f32) -> Color {
-    with_opacity(Color::from_rgba8(0, 0, 0, 255), f64::from(opacity))
 }
 
 /// M22 Phase 2 (§16.1): the real `(source_region, transform)` pair
@@ -423,49 +307,6 @@ fn paint_node(
 
     scene.set_transform(composed);
 
-    // M7 Phase 2 (§7.2): a real shadow, for any NodeKind, painted
-    // behind everything else -- elevation is a universal PaintProperties
-    // field, and a shadow only ever needs this node's own bounds/corner
-    // radius, independent of what it actually draws on top (the same
-    // "zero special-casing" shape M5 Phase 1's transform composition
-    // and M4 Phase 5's ripple/hover already established). Skipped
-    // entirely at elevation <= 0.0 -- matching level 0's own real
-    // 0px-everywhere values, not a degenerate zero-blur draw call.
-    let elevation = node.paint.elevation.current;
-    // M25 Phase 2 (§5, §6): a real, previously-missing compounding --
-    // a fading node's own real shadow must fade with it (the same real
-    // expectation any CSS `opacity` compositing already has: a shadow
-    // is part of what "how visible is this node" governs, not a
-    // separate, always-opaque layer underneath it). `<= 0.0` also
-    // skips the shadow now, matching `elevation <= 0.0`'s own existing
-    // "don't draw an invisible thing" precedent.
-    let node_opacity = own_alpha;
-    if elevation > 0.0 && node_opacity > 0.0 {
-        let radius = node.paint.corner_radius.current as f32;
-
-        // Ambient first, key second -- real box-shadow stacking order
-        // (a later shadow paints on top of an earlier one).
-        let (ambient_y, ambient_blur, ambient_spread) = ambient_shadow_geometry(elevation);
-        let ambient_rect = Rect::new(
-            -f64::from(ambient_spread),
-            f64::from(ambient_y) - f64::from(ambient_spread),
-            w + f64::from(ambient_spread),
-            h + f64::from(ambient_y) + f64::from(ambient_spread),
-        );
-        scene.set_paint(shadow_color(0.15 * node_opacity as f32));
-        scene.fill_blurred_rounded_rect(
-            &ambient_rect,
-            radius,
-            blur_to_std_dev(ambient_blur),
-            false,
-        );
-
-        let (key_y, key_blur) = key_shadow_geometry(elevation);
-        let key_rect = Rect::new(0.0, f64::from(key_y), w, h + f64::from(key_y));
-        scene.set_paint(shadow_color(0.3 * node_opacity as f32));
-        scene.fill_blurred_rounded_rect(&key_rect, radius, blur_to_std_dev(key_blur), false);
-    }
-
     // M95: the `shadows` list, CSS `box-shadow`'s model -- each is the
     // node's own rounded box, offset, grown by `spread` (its corners too),
     // and blurred; the first listed paints on top, so the list paints in
@@ -506,39 +347,29 @@ fn paint_node(
         NodeKind::Rect => {
             let color = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(color);
-            // M7 Phase 4 (§7.4): a real, active shape morph (`node.
-            // paint.shape.current` non-empty) paints the current
-            // interpolated silhouette instead of the plain rounded
-            // rect -- `shape` defaults to `ShapeKey::empty()`, so a
-            // node that never touches it renders byte-for-byte the
-            // same `RoundedRect` fill as before this phase.
-            if node.paint.shape.current.is_empty() {
-                // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
-                // (`[top_left, top_right, bottom_right, bottom_left]`)
-                // wins when set -- `Segmented Button`'s own real need
-                // (a first/last segment rounded only on its outer
-                // edge). `None` (every node before this step) falls
-                // through to the identical uniform-scalar `RoundedRect`
-                // this arm always painted.
-                // M34 Phase 1 (§5, §8): the real path itself comes from
-                // `geometry` now -- re-tessellated only when this
-                // node's own `w`/`h`/radius genuinely changed since its
-                // last paint, not rebuilt from scratch every frame
-                // (`GeometryCache`'s own doc comment has the real,
-                // measured motivation).
-                let path = match node
-                    .paint
-                    .corner_radii_override
-                    .as_ref()
-                    .map(|r| r.current.0)
-                {
-                    Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
-                    None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
-                };
-                scene.fill_path(path);
-            } else {
-                scene.fill_path(&node.paint.shape.current.to_path());
-            }
+            // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
+            // (`[top_left, top_right, bottom_right, bottom_left]`)
+            // wins when set -- `Segmented Button`'s own real need
+            // (a first/last segment rounded only on its outer
+            // edge). `None` (every node before this step) falls
+            // through to the identical uniform-scalar `RoundedRect`
+            // this arm always painted.
+            // M34 Phase 1 (§5, §8): the real path itself comes from
+            // `geometry` now -- re-tessellated only when this
+            // node's own `w`/`h`/radius genuinely changed since its
+            // last paint, not rebuilt from scratch every frame
+            // (`GeometryCache`'s own doc comment has the real,
+            // measured motivation).
+            let path = match node
+                .paint
+                .corner_radii_override
+                .as_ref()
+                .map(|r| r.current.0)
+            {
+                Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
+                None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
+            };
+            scene.fill_path(path);
             // M30 Phase 1 (§5, §7): a real stroked border -- MD3's
             // Outlined button variant is the real consumer, but this is
             // universal `PaintProperties`, not `Button`-specific, the
@@ -548,9 +379,7 @@ fn paint_node(
             // own bounds (kurbo strokes are centered on the path by
             // default) -- a border never grows past the node's own
             // taffy-computed box the way a naive un-inset stroke would.
-            // Skipped entirely at `border_width <= 0.0`, the same
-            // "off unless a caller opts in" contract `elevation`
-            // already established.
+            // Skipped entirely at `border_width <= 0.0`.
             let border_width = node.paint.border_width.current;
             if border_width > 0.0 {
                 let inset = border_width / 2.0;
@@ -559,33 +388,21 @@ fn paint_node(
                 // just above, closing a real, previously-dormant gap --
                 // `RectPathParams::PerCornerBorder`'s own doc comment
                 // has the full story (`geometry_cache.rs`).
-                let border_path: std::borrow::Cow<'_, BezPath> =
-                    if !node.paint.shape.current.is_empty() {
-                        // M39 Phase 3 (§5, §7): a real, active shape
-                        // morph now strokes a real *inset* polygon
-                        // (`ShapeKey::inset_path`'s own doc comment has
-                        // the full real algorithm and its stated scope
-                        // limit) instead of the raw silhouette centered
-                        // -- closes M38 Phase 4's own real, previously-
-                        // stated v1 gap where a shape-morphed border
-                        // could sit up to half its own width outside
-                        // the fill's own edge.
-                        std::borrow::Cow::Owned(node.paint.shape.current.inset_path(inset))
-                    } else if let Some(radii) = node
-                        .paint
-                        .corner_radii_override
-                        .as_ref()
-                        .map(|r| r.current.0)
-                    {
-                        std::borrow::Cow::Borrowed(
-                            geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
-                        )
-                    } else {
-                        let radius = (node.paint.corner_radius.current - inset).max(0.0);
-                        std::borrow::Cow::Borrowed(
-                            geometry.rounded_rect_border(id, w, h, radius, inset),
-                        )
-                    };
+                let border_path: std::borrow::Cow<'_, BezPath> = if let Some(radii) = node
+                    .paint
+                    .corner_radii_override
+                    .as_ref()
+                    .map(|r| r.current.0)
+                {
+                    std::borrow::Cow::Borrowed(
+                        geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
+                    )
+                } else {
+                    let radius = (node.paint.corner_radius.current - inset).max(0.0);
+                    std::borrow::Cow::Borrowed(
+                        geometry.rounded_rect_border(id, w, h, radius, inset),
+                    )
+                };
                 let border_color = with_opacity(node.paint.border_color.current, own_alpha);
                 scene.set_paint(border_color);
                 scene.set_stroke(Stroke::new(border_width));
@@ -860,67 +677,6 @@ fn paint_node(
                 );
                 scene.stroke_path(&stroke);
             }
-        }
-    }
-
-    // M4 Phase 5 (§7.3): the real ripple/hover state-layer paint --
-    // `interaction_mut`/`Tree::dispatch`'s ripple-spawn/`update_hover`
-    // were already real and correctly animating `InteractionState`
-    // since M3 Phase 5 step 9 and M4 Phase 1 respectively, but nothing
-    // in this real per-node walk ever painted it -- only the standalone
-    // `build_ripple_scene` spike (above) ever drew a ripple, over a
-    // synthetic single-button scene with no real `Tree` at all. Painted
-    // after the node's own fill and before its children, matching real
-    // MD3 (a state layer sits under a component's own content, e.g. an
-    // icon/label). `interaction.tint` (M7 Phase 3, §7.1) is already an
-    // MD3 "on-surface"-resolved plain `Color` by the time it reaches
-    // here -- `engine-py::Window.set_theme`/`Node.enable_interaction`
-    // resolve it, `engine-render` never touches `engine_md3` (§4).
-    // `hover_opacity`/each ripple's own `opacity` are already the real,
-    // live, animated 0.0..~0.12 values `engine-core` computed -- filling
-    // with `with_opacity` at that exact value is a true no-op when it's
-    // `0.0`, not a special-cased skip.
-    if let Some(interaction) = &node.interaction {
-        let radius = node.paint.corner_radius.current;
-        let bounds = geometry.rounded_rect_fill(id, w, h, radius);
-
-        // M25 Phase 2 (§5, §6): a real, previously-missing compounding
-        // -- both the hover overlay and each ripple (below) multiplied
-        // only by their own real, independent opacity (`hover_
-        // opacity`/`ripple.opacity`) before this, never by `node.
-        // paint.opacity.current` too, so a fading node's own ripple/
-        // hover state layer would stay fully visible while everything
-        // else around it faded.
-        scene.set_paint(with_opacity(
-            interaction.tint,
-            interaction.hover_opacity.current * own_alpha,
-        ));
-        scene.fill_path(bounds);
-
-        for ripple in &interaction.ripples {
-            // `ripple.origin` is a real pointer coordinate captured by
-            // `Tree::dispatch` in absolute canvas space (§11.9's own
-            // stated scope: hit-testing/dispatch aren't transform-aware
-            // until Phase 2) -- but this node's own paths are now drawn
-            // in *local* space under `scene.set_transform(composed)`
-            // (M5 Phase 1), so `origin` has to be mapped back into that
-            // same local space via `composed`'s inverse before use.
-            // `push_layer`'s own `clip_path` intersected with the fill
-            // path below is exactly "this ripple, bounded to this
-            // node's own shape" -- no second, nested `push_layer` call
-            // needed to achieve that intersection.
-            let local_origin = composed.inverse() * ripple.origin;
-            let circle = Circle::new(local_origin, ripple.radius.current).to_path(0.1);
-            scene.push_layer(
-                Some(&circle),
-                None,
-                Some((ripple.opacity.current * own_alpha) as f32),
-                None,
-                None,
-            );
-            scene.set_paint(interaction.tint);
-            scene.fill_path(bounds);
-            scene.pop_layer();
         }
     }
 

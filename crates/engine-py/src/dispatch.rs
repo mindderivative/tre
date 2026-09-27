@@ -24,8 +24,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{
-    CompletionHandle, DispatchOutcome, EventKind, InputEvent, InteractionConfig, NodeId, NodeKind,
-    PointerButton, Tree,
+    CompletionHandle, DispatchOutcome, EventKind, InputEvent, NodeId, NodeKind, PointerButton, Tree,
 };
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
@@ -279,27 +278,6 @@ pub(crate) fn node_center(
     )
 }
 
-/// `Tree::dispatch`'s own MD3-value inputs (§1 Locked Decisions keeps
-/// `engine-core` itself MD3-agnostic, so these live at the real call
-/// sites instead). Real MD3 spec values where this codebase can express
-/// them today (hover/focus state-layer opacity, MD3's own 0.08/0.12);
-/// `ripple_radius` is a flat approximation, not computed per-node from
-/// its own size the way real MD3 ripples cover a surface's diagonal
-/// from the press point -- `interaction.rs`'s own doc comment already
-/// named the real two-phase/per-node ripple model as separate, later
-/// scope, unchanged by this step.
-pub(crate) fn interaction_config() -> InteractionConfig {
-    InteractionConfig {
-        hover_opacity: 0.08,
-        hover_duration: std::time::Duration::from_millis(100),
-        focus_ring_opacity: 1.0,
-        focus_ring_duration: std::time::Duration::from_millis(100),
-        ripple_radius: 100.0,
-        ripple_opacity: 0.12,
-        ripple_duration: std::time::Duration::from_millis(300),
-    }
-}
-
 /// M54 Phase 2 (§8, §16.2): `Changed`'s own real `new_value`, read
 /// fresh from `tree` -- deliberately *not* carried on `DispatchOutcome`
 /// itself (`ChangedValue` only ever holds the pre-mutation value,
@@ -510,12 +488,10 @@ pub(crate) fn process_input(
 ) -> DispatchOutcome {
     listeners::note_input_modality(event);
     let target = listeners::target_before(&ctx.tree.borrow(), root, event);
-    let outcome = ctx.tree.borrow_mut().dispatch(
-        root,
-        event.clone(),
-        &interaction_config(),
-        crate::clock::now(ctx.tree),
-    );
+    let outcome = ctx
+        .tree
+        .borrow_mut()
+        .dispatch(root, event.clone(), crate::clock::now(ctx.tree));
     listeners::route_input(ctx, target, event, py);
     // M96: layers an outside press or Escape asked to dismiss.
     let dismissed = ctx.tree.borrow_mut().take_dismissals();
@@ -800,12 +776,9 @@ pub(crate) fn paste_clipboard_into_focused(
     match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
         Ok(text) => {
             let event = InputEvent::TextInput(text);
-            let outcome = tree.borrow_mut().dispatch(
-                root,
-                event.clone(),
-                &interaction_config(),
-                crate::clock::now(tree),
-            );
+            let outcome = tree
+                .borrow_mut()
+                .dispatch(root, event.clone(), crate::clock::now(tree));
             run_dispatch_outcome(handlers, tree, completions, &outcome, Some(&event), py);
             true
         }

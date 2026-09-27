@@ -23,11 +23,9 @@ mod animation;
 mod canvas;
 mod dock;
 mod input;
-mod interaction;
 mod node;
 mod overlay;
 mod path;
-mod shape_morph;
 mod tree;
 
 pub use access::{AccessNodeData, AccessStates, AccessValue, Action, ActionData, Live, Role};
@@ -38,7 +36,6 @@ pub use input::{
     ChangedValue, DispatchOutcome, EventKind, InputEvent, Key, Modifiers, PointerButton,
     ScrollDelta,
 };
-pub use interaction::{InteractionState, RippleState};
 pub use node::{
     CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Node, NodeId, NodeKind,
     NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
@@ -47,7 +44,4 @@ pub use node::{
 };
 pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
-pub use shape_morph::ShapeKey;
-pub use tree::{
-    FocusDirection, InteractionConfig, Tree, from_access_id, node_id_as_u64, to_access_id,
-};
+pub use tree::{FocusDirection, Tree, from_access_id, node_id_as_u64, to_access_id};

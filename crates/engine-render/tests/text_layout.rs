@@ -68,7 +68,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
 
         let body = tree.insert(
@@ -88,7 +88,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         let headline = tree.insert(
             NodeKind::Text(TextState {
@@ -107,7 +107,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         let arabic = tree.insert(
             NodeKind::Text(TextState {
@@ -126,7 +126,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(TEXT_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(TEXT_COLOR, 0.0, 1.0),
         );
         tree.add_child(root, body);
         tree.add_child(root, headline);

@@ -39,7 +39,7 @@ def test_animate_accepts_each_known_paint_property():
     # blocks"), so success is simply the absence of an exception.
     node.animate("opacity", 0.5, duration_ms=100)
     node.animate("corner_radius", 12.0, duration_ms=100)
-    node.animate("elevation", 4.0, duration_ms=100)
+    node.animate("shadows", [((0, 0, 0, 80), 0.0, 2.0, 4.0, 0.0)], duration_ms=100)
     node.animate("background", (255, 255, 255, 255), duration_ms=100)
     node.animate("transform", (10.0, 20.0, 1.5), duration_ms=100)
 

@@ -175,7 +175,7 @@ fn virtual_list_item(_idx: usize) -> (NodeKind, Style, PaintProperties) {
             },
             ..Default::default()
         },
-        PaintProperties::new(VLIST_COLOR, 0.0, 0.0, 1.0),
+        PaintProperties::new(VLIST_COLOR, 0.0, 1.0),
     )
 }
 
@@ -195,13 +195,13 @@ fn canvas_transform_custom_hit_test_and_virtual_list_all_compose_under_one_share
                 },
                 ..Default::default()
             },
-            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
 
         let camera = tree.insert(
             NodeKind::Container,
             absolute(0.0, 0.0, f32::from(width), f32::from(height)),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(root, camera);
 
@@ -211,7 +211,7 @@ fn canvas_transform_custom_hit_test_and_virtual_list_all_compose_under_one_share
         let node = tree.insert(
             NodeKind::Rect,
             absolute(20.0, 20.0, 20.0, 20.0),
-            PaintProperties::new(NODE_COLOR, 0.0, 0.0, 1.0),
+            PaintProperties::new(NODE_COLOR, 0.0, 1.0),
         );
         tree.add_child(camera, node);
 
@@ -234,7 +234,7 @@ fn canvas_transform_custom_hit_test_and_virtual_list_all_compose_under_one_share
         let edge = tree.insert(
             NodeKind::Canvas(edge_state),
             absolute(0.0, 0.0, f32::from(width), f32::from(height)),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(camera, edge);
 
@@ -243,7 +243,7 @@ fn canvas_transform_custom_hit_test_and_virtual_list_all_compose_under_one_share
         let list = tree.insert(
             NodeKind::VirtualList(VirtualListState::new(1, ItemExtent::Fixed(10.0))),
             absolute(200.0, 200.0, 40.0, 10.0),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(camera, list);
 

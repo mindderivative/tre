@@ -25,9 +25,7 @@ use taffy::prelude::Style;
 use taffy::prelude::{AvailableSpace, Size};
 
 use crate::clock;
-use crate::dispatch::{
-    fire_focus_transition, interaction_config, process_input, run_completions, wants_event,
-};
+use crate::dispatch::{fire_focus_transition, process_input, run_completions, wants_event};
 use crate::error::EngineError;
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType};
@@ -264,7 +262,7 @@ impl PyWindow {
             }
             Ok(())
         };
-        let transparent = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+        let transparent = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
         let mut paint = transparent;
         let mut session = None;
         let node_kind = match kind {
@@ -276,7 +274,7 @@ impl PyWindow {
             "text" => {
                 require(&["text"])?;
                 // A text's fill is its glyph color: opaque black, like CSS.
-                paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0);
+                paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0);
                 NodeKind::Text(TextState {
                     content: String::new(),
                     font_family: "Roboto".to_string(),
@@ -700,21 +698,10 @@ impl PyWindow {
             "focus" | "unfocus" => {
                 let id = need_node(&f)?;
                 f.done()?;
-                let config = interaction_config();
-                let now = crate::clock::now(&tree);
                 let transition = if event == "focus" {
-                    tree.borrow_mut().set_focus_to(
-                        id,
-                        config.focus_ring_opacity,
-                        config.focus_ring_duration,
-                        now,
-                    )
+                    tree.borrow_mut().set_focus_to(id)
                 } else if tree.borrow().focused() == Some(id) {
-                    tree.borrow_mut().clear_focus(
-                        config.focus_ring_opacity,
-                        config.focus_ring_duration,
-                        now,
-                    )
+                    tree.borrow_mut().clear_focus()
                 } else {
                     None
                 };
@@ -755,7 +742,6 @@ impl PyWindow {
                         width: width as f32,
                         height: height as f32,
                     },
-                    &interaction_config(),
                     crate::clock::now(&tree),
                 );
                 listeners::deliver_window(

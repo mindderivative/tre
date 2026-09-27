@@ -34,8 +34,8 @@ use winit::window::{Window, WindowId};
 
 use crate::dispatch::{
     HandlerMap, SharedCompletions, copy_focused_selection_to_clipboard,
-    cut_focused_selection_to_clipboard, interaction_config, paste_clipboard_into_focused,
-    process_input, run_completions, run_dispatch_outcome,
+    cut_focused_selection_to_clipboard, paste_clipboard_into_focused, process_input,
+    run_completions, run_dispatch_outcome,
 };
 use crate::dock::SharedDockState;
 use crate::event::NodeContext;
@@ -1283,13 +1283,7 @@ impl App {
                         // Assistive-technology navigation shows focus, as
                         // the keyboard does.
                         listeners::set_keyboard_modality(true);
-                        let config = interaction_config();
-                        let transition = tree.set_focus_to(
-                            node,
-                            config.focus_ring_opacity,
-                            config.focus_ring_duration,
-                            crate::clock::now(&tree_rc),
-                        );
+                        let transition = tree.set_focus_to(node);
                         drop(tree);
                         if let Some((old, new)) = transition {
                             crate::dispatch::fire_focus_transition(
@@ -1304,13 +1298,8 @@ impl App {
                     }
                     // M94: a screen reader asking to move focus away.
                     engine_core::Action::Blur => {
-                        let config = interaction_config();
                         let transition = if tree.focused() == Some(node) {
-                            tree.clear_focus(
-                                config.focus_ring_opacity,
-                                config.focus_ring_duration,
-                                crate::clock::now(&tree_rc),
-                            )
+                            tree.clear_focus()
                         } else {
                             None
                         };
@@ -1465,7 +1454,7 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
             )
         };
         let (k, s, p) = boxed(200.0, 200.0);

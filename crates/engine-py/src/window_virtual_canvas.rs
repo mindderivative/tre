@@ -141,7 +141,7 @@ impl PyWindow {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(self.root, id);
         if let Some(offsets) = resolved_offsets {
@@ -215,7 +215,7 @@ impl PyWindow {
                         },
                         ..Default::default()
                     },
-                    PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+                    PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 1.0),
                 ),
                 Err(e) => {
                     // First failure wins; later indices in this same
@@ -226,7 +226,7 @@ impl PyWindow {
                     (
                         NodeKind::Rect,
                         Style::default(),
-                        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 0.0),
+                        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0),
                     )
                 }
             }
@@ -263,7 +263,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         tree.add_child(self.root, id);
         drop(tree);

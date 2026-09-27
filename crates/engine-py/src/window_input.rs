@@ -10,7 +10,7 @@ use engine_core::{EventKind, InputEvent, Key, PointerButton};
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 
-use crate::dispatch::{call_handler, interaction_config, node_center, run_dispatch_outcome};
+use crate::dispatch::{call_handler, node_center, run_dispatch_outcome};
 use crate::node::Node;
 use crate::window::PyWindow;
 
@@ -64,7 +64,6 @@ impl PyWindow {
         );
 
         let now = crate::clock::now(&tree);
-        let config = interaction_config();
         // Each `dispatch` call's own `tree.borrow_mut()` is a short-
         // lived temporary, released before `run_dispatch_outcome` runs
         // -- a click handler that itself touches this same `Tree` (e.g.
@@ -74,9 +73,7 @@ impl PyWindow {
             position: point,
             button: PointerButton::Primary,
         };
-        let press = tree
-            .borrow_mut()
-            .dispatch(root, press_event.clone(), &config, now);
+        let press = tree.borrow_mut().dispatch(root, press_event.clone(), now);
         run_dispatch_outcome(
             &handlers,
             &tree,
@@ -90,9 +87,7 @@ impl PyWindow {
             position: point,
             button: PointerButton::Primary,
         };
-        let release = tree
-            .borrow_mut()
-            .dispatch(root, release_event.clone(), &config, now);
+        let release = tree.borrow_mut().dispatch(root, release_event.clone(), now);
         run_dispatch_outcome(
             &handlers,
             &tree,
@@ -130,12 +125,9 @@ impl PyWindow {
         );
 
         let event = InputEvent::PointerMoved { position: point };
-        let outcome = tree.borrow_mut().dispatch(
-            root,
-            event.clone(),
-            &interaction_config(),
-            crate::clock::now(&tree),
-        );
+        let outcome = tree
+            .borrow_mut()
+            .dispatch(root, event.clone(), crate::clock::now(&tree));
         run_dispatch_outcome(
             &handlers,
             &tree,
@@ -161,13 +153,7 @@ impl PyWindow {
             let active = self.active.borrow();
             (active.tree.clone(), active.handlers.clone())
         };
-        let config = interaction_config();
-        let transition = tree.borrow_mut().set_focus_to(
-            node.id,
-            config.focus_ring_opacity,
-            config.focus_ring_duration,
-            crate::clock::now(&tree),
-        );
+        let transition = tree.borrow_mut().set_focus_to(node.id);
         if let Some((old, new)) = transition {
             crate::dispatch::fire_focus_transition(
                 &handlers,
@@ -220,7 +206,6 @@ impl PyWindow {
                 width: width as f32,
                 height: height as f32,
             },
-            &interaction_config(),
             crate::clock::now(&tree),
         );
         // `Resized` always dispatches to `DispatchOutcome::None`
@@ -291,7 +276,6 @@ impl PyWindow {
                 delta: engine_core::ScrollDelta::Pixels(-delta_x, -delta_y),
                 position: point,
             },
-            &interaction_config(),
             crate::clock::now(&tree),
         );
         // `Scroll` is a true no-op for `Tree::dispatch`'s own outcome
@@ -325,7 +309,6 @@ impl PyWindow {
         );
 
         let now = crate::clock::now(&tree);
-        let config = interaction_config();
         // M55 (§10, §16.2): a real gap found while scoping `Focus`
         // events -- this press's own outcome used to be discarded
         // with no variable at all, so a real right-click-to-focus
@@ -337,9 +320,7 @@ impl PyWindow {
             position: point,
             button: PointerButton::Secondary,
         };
-        let press = tree
-            .borrow_mut()
-            .dispatch(root, press_event.clone(), &config, now);
+        let press = tree.borrow_mut().dispatch(root, press_event.clone(), now);
         run_dispatch_outcome(
             &handlers,
             &tree,
@@ -352,9 +333,7 @@ impl PyWindow {
             position: point,
             button: PointerButton::Secondary,
         };
-        let outcome = tree
-            .borrow_mut()
-            .dispatch(root, release_event.clone(), &config, now);
+        let outcome = tree.borrow_mut().dispatch(root, release_event.clone(), now);
         run_dispatch_outcome(
             &handlers,
             &tree,
@@ -420,12 +399,9 @@ impl PyWindow {
             let active = self.active.borrow();
             (active.tree.clone(), active.root, active.handlers.clone())
         };
-        let outcome = tree.borrow_mut().dispatch(
-            root,
-            event.clone(),
-            &interaction_config(),
-            crate::clock::now(&tree),
-        );
+        let outcome = tree
+            .borrow_mut()
+            .dispatch(root, event.clone(), crate::clock::now(&tree));
         run_dispatch_outcome(
             &handlers,
             &tree,
@@ -459,12 +435,9 @@ impl PyWindow {
             let active = self.active.borrow();
             (active.tree.clone(), active.root, active.handlers.clone())
         };
-        let outcome = tree.borrow_mut().dispatch(
-            root,
-            event.clone(),
-            &interaction_config(),
-            crate::clock::now(&tree),
-        );
+        let outcome = tree
+            .borrow_mut()
+            .dispatch(root, event.clone(), crate::clock::now(&tree));
         run_dispatch_outcome(
             &handlers,
             &tree,

@@ -2,13 +2,13 @@
 //! a path's view-box fit, a trimmed stroke, a mid-morph frame, shadows,
 //! per-corner radii, a color's own alpha, group opacity, a text input's
 //! placeholder, a scroll view's scrollbar color, a terminal's palette,
-//! and a ripple built only from primitives matching the built-in one.
+//! and a ripple built only from primitives.
 //! Same headless render-to-texture-then-readback harness as
 //! `icon_paint.rs`.
 
 use engine_core::{
     CellColor, CornerRadii, Interpolate, NodeId, NodeKind, PaintProperties, PathData, PathState,
-    RippleState, SCROLLBAR_MARGIN, ScrollViewState, Shadow, Shadows, TerminalCell, TerminalState,
+    SCROLLBAR_MARGIN, ScrollViewState, Shadow, Shadows, TerminalCell, TerminalState,
     TextFieldState, Tree,
 };
 use peniko::Color;
@@ -22,7 +22,7 @@ fn path_node(tree: &mut Tree, parent: NodeId, style: Style, data: &str, fill: Co
     let id = tree.insert(
         NodeKind::Path(PathState::new(PathData::from_svg(data).unwrap())),
         style,
-        PaintProperties::new(fill, 0.0, 0.0, 1.0),
+        PaintProperties::new(fill, 0.0, 1.0),
     );
     tree.add_child(parent, id);
     id
@@ -124,7 +124,7 @@ fn shadows_paint_under_the_node_offset_and_spread() {
         let card = tree.insert(
             NodeKind::Rect,
             placed(20.0, 20.0, 40.0, 40.0),
-            PaintProperties::new(WHITE, 0.0, 0.0, 1.0),
+            PaintProperties::new(WHITE, 0.0, 1.0),
         );
         tree.add_child(root, card);
         tree.get_mut(card).unwrap().paint.shadows.current = Shadows(vec![Shadow {
@@ -154,7 +154,7 @@ fn four_corner_radii_round_each_corner_on_its_own() {
         let card = tree.insert(
             NodeKind::Rect,
             placed(20.0, 20.0, 60.0, 60.0),
-            PaintProperties::new(RED, 0.0, 0.0, 1.0),
+            PaintProperties::new(RED, 0.0, 1.0),
         );
         tree.add_child(root, card);
         tree.get_mut(card).unwrap().paint.corner_radii_override =
@@ -176,7 +176,7 @@ fn a_colors_own_alpha_renders() {
         let card = tree.insert(
             NodeKind::Rect,
             placed(20.0, 20.0, 60.0, 60.0),
-            PaintProperties::new(Color::from_rgba8(0xFF, 0x00, 0x00, 0x80), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0xFF, 0x00, 0x00, 0x80), 0.0, 1.0),
         );
         tree.add_child(root, card);
         layout(&mut tree, root);
@@ -197,13 +197,13 @@ fn opacity_fades_a_node_and_its_children_as_one() {
         let group = tree.insert(
             NodeKind::Rect,
             placed(20.0, 20.0, 60.0, 60.0),
-            PaintProperties::new(CLEAR, 0.0, 0.0, 0.5),
+            PaintProperties::new(CLEAR, 0.0, 0.5),
         );
         tree.add_child(root, group);
         let child = tree.insert(
             NodeKind::Rect,
             placed(0.0, 0.0, 60.0, 60.0),
-            PaintProperties::new(RED, 0.0, 0.0, 1.0),
+            PaintProperties::new(RED, 0.0, 1.0),
         );
         tree.add_child(group, child);
         layout(&mut tree, root);
@@ -226,7 +226,7 @@ fn an_empty_text_input_shows_its_placeholder_in_its_color() {
         let field = tree.insert(
             NodeKind::TextField(state),
             placed(0.0, 0.0, 100.0, 40.0),
-            PaintProperties::new(BLACK, 0.0, 0.0, 1.0),
+            PaintProperties::new(BLACK, 0.0, 1.0),
         );
         tree.add_child(root, field);
         layout(&mut tree, root);
@@ -248,7 +248,7 @@ fn a_scroll_view_paints_its_scrollbar_fill_and_width() {
         let view = tree.insert(
             NodeKind::ScrollView(state),
             placed(0.0, 0.0, 100.0, 100.0),
-            PaintProperties::new(CLEAR, 0.0, 0.0, 1.0),
+            PaintProperties::new(CLEAR, 0.0, 1.0),
         );
         tree.add_child(root, view);
         let content = tree.insert(
@@ -260,7 +260,7 @@ fn a_scroll_view_paints_its_scrollbar_fill_and_width() {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(CLEAR, 0.0, 0.0, 1.0),
+            PaintProperties::new(CLEAR, 0.0, 1.0),
         );
         tree.add_child(view, content);
         layout(&mut tree, root);
@@ -288,7 +288,7 @@ fn a_terminal_paints_indexed_colors_from_its_palette() {
         let terminal = tree.insert(
             NodeKind::Terminal(state),
             placed(0.0, 0.0, 100.0, 40.0),
-            PaintProperties::new(BLACK, 0.0, 0.0, 1.0),
+            PaintProperties::new(BLACK, 0.0, 1.0),
         );
         tree.add_child(root, terminal);
         layout(&mut tree, root);
@@ -300,83 +300,69 @@ fn a_terminal_paints_indexed_colors_from_its_palette() {
     });
 }
 
-/// The proof ripple: a box that clips its children, holding a circle
-/// `path` at the press point whose group opacity is the ripple's -- built
-/// only from M95 primitives -- paints the same pixels as the engine's own
-/// built-in ripple at the same radius and opacity.
+/// A ripple built only from M95 primitives -- a box that clips its
+/// children, holding a circle `path` at the press point whose group
+/// opacity is the ripple's -- tints the card inside the circle and
+/// nowhere else. (M99 removed the engine's own built-in ripple, which
+/// this used to match pixel for pixel.)
 #[test]
-fn a_ripple_built_from_primitives_matches_the_built_in_one() {
+fn a_ripple_built_from_primitives_tints_only_inside_its_circle() {
     pollster::block_on(async {
         let origin = Point::new(30.0, 30.0);
         let radius = 30.0;
         let opacity = 0.12;
 
-        let built_in = {
+        let card_scene = |with_ripple: bool| {
             let (mut tree, root) = scene();
             let card = tree.insert(
                 NodeKind::Rect,
                 placed(10.0, 10.0, 80.0, 80.0),
-                PaintProperties::new(WHITE, 0.0, 0.0, 1.0),
-            );
-            tree.add_child(root, card);
-            let interaction = tree.interaction_mut(card).unwrap();
-            interaction.tint = BLACK;
-            let mut ripple = RippleState::new(
-                origin,
-                radius,
-                opacity,
-                std::time::Duration::from_millis(1),
-                std::time::Instant::now(),
-            );
-            ripple.radius.current = radius;
-            ripple.radius.active = None;
-            ripple.opacity.current = opacity;
-            ripple.opacity.active = None;
-            interaction.ripples.push(ripple);
-            layout(&mut tree, root);
-            Frame::of(&tree, root).await
-        };
-
-        let primitive = {
-            let (mut tree, root) = scene();
-            let card = tree.insert(
-                NodeKind::Rect,
-                placed(10.0, 10.0, 80.0, 80.0),
-                PaintProperties::new(WHITE, 0.0, 0.0, 1.0),
+                PaintProperties::new(WHITE, 0.0, 1.0),
             );
             tree.add_child(root, card);
             tree.get_mut(card).unwrap().paint.clip_children = true;
-            // The circle in the card's own coordinates: the press point
-            // (30, 30) in the window is (20, 20) in the card.
-            let (cx, cy) = (origin.x - 10.0, origin.y - 10.0);
-            let circle = format!(
-                "M{},{cy} A{radius},{radius} 0 1 0 {},{cy} A{radius},{radius} 0 1 0 {},{cy} Z",
-                cx - radius,
-                cx + radius,
-                cx - radius,
-            );
-            let ink = path_node(
-                &mut tree,
-                card,
-                placed(0.0, 0.0, 80.0, 80.0),
-                &circle,
-                BLACK,
-            );
-            tree.get_mut(ink).unwrap().paint.opacity.current = opacity;
+            if with_ripple {
+                // The circle in the card's own coordinates: the press
+                // point (30, 30) in the window is (20, 20) in the card.
+                let (cx, cy) = (origin.x - 10.0, origin.y - 10.0);
+                let circle = format!(
+                    "M{},{cy} A{radius},{radius} 0 1 0 {},{cy} A{radius},{radius} 0 1 0 {},{cy} Z",
+                    cx - radius,
+                    cx + radius,
+                    cx - radius,
+                );
+                let ink = path_node(
+                    &mut tree,
+                    card,
+                    placed(0.0, 0.0, 80.0, 80.0),
+                    &circle,
+                    BLACK,
+                );
+                tree.get_mut(ink).unwrap().paint.opacity.current = opacity;
+            }
             layout(&mut tree, root);
-            Frame::of(&tree, root).await
+            (tree, root)
         };
+        let (tree, root) = card_scene(false);
+        let plain = Frame::of(&tree, root).await;
+        let (tree, root) = card_scene(true);
+        let rippled = Frame::of(&tree, root).await;
 
         for (x, y, what) in [
             (30, 30, "the ripple's center"),
             (50, 30, "inside the ripple"),
+        ] {
+            assert!(
+                rippled.at(x, y)[0] < plain.at(x, y)[0],
+                "{what}: the ripple tints the card"
+            );
+        }
+        for (x, y, what) in [
             (75, 75, "the card outside the ripple"),
             (5, 5, "outside the card, where the clip holds the ripple"),
         ] {
-            let (a, b) = (built_in.at(x, y), primitive.at(x, y));
-            assert!(close(a, b, 2), "{what}: built-in {a:?}, primitive {b:?}");
+            let (a, b) = (plain.at(x, y), rippled.at(x, y));
+            assert!(close(a, b, 2), "{what}: plain {a:?}, rippled {b:?}");
         }
-        // And the ripple really is there: tinted, not the plain card.
-        assert!(built_in.at(30, 30)[0] < 0xF0, "the ripple tints the card");
     });
 }

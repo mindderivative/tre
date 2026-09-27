@@ -334,9 +334,6 @@ class Node:
         contract.
         """
         ...
-    def enable_interaction(self) -> None:
-        """Opts this node into MD3 ripple/hover visual feedback."""
-        ...
     def on(self, event: str, handler: Callable[..., object]) -> None:
         """M94: registers `handler` for `event`, replacing any earlier
         listener for it. Events: `pointer_enter`, `pointer_leave`,

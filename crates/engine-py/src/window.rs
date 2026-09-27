@@ -245,7 +245,7 @@ impl PyWindow {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
         );
         let tree = Rc::new(RefCell::new(tree));
         let handlers: HandlerMap = Rc::new(RefCell::new(HashMap::new()));
