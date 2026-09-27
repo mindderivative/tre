@@ -8,6 +8,10 @@
    names M100 was meant to remove; they now fail, with the tests and two
    examples moved to the new names. cargo 326, pytest 428.
 
+2. Phase 1 Step 1: ten guide pages, a switch walkthrough with
+   `examples/switch.py`, the overview, Getting Started, and API reference
+   rewritten; `_core.pyi` docstrings fixed; anchors validated.
+
 ## Status
 
-**Started (2026-09-27).** Phase 1 Step 1 next.
+**Started (2026-09-27).** Phase 1 Step 2 next.

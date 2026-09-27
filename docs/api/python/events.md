@@ -1,9 +1,8 @@
 # Events and Listeners
 
-*New in 0.3.4.* The event model of the [target API](../../design/target-api.md):
-listeners registered with `on(event, handler)` on a [`Node`](node.md) or a
-[`Window`](window.md). *0.3.5 removed the older, non-bubbling `set_on_*`
-handlers it replaces.*
+Listeners registered with `on(event, handler)` on a [`Node`](node.md) or a
+[`Window`](window.md). For a walkthrough, see
+[Events and Input](../../guide/events-and-input.md).
 
 ## Node listeners
 
@@ -154,7 +153,7 @@ for character keys.
 ## Testing without a display
 
 `window.simulate(event, node=None, **fields)` delivers a synthetic event through
-the same pipeline as real input, so listeners and the older handlers both fire.
+the same pipeline as real input, so every listener fires as it would live.
 
 ```python
 window.simulate("click", node=button)
@@ -181,5 +180,5 @@ window.simulate("resize", width=800, height=600)
 Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
 window-space `x`/`y` without a node. Any event also takes `shift`, `ctrl`,
 `alt`, and `meta`. A simulated key press edits text and moves focus exactly
-as a real one does — Ctrl+C/X/V/A included (M100: they reach the text input's
-clipboard handling), and a focused terminal takes every key, as it does live. An unknown event or field raises `ValueError`.
+as a real one does — Ctrl+C/X/V/A included — and a focused terminal takes
+every key, as it does live. An unknown event or field raises `ValueError`.

@@ -31,7 +31,7 @@ from __future__ import annotations
 from typing import Any, Callable, Sequence
 
 Color = tuple[int, int, int, int]
-"""An MD3 `(r, g, b, a)` byte tuple, 0-255 per channel."""
+"""An `(r, g, b, a)` byte tuple, 0-255 per channel, straight alpha."""
 
 class Event:
     """What a `node.on(...)` or `window.on(...)` listener receives when it
@@ -119,7 +119,8 @@ class Event:
 class Node:
     """A handle to one real node in a `Window`'s tree.
     Never constructed directly -- always returned by a `Window`
-    (`create`, `root`, or an `add_*` factory) or another `Node`.
+    (`create`, `root`) or another `Node`. Handles compare and hash equal
+    when they name the same node.
     """
 
     def animate(
@@ -133,11 +134,13 @@ class Node:
         """Starts (or retargets) an animation on one property, from its
         current value. Returns immediately -- never blocks.
         `duration_ms=0` snaps instantly on the next tick rather than
-        easing. M95: `easing` is `"linear"` (the default) or a cubic
-        bezier `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it; the
-        M93 paint names -- `fill`, `stroke_color`, `stroke_width`,
-        `opacity`, `corner_radius` (a number or a 4-tuple), `shadows`,
-        and on a path `data`/`trim_start`/`trim_end` -- animate here.
+        easing. `easing` is `"linear"` (the default) or a cubic bezier
+        `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it. Animatable:
+        `fill`, `stroke_color`, `stroke_width`, `opacity`,
+        `corner_radius` (a number or a 4-tuple), `shadows`, the transform
+        parts `translate_x`/`translate_y`/`scale`/`rotation_deg`, a
+        scroll view's `scroll_offset`, and a path's `data`/`trim_start`/
+        `trim_end`; any other name raises `ValueError`.
         `on_complete`, when given, is called with no arguments exactly
         once, the real frame this specific animation finishes; an
         animation replaced or stopped before then never calls it.
@@ -151,11 +154,12 @@ class Node:
         """M95: stops `name`'s running animation where it is."""
         ...
     def get(self, property: str) -> Any:
-        """Reads one property: an animatable number's current, possibly
-        mid-animation value (a `float`), or -- M94 -- any property `set`
-        accepts, plus `focused`. On a built-in slider or progress
-        indicator, `value` stays that widget's numeric value. M97:
-        `kind` is the node's kind, by the name `create` takes.
+        """Reads one property: any property `set` accepts -- an animating
+        one at its current, mid-animation value -- plus the read-only
+        `kind` (by the name `create` takes), `focused`, `layer_placement`,
+        and `layout_x`/`layout_y`/`layout_width`/`layout_height`, which
+        run any pending layout first. Raises `ValueError` for an unknown
+        name.
         """
         ...
     def set(self, **props: Any) -> None:
@@ -259,7 +263,8 @@ class Window:
         ...
     @property
     def root(self) -> Node:
-        """M94: the window's root node (the shown one, after `show_view`)."""
+        """M94: the window's root node -- a flex row with 16px padding and
+        gaps, sized to the window."""
         ...
     def on(self, event: str, handler: Callable[..., object]) -> None:
         """M94: registers `handler` for a window event -- `resize`,
@@ -346,8 +351,9 @@ class Window:
         ...
     # -- size and clipboard ----------------------------------------------
     def resize(self, width: int, height: int) -> None:
-        """Resizes the window's root layout box programmatically, without a
-        live window. A live OS resize updates the same shared size."""
+        """Sets the window's size from code; the root's layout box
+        follows. Fires no `resize` event (`simulate("resize", ...)` does).
+        A live OS resize updates the same size."""
         ...
     def read_clipboard(self) -> str | None:
         """M100: the OS clipboard's text, or `None` when it holds no text or
@@ -429,7 +435,7 @@ class LoopHandle:
 
 class Painter:
     """The drawing surface a canvas's `draw` callback receives -- never
-    constructed directly. M100 renamed it from `Painter`.
+    constructed directly. M100 renamed it from `CanvasContext`.
     """
 
     def fill_rect(self, x: float, y: float, width: float, height: float, color: Color) -> None: ...
@@ -440,8 +446,10 @@ class Painter:
         color: Color,
         width: float,
     ) -> None:
-        """`points` is a list of `[x, y]` pairs -- a straight polyline
-        through them, in canvas-local coordinates.
+        """Strokes a path in canvas-local coordinates. `points` starts
+        with an `[x, y]` point; each later entry is a line (`[x, y]`), a
+        quadratic curve (`[cx, cy, x, y]`), or a cubic curve (`[c1x, c1y,
+        c2x, c2y, x, y]`). Raises `ValueError` for any other shape.
         """
         ...
     def set_hit_test_circle(self, cx: float, cy: float, radius: float) -> None:
@@ -452,7 +460,7 @@ class Painter:
     def set_hit_test_path(self, points: Sequence[Sequence[float]], tolerance: float) -> None:
         """Replaces this canvas's default rectangular hit test with a
         stroke-shaped one -- a point hits if it's within `tolerance` of
-        the polyline through `points`.
+        the path `points` describes, in `stroke_path`'s form.
         """
         ...
 
@@ -463,7 +471,7 @@ def register_font(data: bytes) -> list[str]:
     caller (a framework like Tesserae) owns that.
 
     Returns the family names the data contains: the exact strings a
-    theme's `typography:` `font_family` must use to resolve to it.
+    node's `font_family` must use to resolve to it.
     Registering identical bytes twice is a no-op that still returns the
     names. A window already running picks the font up on its next frame.
     Raises `ValueError` if `data` holds no parseable font face.

@@ -1,9 +1,10 @@
 # Docking
 
-*0.3.5 removed `build_shell` and the MD3 shell chrome:* a framework builds
-its own app shell from the building blocks. It also reduced docking to its
-bare bones: `tre` docks panels, drags them, and reports; what a drag looks
-like — the handle, the highlight over the target zone — is the framework's.
+Docking arranges panels in zones around a window's content — a file tree on
+the left, an inspector on the right, a terminal at the bottom — and lets the
+user drag a panel from one zone to another. `tre` docks panels, drags them,
+and reports what's happening; what a drag looks like — the handle you grab
+and the highlight over the target zone — is yours to draw.
 
 ## Zones and panels
 
@@ -14,6 +15,10 @@ panel attaches it under that node and makes it the zone's shown panel.
 left_zone = window.create("box", fill=(0xF5, 0xF5, 0xF5, 0xFF), width=200, height=400)
 window.root.add_child(left_zone)
 window.add_dock_zone("left", left_zone, size=200.0)
+
+right_zone = window.create("box", fill=(0xF5, 0xF5, 0xF5, 0xFF), width=200, height=400)
+window.root.add_child(right_zone)
+window.add_dock_zone("right", right_zone, size=200.0)
 
 panel = window.create("box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=180, height=380)
 window.dock_panel("left", panel)
@@ -65,7 +70,3 @@ window.simulate("pointer_move", node=right_zone)
 window.simulate("pointer_up", node=right_zone)
 assert right_zone.children() == [panel]
 ```
-
-*0.3.5 removed* `set_active_tab` (now `set_active_panel`),
-`set_dock_handle`, `set_drop_zone_highlight`, `drag_panel_over`, and
-`drop_panel_at`; `start_panel_drag` now takes the panel, not a handle.

@@ -1,7 +1,6 @@
 # Nodes and Properties
 
-*New in 0.3.4.* Every node the [target API](../../design/target-api.md) builds
-comes from `window.create(kind, **props)`, and every property is read and
+Every node comes from `window.create(kind, **props)`, and every property is read and
 written through [`node.set`, `node.get`, and `node.animate`](node.md#set-get-and-focus).
 This page lists them all. Paint, paths, shadows, and easing have their own page,
 [Paint, Paths, and Animation](paint.md); events are in
@@ -182,7 +181,7 @@ Plus `font_size` and the `palette` on
 
 | Property | Value |
 | --- | --- |
-| `kind` | The node's kind, by the name `create` takes — `"box"`, `"text"`, `"text_input"`, ... (*new in 0.3.5*) |
+| `kind` | The node's kind, by the name `create` takes — `"box"`, `"text"`, `"text_input"`, ... |
 | `focused` | Whether the node has keyboard focus |
 | `layer_placement` | A shown [layer](layers.md)'s side of its anchor — `"below"`, `"above"`, `"start"`, `"end"` — or `None` |
 | `layout_x`, `layout_y` | The node's computed position in the window |

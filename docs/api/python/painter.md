@@ -1,10 +1,10 @@
 # `Painter`
 
 Passed to a canvas node's `draw` callback, which runs when the canvas is
-created, when its `draw` is set, and on each `canvas.redraw()`.
-*0.3.5 renamed it from `CanvasContext`.* See
-[Canvas & Virtualized Lists](../../guide/canvas-and-lists.md) for a full
-walkthrough. Never constructed directly.
+created, when its `draw` is set, and on each `canvas.redraw()`. Everything
+the callback draws replaces what the canvas showed. See
+[Painting → Canvas](../../guide/painting.md#canvas). Never constructed
+directly.
 
 ## `fill_rect`
 

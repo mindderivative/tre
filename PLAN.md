@@ -44,4 +44,4 @@ Each step: the full standing chain, the tracker, a local commit, memory.
 
 ## Status
 
-**Started (2026-09-27).** Phase 1 Step 1 next.
+**Started (2026-09-27).** Phase 1 Step 2 next.

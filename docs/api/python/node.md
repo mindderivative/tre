@@ -1,12 +1,9 @@
 # `Node`
 
-A handle to one node in a [`Window`](window.md)'s tree. Returned by [`window.create`](window.md#nodes); never constructed directly.
-
-*New in 0.3.4:* `on`/`off` listeners, `capture_pointer`/`release_pointer`,
-and handle equality — see [Events and Listeners](events.md) — plus `set`,
-the wider `get`, and `focus`, below, and the paint, path, and animation
-properties, `get_target`, `stop_animation`, and `animate`'s `easing` — see
-[Paint, Paths, and Animation](paint.md).
+A handle to one node in a [`Window`](window.md)'s tree. Returned by
+[`window.create`](window.md#nodes), `window.root`, and the tree methods
+below; never constructed directly. Two handles compare equal, and hash
+equal, when they name the same node, so nodes can key a dict.
 
 ## `set`, `get`, and `focus`
 
@@ -40,42 +37,42 @@ focusable nodes offer focus, button-like roles offer activation, a slider
 or a value range offers increment/decrement/set-value, and `expanded` offers
 expand/collapse. Requests arrive as the [`a11y_action`](events.md) event.
 
-**`get(name)`** reads any of those back exactly as set, `focused`, or an
-animatable number's current value (below). On a built-in slider or progress
-indicator, `value` stays that widget's numeric value.
+**`get(name)`** reads any property back exactly as set — an animating one
+at its current, mid-animation value — plus the read-only `kind`, `focused`,
+`layer_placement`, and `layout_*` values; see
+[Nodes and Properties](properties.md#read-only).
 
 **`focus()`** moves keyboard focus to the node, firing `unfocus` and `focus`.
 
 ## `animate`
 
-**`animate(property, to, duration_ms=0, on_complete=None)`**
+**`animate(property, to, duration_ms=0, easing=None, on_complete=None)`**
 
-Starts (or retargets) an animation on one property. Returns immediately —
-never blocks waiting for the animation to finish.
+Eases one property from its current value to `to` and returns at once:
 
 ```python
-node.animate("opacity", 0.0, duration_ms=300, on_complete=lambda: print("faded"))
+node.animate("opacity", 0.0, 300, easing=(0.3, 0.0, 0.8, 0.15),
+             on_complete=lambda: node.remove())
 ```
 
-| `property` | `to` type | Applies to |
-| --- | --- | --- |
-| `"opacity"` | `float` (0.0–1.0) | every node |
-| `"corner_radius"` | `float` | every node |
-| `"background"` | `(r, g, b, a)` int tuple | every node with a fill — not `Text` |
-| `"foreground"` | `(r, g, b, a)` int tuple | `Text` — the glyph color |
-| `"border_color"` | `(r, g, b, a)` int tuple | every node |
-| `"border_width"` | `float` | every node |
-| `"transform"` | `(translate_x, translate_y, scale)` float tuple | every node |
+The animatable properties are `fill`, `stroke_color`, `stroke_width`,
+`opacity`, `corner_radius`, `shadows`, `translate_x`, `translate_y`,
+`scale`, `rotation_deg`, a scroll view's `scroll_offset`, and a path's
+`data`, `trim_start`, and `trim_end`. Any other name raises `ValueError`,
+as does a `to` of the wrong shape. `easing` is `"linear"` or a cubic bezier
+`(x1, y1, x2, y2)`. `on_complete` is called with no arguments exactly once,
+in the frame the value arrives — or in `window.advance(ms)` in a test — and
+never for an animation replaced or stopped first.
 
-*0.3.5 removed* `elevation` (use `shadows`) and `shape`, the MD3 shape
-library (use a `path` node's `data`) — see
-[Paint, Paths, and Animation](paint.md).
+**`get_target(name)`** is where a running animation is heading — `get(name)`
+when nothing animates it — and **`stop_animation(name)`** stops it where it
+is. See [Paint, Paths, and Animation](paint.md#animating) and the
+[Animation](../../guide/animation.md) guide.
 
-Raises `ValueError` for an unknown property name, or `TypeError` if `to`
-doesn't match the property's expected shape. `on_complete`, when given,
-is called with no arguments exactly once, the real frame the animation
-finishes — drained by `App.run()`'s per-frame loop, or by
-`window.advance(ms)` in a test.
+## `redraw`
+
+**`redraw()`** runs a canvas's `draw` callback now; see
+[`Painter`](painter.md). Raises `ValueError` on any other kind.
 
 ## Events
 
@@ -85,17 +82,10 @@ removes it; see [Events and Listeners](events.md) for every event, bubbling,
 and the `Event` fields. A handler takes no arguments or one, the `Event`. An
 exception raised inside a handler is caught, logged, and non-fatal.
 
-*0.3.5 removed the `set_on_*` methods:* `set_on_click` is `on("click")`,
-`set_on_hover_enter`/`set_on_hover_exit` are `on("pointer_enter")`/
-`on("pointer_leave")`, `set_on_change` is `on("change")`, and
-`set_on_focus_enter`/`set_on_focus_exit` are `on("focus")`/`on("unfocus")`.
-Unlike them, `click` bubbles to ancestors, and `on("click")` doesn't make a
-node focusable — set `focusable=True` for that.
+**`capture_pointer()`** routes every later pointer event to this node until
+the button is released or **`release_pointer()`** is called — for drags.
 
 ## Tree structure
-
-*Changed in 0.3.4:* `remove()` detaches rather than freeing, and nodes
-have a lifetime of their own — see [Lifetime](#lifetime).
 
 | Method | Does |
 | --- | --- |
@@ -134,20 +124,3 @@ Switching screens is `old.remove()` then `window.root.add_child(new)`:
 - **A detached subtree keeps everything else**: scroll offsets, a text
   input's text, caret, and selection, and running animations, which keep
   advancing on the window's clock. Attach it again and it's as you left it.
-
-*0.3.5 removed the MD3 widget kinds* — checkbox, radio button, switch,
-slider, the progress indicators, loading indicator, time picker dial,
-carousel, splitter, link, and icon — with their `Node` methods
-(`set_checked`/`get_checked`, `set_selected`/`get_selected`, the
-carousel and time-picker-dial accessors) and animatable properties. A
-framework builds them from boxes, text, and paths.
-
-*0.3.5 also moved the per-kind methods onto `set` and `get`:* `set_layout(...)`
-is `set(...)`; `set_text(t)` is `set(text=t)`, which fires no `change` (that's
-for edits the user makes); `get_text()` is `get("text")` (on a terminal, its
-visible grid, one line per row); `is_focused()` is `get("focused")`;
-`set_syntax_spans`, `set_folded_ranges`, and `set_clip_children` are
-`set(syntax_spans=...)`, `set(folded_ranges=...)`, `set(clip_children=...)`;
-`set_terminal_selection(a, b, c, d)` is `set(selection=(a, b, c, d))`; and
-`push_frame(rgba, w, h)` is `set(rgba=rgba, pixel_width=w, pixel_height=h)`.
-Every property is on [Nodes and Properties](properties.md).
