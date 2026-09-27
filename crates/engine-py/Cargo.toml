@@ -65,7 +65,6 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # real via direct source read), not `arboard`'s own default `image-
 # data` feature (image clipboard support, unneeded here).
 arboard = { version = "3.6.1", default-features = false }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # M30 Phase 9 Step 4 (§5, §8, §10): `Terminal`'s own real PTY/VT
 # split -- the identical real "spawn a real pseudo-terminal is OS-
 # specific process management; interpreting its byte stream is the

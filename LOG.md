@@ -23,7 +23,10 @@
 5. Phase 2 Step 2: the state layer and ripple, elevation, the shape
    library, and the MD3 curves deleted; two examples rewritten on shadows
    and path morphing; cargo 326, pytest 465, 15 examples, docs clean.
+6. Phase 2 Step 3: `add_image(path)`, the `image` crate, and the Working
+   with Files page removed (D6); full chain: cargo 326, pytest 456, 15
+   examples, mypy and mkdocs clean, 85 names documented.
 
 ## Status
 
-**In progress.** Phase 2 Step 3 (the file conveniences) next.
+**Complete (2026-09-26).** M100, the naming convention, is next.

@@ -90,8 +90,6 @@ specific ones) can be driven this way — see
 
 - [Imperative API](guide/imperative-api.md) — the full `Window`/`Node`
   tour: every node kind, events, animation, focus.
-- [Working with Files](guide/working-with-files.md) — load images and
-  fonts from files on disk.
 - Browse [`examples/`](https://github.com/mindderivative/tre/tree/main/examples)
   in the repository — each script is a small, self-contained proof of one
   mechanism (`examples/docking.py` for docking, `examples/text_field.py`

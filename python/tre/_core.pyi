@@ -603,19 +603,6 @@ class Window:
         natural line height. M99 removed the MD3 `typography_role`.
         """
         ...
-    def add_image(
-        self,
-        path: str,
-        width: float,
-        height: float,
-        fit: str = "fill",
-        x: float | None = None,
-        y: float | None = None,
-    ) -> Node:
-        """`fit` is one of `"cover"`, `"contain"`, `"fill"`. Raises if
-        `path` can't be read or decoded.
-        """
-        ...
     def add_image_from_bytes(
         self,
         rgba: bytes,
@@ -627,12 +614,11 @@ class Window:
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
-        """`add_image`'s decode-free sibling: `rgba` is already-decoded
-        straight-alpha RGBA8 pixels (`pixel_width * pixel_height * 4`
-        bytes exactly, or a clear `ValueError`) -- no file, no `image`
-        crate involved, the caller owns decoding entirely. `width`/
-        `height` are the node's own fixed display box (`add_image`'s
-        identical contract); `pixel_width`/`pixel_height` describe
+        """An `Image` node from already-decoded straight-alpha RGBA8
+        pixels (`pixel_width * pixel_height * 4` bytes exactly, or a
+        clear `ValueError`) -- the caller owns decoding (M99 removed
+        `add_image(path)`). `width`/`height` are the node's own fixed
+        display box; `pixel_width`/`pixel_height` describe
         `rgba` itself, and `fit` resolves any mismatch between the two.
         The node this returns is a real, ordinary `Image` node --
         `Node.push_frame` keeps working on it afterward, identically to
@@ -653,8 +639,8 @@ class Window:
         camera driver, frames generated on the fly) and pushes each
         decoded frame; this method only creates the display surface,
         initialized as fully transparent until the first real
-        `push_frame` call. `fit` is `add_image`'s own identical
-        `"cover"`/`"contain"`/`"fill"` parameter.
+        `push_frame` call. `fit` is `"cover"`, `"contain"`, or `"fill"`,
+        as for `add_image_from_bytes`.
         """
         ...
     def add_text_field(

@@ -46,4 +46,4 @@ follow, the tracker, a local commit, memory.
 
 ## Status
 
-Phase 1 and Phase 2 Steps 1–2 done (2026-09-26). Step 3, the file conveniences, next.
+**M99 complete (2026-09-26).** M100, the naming convention, is next.

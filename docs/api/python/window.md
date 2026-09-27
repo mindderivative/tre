@@ -70,14 +70,18 @@ pixels = bytes([255, 0, 0, 255]) * (64 * 64)  # a solid red 64x64 image
 image = window.add_image_from_bytes(pixels, 64, 64, width=200, height=200)
 ```
 
-### `add_image`
+An image file is decoded by the caller — any decoder works:
 
-**`add_image(path, width, height, fit="fill", x=None, y=None)`** *(file convenience)*
+```python
+from PIL import Image
 
-Reads and decodes an image file (PNG or JPEG only), then builds the same
-node `add_image_from_bytes` does. Raises `OSError` if the file can't be
-read or decoded, `ValueError` for an unknown `fit`. See
-[Working with Files → Images from files](../../guide/working-with-files.md#images-from-files).
+img = Image.open("photo.png").convert("RGBA")
+picture = window.add_image_from_bytes(
+    img.tobytes(), img.width, img.height, width=200, height=120, fit="cover"
+)
+```
+
+*0.3.5 removed `add_image(path)` and its PNG/JPEG decoding.*
 
 ### Icons
 

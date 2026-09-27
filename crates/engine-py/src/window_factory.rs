@@ -54,12 +54,8 @@ fn parse_content_fit(fit: &str) -> PyResult<ContentFit> {
     }
 }
 
-/// M82: the shared node-construction primitive `add_image` (path-based
-/// convenience) and `add_image_from_bytes` (the real, decode-free
-/// primitive) both build on, once each has its own `ImageState` ready
-/// -- keeps the tree-insert/`positioned_style`/`add_child` plumbing in
-/// one place instead of duplicated between the two, and makes "`path=`
-/// is a convenience wrapper around the real primitive" true in code.
+/// M82: inserts an `Image` node from a ready `ImageState` --
+/// `add_image_from_bytes` builds on it.
 fn insert_image_node(
     tree: &mut Tree,
     root: NodeId,
@@ -210,68 +206,7 @@ impl PyWindow {
         Ok(self.wrap_node(id))
     }
 
-    /// M22 Phase 1 (§5): creates a real `NodeKind::Image`, loaded from
-    /// a real file on disk. Unlike `add_rect`/`add_checkbox`/
-    /// `add_slider`, deliberately does *not* take a `background` param
-    /// -- mirrors `add_canvas`'s own real precedent instead (a
-    /// hardcoded transparent `PaintProperties` fill), since there's no
-    /// meaningful "behind the content" color this phase scopes for a
-    /// node whose entire content is a loaded image, the same "fully
-    /// custom-drawn kind doesn't expose a separate background" reasoning
-    /// `add_canvas` already established.
-    ///
-    /// Decoding is the real crate-boundary work this method does that
-    /// `engine-core` deliberately never does itself (`ImageState`'s own
-    /// doc comment) -- `image::open` reads and decodes the file
-    /// (whatever real format its own magic-byte sniffing detects among
-    /// this crate's enabled `png`/`jpeg` features), `.to_rgba8()` gives
-    /// real straight-alpha (unpremultiplied) 8-bit RGBA pixels, and
-    /// those raw bytes become a `peniko::ImageData` via `peniko::Blob`'s
-    /// own real `From<Vec<u8>>` impl -- zero copying beyond what
-    /// `to_rgba8()` itself already allocates.
-    ///
-    /// M22 Phase 2 (§16.1): `fit` (`"cover"`/`"contain"`/`"fill"`,
-    /// default `"fill"` -- byte-for-byte Phase 1's own only behavior)
-    /// sets `ImageState.content_fit`, the identical field `kind: Image`
-    /// in a real `view.yaml`'s own `image.fit:` sets -- kept symmetric
-    /// with the declarative path rather than leaving this imperative
-    /// entry point stuck at `Fill` forever.
-    #[pyo3(signature = (path, width, height, fit="fill", x=None, y=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn add_image(
-        &self,
-        path: &str,
-        width: f32,
-        height: f32,
-        fit: &str,
-        x: Option<f32>,
-        y: Option<f32>,
-    ) -> PyResult<Node> {
-        let content_fit = parse_content_fit(fit)?;
-        let decoded = image::open(path)
-            .map_err(|e| EngineError::ImageLoadFailed {
-                path: path.to_string(),
-                reason: e.to_string(),
-            })?
-            .to_rgba8();
-        let (img_width, img_height) = decoded.dimensions();
-        let image_data = peniko::ImageData {
-            data: peniko::Blob::from(decoded.into_raw()),
-            format: peniko::ImageFormat::Rgba8,
-            alpha_type: peniko::ImageAlphaType::Alpha,
-            width: img_width,
-            height: img_height,
-        };
-        let mut image_state = ImageState::new(image_data);
-        image_state.content_fit = content_fit;
-
-        let mut tree = self.tree.borrow_mut();
-        let id = insert_image_node(&mut tree, self.root, image_state, width, height, x, y);
-        Ok(self.wrap_node(id))
-    }
-
-    /// M82: the real, decode-free primitive `add_image`'s own `image::
-    /// open(path)` convenience wraps -- takes already-decoded, straight
+    /// M82: the real, decode-free image primitive -- takes already-decoded, straight
     /// -alpha RGBA8 pixels directly, the identical contract and
     /// validation `Node.push_frame` already established (that method's
     /// own doc comment: "the app decodes however it likes ... PyAV,
@@ -284,9 +219,8 @@ impl PyWindow {
     /// (`content_fit`) resolves any mismatch between the two at paint
     /// time, the identical real mechanism a pushed video frame of a
     /// different resolution than its node's box already relies on.
-    /// Shares `insert_image_node` with `add_image` so "`path=` is a
-    /// convenience wrapper around the real primitive" is true in code,
-    /// not just prose.
+    /// M99 (D6): the only image constructor -- `add_image(path)` and the
+    /// `image` crate went; the framework decodes.
     #[pyo3(signature = (rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_image_from_bytes(

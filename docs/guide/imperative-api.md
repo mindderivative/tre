@@ -66,7 +66,6 @@ the docking methods:
 | `add_code_editor(content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None)` | A monospace code editor — folding, syntax spans, whitespace glyphs |
 | `add_terminal(shell, cols, rows, background, font_size=14.0, scrollback_lines=1000, x=None, y=None)` | A real PTY-backed terminal emulator |
 | `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed image from already-decoded RGBA8 pixels |
-| `add_image(path, width, height, fit="fill", x=None, y=None)` | The same, reading and decoding a PNG/JPEG file — see [Working with Files](working-with-files.md#images-from-files) |
 | `add_video(width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed video surface — frames pushed via `node.push_frame(...)` |
 | `add_scroll_view(width, height, orientation="vertical", x=None, y=None)` | A scrollable viewport over exactly one child |
 | `add_canvas(width, height, draw, x=None, y=None)` | A custom-drawn surface — see [Canvas & Virtualized Lists](canvas-and-lists.md) |

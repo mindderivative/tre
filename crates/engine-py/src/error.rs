@@ -57,17 +57,10 @@ pub enum EngineError {
     /// or an ancestor's).
     #[error("this Node was destroyed")]
     Destroyed,
-    /// M22 Phase 1 (§5): `Window.add_image` couldn't read or decode
-    /// the file at `path` -- a real I/O/format failure, not a value or
-    /// type mismatch the way the two variants above represent, so this
-    /// maps to `PyIOError` rather than `PyValueError`/`PyTypeError`.
-    #[error("failed to load image '{path}': {reason}")]
-    ImageLoadFailed { path: String, reason: String },
     /// M30 Phase 9 Step 4 (§5, §8, §10): `Window.add_terminal` couldn't
     /// open a real PTY or spawn `shell` on it -- a real process/OS-
-    /// integration failure, the same real "not a value/type mismatch"
-    /// shape `ImageLoadFailed` already established for a different
-    /// real I/O failure.
+    /// integration failure, not a value/type mismatch, so it maps to
+    /// `PyIOError`.
     #[error("failed to start terminal shell '{shell}': {reason}")]
     TerminalSpawnFailed { shell: String, reason: String },
 }
@@ -83,9 +76,7 @@ impl From<EngineError> for PyErr {
             | EngineError::ForeignNode
             | EngineError::Destroyed => PyValueError::new_err(e.to_string()),
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
-            EngineError::ImageLoadFailed { .. } | EngineError::TerminalSpawnFailed { .. } => {
-                PyIOError::new_err(e.to_string())
-            }
+            EngineError::TerminalSpawnFailed { .. } => PyIOError::new_err(e.to_string()),
         }
     }
 }

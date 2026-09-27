@@ -80,6 +80,8 @@ GONE = {
         "drop_panel_at",
         # M99 Phase 1 Step 3: engine-md3's icons.
         "add_icon",
+        # M99 Phase 2 Step 3: the file conveniences (D6).
+        "add_image",
     },
     "Node": {
         "set_context_menu",

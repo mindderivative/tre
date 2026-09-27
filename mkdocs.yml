@@ -54,7 +54,6 @@ nav:
       - Docking: guide/docking-and-shell.md
       - Canvas & Virtualized Lists: guide/canvas-and-lists.md
       - Accessibility & Fonts: guide/theming-and-accessibility.md
-      - Working with Files: guide/working-with-files.md
   - Python API Reference:
       - Overview: api/python/index.md
       - App: api/python/app.md

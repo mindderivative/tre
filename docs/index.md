@@ -41,8 +41,7 @@ project's design decisions.
   removed its own.
 - **Data in, not files** — images as decoded pixels, fonts as bytes, so
   a framework built on `tre` owns every file format and loading
-  decision. Using `tre` directly? [Working with Files](guide/working-with-files.md)
-  shows how to load them.
+  decision; `tre` 0.3.5 removed its own file loading.
 - **Thread-safe updates into a running app** — `App.thread_handle()`
   lets a background thread (a file watcher, a network client) hand work
   to the event loop, waking it even when idle.
@@ -66,8 +65,6 @@ project's design decisions.
   window in a few lines of Python.
 - **[Guide](guide/imperative-api.md)** — walkthroughs of the imperative
   API, docking, canvas drawing, and accessibility.
-- **[Working with Files](guide/working-with-files.md)** — for using
-  `tre` directly: image and font files.
 - **[Python API Reference](api/python/index.md)** — every public class
   and method, with real signatures pulled from the source.
 - **[Architecture](architecture.md)** — the engine's crate layout and
