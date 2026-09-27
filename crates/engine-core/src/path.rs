@@ -1,7 +1,6 @@
-//! M95 (D4): the `path` node's data -- any vector path, fitted into a view
-//! box, filled, stroked, trimmed, and morphed. Generalizes `Icon` (a fixed
-//! 24x24 path) and the MD3 shape library's morph (`ShapeKey`, one closed
-//! contour's vertices) to arbitrary SVG path data.
+//! M95 (D4): the `path` node's data -- any vector path (arbitrary SVG
+//! path data), fitted into a view box, filled, stroked, trimmed, and
+//! morphed.
 //!
 //! **Morphing** resamples both paths by arc length rather than matching
 //! their vertices, so any two paths morph -- including curves, several

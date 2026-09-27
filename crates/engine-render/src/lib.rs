@@ -87,8 +87,7 @@ pub fn build_rect_scene(width: u16, height: u16, color: Color, opacity: f64) -> 
 /// exact risk named in §7.2/§15 ("early-stage per Vello's own release
 /// notes, no API stability guarantee yet, uneven parity across the
 /// `vello`/`vello_cpu`/`vello_hybrid` variants"). One rect, no `Tree`,
-/// no layout, no MD3 elevation tokens -- those are deliberately later
-/// steps (9, 11) that would otherwise sit on an unverified foundation.
+/// no layout.
 ///
 /// `std_dev` is the Gaussian blur's standard deviation in pixels (not a
 /// blur "radius" in the CSS `box-shadow` sense); `corner_radius` is the
@@ -128,7 +127,7 @@ pub fn build_shadow_scene(
 /// need to persist across frames, so they're the caller's, not built
 /// fresh per call -- see `TextRenderer`'s own doc comment for why.
 /// `geometry` (M34 Phase 1, §5, §8) is the identical kind of caller-
-/// owned, cross-frame cache, for `Rect`/`Splitter`'s own tessellated
+/// owned, cross-frame cache, for a `Rect`'s own tessellated
 /// fill/border paths -- see `GeometryCache`'s own doc comment.
 pub fn build_tree_scene(
     tree: &Tree,
@@ -349,9 +348,8 @@ fn paint_node(
             scene.set_paint(color);
             // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
             // (`[top_left, top_right, bottom_right, bottom_left]`)
-            // wins when set -- `Segmented Button`'s own real need
-            // (a first/last segment rounded only on its outer
-            // edge). `None` (every node before this step) falls
+            // wins when set (a segmented group's first/last segment,
+            // rounded only on its outer edge). `None` falls
             // through to the identical uniform-scalar `RoundedRect`
             // this arm always painted.
             // M34 Phase 1 (§5, §8): the real path itself comes from
@@ -370,11 +368,9 @@ fn paint_node(
                 None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
             };
             scene.fill_path(path);
-            // M30 Phase 1 (§5, §7): a real stroked border -- MD3's
-            // Outlined button variant is the real consumer, but this is
-            // universal `PaintProperties`, not `Button`-specific, the
-            // same "any Rect/Splitter can use it" reach `background`/
-            // `corner_radius` already have. Inset by half the stroke
+            // M30 Phase 1 (§5, §7): a real stroked border (the Python
+            // API's `stroke_color`/`stroke_width`), universal
+            // `PaintProperties` like `background`/`corner_radius`. Inset by half the stroke
             // width so the border paints entirely *inside* this node's
             // own bounds (kurbo strokes are centered on the path by
             // default) -- a border never grows past the node's own
@@ -429,12 +425,8 @@ fn paint_node(
         // glyph color), a real `TextField` is a genuinely boxed input
         // -- `background` paints its own real fill first (the same
         // `RoundedRect` fill every other boxed `NodeKind` uses), and
-        // `draw_field` paints its content/caret/selection on top in a
-        // fixed, real, not-yet-theme-aware color (the same "real but
-        // not yet theme-aware" scope `Checkbox`'s own hardcoded white
-        // checkmark, M14 Phase 1, already established -- `engine-render`
-        // has no `engine-md3` dependency, §4, to resolve a real
-        // on-surface token from here).
+        // `draw_field` paints its content/caret/selection on top in
+        // `state.text_tint` (below).
         NodeKind::TextField(state) => {
             let radius = node.paint.corner_radius.current;
             let bg = with_opacity(node.paint.background.current, own_alpha);
@@ -446,16 +438,15 @@ fn paint_node(
             // honest correction: that claim was wrong, caught here by
             // checking the actual current source rather than trusting
             // the prior write-up). Routed through `geometry` now, the
-            // same real cache `Checkbox`/`Switch`/`Terminal` already
-            // use -- also reused directly below for this same node's
+            // same real cache `Rect`/`Terminal` already use -- also
+            // reused directly below for this same node's
             // own real clip layer, since both need the identical path.
             scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
-            // M20 Phase 2 (§7.1, §7.3): the real resolved color now
-            // comes from `state.text_tint` -- plain dark by default
-            // (byte-for-byte the old hardcoded literal), a real
-            // resolved MD3 "on-surface" color once `Window.set_theme`
-            // has pushed one in.
+            // M20 Phase 2 (§7.1, §7.3): the real resolved color comes
+            // from `state.text_tint` -- plain dark by default
+            // (byte-for-byte the old hardcoded literal), or whatever
+            // the text input's `fill` sets.
             let text_color = with_opacity(state.text_tint.current, own_alpha);
             // M38 Phase 7 (§5, §8): a real, genuinely overflowing
             // `multiline` field now clips its own painted content to
@@ -498,10 +489,8 @@ fn paint_node(
         // same `RoundedRect` fill `TextField`'s own arm just above
         // already establishes), then `draw_terminal` paints every real
         // cell's own background/glyph on top, plus the caret, in a
-        // fixed, not-yet-theme-aware color (the same real scope
-        // `TextField`'s own arm already accepts -- `engine-render` has
-        // no `engine-md3` dependency to resolve a real theme token
-        // from here, §4).
+        // fixed color (`engine-render` has no design system to resolve
+        // one from, §4).
         NodeKind::Terminal(state) => {
             let radius = node.paint.corner_radius.current;
             let bg = with_opacity(node.paint.background.current, own_alpha);
@@ -530,27 +519,17 @@ fn paint_node(
         // below already only ever sees `VirtualListState::materialized`'s
         // small real subset, never `item_count`, with zero changes
         // needed here (§14 step 15, §11.7).
-        // M30 Phase 9 Step 5 (§5, §7, §11.7): a `Carousel` paints
-        // nothing of its own beyond the generic background/corner-
-        // radius box every `NodeKind` already gets above -- the
-        // identical real "exists purely to give `taffy` something to
-        // lay its children out against" shape `Container`/`VirtualList`
-        // already have. Real item geometry (position/width) is already
-        // fully baked into each child's own `layout_style` by `Tree::
-        // sync_carousel_layouts`, so nothing kind-specific is needed
-        // here at all; the clip below is this kind's only other real
-        // paint-time behavior.
         // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints nothing of
-        // its own either, the identical real shape -- its one real
+        // its own, like `Container`/`VirtualList` -- its one real
         // child's own absolute position is already baked into `layout_
         // style` by `Tree::sync_scroll_view_layouts`, so the ordinary
         // recursive walk below (composed transform only, no extra
         // paint-time offset) already paints it in the right place; the
         // unconditional clip below is this kind's only other real
-        // paint-time behavior, mirroring `Carousel`'s own.
+        // paint-time behavior.
         NodeKind::Container | NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
         // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
-        // resolved ahead of time by `engine-py::Window.redraw_canvas`
+        // resolved ahead of time by `engine-py`'s `draw` callback
         // (`canvas.rs`'s own module doc comment) -- every coordinate is
         // node-local, drawn under the same `composed` transform as
         // every other `NodeKind`, with zero special-casing beyond this
@@ -615,12 +594,9 @@ fn paint_node(
         // -- `Scene::draw_texture_rects` has no opacity parameter of
         // its own at all (confirmed via direct source read), unlike
         // every `set_paint`-based fill in this match. `push_layer`'s
-        // own real `opacity` parameter (the identical mechanism the
-        // ripple/hover overlay above already uses for the same real
-        // "an opacity-only layer, no clip") wraps the draw instead --
-        // skipped entirely at `opacity <= 0.0`, the same "don't draw
-        // an invisible thing" precedent the elevation section above
-        // already established.
+        // own real `opacity` parameter (an opacity-only layer, no
+        // clip) wraps the draw instead -- skipped entirely at
+        // `opacity <= 0.0`, so an invisible thing is never drawn.
         NodeKind::Image(state) => {
             let img_width = state.image.width;
             let img_height = state.image.height;
@@ -640,21 +616,6 @@ fn paint_node(
                 scene.pop_layer();
             }
         }
-        // M23 Phase 1 (§1, §3): `state.path` is real, already-parsed
-        // `BezPath` data in the icon's own fixed `0..ICON_VIEWBOX_SIZE`
-        // SVG-source coordinate space (§1's own real "MD3's own icon
-        // set embedded as `kurbo::BezPath` data" design) -- every
-        // curated icon shares the identical real `viewBox="0 -960 960
-        // 960"`, confirmed via a real fetch of eight distinct icons
-        // directly from Google's own CDN, so a single fixed transform
-        // (translate the real negative-y range up into `0..960`, then
-        // scale into the node's own local box) applies uniformly.
-        // `Scene::fill_path` always draws in whatever transform is
-        // currently active (unlike `Image`'s own `draw_texture_rects`,
-        // whose `SampleRect.transform` is a real, separate per-call
-        // argument needing no such restore) -- `composed` is put back
-        // immediately after, since the post-match ripple/hover overlay
-        // below relies on it still being active.
         // M95 (D4): any vector path, in node-local pixels once fitted
         // into the view box. The fill is the whole path; the stroke is
         // the trimmed outline, centered on the path as in SVG, with round
@@ -691,31 +652,15 @@ fn paint_node(
         NodeKind::VirtualList(_) | NodeKind::ScrollView(_)
     ) || node.paint.clip_children
     {
-        // M30 Phase 9 Step 5 (§5, §7, §11.7): the real MD3 "clip items
-        // to the strip, so one scrolled off does not spill out" anatomy
-        // (pyCopper's own real `CLIPS_CHILDREN = True`) -- the identical
-        // real clip mechanism `VirtualList` above already uses. No
-        // scroll-offset translation needed here, unlike `VirtualList`:
-        // `Tree::sync_carousel_layouts` already bakes every real item's
-        // shifted position straight into its own `layout_style`, so
-        // `composed` alone (each child's own real `Layout::location`)
-        // is already correct -- the same real design choice that keeps
-        // hit-testing and paint from ever disagreeing (`sync_carousel_
-        // layouts`'s own doc comment).
+        // M32 Phase 3 (§5, §7, §11.7/§11.8): any `NodeKind` takes this
+        // branch when `PaintProperties.clip_children` is genuinely set.
+        // No scroll-offset translation for the general case, the
+        // identical real v1 limit `clip_children`'s own doc comment
+        // states: clipping only, not a new scroll mechanism.
         //
-        // M32 Phase 3 (§5, §7, §11.7/§11.8): `Carousel` always takes
-        // this branch (its own real MD3 anatomy, not an opt-in); any
-        // other `NodeKind` takes it only when `PaintProperties.clip_
-        // children` is genuinely set -- the real, general form of this
-        // same clip, closing "no `NodeKind` besides `VirtualList` clips
-        // today." No scroll-offset translation for the general case
-        // either, the identical real v1 limit `clip_children`'s own doc
-        // comment states: clipping only, not a new scroll mechanism.
-        //
-        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` also always takes
-        // this branch (its own real anatomy always clips, matching
-        // `Carousel`, not an opt-in) -- and, like `Carousel`, needs no
-        // scroll-offset translation here either: `Tree::sync_scroll_
+        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` always takes this
+        // branch (its own real anatomy always clips, not an opt-in) --
+        // and needs no scroll-offset translation here either: `Tree::sync_scroll_
         // view_layouts` already bakes its one real child's own current
         // scroll-shifted position into `layout_style` every frame, the
         // identical bug-avoiding "paint and hit-test read the same real
@@ -729,7 +674,7 @@ fn paint_node(
         // every frame, the identical fix, so the separate paint-time-
         // only `Affine::translate` this branch used to need for
         // `VirtualList` alone is gone: `composed` alone is now already
-        // correct for it too, exactly like `Carousel`/`ScrollView`.
+        // correct for it too, exactly like `ScrollView`.
         let clip_radius = node.paint.corner_radius.current;
         let clip = geometry.rounded_rect_fill(id, w, h, clip_radius);
         scene.push_layer(Some(clip), None, None, None, None);
@@ -782,13 +727,9 @@ fn paint_node(
 /// uses), reading `ScrollViewState::thumb_geometry`'s own real,
 /// shared geometry (the identical values `Tree::grabs_scroll_view_
 /// thumb`/`update_scroll_view_thumb_drag` already compute, so paint
-/// and hit-testing/dragging can never drift). **Real, honest v1 scope
-/// choice, stated directly:** a fixed, literal color (real MD3
-/// baseline `outline_variant`, `0xCAC4D0`) at pyCopper's own real
-/// `BAR_OPACITY` (0.55) -- `engine-render` has no `engine-md3`
-/// dependency to resolve a real live theme token from (§4), the
-/// identical "real but not yet theme-aware" scope `TextField`'s own
-/// hardcoded caret color already established. Uncached (no
+/// and hit-testing/dragging can never drift). Painted in the view's
+/// `scrollbar_fill`, or `DEFAULT_SCROLLBAR_FILL` when it sets none.
+/// Uncached (no
 /// `GeometryCache` entry): the thumb's own position changes on every
 /// real scroll tick, so a per-frame cache would rarely hit anyway,
 /// and it's a genuinely small shape (`SCROLLBAR_THICKNESS` = 4px

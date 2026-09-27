@@ -192,8 +192,8 @@ fn a_real_scroll_offset_shifts_materialized_children_up_by_that_many_pixels() {
         // M37 (§5, §7, §11.7): the real scroll offset is now baked
         // into each materialized item's own `layout_style` by `Tree::
         // sync_virtual_list_layouts`, which only runs inside `Tree::
-        // compute_layout` -- the identical real requirement `Carousel`/
-        // `ScrollView` already have (a direct field mutation needs a
+        // compute_layout` -- the identical real requirement
+        // `ScrollView` already has (a direct field mutation needs a
         // fresh layout pass to take visual effect; a real app's own
         // per-frame loop always calls `compute_layout` before painting
         // regardless, so this is invisible in real usage). Fixes the

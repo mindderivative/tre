@@ -1,11 +1,10 @@
 //! Pure-Rust node tree, animation core, and the generic interfaces other
-//! crates build on. No `pyo3`, no `winit`, MD3-agnostic. Does depend
+//! crates build on. No `pyo3`, no `winit`, no design system. Does depend
 //! directly on the plain `accesskit` data crate (§14 step 7, §4/§10's
 //! own reasoning: `accesskit` is small and OS-agnostic, the same class
 //! of dependency as `taffy`/`parley`, both already here).
 //!
-//! `BindingResolver` lives in `engine-spec` instead (§16.2, the one
-//! capability only `engine-py` supplies there). `InputEvent` (§4) lands
+//! `InputEvent` (§4) lands
 //! here at M4 Phase 1 step 1, alongside `Tree::dispatch`/`hit_test`/
 //! `update_hover`/`move_focus` -- the real dispatch core every M3
 //! interaction-dependent step (7, 9, 11, 12, 13, 14, 15) deferred, each
@@ -15,7 +14,7 @@
 //! `AppHandler` trait alongside `InputEvent` for the one meaning-
 //! dependent hook `Tree::dispatch` can't resolve itself -- never
 //! actually implemented anywhere; `engine-py::dispatch.rs`'s own
-//! `HandlerMap`/`call_handler` is the real mechanism that shipped
+//! `HandlerMap` and `listeners.rs` delivery are the real mechanism
 //! instead, so the dead trait was removed.
 
 mod access;

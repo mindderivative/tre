@@ -1,9 +1,9 @@
 //! M30 Phase 1 Step 4 (§5, §7): proves `PaintProperties.
 //! corner_radii_override` genuinely paints independent per-corner
 //! rounding, not just that the field compiles and threads through as
-//! inert data -- the real prerequisite `Segmented Button`'s first/
-//! last segments need (rounded on their own outer edge, square on the
-//! edge touching the next segment). Same headless render-to-texture-
+//! inert data -- what a segmented group's first/last segments need
+//! (rounded on their own outer edge, square on the edge touching the
+//! next segment). Same headless render-to-texture-
 //! then-readback discipline as `border_paint.rs`.
 
 use engine_core::{NodeKind, PaintProperties, Tree};

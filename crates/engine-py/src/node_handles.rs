@@ -5,7 +5,7 @@
 //! attached to a window is never freed this way.
 //!
 //! The counts live here rather than in `Tree` so that making a handle never
-//! needs a `Tree` borrow: many factories build their `Node` while still
+//! needs a `Tree` borrow: callers often build a `Node` while still
 //! holding one. They're per-thread because a handle's state is only ever
 //! created and dropped on its owning thread (`thread_bound`), and keyed by the
 //! tree's address, which can't be reused while any handle keeps that tree

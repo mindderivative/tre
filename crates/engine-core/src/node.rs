@@ -1,37 +1,11 @@
 //! §5's core data model: `NodeId`, `Node`, `NodeKind`, `PaintProperties`.
 //!
-//! Deliberately narrower than ARCHITECTURE.md §5's full struct shapes, for
-//! this build-order step (§14 step 3, "layout of multiple static nodes"):
-//!
-//! - `Node` originally omitted `access: AccessNodeData` (AccessKit
-//!   wiring, step 7) and `interaction: Option<InteractionState>`
-//!   (ripple/state-layer, §7.3, step 9); both fields have since landed
-//!   at their own steps, per Design Principle 5's "add it when its own
-//!   step needs it" discipline.
-//! - `PaintProperties` originally omitted `transform: Animated<kurbo::
-//!   Affine>` (needed a non-trivial `Interpolate` impl); it landed at
-//!   M5 Phase 1 (§11.9) as a plain componentwise coefficient lerp, not
-//!   a rotation-aware decomposition -- see `animation.rs`'s own
-//!   `Interpolate for Affine` doc comment for why that's still correct
-//!   for this framework's actual pan/zoom scope. `shape:
-//!   Animated<ShapeKey>` (the §7.4 shape-correspondence-then-lerp
-//!   technique) landed at M7 Phase 4, once `ShapeKey` itself moved here
-//!   from `engine-md3` (see `shape_morph.rs`'s own doc comment).
-//! - `NodeKind` carried only `Rect`/`Container` through step 3;
-//!   `Text(TextState)` is added at step 4 (§14 step 4, the typography
-//!   spike). `Image`/`Slider`/`Checkbox`/`Canvas` still land with their
-//!   own later build-order steps.
-//!
-//! Each omission is additive to restore later, per Design Principle 5 and
-//! the same "don't build ahead of need" discipline already applied to
-//! `MotionCurve` (step 2, `Linear`-only) and here again to `NodeKind`.
-//! `TextState` itself is narrower than a real future MD3 text component
-//! will need: no `Animated` fields (no MD3 component in scope yet
-//! animates a text property -- cursor blink, reveal-on-scroll, etc. --
-//! so none is manufactured here ahead of a step that needs one), no
-//! wrapping/overflow policy (this step measures `parley`'s own
-//! line-breaking against a fixed box width, it doesn't design a CSS-like
-//! overflow model).
+//! `NodeKind` is the engine's small set of primitives -- a plain
+//! `Container` plus what `window.create` names "box", "text",
+//! "text_input", "image", "path", "canvas", "scroll_view",
+//! "virtual_list", and "terminal". Anything richer (a checkbox, a menu,
+//! a dialog) is a framework's to build from these; `engine-core` has no
+//! design system of its own.
 
 use std::time::Instant;
 
@@ -62,8 +36,8 @@ slotmap::new_key_type! {
 /// Decisions ("common core + per-kind payload"). `Rect`/`Container`
 /// carry no payload beyond `PaintProperties`; `Text` carries `TextState`
 /// (§14 step 4).
-/// No longer derives `Clone`/`Debug`/`PartialEq` now that `Splitter`
-/// carries an `Animated<f64>` -- `Animated<T>` implements none of those
+/// Doesn't derive `Clone`/`Debug`/`PartialEq`: several kinds carry an
+/// `Animated<f64>` -- `Animated<T>` implements none of those
 /// (same reason `PaintProperties`, also full of `Animated` fields,
 /// never derived them either); nothing in this codebase actually
 /// cloned, printed, or compared a `NodeKind` value directly (checked
@@ -84,12 +58,10 @@ pub enum NodeKind {
     Canvas(CanvasState),
     /// M15 Phase 1 (§5, §16.7): a real, single-line editable text
     /// field. `content`/`cursor`/`selection_anchor` are plain, engine-
-    /// core-native byte-offset state -- Design Principle 6's own
-    /// "app-owned meaning" shape `CheckboxState.checked` already
-    /// established, except here the *engine* is the one real mutator
-    /// (via `Tree::dispatch`'s own keyboard-editing arm, M15 Phase 2),
-    /// since typing is mechanical, not app-defined meaning the way a
-    /// checkbox's "checked" is. Deliberately does *not* carry a
+    /// core-native byte-offset state, and the *engine* is the one real
+    /// mutator (via `Tree::dispatch`'s own keyboard-editing arm, M15
+    /// Phase 2), since typing is mechanical, not app-defined meaning
+    /// (Design Principle 6). Deliberately does *not* carry a
     /// `parley::Layout`/`Selection` directly: `engine-core` has no
     /// `parley` dependency at all (§4's crate-boundary rule) --
     /// `engine-render` reconstructs both, each frame, purely to compute
@@ -255,8 +227,8 @@ impl TerminalCell {
     /// real default" convention other `NodeKind`s already use), the
     /// default foreground `engine-render`'s own paint code resolves
     /// against the terminal's own real base ink color instead of a
-    /// hardcoded one here (`engine-core` has no MD3/theme awareness,
-    /// §4).
+    /// hardcoded one here (`engine-core` has no design-system
+    /// awareness, §4).
     pub fn blank() -> Self {
         Self {
             ch: ' ',
@@ -282,10 +254,9 @@ impl TerminalCell {
 /// agnostic `engine-core`), which rebuilds this whole struct's own
 /// `cells`/`cursor_*` fields wholesale whenever the real terminal
 /// screen changes (the identical real "wholesale replacement, not
-/// incremental diffing" simplicity `Video`'s own `push_frame` design
-/// already chose for a comparable "engine only displays the latest
-/// snapshot a real external process produced" shape, M30 Phase 9 Step
-/// 1).
+/// incremental diffing" simplicity an image node's `rgba` frames
+/// already use for a comparable "engine only displays the latest
+/// snapshot a real external process produced" shape).
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalState {
     pub cols: u16,
@@ -300,7 +271,7 @@ pub struct TerminalState {
     /// this terminal's own cell grid -- `(row, col)`, the anchor where
     /// a real press started. `None` (every terminal, until a real
     /// press) means no selection, the same "off unless a caller opts
-    /// in" contract every other additive field in this catalog already
+    /// in" contract every other additive field here already
     /// follows. `engine-core` never interprets these coordinates itself
     /// beyond clamping/normalizing (`Tree::terminal_selected_text`) --
     /// deciding *where* a real pointer press landed needs real font
@@ -385,10 +356,8 @@ impl TerminalState {
 /// point at a scrolled item's own genuine post-scroll screen position
 /// resolves to the wrong node), `scroll` here is turned into a real,
 /// baked-in absolute `layout_style.inset` by `Tree::sync_scroll_view_
-/// layouts` every frame -- the identical bug-free pattern `Carousel`'s
-/// own `sync_carousel_layouts` already established, which both
-/// `engine-render::paint_node` and `Tree::hit_test_at` read correctly
-/// by construction, since neither needs a second, separate transform
+/// layouts` every frame, which both `engine-render::paint_node` and
+/// `Tree::hit_test_at` read correctly by construction, since neither needs a second, separate transform
 /// to agree with. Plain `Animated<f64>`, driven directly (never
 /// through `animate_field`/central ticking), the identical real
 /// precedent `VirtualListState::scroll_offset`'s own doc comment
@@ -400,8 +369,8 @@ impl TerminalState {
 /// one; `Animated<f64>` is used here purely for its own `.current`/
 /// `Interpolate` convenience, not because this value is ever eased.
 /// No `#[derive(Clone, Debug, PartialEq)]` -- `Animated<T>`
-/// implements none of those, the same real reason `NodeKind`/
-/// `IconState` already state for `Splitter`/`Icon`.
+/// implements none of those, the same real reason `NodeKind`'s own
+/// doc comment states.
 pub struct ScrollViewState {
     pub scroll: Animated<f64>,
     /// `false` (the default) scrolls vertically; `true` scrolls
@@ -419,10 +388,9 @@ pub struct ScrollViewState {
     /// anywhere along its own length must not snap it so that point
     /// jumps under the pointer, the identical real UX pyCopper's own
     /// design already chose and this ports verbatim. Lives on this
-    /// state (not `Tree` itself) the same way `CarouselState.drag_
-    /// last_x`/`drag_accum` already establish: kind-specific drag
-    /// anchor data belongs to the kind, `Tree.dragging` alone only
-    /// ever names *which* node is being dragged.
+    /// state (not `Tree` itself): kind-specific drag anchor data belongs
+    /// to the kind, `Tree.dragging` alone only ever names *which* node
+    /// is being dragged.
     pub thumb_drag_anchor: Option<(f64, f64)>,
     /// M95: the scrollbar thumb's color; `None` paints the default.
     pub scrollbar_fill: Option<Color>,
@@ -448,7 +416,7 @@ impl ScrollViewState {
     /// dragging (`Tree::grabs_scroll_view_thumb`/`update_scroll_view_
     /// thumb_drag`) so the two can never drift -- the identical real
     /// "one function, every real caller" discipline `VirtualListState::
-    /// offset_of`/`Tree::splitter_geometry` already establish.
+    /// offset_of` already establishes.
     /// `viewport_extent`/`content_extent` are the real, live measured
     /// sizes along this view's own scroll axis (`Tree::sync_scroll_
     /// view_layouts`'s own already-computed values, recomputed here
@@ -509,8 +477,8 @@ pub const SCROLLBAR_GRAB_SLOP: f64 = 6.0;
 ///
 /// M38 Phase 7 (§5, §8): no longer derives `Clone`/`Debug`/`PartialEq`
 /// -- `scroll_offset: Animated<f64>` implements none of those, the
-/// identical real reason `ScrollViewState`/`Splitter`/`Icon`'s own
-/// doc comments already state for their own `Animated<T>` fields.
+/// identical real reason `ScrollViewState`'s own doc comment already
+/// states for its own `Animated<T>` field.
 pub struct TextFieldState {
     pub content: String,
     pub font_family: String,
@@ -540,8 +508,7 @@ pub struct TextFieldState {
     /// "a preedit underline" needs; a real, stated simplification.
     pub preedit: Option<String>,
     /// M20 Phase 2 (§7.1, §7.3): the field's own real text/caret/
-    /// selection-highlight color -- `CheckboxState.mark_tint`'s own
-    /// real sibling, same reasoning. Defaults to real, byte-for-byte
+    /// selection-highlight color. Defaults to real, byte-for-byte
     /// the historical hardcoded `0x1C1B1F` `engine-render`'s own
     /// `TextField` paint used before this phase.
     pub text_tint: Animated<Color>,
@@ -715,7 +682,7 @@ impl TextFieldState {
 /// plus format/alpha-type/width/height), so storing it directly costs
 /// zero new dependency-graph edge here. Decoding an actual image file
 /// (the `image` crate, PNG/JPEG bytes -> raw RGBA8) happens in
-/// `engine-py::Window.add_image` -- the same real "resolved ahead of
+/// `engine-py` (an image node's `src`) -- the same real "resolved ahead of
 /// time, not computed live" split `NodeKind::Canvas`'s own module doc
 /// comment already established for its Python draw callback.
 #[derive(Clone, Debug, PartialEq)]
@@ -741,12 +708,9 @@ impl ImageState {
         }
     }
 
-    /// A 1x1 fully-transparent placeholder -- the same real "nothing to
-    /// show yet" image `Window.add_video`'s own synthetic default
-    /// already builds (`window_factory.rs`), factored out here so a
-    /// declarative `kind: Image` with no `src:` (`engine-spec::build`)
-    /// can express the identical shape without duplicating the literal
-    /// in a second crate.
+    /// A 1x1 fully-transparent placeholder -- the "nothing to show yet"
+    /// image an image node starts with before it has a `src` or
+    /// `rgba` frame.
     pub fn blank() -> Self {
         Self::new(peniko::ImageData {
             data: peniko::Blob::from(vec![0u8, 0, 0, 0]),
@@ -791,12 +755,8 @@ pub struct VirtualListState {
     /// paint-time position (`paint_node`), not their `layout_style`
     /// (their real taffy layout never changes; only where they're
     /// *drawn* does). Plain `Animated<f64>`, driven directly (like a
-    /// scrollbar being dragged, not eased toward a target) the same way
-    /// `SplitterState.position` already is -- confirmed via reading
-    /// `Tree::tick_all` directly that kind-specific `Animated<T>`
-    /// fields are never ticked centrally, only by their own dedicated
-    /// mechanism, so this follows that same real precedent rather than
-    /// inventing a new one.
+    /// scrollbar being dragged, not eased toward a target) -- never
+    /// ticked centrally, only by its own dedicated mechanism.
     pub scroll_offset: Animated<f64>,
     /// M12 Phase 1 (§11.7): real, resolved cumulative offsets for
     /// `Variable`-extent lists -- index `idx` maps to item `idx`'s own
@@ -917,12 +877,9 @@ pub enum ItemExtent {
 /// `engine-render`'s own text-shaping pipeline (`text.rs`) hardcoded
 /// `parley::Alignment::Start` unconditionally until this phase, a real,
 /// verified gap (confirmed by direct read, not assumed) that blocks any
-/// correctly-rendered centered label -- MD3's `Button` is the first real
-/// consumer (its label must sit centered in the button's own box), but
-/// this lives on `TextState` itself rather than as Button-specific
-/// machinery, the identical "universal capability, not component-
-/// specific" precedent `PaintProperties.border_color`/`border_width`
-/// already established this same phase.
+/// correctly-rendered centered label (a button's, say). It lives on
+/// `TextState` itself, a universal capability rather than
+/// component-specific machinery.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TextAlign {
     /// Left for LTR text, right for RTL -- byte-for-byte the same
@@ -936,9 +893,9 @@ pub enum TextAlign {
 }
 
 /// A text node's content and shaping inputs -- everything `parley` needs
-/// to shape a run, and nothing about how it got styled (that's
-/// `engine_md3`'s future job, not this crate's -- `engine-core` stays
-/// MD3-agnostic per §1 Locked Decisions). `font_family` names an
+/// to shape a run, and nothing about how it got styled (that's a
+/// framework's job, not this crate's -- `engine-core` has no design
+/// system, §1 Locked Decisions). `font_family` names an
 /// already-registered family (by exact name, matching the font's own
 /// name table) rather than carrying a weight/style axis: this step's two type
 /// roles are two distinct font files (Roboto Regular vs. Medium), not
@@ -1148,13 +1105,11 @@ pub struct PaintProperties {
     /// shape.
     pub transform: Animated<peniko::kurbo::Affine>,
     /// M30 Phase 1 (§5, §7): a real stroked border, painted inside the
-    /// node's own fill edge (never expanding its layout box) -- MD3's
-    /// Outlined button variant is the real consumer that surfaced this
-    /// gap (a 1dp outline with no fill), but the field is universal
-    /// like every other `PaintProperties` field, not `Button`-specific.
+    /// node's own fill edge (never expanding its layout box) -- the
+    /// Python API's `stroke_color`/`stroke_width`.
     /// `border_width.current <= 0.0` is a true no-op, the same
-    /// "off unless a caller opts in" contract `elevation`/`shape`
-    /// already establish.
+    /// "off unless a caller opts in" contract every other
+    /// `PaintProperties` field keeps.
     pub border_color: Animated<Color>,
     pub border_width: Animated<f64>,
     /// M30 Phase 1 Step 4 (§5, §7): a real per-corner radius override,
@@ -1162,32 +1117,22 @@ pub struct PaintProperties {
     /// own `RoundedRect::new` already accepts a 4-tuple of independent
     /// corner radii natively (confirmed via direct source read of the
     /// pinned `kurbo 0.13.1`, not assumed), so this is exposing an
-    /// existing real primitive, not inventing new geometry. `Segmented
-    /// Button`'s own real MD3 anatomy is the consumer that surfaced
-    /// the gap: a group's first/last segments are rounded only on
-    /// their outer edge, square on the edge touching the next
-    /// segment -- `corner_radius`'s own single scalar can't express
-    /// that. `None` (every existing node, unchanged) means "use the
-    /// uniform `corner_radius` scalar," the same true no-op contract
-    /// `border_width: 0.0` already establishes -- not `Animated`, a
-    /// deliberate, honest scope limit: nothing in this catalog yet
-    /// needs a *smooth transition* between two different corner-radii
-    /// shapes, only a static per-node choice made once at construction.
+    /// existing real primitive, not inventing new geometry -- a
+    /// segmented group's first/last segments, say, rounded only on
+    /// their outer edge, which `corner_radius`'s own single scalar
+    /// can't express. `None` (the default) means "use the uniform
+    /// `corner_radius` scalar," the same true no-op contract
+    /// `border_width: 0.0` already establishes.
     pub corner_radii_override: Option<Animated<CornerRadii>>,
-    /// M95: drop shadows (`Shadows`), independent of the legacy MD3
-    /// `elevation`, which keeps drawing its own until M99 removes it.
+    /// M95: drop shadows (`Shadows`).
     pub shadows: Animated<Shadows>,
     /// M96: the target API's `translate_x`/`translate_y`/`scale`/
-    /// `rotation_deg`, composed after the legacy `transform` above (which
-    /// keeps its top-left origin for canvas pan/zoom until M101 merges
-    /// the two). Read both through `local_transform`.
+    /// `rotation_deg`, composed after `transform` above (a plain
+    /// top-left-origin affine the Python API doesn't set). Read both
+    /// through `local_transform`.
     pub node_transform: NodeTransform,
     /// M32 Phase 3 (§5, §7, §11.7/§11.8): the real, general form of the
-    /// clip `VirtualList`/`Carousel` each already bake into their own
-    /// paint -- confirmed via direct read of `engine-render::paint_node`
-    /// before adding this that no other `NodeKind` clips its own
-    /// children at all, the exact gap this catalog's own "no `NodeKind`
-    /// besides `VirtualList` clips today" note names. `false` (every
+    /// clip `VirtualList` bakes into its own paint. `false` (every
     /// existing node, unchanged) is a true no-op, the same "off unless
     /// a caller opts in" contract every other additive field here
     /// already follows -- a child painted past this node's own box
@@ -1196,10 +1141,8 @@ pub struct PaintProperties {
     /// plain node into this does not give it a real scroll offset or
     /// wheel-input wiring of its own; content still simply extends
     /// past the box, just genuinely hidden there instead of visibly
-    /// spilling out. Not `Animated`, the identical deliberate choice
-    /// `corner_radii_override` already made just above: nothing in
-    /// this catalog needs a *smooth transition* into/out of clipping,
-    /// only a static per-node choice.
+    /// spilling out. Not `Animated`: nothing needs a *smooth
+    /// transition* into/out of clipping, only a static per-node choice.
     pub clip_children: bool,
 }
 
@@ -1277,19 +1220,12 @@ pub struct Node {
     /// label/actions) unless a caller opts a node in via
     /// `Tree::set_access`.
     pub access: crate::access::AccessNodeData,
-    /// M30 Phase 5 Step 1 (§5, §7): a real, confirmed gap this step's
-    /// own `Navigation Rail` surfaced -- `Tree::hit_test_at`'s own
-    /// "children checked first, no ancestor bubbling" contract (M30
-    /// Phase 1's own `NodeKind::Text`/`NodeKind::Icon` fix already
-    /// documents this) meant a decorative interior `Rect` (the active-
-    /// indicator pill behind a nav item's icon) permanently ate every
-    /// click meant for its own interactive parent, since a plain
-    /// `Rect` always independently claims a hit and nothing bubbles
-    /// back out. Text/Icon got a hardcoded per-`NodeKind` exemption;
-    /// a `Rect` genuinely can't (it's the real click target for
-    /// `Button`/`Card`/`Chip`/every other composite in this catalog),
-    /// so this generalizes the same real exemption into a purely
-    /// additive, opt-in per-node flag instead. `true` (every existing
+    /// M30 Phase 5 Step 1 (§5, §7): whether this node itself claims a
+    /// hit in `Tree::hit_test_at` -- `false` lets a decorative interior
+    /// `Rect` (an indicator pill behind an icon, say) pass the point
+    /// through to its parent. `Text` gets the same exemption
+    /// unconditionally; a `Rect` can't (it's often the real click
+    /// target), so this is an opt-in per-node flag. `true` (every existing
     /// node, via `Tree::insert`'s own single real construction site)
     /// is a true no-op -- only `Tree::set_hit_testable(id, false)`
     /// changes anything.

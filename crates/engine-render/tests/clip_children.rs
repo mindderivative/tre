@@ -1,9 +1,9 @@
 //! M32 Phase 3 (§5, §7, §11.7/§11.8): the standalone pixel-level proof
 //! that `PaintProperties.clip_children` genuinely clips an oversized
 //! child to its own parent's real box -- the real, general form of the
-//! clip `VirtualList`/`Carousel` each already have, proven the
-//! identical headless render-to-texture-then-readback way
-//! `virtual_list_scroll.rs` already proves theirs. Also proves the
+//! clip `VirtualList` already has, proven the identical headless
+//! render-to-texture-then-readback way `virtual_list_scroll.rs`
+//! already proves its own. Also proves the
 //! real, necessary negative: `clip_children: false` (every existing
 //! node, unchanged) must still let an oversized child paint past its
 //! own parent's box exactly as it always did -- a true no-op, not a

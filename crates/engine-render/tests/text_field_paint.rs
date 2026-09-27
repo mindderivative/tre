@@ -2,7 +2,7 @@
 //! TextField` genuinely paints its own real box fill, real glyphs, and
 //! a real caret gated on the `Tree`'s own live focused node -- not just
 //! that the match arm compiles. Same headless render-to-texture-then-
-//! readback discipline as `checkbox_paint.rs`/`slider_paint.rs`.
+//! readback discipline as `border_paint.rs`.
 //!
 //! Two claims, kept deliberately separate:
 //!
@@ -328,7 +328,7 @@ fn a_cleared_preedit_i_e_an_empty_string_paints_no_underline_same_as_none() {
 /// stub. No GPU/pixel readback needed at all (unlike every test above):
 /// `TextRenderer::new()` is pure CPU-side font/layout setup, and `hit_
 /// test_position` returns a plain `usize`, no `Scene`/`Resources`
-/// involved -- the same reason `checkbox_paint.rs`-style pixel tests
+/// involved -- the same reason `border_paint.rs`-style pixel tests
 /// exist for *painting* claims but a plain unit test suffices here.
 #[test]
 fn hit_test_position_at_the_very_start_of_the_field_returns_byte_offset_zero() {

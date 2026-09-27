@@ -5,8 +5,7 @@
 //! code. Same headless render-to-texture-then-readback discipline as
 //! every other pixel-level proof in this crate.
 //!
-//! Two claims, kept deliberately separate, matching `splitter_drag_
-//! dispatch.rs`'s own before/mid-flight shape:
+//! Two claims, kept deliberately separate (before and mid-flight):
 //!
 //! 1. Before any transform is applied (`Animated::new`'s own identity
 //!    default), the child rect renders at its plain taffy layout

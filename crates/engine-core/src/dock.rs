@@ -12,12 +12,11 @@
 //! that nothing needs them before leaving them off).
 //!
 //! **What actually makes a `DockLayout` do anything lives on `Tree`, not
-//! here** -- `Tree::apply_active_tab` (tabbed grouping) and Stage A's
-//! own `Tree::set_splitter_position` (zone resizing, reused verbatim,
-//! not a second mechanism, per §11.4's own "docking is a *consumer* of
-//! splitters" text) -- matching every other `NodeKind` payload's "the
-//! struct is inert, a `Tree` method is what makes it do anything" shape
-//! this crate already uses throughout.
+//! here** -- `Tree::apply_active_tab` (tabbed grouping) -- matching
+//! every other `NodeKind` payload's "the struct is inert, a `Tree`
+//! method is what makes it do anything" shape this crate already uses
+//! throughout. Resizing a zone is the framework's job (M99 removed the
+//! engine's splitter), on the zone's container like any other node.
 
 use smallvec::SmallVec;
 
@@ -50,13 +49,8 @@ impl DockSide {
 /// §11.4's own struct sketch, unchanged. `panels` are tabbed together
 /// when more than one; `active_tab` indexes into `panels` (which one is
 /// currently attached to this zone's container, via `Tree::
-/// apply_active_tab`); `size` is this zone's own extent, kept in sync
-/// with whatever the shared splitter mechanism (Stage A) actually
-/// applies to the zone's container -- syncing that is the caller's own
-/// small helper, not something the splitter mechanism reaches in and
-/// mutates itself (keeping "one generic resize mechanism, independent
-/// call sites" a real, decoupled fact, not just an architectural
-/// framing).
+/// apply_active_tab`); `size` is this zone's own extent, as given when
+/// the zone was registered.
 pub struct DockZone {
     pub panels: SmallVec<[NodeId; 4]>,
     pub active_tab: usize,

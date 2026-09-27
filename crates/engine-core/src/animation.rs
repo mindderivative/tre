@@ -6,10 +6,9 @@
 
 use std::time::{Duration, Instant};
 
-/// Implemented by every type an `Animated<T>` can wrap -- `f64` and
-/// `peniko::Color` for now (this step's own scope). `kurbo::Affine` and
-/// `ShapeKey` (§5, §7.4) land whenever a later step first animates a
-/// transform or a shape morph.
+/// Implemented by every type an `Animated<T>` can wrap -- `f64`,
+/// `peniko::Color`, and `kurbo::Affine` here, plus `CornerRadii`,
+/// `Shadow`/`Shadows` (`node.rs`), and `PathData` (`path.rs`).
 pub trait Interpolate {
     fn interpolate(&self, other: &Self, t: f64) -> Self;
 }
@@ -277,8 +276,8 @@ mod tests {
     }
 
     /// M7 Phase 1 (§7.5): every curve -- here the MD3 values, as the
-    /// beziers a framework passes -- must start at `y=0` and end at `y=1`, the same boundary condition every CSS/MD3 easing
-    /// curve is defined to satisfy.
+    /// beziers a framework passes -- must start at `y=0` and end at
+    /// `y=1`, the boundary condition every CSS easing curve satisfies.
     #[test]
     fn every_motion_curve_satisfies_its_own_boundary_conditions() {
         for curve in [

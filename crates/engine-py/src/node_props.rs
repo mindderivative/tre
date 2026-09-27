@@ -747,8 +747,7 @@ impl Node {
 
     /// Reads one property: any `set` property, `focused`, or -- for the
     /// animatable numeric properties -- its current, possibly
-    /// mid-animation value. On a built-in slider or progress indicator,
-    /// `value` stays that widget's numeric value.
+    /// mid-animation value. `value` is the accessibility value.
     fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let value = {
             let tree = self.tree.borrow();
@@ -962,8 +961,8 @@ impl Node {
         }
     }
 
-    /// Moves keyboard focus to this node, firing `unfocus` and `focus` (and
-    /// the legacy focus handlers) as any focus change does.
+    /// Moves keyboard focus to this node, firing `unfocus` and `focus` as
+    /// any focus change does.
     fn focus(&self, py: Python<'_>) {
         let transition = self.tree.borrow_mut().set_focus_to(self.id);
         if let Some((old, new)) = transition {

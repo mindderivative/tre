@@ -11,7 +11,9 @@
 2. Phase 1 Step 1: ten guide pages, a switch walkthrough with
    `examples/switch.py`, the overview, Getting Started, and API reference
    rewritten; `_core.pyi` docstrings fixed; anchors validated.
+3. Phase 1 Step 2: ARCHITECTURE.md, README, and docs/architecture.md
+   rewritten; stale comments in 40 Rust files corrected.
 
 ## Status
 
-**Started (2026-09-27).** Phase 1 Step 2 next.
+**Started (2026-09-27).** Phase 2 Step 1 next.

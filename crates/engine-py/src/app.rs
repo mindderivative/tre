@@ -60,11 +60,11 @@ pub struct AppState {
 /// need to touch a Python object -- they only ever see plain Rust data
 /// they already own, the same "only thin data crosses into winit's own
 /// callback world" discipline `engine-platform`'s own `PlatformEvent`
-/// already follows. `handlers` is the one exception: `Node.
-/// set_on_click`'s own real `Py<PyAny>` callbacks (M4 Phase 1 step 3)
-/// have to be looked up by the `on_input` closure below on a real
-/// activation, so this is the one Python-object-bearing field extracted
-/// here rather than converted to plain data.
+/// already follows. `handlers` is the one exception: `node.on(...)`
+/// listeners' real `Py<PyAny>` callbacks have to be looked up by the
+/// `on_input` closure below on real input, so this is the one
+/// Python-object-bearing field extracted here rather than converted to
+/// plain data.
 struct WindowSetup {
     tree: Rc<RefCell<Tree>>,
     root: NodeId,
@@ -76,14 +76,9 @@ struct WindowSetup {
     width: SharedSize,
     height: SharedSize,
     handlers: HandlerMap,
-    /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, plain
-    /// data (no `Py<PyAny>`), extracted the same way `handlers` is.
-    /// M4 Phase 9 (§11.4): real docking state, extracted the same way.
+    /// M4 Phase 9 (§11.4): real docking state, plain data (no
+    /// `Py<PyAny>`), extracted the same way `handlers` is.
     dock: SharedDockState,
-    /// M7 Phase 3 (§7.1): the window's own theme, extracted the same
-    /// way -- the real live-switch path (`on_input`'s new `ThemeChanged`
-    /// arm, below) needs to mutate it, so it stays a shared handle,
-    /// never copied to a plain snapshot.
     /// M9 Phase 2 (§5): the window's own `on_complete` registry,
     /// extracted the same way -- the real `on_frame` closure needs to
     /// mutate it (removing a callback the instant it's invoked).
@@ -116,8 +111,7 @@ fn text_field_hit_offset(
     // M38 Phase 7 (§5, §8): no longer clones `state` out of the borrow
     // -- `TextFieldState` stopped deriving `Clone` once it gained a
     // real `Animated<f64>` field (`scroll_offset`), the identical real
-    // reason `ScrollViewState`/`Splitter`/`Icon` never derived it
-    // either. Holds `tree.borrow()` for this whole function's body
+    // reason `ScrollViewState` never derived it either. Holds `tree.borrow()` for this whole function's body
     // instead, released when it returns, before either real caller's
     // own subsequent `borrow_mut()`.
     let tree = tree.borrow();
@@ -172,7 +166,7 @@ struct GpuState {
     frame_renderer: FrameRenderer,
     text_renderer: TextRenderer,
     /// M34 Phase 1 (§5, §8): the real, per-node tessellated-path cache
-    /// for `Rect`/`Splitter`'s own fill/border paths -- the identical
+    /// for a `Rect`'s own fill/border paths -- the identical
     /// "long-lived, caller-owned, not rebuilt per call" shape `text_
     /// renderer` already has (`GeometryCache`'s own doc comment).
     geometry_cache: GeometryCache,
@@ -374,7 +368,7 @@ struct WindowRuntime {
     /// press-and-drag is currently extending a selection in -- plain,
     /// not `RefCell`-wrapped, since only `on_input`'s own closure ever
     /// reads or writes it. Lives here rather than `engine-core`'s
-    /// existing `Tree.dragging` (Splitter/Slider drags): that
+    /// existing `Tree.dragging` (scrollbar-thumb drags): that
     /// mechanism's own `update_drag` is pure geometry with zero
     /// rendering knowledge, but a real drag-selection needs the exact
     /// same per-glyph hit-test Phase 1 already established only
@@ -732,17 +726,12 @@ impl App {
                 let runtime = runtimes
                     .get(&window_id)
                     .expect("build_access_update requested for a window with no runtime state");
-                // M42 Phase 2: reads through `active` directly rather
-                // than `runtime.tree`/`.root` -- this closure only ever
-                // holds a shared `&runtime` (via `.borrow()`, not
-                // `.borrow_mut()`), so it can't refresh `runtime`'s own
-                // plain fields in place the way `frame`/`input` do.
                 runtime.tree.borrow().build_access_update(runtime.root)
             },
             // M4 Phase 1 step 3: the real "meaning-dependent" half
             // `Tree::dispatch` leaves for its own caller (§2 Design
             // Principle 6) -- every mechanical consequence (hover, focus
-            // movement, ripple-spawn-on-press) already happened inside
+            // movement) already happened inside
             // `dispatch` itself; this closure hands each input to
             // `dispatch::process_input`, which delivers the listeners.
             move |window_id, event| {
@@ -859,7 +848,7 @@ impl App {
                         // half of click-to-position. Lives here, not
                         // inside `Tree::dispatch`'s own existing
                         // `self.dragging`/`update_drag` mechanism
-                        // (Splitter/Slider) -- that mechanism is pure
+                        // (scrollbar thumbs) -- that mechanism is pure
                         // geometry with zero rendering knowledge, but
                         // this needs the identical real per-glyph
                         // hit-test `PointerPressed` above already uses,
@@ -920,7 +909,7 @@ impl App {
                         // hitting the original node" real mouse-up
                         // semantics `Tree::dispatch`'s own `self.
                         // dragging = None` already established for
-                        // Splitter/Slider (M4 Phase 3).
+                        // its own drags (M4 Phase 3).
                         runtime.text_drag = None;
                         // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
                         // real `Terminal` sibling -- the real selection
@@ -956,11 +945,9 @@ impl App {
                     // `runtime.width`/`height` are now the identical
                     // real, shared `Rc<Cell<u32>>` `PyWindow`'s own
                     // fields are (`window::SharedSize`), so this `.set()`
-                    // call is immediately visible there too -- an app
-                    // that calls e.g. `add_dialog` from a live click
-                    // handler after a real resize now sizes that
-                    // dialog's own full-window scrim against the
-                    // window's real *current* dimensions, not its
+                    // call is immediately visible there too -- a
+                    // listener reading the window's size after a real
+                    // resize sees its real *current* dimensions, not its
                     // construction-time ones.
                     //
                     // M40 Phase 1 (§4, §6, §9): no longer calls `runtime.
@@ -1008,8 +995,8 @@ impl App {
             // M4 Phase 2 (§10): a real screen reader naming a node to
             // activate or focus directly, routed through the exact same
             // `run_dispatch_outcome`/`handlers` path a mouse click or
-            // `Window.click()` already uses -- one click-handling
-            // mechanism, reached three ways now, not three separate ones.
+            // `window.simulate("click", ...)` already uses -- one
+            // click-handling mechanism, not three separate ones.
             move |window_id, request| {
                 let runtimes = runtimes_for_access_action.borrow();
                 let Some(runtime) = runtimes.get(&window_id) else {
@@ -1158,10 +1145,10 @@ impl App {
                         token: index as u64,
                     });
                     // M31 Phase 6 (§5, §6): every real `Terminal` this
-                    // window already has (a real `add_terminal` call
-                    // always happens before `App.run()`, so every real
-                    // session already exists by the time `setup` runs
-                    // here) gets a real clone of this run's own fresh
+                    // window already has (a real
+                    // `window.create("terminal", ...)` call always happens
+                    // before `App.run()`, so every real session already
+                    // exists by the time `setup` runs here) gets a real clone of this run's own fresh
                     // waker -- the one real place able to reach it at
                     // all, closing the real, stated v1 cost M30 Phase 9
                     // Step 4 left open.
@@ -1259,12 +1246,9 @@ mod tests {
     /// environment -- manually verified once via a throwaway probe
     /// before committing to the dependency at all (see `PLAN.md`/
     /// `LOG.md`), kept here as a real, automated check rather than
-    /// trusting that one-off result forever. No real keyboard event can
-    /// be synthesized from a test (the real Ctrl+C/X/V path only ever
-    /// originates from an actual OS-level `winit` event, confirmed in
-    /// `Window.copy`/`cut`/`paste`'s own doc comments) -- this instead
-    /// proves the one real, testable half: a genuine set/get round trip
-    /// against whatever clipboard mechanism is actually reachable here.
+    /// trusting that one-off result forever. This proves the OS half
+    /// on its own: a genuine set/get round trip against whatever
+    /// clipboard mechanism is actually reachable here.
     /// Treats "no clipboard service reachable" as a real, honest skip,
     /// not a failure -- the same "genuinely different environment"
     /// tolerance this codebase already applies to GPU/display absence

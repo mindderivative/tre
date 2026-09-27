@@ -4,8 +4,8 @@
 //! runs. Deliberately holds no
 //! `Py<PyAny>` -- every field is plain Rust data (`engine_core::
 //! DrawCommand`/`CustomHitTest`), so this pyclass needs no
-//! `__traverse__`/`__clear__` at all, the same reasoning `context_menus`/
-//! `dock` already established in `window.rs`. See `engine_core::canvas`'s
+//! `__traverse__`/`__clear__` at all, the same reasoning `dock` already
+//! established in `window.rs`. See `engine_core::canvas`'s
 //! own module doc comment for why the callback that populates this
 //! never reaches `engine-core`/`engine-render`'s hot paths.
 

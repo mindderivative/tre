@@ -62,10 +62,9 @@ pub struct Tree {
     /// not one per button -- this minimal mouse-only model never needs
     /// to track two buttons held down at once.
     pressed: Option<(PointerButton, NodeId)>,
-    /// M4 Phase 3 (§11.5), widened M14 Phase 2 (§7.3): the node
-    /// currently being pointer-dragged, if any -- a `NodeKind::
-    /// Splitter` or (M14 Phase 2) a `NodeKind::Slider`, set on a
-    /// primary-button `PointerPressed` that hits one, read by every
+    /// M4 Phase 3 (§11.5): the node currently being pointer-dragged, if
+    /// any -- a `ScrollView`/`VirtualList` whose scrollbar thumb a
+    /// primary-button `PointerPressed` grabbed, read by every
     /// subsequent `PointerMoved` until a primary-button `PointerRelease
     /// d` clears it (wherever that happens, not conditioned on still
     /// hitting the node -- a real mouse-up always ends a drag, matching
@@ -96,8 +95,8 @@ pub struct Tree {
     /// M96: detached subtree roots that are freed once nothing outside the
     /// tree references anything in their subtree (`detach_collectible`,
     /// `collect_unreferenced`). A root leaves the set when it's attached
-    /// again. Content detached any other way (legacy context menus,
-    /// inactive dock panels) is never collected.
+    /// again. Content detached any other way (a plain `detach`, inactive
+    /// dock panels) is never collected.
     collectible: HashSet<NodeId>,
 }
 
@@ -244,11 +243,9 @@ impl Tree {
     }
 
     /// M30 Phase 5 Step 1 (§5, §7): opts `id` out of independently
-    /// claiming a hit in `hit_test_at` -- `Node.hit_testable`'s own
-    /// doc comment has the full real finding this generalizes
-    /// (`NodeKind::Text`/`NodeKind::Icon`'s own hardcoded exemption,
-    /// widened into an opt-in flag for a decorative `Rect` layer like
-    /// `Navigation Rail`'s own active-indicator pill). A no-op call
+    /// claiming a hit in `hit_test_at` -- see `Node::hit_testable`'s own
+    /// doc comment (`NodeKind::Text`'s own hardcoded exemption, widened
+    /// into an opt-in flag for a decorative `Rect` layer). A no-op call
     /// (`id` already at `hit_testable`) is harmless; panics if `id` is
     /// stale/foreign to this `Tree`, the same real contract every
     /// other single-node setter here already has.
@@ -313,7 +310,7 @@ impl Tree {
 
     /// M6 Phase 1 (§8): the checked counterpart to `add_child`, for the
     /// one caller that can't structurally guarantee it won't form a
-    /// cycle -- Python's own `Node.add_child`. Every existing internal
+    /// cycle -- Python's own `node.add_child`. Every existing internal
     /// caller of `add_child` already knows it can't (attaching a
     /// freshly-inserted node, or a reparent already proven disjoint),
     /// and keeps calling the cheaper, infallible `add_child` directly;
@@ -465,9 +462,8 @@ impl Tree {
         self.nodes.get_mut(id)
     }
 
-    /// Recursively removes `id` and its whole subtree (§14 step 12,
-    /// §16.4's own reconciliation need: a widget whose `id` disappeared
-    /// from a reloaded view must actually leave the tree, not just its
+    /// Recursively removes `id` and its whole subtree (§14 step 12: a
+    /// removed node must take its descendants with it, not just its
     /// root node). Detaches `id` from its parent's `children` list
     /// first, if it has one -- an orphaned root removal (the subtree's
     /// own top node had no parent) is also valid, matching `insert`'s
@@ -586,8 +582,8 @@ impl Tree {
     /// M36 Phase 1 (§5, §7, §11.7): the real, general scrollable-
     /// viewport mechanism, grounded directly in the sibling `pyCopper`
     /// project's own `ScrollViewElement.perform_layout`/`child_origin`.
-    /// Mirrors `sync_carousel_layouts`'s own exact shape -- and, unlike
-    /// `VirtualList`'s own separate paint-time-only translate, bakes
+    /// Unlike `VirtualList`'s own separate paint-time-only translate
+    /// (before M37), bakes
     /// the one real child's own current scroll-shifted position
     /// directly into `layout_style` every frame, so `Tree::hit_test_at`
     /// (which reads `self.layout(child)`, not a second paint-only
@@ -672,13 +668,13 @@ impl Tree {
     /// `engine-render::paint_node` translate, never reflected back
     /// into `layout_style` -- so a real point-based hit-test at a
     /// materialized item's own genuine post-scroll screen position
-    /// resolved to the *wrong* item, silently never caught because
-    /// `Window.click(node)`'s own synthetic helper computed its target
-    /// from the identical stale, pre-scroll `self.layout(node)` `Tree::
+    /// resolved to the *wrong* item, silently never caught because the
+    /// synthetic click helper of the time computed its target from the
+    /// identical stale, pre-scroll `self.layout(node)` `Tree::
     /// hit_test_at` itself reads, so the two coincidentally agreed
     /// without either reflecting the real, live, post-scroll visual
-    /// position. Mirrors `sync_carousel_layouts`/`sync_scroll_view_
-    /// layouts`'s own exact bug-free shape: bakes each real
+    /// position. Mirrors `sync_scroll_view_layouts`'s own exact
+    /// bug-free shape: bakes each real
     /// materialized child's own current scroll-adjusted position
     /// directly into `layout_style.inset.top` every frame, which both
     /// `engine-render::paint_node` and `Tree::hit_test_at` now read
@@ -983,15 +979,8 @@ impl Tree {
     /// `hit_test_at` already compose (M5 Phase 1/2), not just a pure
     /// accumulated translation. §14 step 13's own real need: `open_overlay`
     /// positions an overlay relative to its anchor's *absolute* bounds,
-    /// not the anchor's own parent-relative `Layout::location` --
-    /// `splitter_geometry`'s drag math and every `engine-py` synthetic-
-    /// point entry point (`Window`/`View`'s `.click()`/`.hover()`/
-    /// `.right_click()`) have the exact same real need, confirmed via
-    /// grep as this method's only real callers (a small, fully
-    /// enumerated set, unlike `add_child`'s ~80 -- every one of them
-    /// wants the transform-aware answer, so this rewrites the method in
-    /// place rather than adding a parallel checked sibling the way M6
-    /// Phase 1/M5 Phase 2 did for `add_child`/`hit_test`).
+    /// not the anchor's own parent-relative `Layout::location` -- and
+    /// every caller wants the transform-aware answer.
     ///
     /// An `Affine` only composes correctly root-to-node, the opposite
     /// order of the old bottom-up accumulation -- so this collects the
@@ -1144,28 +1133,16 @@ impl Tree {
     }
 
     /// Closes an overlay opened via `open_overlay`: detaches its whole
-    /// subtree from its own parent (the same real `Tree::detach`
-    /// mechanism `Node.set_context_menu` already uses to keep content
+    /// subtree from its own parent (`Tree::detach`, which keeps content
     /// "alive, parentless, ready for `add_child` elsewhere later") and
     /// drops its metadata. Returns `true` if `id` was a real,
     /// currently-open overlay.
     ///
-    /// **M10 Phase 1 (§11.3): real finding, corrected before this
-    /// phase's own dismissal wiring shipped, not after.** Originally
-    /// used `Tree::remove` (full, irreversible destruction) -- this
-    /// genuinely broke the single most realistic real use of dismissal:
-    /// right-click a context menu open, dismiss it (outside click or
-    /// Escape), right-click the *same* anchor again. `Node.set_
-    /// context_menu` registers one specific, app-owned content `NodeId`
-    /// meant to be reopened repeatedly, not recreated per click --
-    /// destroying it on the very first dismissal left `dispatch::
-    /// open_context_menu`'s own stored `content` id dangling, panicking
-    /// the next real reopen attempt (`open_overlay`'s own `self.get(
-    /// content).expect(...)`). Detach, not destroy, is the same
-    /// contract `set_context_menu` already committed to for exactly
-    /// this reason -- a caller that genuinely wants an overlay's own
-    /// content destroyed can still call `Tree::remove` on it directly
-    /// afterward.
+    /// **M10 Phase 1 (§11.3):** detach, not destroy -- the same content
+    /// (a context menu, say) is meant to be reopened repeatedly, not
+    /// recreated per open. A caller that genuinely wants an overlay's
+    /// own content destroyed can still call `Tree::remove` on it
+    /// directly afterward.
     pub fn close_overlay(&mut self, id: NodeId) -> bool {
         self.dirty = true;
         let Some(index) = self.overlays.iter().position(|(content, _)| *content == id) else {
@@ -1207,11 +1184,10 @@ impl Tree {
     /// anything was actually dismissed, so `dispatch`'s own
     /// `PointerPressed` arm knows whether to consume that press.
     fn dismiss_overlays_outside(&mut self, point: Point) -> bool {
-        // M30 Phase 8 Step 6 (§11.3): a real, confirmed bug this step's
-        // own `Main Menu` submenus found live, not assumed in advance --
-        // a submenu opened *inside* a real parent menu (`open_menu`
-        // with a menu-item `Node` as its own anchor, exactly what this
-        // step's own real submenu design already does) genuinely sits
+        // M30 Phase 8 Step 6 (§11.3): a real, confirmed bug submenus
+        // found live, not assumed in advance -- a submenu opened
+        // *inside* a real parent menu (with a menu-item `Node` as its
+        // own anchor) genuinely sits
         // outside the parent menu's own bounds (`open_overlay` always
         // positions content anchor-relative-below, so a submenu grows
         // past whatever real vertical space the parent menu's own
@@ -1224,10 +1200,9 @@ impl Tree {
         // currently-open overlay is never "outside" for the purposes
         // of dismissing a *different* overlay -- the user is still
         // interacting with the real overlay system as a whole. A true
-        // no-op for the single-overlay case every existing real caller
-        // (`Menu`/`Tooltip`/`Search View`/`Popover`) already exercises:
-        // with only one overlay open, "inside any overlay" and "inside
-        // this overlay" are the identical real condition.
+        // no-op for the single-overlay case: with only one overlay open,
+        // "inside any overlay" and "inside this overlay" are the
+        // identical real condition.
         let inside_any_overlay = self
             .overlays
             .iter()
@@ -1538,9 +1513,8 @@ impl Tree {
     /// is needed for "recycling" beyond this ordinary remove+insert, per
     /// §11.7's own text.
     ///
-    /// Panics if `list` isn't a `NodeKind::VirtualList`, the same
-    /// "internal bookkeeping bug, not a runtime condition" reasoning
-    /// `set_splitter_position` already uses for a malformed call.
+    /// Panics if `list` isn't a `NodeKind::VirtualList` -- an internal
+    /// bookkeeping bug, not a runtime condition.
     pub fn set_virtual_list_window(
         &mut self,
         list: NodeId,
@@ -1614,11 +1588,9 @@ impl Tree {
     /// A positive `delta_y` increases the offset (content moves up,
     /// later items come into view) -- this crate's own chosen, stated
     /// convention (`PLAN.md`), not one `winit`'s own docs pin down.
-    /// Exposed as its own real method, the same "a direct method
-    /// `dispatch` reuses internally" shape `set_splitter_position`/
-    /// `spawn_ripple` already use -- panics if `id` isn't a real
-    /// `NodeKind::VirtualList` in this `Tree`, the same "internal bug,
-    /// not a runtime condition" contract those methods use too.
+    /// Exposed as its own real method `dispatch` reuses internally --
+    /// panics if `id` isn't a real `NodeKind::VirtualList` in this
+    /// `Tree` (an internal bug, not a runtime condition).
     pub fn scroll_virtual_list_by(&mut self, id: NodeId, delta_y: f64) {
         self.dirty = true;
         let node = self
@@ -1757,11 +1729,6 @@ impl Tree {
             if node.paint.tick(now, &mut completed) {
                 any_active = true;
             }
-            // M35 Phase 2 (§5, §8): `Icon.rotation`'s own real central-
-            // ticking need, mirrored a fourth time -- `Split Button`'s
-            // own real "menu icon rotates inwards 180°" need. M92: its
-            // `tint` too. Both ticked unconditionally (no short-circuit),
-            // so neither animation stalls while the other runs.
             // M95: a path's data (morphing) and stroke trim.
             if let NodeKind::Path(state) = &mut node.kind
                 && state.tick(now, &mut completed)
@@ -1805,9 +1772,8 @@ impl Tree {
     /// M5 Phase 3 (§11.10, §11.11): replaces a `NodeKind::Canvas`
     /// node's entire real content -- both what `paint_node` draws and
     /// what `hit_test_at` tests against. The one, ordinary (non-
-    /// callback) `Tree` mutation `engine-py::Window.redraw_canvas`
-    /// calls after invoking the app's Python draw callback exactly
-    /// once and collecting its result -- see `canvas.rs`'s own module
+    /// callback) `Tree` mutation `engine-py` makes after invoking the
+    /// app's Python `draw` callback and collecting its result -- see `canvas.rs`'s own module
     /// doc comment for why the callback itself never reaches this far.
     /// Returns `None` if `id` doesn't exist or isn't a `Canvas`.
     pub fn set_canvas_content(
@@ -1857,10 +1823,8 @@ impl Tree {
     /// own_transform` product `engine-render::paint_node` composes
     /// during paint -- if this formula and that one ever diverge,
     /// hit-testing and rendering will disagree about where a node is.
-    /// Deliberately does NOT reuse `absolute_position` (pure
-    /// translation, used by overlay placement/splitter-drag geometry/
-    /// several `engine-py` synthetic-point entry points -- all
-    /// explicitly out of this phase's scope, unchanged).
+    /// (`absolute_position` composes the same product, via
+    /// `composed_transform`.)
     ///
     /// **Since M5 Phase 3:** a `NodeKind::Canvas` with a `CustomHitTest`
     /// set (`Tree::set_canvas_content`) overrides the rect test below
@@ -1918,10 +1882,10 @@ impl Tree {
         // transform (M5 Phase 1).
         let local_point = composed.inverse() * point;
 
-        // M30 Phase 5 Step 1 (§5, §7): `Node.hit_testable`'s own real
+        // M30 Phase 5 Step 1 (§5, §7): `Node::hit_testable`'s own real
         // opt-out, checked before the per-`NodeKind` match below --
         // `false` short-circuits straight to "no hit" here exactly the
-        // way `NodeKind::Text`/`NodeKind::Icon` already do unconditionally,
+        // way `NodeKind::Text` already does unconditionally,
         // generalized to any node a caller has explicitly opted out
         // (children were already checked above, so this only ever
         // affects whether *this* node itself claims the point).
@@ -1942,31 +1906,13 @@ impl Tree {
                     }
                     None => rect_contains(layout, local_point),
                 },
-                // M30 Phase 1 (§5, §7): a real, confirmed bug this phase's
-                // own `Button` surfaced -- a bare `Text` label used to claim
-                // any click landing on its own box, even when it's purely
-                // decorative content inside a clickable parent (`Button`'s
-                // centered label, sized to fill the container's inner
-                // content width, sat directly over the container's own
-                // registered click handler and ate every click meant for
-                // it; `test_button.py`'s own real click-dispatch test
-                // caught this, not inferred). No child recursion loop
-                // anywhere in this codebase bubbles a hit up to an
-                // ancestor -- `dispatch` only ever looks at the exact node
-                // `hit_test` returns -- so a `Text` child silently owning
-                // the hit was a real, permanent dead end for its parent's
-                // handler, not a one-frame quirk. A bare label never has a
-                // legitimate independent reason to be its own click
-                // target (confirmed: no existing example or test anywhere
-                // registers `set_on_click`/`enable_interaction` directly
-                // on a plain `add_text` node) -- `TextField` is unaffected,
-                // a distinct `NodeKind` with its own real click-to-focus
-                // need. A future standalone clickable label (MD3's own
-                // `Link`, this catalog's own Phase 8 scope) gets its own
-                // dedicated `NodeKind` when that phase investigates it,
-                // the same "each interactive component is its own real
-                // `NodeKind`" precedent `Checkbox`/`Slider`/`TextField`
-                // already establish, not a handler bolted onto bare `Text`.
+                // M30 Phase 1 (§5, §7): a bare `Text` label never claims a
+                // hit itself -- it's decorative content inside a clickable
+                // parent (a button's centered label, sized to fill the
+                // button's box, would otherwise sit over the parent and
+                // take its clicks as `hit_test`'s target). `TextField` is
+                // unaffected, a distinct `NodeKind` with its own real
+                // click-to-focus need.
                 NodeKind::Text(_) => false,
                 _ => rect_contains(layout, local_point),
             }
@@ -1976,19 +1922,13 @@ impl Tree {
 
     /// The concrete fulfillment of §7.3's own text: "hover needs no new
     /// dispatch mechanism -- it falls out of hit-testing, run every
-    /// pointer-move... entirely inside `engine-core`." Only animates a
-    /// node that already opted into `InteractionState` (Design
-    /// Principle 6: "only a node that opts in pays the cost") -- unlike
-    /// `interaction_mut`, this never lazily creates one just because a
-    /// node happened to be hovered. `hover_opacity`/`duration` are
-    /// caller-supplied, not hardcoded: `engine-core` stays MD3-agnostic
-    /// (§1 Locked Decisions) -- the real MD3 hover value is
-    /// `engine-md3`'s to supply, the same generic/preset split
-    /// `MotionCurve`/`engine_md3::motion::STANDARD` already uses.
+    /// pointer-move... entirely inside `engine-core`." Hover draws
+    /// nothing itself -- a framework styles it from `pointer_enter`/
+    /// `pointer_leave` listeners.
     ///
     /// Returns the newly-hovered node (`None` if the pointer left every
     /// hit-testable node). A repeated call with the same result is a
-    /// no-op -- it doesn't retrigger the same animation every frame.
+    /// no-op.
     pub fn update_hover(&mut self, root: NodeId, point: Point) -> Option<NodeId> {
         let hit = self.hit_test_input(root, point);
         self.set_hovered(hit)
@@ -2007,17 +1947,7 @@ impl Tree {
     }
 
     /// M38 Phase 5 (§5, §7): the single real chokepoint every real
-    /// `self.pressed` mutation now goes through -- mirrors `update_
-    /// hover`'s own real shape-retarget shape just above, keyed on
-    /// `pressed` instead of `hovered` and `press_interactive_shape`
-    /// instead of `interactive_shape`: the node losing press animates
-    /// `shape` back to relaxed, the one gaining it animates toward
-    /// tightened. Compares by `NodeId` alone (not the full `(button,
-    /// node)` pair) -- a same-node press with a *different* button
-    /// (a real, if rare, case: e.g. a right-click landing while a
-    /// left-click is somehow still recorded) is not a real visual
-    /// press *transition* for this node, so it must not needlessly
-    /// restart the shape animation.
+    /// `self.pressed` mutation goes through.
     fn set_pressed(&mut self, new: Option<(PointerButton, NodeId)>) {
         let old = self.pressed;
         if old.map(|(_, id)| id) == new.map(|(_, id)| id) {
@@ -2028,12 +1958,8 @@ impl Tree {
     }
 
     /// §10's own minimal keyboard focus model: Tab/Shift-Tab moves
-    /// `focused` in tree order, wrapping at both ends. "Interactive"
-    /// means `access.actions` is non-empty -- the real, already-existing
-    /// signal (M3 step 7's own button test sets `Action::Click`), not a
-    /// new field manufactured for this step. Animates `focus_ring` the
-    /// same opt-in-only way `update_hover` animates `hover_opacity`, for
-    /// the same Design Principle 6 reason.
+    /// `focused` in tree order, wrapping at both ends, over the nodes in
+    /// the Tab order (`AccessNodeData::in_tab_order`).
     ///
     /// M55: returns the real `(old, new)` transition, `Some` only on a
     /// genuine change -- `Tree::dispatch`'s own `KeyPressed`/`Key::Tab`
@@ -2136,11 +2062,9 @@ impl Tree {
     }
 
     /// M15 Phase 2 (§8, §10): real keyboard-driven `TextField` editing
-    /// -- the `Tree`'s own real mutator (unlike `CheckboxState.
-    /// checked`, a real keystroke is mechanical, not app-defined
-    /// meaning, so `engine-core` is the one real owner here, mirroring
-    /// `set_slider_position`'s own "engine-core owns the real
-    /// mutation" shape). `content`/`cursor` stay on real UTF-8 char
+    /// -- the `Tree`'s own real mutator (a real keystroke is
+    /// mechanical, not app-defined meaning, so `engine-core` is the one
+    /// real owner here). `content`/`cursor` stay on real UTF-8 char
     /// boundaries throughout via `char_indices` -- grapheme-cluster
     /// and BiDi-visual-order movement are `parley::editing::Selection`
     /// 's own richer job, deliberately not reused here (`engine-core`
@@ -2153,9 +2077,8 @@ impl Tree {
     /// those. Every other key returns `Some`: `Changed(field)` for
     /// a real content edit, `None` (the outcome, not the `Option`) for
     /// pure cursor movement or a genuine no-op (e.g. `Backspace` at
-    /// `cursor == 0`) -- `EventKind::Change` (M14 Phase 3) only ever
-    /// means "the bound value actually changed," and cursor position
-    /// isn't the bound value.
+    /// `cursor == 0`) -- a `change` event only ever means "the text
+    /// actually changed," and cursor position isn't the text.
     ///
     /// M15 Phase 3 (§16.7) adds real `shift`-driven selection: an
     /// arrow/`Home`/`End` key held with `shift` extends the selection
@@ -2720,8 +2643,8 @@ impl Tree {
     /// hit_test_position` (the real per-glyph shaping `engine-core` has
     /// no visibility into, §4) computes *which byte offset* a click
     /// landed on; this method is the plain mutation that applies it,
-    /// the identical "engine-core owns the real mutation" split `set_
-    /// slider_position`/`dispatch_text_field_key` already established.
+    /// the identical "engine-core owns the real mutation" split
+    /// `dispatch_text_field_key` already established.
     /// A plain click always collapses any active selection -- real
     /// desktop-editor behavior, matching every non-shift cursor movement
     /// `dispatch_text_field_key` already has (M15 Phase 2/3).
@@ -2788,11 +2711,8 @@ impl Tree {
         true
     }
 
-    /// M53 Phase 1 (§8, §10, §11.3): a real "Select All" -- genuinely
-    /// new, not composable from Python today (`Node.get` has no way to
-    /// read a field's own `content.len()`, so an app cannot build this
-    /// itself from `set_text_field_cursor`/`extend_text_field_selection`
-    /// alone). `selection_anchor` at the real start (`0`, always a char
+    /// M53 Phase 1 (§8, §10, §11.3): a real "Select All" (Ctrl+A).
+    /// `selection_anchor` at the real start (`0`, always a char
     /// boundary), `cursor` at the real end (`content.len()`, likewise) --
     /// matching every real desktop text field's own Ctrl+A convention:
     /// the whole content becomes selected, cursor lands at the end, not
@@ -2861,11 +2781,9 @@ impl Tree {
     /// grab." Real *linear* selection (reading order: row by row, left
     /// to right within each row), the same real default every terminal
     /// emulator uses, not a rectangular block-select. Each real row's
-    /// own trailing whitespace is trimmed, joined by `"\n"` -- the
-    /// identical real convention `Node.get_text()`'s own Terminal arm
-    /// already established for the exact same reason (a real fixed-
-    /// width grid pads every row with blanks that were never really
-    /// "selected" text).
+    /// own trailing whitespace is trimmed, joined by `"\n"` (a real
+    /// fixed-width grid pads every row with blanks that were never
+    /// really "selected" text).
     pub fn terminal_selected_text(&self, id: NodeId) -> Option<String> {
         let NodeKind::Terminal(state) = &self.nodes.get(id)?.kind else {
             return None;
@@ -2950,19 +2868,13 @@ impl Tree {
     /// M4 Phase 1 step 1's one real top-level entry point: `engine-
     /// platform` translates a raw `winit` event into `InputEvent` and
     /// calls this. Every *mechanical* consequence (hover, focus
-    /// movement, ripple-spawn-on-press, §2 Design Principle 6) happens
-    /// here, inside `engine-core`; the one *meaning-dependent* outcome
-    /// (`DispatchOutcome::Activated`) is left for the caller to
-    /// interpret -- `engine-py::dispatch.rs`'s own real `call_handler`,
-    /// not a generic trait (`input.rs`'s own doc comment has the real
-    /// correction) -- `Tree` has no idea what activating a node means,
-    /// only that it happened.
-    ///
-    /// Ripple stays the existing single-shot press+release
-    /// approximation (`InteractionState::spawn_ripple`) for this step --
-    /// upgrading to real two-phase press/hold/release timing is a real,
-    /// separate scope (PLAN.md), not bundled into "make real events
-    /// reach the tree at all."
+    /// movement, text editing, scrolling, §2 Design Principle 6) happens
+    /// here, inside `engine-core`; the *meaning-dependent* outcomes
+    /// (`DispatchOutcome`) are left for the caller to interpret --
+    /// `engine-py::dispatch.rs`'s `run_dispatch_outcome`, not a generic
+    /// trait (`input.rs`'s own doc comment has the real correction) --
+    /// `Tree` has no idea what activating a node means, only that it
+    /// happened.
     pub fn dispatch(&mut self, root: NodeId, event: InputEvent, now: Instant) -> DispatchOutcome {
         self.dirty = true;
         match event {
@@ -2974,7 +2886,7 @@ impl Tree {
                 let old_hovered = self.hovered;
                 let new_hovered = self.update_hover(root, position);
                 // M4 Phase 3 (§11.5): live-follows-the-cursor while a
-                // splitter drag is active -- a no-op otherwise.
+                // scrollbar-thumb drag is active -- a no-op otherwise.
                 if self.dragging.is_some() {
                     self.update_drag(position, now);
                 }
@@ -2997,7 +2909,7 @@ impl Tree {
                 // M10 Phase 1 (§11.3): a real press outside every open
                 // dismiss_on_outside_click overlay's own subtree closes
                 // it and consumes this press -- skips the normal hit/
-                // ripple registration below entirely, matching
+                // press registration below entirely, matching
                 // Android's own real "outside touch dismisses, doesn't
                 // pass through" convention (`PLAN.md`).
                 if self.dismiss_overlays_outside(position) {
@@ -3008,7 +2920,7 @@ impl Tree {
                 // half `dismiss_overlays_outside` alone can't express
                 // -- a press outside a real modal overlay is consumed
                 // here even when it doesn't also dismiss anything,
-                // the same real "skip the normal hit/ripple
+                // the same real "skip the normal hit/press
                 // registration below entirely" outcome the dismiss
                 // case already has.
                 if self.press_blocked_by_modal_overlay(position) {
@@ -3030,12 +2942,9 @@ impl Tree {
                 // an architecture this codebase doesn't have, so this
                 // instead walks the hit node's own ancestor chain for a
                 // real `ScrollView` whose thumb the press genuinely
-                // grabs, the identical real "walk up looking for the
-                // right kind of ancestor" technique the carousel-drag
-                // detection just below already establishes). A real
-                // grab starts the drag and consumes the press entirely
-                // -- the content underneath must not also register a
-                // ripple/click for the same real press.
+                // grabs). A real grab starts the drag and consumes the
+                // press entirely -- the content underneath must not
+                // also register a click for the same real press.
                 if button == PointerButton::Primary {
                     let mut current = hit;
                     while let Some(id) = current {
@@ -3104,13 +3013,9 @@ impl Tree {
                     // finding already states for text input generally.
                     //
                     // M53 Phase 1 (§8, §10, §11.3): widened to `Pointer
-                    // Button::Secondary` too -- a real, concrete gap
-                    // found while scoping context menus for `TextField`/
-                    // `CodeEditor`: a right-click opens whatever context
-                    // menu `Node.set_context_menu` attached (already
-                    // real, already wired, `open_context_menu`), but
-                    // without this, it never focused the field first --
-                    // a Copy/Cut/Paste menu item would act on whatever
+                    // Button::Secondary` too -- a right-click that opens
+                    // a context menu must focus the field first, or a
+                    // Copy/Cut/Paste menu item would act on whatever
                     // was last *left*-clicked, not the field the user
                     // just right-clicked. Every real desktop text field
                     // focuses itself on right-click too, the identical
@@ -3153,11 +3058,9 @@ impl Tree {
                 let outcome = match self.pressed {
                     // M4 Phase 7 (§11.3): a same-node press/release pair
                     // means something different per button -- Primary
-                    // activates (existing, unchanged), Secondary opens a
-                    // context menu (its own real outcome now), Middle
-                    // has no real meaning yet, matching Middle's own
-                    // stated "no real MD3 desktop meaning" status
-                    // elsewhere in this module.
+                    // activates, Secondary is its own real outcome (a
+                    // context menu, say), Middle has no real meaning
+                    // yet.
                     Some((pressed_button, pressed_node))
                         if pressed_button == button && Some(pressed_node) == hit =>
                     {
@@ -3253,19 +3156,15 @@ impl Tree {
                     // M10 Phase 1 (§11.3): closes every real, currently-
                     // open dismiss_on_escape overlay -- a mechanical
                     // consequence handled entirely here, the same shape
-                    // ripple-spawn/hover-update already use, no new
-                    // outcome variant.
+                    // hover-update already uses, no new outcome variant.
                     Key::Escape => {
                         self.dismiss_escapable_overlays();
                         DispatchOutcome::None
                     }
                     // M15 Phase 2: real, but only ever meaningful when a
                     // `TextField` is focused -- handled above via `
-                    // dispatch_text_field_key` in that case.
-                    // `ArrowLeft`/`ArrowRight` (M24 Phase 1, §10) are
-                    // also real when a `Slider` is focused instead,
-                    // handled above via `dispatch_slider_key`. Reaching
-                    // here means neither is focused, a true no-op.
+                    // dispatch_text_field_key` in that case. Reaching
+                    // here means none is focused, a true no-op.
                     // `ArrowUp`/`ArrowDown` (M30 Phase 9 Step 3, §10)
                     // join the same real "only meaningful when a
                     // TextField is focused" group -- also handled above
@@ -3331,9 +3230,9 @@ impl Tree {
             // materialized child, not just the list's own root pixel --
             // real browser/OS scroll-bubbling behavior), and moves that
             // list's own real scroll offset. A mechanical consequence
-            // handled entirely here, the same shape ripple-spawn-on-
-            // press/hover-update already use -- still DispatchOutcome::
-            // None, nothing for the app layer to be told happened.
+            // handled entirely here, the same shape hover-update
+            // already uses -- still DispatchOutcome::None, nothing for
+            // the app layer to be told happened.
             InputEvent::Scroll { delta, position } => {
                 // M96: winit's sign scrolls toward the start; every offset
                 // below grows toward the end, so it flips once, here. (It
@@ -3389,14 +3288,13 @@ impl Tree {
                 DispatchOutcome::None
             }
             // M7 Phase 3 (§7.1): plumbing only, see `InputEvent::
-            // ThemeChanged`'s own doc comment -- `engine-py` handles
-            // this directly on the raw event, the same way it already
-            // does for dock-drag `PointerPressed`/`PointerReleased`.
+            // ThemeChanged`'s own doc comment -- `engine-py` reports
+            // the raw event to window listeners.
             InputEvent::ThemeChanged { .. } => DispatchOutcome::None,
             // M32 Phase 2 (§4, §5): unlike `ThemeChanged`, a real
             // mutation happens right here -- `root`'s own `layout_
             // style.size` is a pure taffy concern `engine-core` fully
-            // owns (no MD3/platform knowledge needed), so there's no
+            // owns (no platform knowledge needed), so there's no
             // reason to defer this to `engine-py` the way `ThemeChanged`
             // has to. `self.dirty` is already set unconditionally at
             // the top of this function, which is exactly what a real
@@ -3690,7 +3588,7 @@ mod tests {
     /// M29 Phase 1 (§5, §6): real regression coverage for the
     /// centralized dirty flag -- `take_dirty()` must report `true` after
     /// each real category of mutation (structural, paint-property via
-    /// the `get_mut` chokepoint, interaction, animation-tick) and
+    /// the `get_mut` chokepoint, animation-tick) and
     /// `false` on a `Tree` touched only by read-only calls in between.
     #[test]
     fn take_dirty_reports_true_after_each_real_mutation_category_and_false_between() {
@@ -3717,7 +3615,7 @@ mod tests {
         );
 
         // Paint-property, via the get_mut chokepoint every raw Node
-        // mutation (Node.animate/set_checked/set_text/etc.) goes through.
+        // mutation (`animate`, `node.set`, etc.) goes through.
         tree.get_mut(id).unwrap().paint.opacity.current = 0.5;
         assert!(tree.take_dirty(), "get_mut must mark the tree dirty");
         assert!(!tree.take_dirty());
@@ -5169,9 +5067,8 @@ mod tests {
         );
 
         // A real child of parent_menu, sized to fill it exactly, the
-        // same way `add_menu_item`'s own real container fills its own
-        // parent `Menu` -- its own resolved absolute position is
-        // therefore identical to parent_menu's, (0,20).
+        // way a menu item fills its menu -- its own resolved absolute
+        // position is therefore identical to parent_menu's, (0,20).
         let (k, s, p) = leaf(120.0, 20.0);
         let parent_item = tree.insert(k, s, p);
         tree.add_child(parent_menu, parent_item);
@@ -7208,10 +7105,9 @@ mod tests {
         assert_eq!(state.selection_anchor, None);
     }
 
-    /// A `TextField`'s own real, automatic accessibility derivation --
-    /// mirrors `build_access_update_reports_the_real_toggled_state_for_
-    /// a_checkbox`'s own shape: reads `content` directly from `NodeKind
-    /// ::TextField`, not a second, separately-set copy.
+    /// A `TextField`'s own real, automatic accessibility derivation:
+    /// reads `content` directly from `NodeKind::TextField`, not a
+    /// second, separately-set copy.
     #[test]
     fn build_access_update_reports_the_real_value_role_and_focus_action_for_a_text_field() {
         use crate::access::{Action, Role};
@@ -7250,8 +7146,7 @@ mod tests {
         );
     }
 
-    /// M15 Phase 2 (§8, §10): mirrors `slider_scene`'s own shape -- a
-    /// real `TextField`, already the `Tree`'s own real focused node
+    /// M15 Phase 2 (§8, §10): a real `TextField`, already the `Tree`'s own real focused node
     /// (every real editing test needs that, so seeding it here avoids
     /// repeating a `set_focus_to` call in every single test below).
     fn text_field_scene(content: &str) -> (Tree, NodeId, NodeId) {
@@ -8920,10 +8815,6 @@ mod tests {
         );
     }
 
-    // -------------------------------------------------------------
-    // M30 Phase 9 Step 5 (§5, §7, §11.7): Carousel
-    // -------------------------------------------------------------
-
     // --- M65 (§5, §6): the real per-kind existence counters
     // `compute_layout`'s own sync_*_layouts functions consult instead
     // of scanning. ------------------------------------------------
@@ -8994,9 +8885,8 @@ mod tests {
     }
 
     /// M36 Phase 1 (§5, §7, §11.7): a real `ScrollView` (100px viewport)
-    /// with a single 400px-tall child, the same real "explicit content
-    /// height the caller supplies" convention every other `add_*`
-    /// factory in this codebase already establishes.
+    /// with a single 400px-tall child whose content height the caller
+    /// supplies explicitly.
     fn scrollable_view(horizontal: bool) -> (Tree, NodeId, NodeId) {
         let mut tree = Tree::new();
         let (view_w, view_h) = if horizontal {

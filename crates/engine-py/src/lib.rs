@@ -59,8 +59,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// M86: registers a font the caller already loaded (a `.ttf`/`.otf`/
 /// `.ttc` file's raw bytes) with every current and future window in
 /// this process -- `tre` never reads a font file itself. Returns the
-/// family names the data contains, the exact strings a theme's
-/// `typography:` `font_family` must use. Raises `ValueError` if the data
+/// family names the data contains, the exact strings a node's
+/// `font_family` property must use. Raises `ValueError` if the data
 /// holds no parseable font face. `&[u8]` borrows a Python `bytes`
 /// directly rather than extracting it element by element.
 #[pyfunction]

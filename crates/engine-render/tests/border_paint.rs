@@ -2,7 +2,7 @@
 //! border_color`/`border_width` genuinely paint a real stroked border,
 //! inset entirely inside the node's own bounds -- not just that the
 //! new fields compile and tick. Same headless render-to-texture-then-
-//! readback discipline as `checkbox_paint.rs`.
+//! readback discipline as `image_paint.rs`.
 //!
 //! Three claims, kept deliberately separate:
 //!

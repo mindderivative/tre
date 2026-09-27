@@ -1,7 +1,7 @@
 //! M30 Phase 1 (§5, §7): proves `TextState.align` genuinely repositions
 //! glyph ink, not just that it compiles and threads through as an inert
-//! field -- the real prerequisite for `Button`'s own centered label
-//! (MD3's anatomy for every button variant). Same headless render-to-
+//! field -- the real prerequisite for a centered label (a button's,
+//! say). Same headless render-to-
 //! texture-then-readback discipline and the same `Readback`/`has_ink_in`
 //! coarse-ink-presence signal `text_layout.rs` already established for
 //! anti-aliased glyph edges (an exact pixel match is brittle for text;

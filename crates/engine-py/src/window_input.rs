@@ -29,14 +29,6 @@ impl PyWindow {
     fn resize(&mut self, width: u32, height: u32, py: Python<'_>) {
         self.width.set(width);
         self.height.set(height);
-        // M57 (§8): the `Tree::dispatch` call routes through `self.
-        // active`, not `self.tree`/`self.root`/`self.handlers`/`self.
-        // context_menus` directly -- a real resize must mutate whichever
-        // View is currently shown, the identical real staleness fix
-        // every other "act on the currently active view" method already
-        // got. `self.width`/`height.set()` above stay window-level,
-        // correctly unaffected -- a real, shared `SharedSize` regardless
-        // of which View is currently active.
         let (tree, root, handlers) = (self.tree.clone(), self.root, self.handlers.clone());
         let outcome = tree.borrow_mut().dispatch(
             root,

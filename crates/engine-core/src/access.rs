@@ -1,24 +1,9 @@
-//! §10's `AccessNodeData` -- narrower than the full future model: no
-//! states derived automatically from a `NodeKind` payload field yet
-//! (`CheckboxState.checked`, etc. -- neither exists yet, §7.3's
-//! interaction components land at later build-order steps), so
-//! `AccessStates` carries only `disabled`, set directly. `Tree::focused`
-//! exists as a plain field so `TreeUpdate.focus` always has a valid
-//! value to report -- the *data* this step needs, not §10's full
-//! "minimal keyboard focus model" (Tab/Shift-Tab traversal, Enter/Space
-//! dispatch): that's real `InputEvent`/`AppHandler` keyboard-dispatch
-//! wiring with nothing to dispatch *to* yet (no interactive component
-//! exists before §7.3), so it's deferred to whichever step first needs
-//! it, not built ahead of that need.
-//!
-//! M14 Phase 1 (§7.3): `Tree::build_access_update` derives `checked`
-//! directly from `NodeKind::Checkbox`'s own real `checked: bool` --
-//! deliberately *not* mirrored into a second field here, which would
-//! just be two copies of the same fact that could drift out of sync;
-//! `CheckboxState.checked` is the one real source of truth, exactly
-//! "the app sets one property and the accessibility tree stays correct
-//! for free," not "the app sets one property and something else has to
-//! remember to copy it."
+//! §10's `AccessNodeData` -- a node's accessibility data, which
+//! `Tree::build_access_update` turns into an AccessKit `TreeUpdate`.
+//! M94 made every field framework-settable through `node.set(...)`
+//! (`role`, `label`, `checked`, `value`, ...): the engine has no widget
+//! kinds of its own to derive such states from, so the framework that
+//! draws a checkbox is the one that says it is checked.
 
 pub use accesskit::{Action, ActionData, Live, Role};
 

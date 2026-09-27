@@ -111,8 +111,8 @@ impl PyWindow {
 }
 
 impl PyWindow {
-    /// Fires `focus`/`unfocus` (and the legacy focus handlers) for a focus
-    /// change a layer made.
+    /// Fires `focus`/`unfocus` listeners for a focus change a layer
+    /// made.
     fn fire_focus(&self, transition: FocusTransition, py: Python<'_>) {
         let Some((old, new)) = transition else {
             return;

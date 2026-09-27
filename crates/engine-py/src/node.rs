@@ -1,26 +1,19 @@
 //! `Node` (§8's `PyNode`, renamed to match what Python actually sees --
-//! `tre.Node`, not `tre.PyNode`) -- narrower than §8's own full sketch:
-//! `animate()`/`get()` plus, as of M4 Phase 1 step 3, `set_on_click`, and
-//! as of M4 Phase 6, `set_on_hover_enter`/`set_on_hover_exit`.
-//! Still no `add_child` (no cycle to reject, so `EngineError::
-//! CycleRejected` isn't implemented yet either) -- additive when its own
-//! later build-order step needs it.
+//! `tre.Node`, not `tre.PyNode`): a handle to one node in a `Window`'s
+//! tree. `animate` lives here; properties (`set`/`get`), listeners
+//! (`on`), tree structure, and per-kind callbacks live in the sibling
+//! `node_*` modules.
 //!
-//! Handler callback storage (`handlers`) is an `Rc<RefCell<HashMap<
-//! (NodeId, EventKind), (Py<PyAny>, bool)>>>` (the `bool`, M54 Phase 2,
-//! is whether this handler arity-sniffed as wanting a real `Event`
-//! argument) *shared* with the owning `PyWindow` (or `View`) -- created
-//! once there, cloned into every `Node` handed
-//! out, the exact same sharing shape `tree: Rc<RefCell<Tree>>` already
-//! uses. This is what actually resolves §8's own review note (a Python
+//! Callback storage (`handlers`, a `HandlerMap` keyed by `(NodeId,
+//! HandlerKey)`, `dispatch.rs`) is *shared* with the owning `PyWindow`
+//! -- created once there, cloned into every `Node` handed out, the
+//! exact same sharing shape `tree: Rc<RefCell<Tree>>` already uses.
+//! This is what actually resolves §8's own review note (a Python
 //! callback stored in a Rust struct is a real GC-cycle risk unless the
 //! owning `#[pyclass]` implements `__traverse__`/`__clear__`) without
-//! needing `Node` to hold a back-reference to its own owner: `PyWindow`/
-//! `View`'s own `__traverse__` already visits everything in this same
-//! shared map. Keyed by `(NodeId, EventKind)` rather than one map per
-//! event kind since M4 Phase 6 (§16.2) -- the Rule of Three, once
-//! `Click`/`HoverEnter`/`HoverExit` all needed the same "look up a
-//! registered handler for this node, call it" shape.
+//! needing `Node` to hold a back-reference to its own owner:
+//! `PyWindow`'s own `__traverse__` already visits everything in this
+//! same shared map.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -60,9 +53,9 @@ impl NodeState {
         })
     }
 
-    /// When focus is on this node or inside it, clears it and fires `unfocus`
-    /// (and the legacy focus-exit handler) -- before a detach or free, so
-    /// `unfocus` bubbles through the tree as it still is.
+    /// When focus is on this node or inside it, clears it and fires
+    /// `unfocus` -- before a detach or free, so `unfocus` bubbles through
+    /// the tree as it still is.
     fn release_focus_within(&self, py: Python<'_>) {
         let inside = {
             let tree = self.tree.borrow();
@@ -122,15 +115,6 @@ pub struct NodeState {
     pub(crate) id: NodeId,
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) handlers: HandlerMap,
-    /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, shared
-    /// with the owning `PyWindow`/`View` the same way `handlers` is --
-    /// no `Py<PyAny>` involved at all (unlike `handlers`), so no
-    /// GC-traversal obligation the way a stored Python callback needs.
-    /// M7 Phase 3 (§7.1): shared with the owning `PyWindow` the same
-    /// way `context_menus` is -- no `Py<PyAny>` involved, no GC
-    /// obligation. A `View`-created `Node` gets a fresh, private,
-    /// never-`Window`-linked instance instead (`view.rs`), matching
-    /// this phase's own stated scope.
     /// M9 Phase 2 (§5): `animate(..., on_complete=...)`'s own registry,
     /// shared with the owning `PyWindow` the same way `handlers` is --
     /// real `Py<PyAny>` callbacks live here, but `PyWindow`'s own
@@ -138,10 +122,7 @@ pub struct NodeState {
     /// `Rc<RefCell<...>>` (it's the same underlying map, not a
     /// separate copy), so `Node` itself needs no new GC obligation of
     /// its own -- matching `handlers`' own existing precedent (`Node`
-    /// has never implemented `__traverse__`/`__clear__` itself). A
-    /// `View`-created `Node` gets a fresh, private instance instead,
-    /// matching `theme`'s own precedent -- `View` has no real
-    /// per-frame render loop to ever drain a completion through.
+    /// has never implemented `__traverse__`/`__clear__` itself).
     pub(crate) completions: SharedCompletions,
 }
 
@@ -297,9 +278,6 @@ impl Node {
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                 animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
             }
-            // M30 Phase 3 Step 2 (§8): the progress indicators' own
-            // arm. M90: `Slider` joins it -- a slider's position was
-            // `thumb_position` here but `value` everywhere else.
             // M95: a path's data morphs; its stroke trim animates.
             "data" | "trim_start" | "trim_end" => {
                 let NodeKind::Path(state) = &mut node.kind else {
@@ -368,12 +346,10 @@ impl Node {
     /// (`Rc::ptr_eq` on the shared `Tree` handle) -- a `NodeId` is only
     /// unique within the `Tree` that minted it, and handing a foreign
     /// one to this `Tree`'s own `taffy` tree risks real corruption, not
-    /// just a wrong result. If `child` already has a different parent
-    /// (every existing node-creation method attaches immediately, so it
-    /// usually does), `Tree::try_add_child` detaches it first via the
-    /// same `Tree::detach` mechanism `set_context_menu` already uses,
-    /// rather than corrupting the tree the "`add_child` has no dedup"
-    /// way M4 Phase 7/9 each already found once.
+    /// just a wrong result. If `child` already has a different parent,
+    /// `Tree::try_add_child` detaches it first via `Tree::detach`, rather
+    /// than corrupting the tree the "`add_child` has no dedup" way M4
+    /// Phase 7/9 each already found once.
     fn add_child(&self, child: PyRef<'_, Node>) -> PyResult<()> {
         self.check_pair(&child)?;
         if self.tree.borrow_mut().try_add_child(self.id, child.id) {
@@ -503,10 +479,10 @@ fn animate_field<T: engine_core::Interpolate + Clone>(
     }
 }
 
-/// M82: shared by `push_frame` and `Window.add_image_from_bytes` --
-/// both accept a caller-decoded, straight-alpha RGBA8 buffer with no
-/// `tre`-side decoding at all, and both need the identical real length
-/// check (and identical error wording) against that contract.
+/// M82: the length check for `node.set(rgba=, pixel_width=,
+/// pixel_height=)` -- a caller-decoded, straight-alpha RGBA8 buffer
+/// with no `tre`-side decoding at all must be exactly
+/// `width * height * 4` bytes.
 pub(crate) fn validate_rgba_frame_len(
     context: &str,
     rgba_len: usize,

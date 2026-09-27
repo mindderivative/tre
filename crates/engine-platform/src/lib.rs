@@ -98,7 +98,7 @@ use winit::window::{Window, WindowAttributes, WindowId};
 /// three -- an earlier doc comment on `engine_core::PointerButton`
 /// claimed a 1:1 three-variant match without checking, which was wrong.
 /// `Back`/`Forward`/`Other` (a browser-navigation convention with no
-/// real MD3 desktop meaning yet) translate to `None` -- no `InputEvent`
+/// real desktop meaning here yet) translate to `None` -- no `InputEvent`
 /// at all, a stated narrowing, not a silently-dropped case.
 fn translate_pointer_button(button: MouseButton) -> Option<PointerButton> {
     match button {

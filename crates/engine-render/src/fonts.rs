@@ -3,8 +3,8 @@
 //!
 //! `TextRenderer` deliberately never discovers system fonts
 //! (`system_fonts: false`, see its own doc comment), so before this
-//! module a theme's `typography: {body_large: {font_family: Inter}}`
-//! could name a family `tre` had no way to receive -- it silently fell
+//! module a node's `font_family` could name a family `tre` had no way
+//! to receive -- it silently fell
 //! back. The caller (a framework like Tesserae) owns reading the file;
 //! `register_font` takes the bytes.
 //!
@@ -51,7 +51,7 @@ impl std::error::Error for NoFontFacesFound {}
 
 /// Registers `data` (a `.ttf`/`.otf`/`.ttc` file's raw bytes) with every
 /// current and future `TextRenderer` in this process, returning the
-/// family names it contains -- the exact strings a theme's
+/// family names it contains -- the exact strings a node's
 /// `font_family` must use to resolve to it. Registering identical bytes
 /// twice is a no-op that still returns the names.
 pub fn register_font(data: Vec<u8>) -> Result<Vec<String>, NoFontFacesFound> {

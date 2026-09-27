@@ -42,12 +42,9 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 /// clipboard/theme events all fall through). `Enter` maps to `\r` (a
 /// real terminal convention, not `\n`); `Backspace` to `\x7f` (`DEL`,
 /// the real modern-terminal default); arrows/`Home`/`End` to their
-/// real standard xterm CSI sequences. Shared by both real real-window
-/// keyboard input (`app.rs`'s own `on_input` closure) and the
-/// synthetic, no-window-needed testing entry points (`Window.
-/// press_key`/`type_text`, `window_input.rs`) -- the identical real
-/// "one real translation, two real callers" shape this codebase
-/// already uses throughout for input handling.
+/// real standard xterm CSI sequences. Called from
+/// `dispatch::process_input`, so a live key and `window.simulate(...)`
+/// get the identical translation.
 ///
 /// **M32 Phase 4 (§4, §8) closes the real gap this doc comment used to
 /// state here:** Ctrl+`<letter>` shortcuts (SIGINT included) now reach
@@ -91,7 +88,7 @@ pub(crate) fn input_bytes_for(event: &InputEvent) -> Option<Vec<u8>> {
 /// bytes (SIGINT included), not clipboard copy/cut/paste, matching
 /// every real terminal emulator's own actual behavior (a bare Ctrl+C
 /// inside a real terminal has never meant "copy" in any of them); when
-/// no terminal is focused, `app.rs`'s own `on_input` never calls this
+/// no terminal is focused, `dispatch::process_input` never calls this
 /// at all for those three, so ordinary `TextField` copy/cut/paste stays
 /// completely unaffected. `None` for anything else -- pointer/scroll/
 /// theme events all fall through, the same minimal-vocabulary contract
@@ -112,8 +109,7 @@ pub(crate) fn control_byte_for(event: &InputEvent) -> Option<u8> {
 /// it's directly unit-testable without spawning a real PTY/shell --
 /// the identical real "Rust proves the pure logic, a live empirical
 /// script/pytest proves the real end-to-end `vt100` integration"
-/// split this codebase already uses throughout (`test_checkbox.py`'s
-/// own doc comment states the general principle). `current`/the
+/// split this codebase already uses throughout. `current`/the
 /// result are `vt100::Screen::scrollback`'s own real, unsigned "lines
 /// back from the bottom" unit; `delta_lines` is signed (positive =
 /// further into history, matching a real wheel-up notch) since
@@ -150,8 +146,8 @@ pub(crate) struct TerminalSession {
     /// reach a fresh `EventLoopWaker`, `engine-platform`'s own doc
     /// comment) is still visible to a thread that was already running
     /// before it existed (a `TerminalSession` is always spawned by a
-    /// real `add_terminal` call, which always happens before `App.
-    /// run()` -- and therefore before any real `EventLoopWaker` exists
+    /// real `window.create("terminal", ...)` call, which always happens
+    /// before `App.run()` -- and therefore before any real `EventLoopWaker` exists
     /// -- in every real caller this codebase has). `None` until `set_
     /// waker` runs -- the real, honest "no live loop to wake yet"
     /// state a synthetic, no-`App.run()`-needed test correctly stays
@@ -371,9 +367,7 @@ impl TerminalSession {
     pub(crate) fn write_input(&mut self, bytes: &[u8]) {
         // A closed/dead PTY write failing is a real, unremarkable
         // "the shell already exited" condition, not a bug to surface
-        // -- `Window.add_video`'s own `push_frame` has no error path
-        // for "the app kept sending frames after tearing something
-        // down" either; consistent, not a new precedent.
+        // -- nothing useful can be done with the error.
         let _ = self.writer.write_all(bytes);
     }
 

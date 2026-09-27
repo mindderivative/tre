@@ -1,7 +1,7 @@
-//! §11.3's overlay mechanism (§14 step 13): "menu bars, dropdown menus,
-//! context menus, tooltips, and MD3 dialogs are all the same missing
-//! primitive... tree-resident, not a parallel structure." `OverlayMeta`
-//! is the *only* new bookkeeping this needs -- everything else
+//! §11.3's overlay mechanism (§14 step 13): menus, tooltips, and
+//! dialogs are all the same primitive -- tree-resident, not a parallel
+//! structure. M96's layers (`window.show_layer`) are built on it.
+//! `OverlayMeta` is the *only* new bookkeeping this needs -- everything else
 //! (positioning, paint order, hit-testing, the focus model,
 //! `build_access_update()`) reuses machinery that already exists,
 //! per §11.3's own text, which `Tree::open_overlay`/`close_overlay`

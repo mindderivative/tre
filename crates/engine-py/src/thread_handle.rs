@@ -1,14 +1,14 @@
 //! M87 (tre issue #6): running a Python callable on a live `App`'s
 //! event-loop thread, queued from any other thread.
 //!
-//! `App`/`Window`/`View`/`Node` are all thread-bound (`thread_bound`), so a
+//! `App`/`Window`/`Node` are all thread-bound (`thread_bound`), so a
 //! background thread -- a file watcher driving hot reload, a network
 //! client, a subprocess reader -- can't touch them, and once `App.run()`
 //! starts, Python otherwise only runs inside input handlers. `LoopHandle`
 //! is the one `Send + Sync` object a background thread can hold:
 //! `call_soon(fn)` queues `fn` and wakes the loop, and the event-loop
 //! thread runs it at the top of its next frame, with the GIL held, where
-//! it can call `view.reconcile(spec=...)` like any input handler could.
+//! it can call `node.set(...)` like any input handler could.
 //!
 //! The same shape `TerminalSession`'s PTY reader thread already uses
 //! (`terminal.rs`): a shared queue plus an `EventLoopWaker`

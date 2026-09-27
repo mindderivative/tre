@@ -1,5 +1,5 @@
-//! M34 Phase 1 (§5, §8): per-node tessellated-path caching for `Rect`/
-//! `Splitter`'s own plain rounded-rect fill/border paths -- the same
+//! M34 Phase 1 (§5, §8): per-node tessellated-path caching for a
+//! `Rect`'s own plain rounded-rect fill/border paths -- the same
 //! "cache what a frame doesn't need to redo" reasoning `TextRenderer::
 //! shaped_layout`'s own per-node `Layout` cache already established for
 //! shaped text (`text.rs`'s own doc comment), applied here to
@@ -17,18 +17,13 @@
 //! API it doesn't have (confirmed via direct source read, `PLAN.md`).
 //! So this cache is a real, honest, modest win -- skips the real ~20%
 //! tessellation share of an already-cheap total, not a dramatic one --
-//! deliberately scoped, at first (M34 Phase 1), to `Rect`/`Splitter`'s
-//! own plain (non-shape-morph) fill/border paths, the single most
+//! deliberately scoped to a `Rect`'s own plain fill/border paths
+//! (uniform or per-corner), the single most
 //! common real paint call in any app (every button/card/panel/dialog
 //! background), leaving every other curve-tessellating `NodeKind`
 //! uncached as a real, deliberate v1 scope limit.
 //!
-//! **M38 Phase 1 (§5, §7, §8):** extends the identical real cache to
-//! `RadioButton`'s ring/dot, `Switch`'s track/outline/handle,
-//! `CircularProgress`'s arc, and `Checkbox`'s box (the latter two
-//! reuse the existing rounded-rect/border methods directly, since
-//! their real generating geometry is byte-for-byte identical to
-//! `Rect`'s own). Deliberately still does **not** cache `Terminal`'s
+//! Deliberately does **not** cache `Terminal`'s
 //! own per-cell/selection/cursor rects -- those are plain, axis-
 //! aligned `Rect::to_path` calls, not curve tessellation, and M34's
 //! own real benchmark already found the tessellation share of the
@@ -49,12 +44,12 @@ use peniko::kurbo::{BezPath, RoundedRect, Shape};
 /// "remember to invalidate" bookkeeping a future change could forget.
 #[derive(Clone, Copy, PartialEq)]
 enum RectPathParams {
-    /// `Rect`/`Splitter`'s own plain fill, one uniform corner radius --
+    /// A `Rect`'s own plain fill, one uniform corner radius --
     /// `PaintProperties.corner_radius`'s own default real case.
     Uniform { w: f64, h: f64, radius: f64 },
     /// The real per-corner override (`PaintProperties.
-    /// corner_radii_override`, M30 Phase 1 Step 4) -- `Segmented
-    /// Button`'s own real need, a distinct params shape from `Uniform`
+    /// corner_radii_override`, M30 Phase 1 Step 4) -- a distinct
+    /// params shape from `Uniform`
     /// since a node can genuinely switch between the two.
     PerCorner { w: f64, h: f64, radii: [f64; 4] },
     /// A stroked border's own real generating inputs (M30 Phase 1,
@@ -73,9 +68,8 @@ enum RectPathParams {
     /// the fill path, never the border, confirmed by direct grep
     /// before this phase): a bordered `Rect` with a real per-corner
     /// override painted its stroke at the plain uniform `corner_
-    /// radius` regardless, a mismatch invisible until Split Button's
-    /// own outlined variant became the first real consumer to combine
-    /// a nonzero border with per-corner geometry.
+    /// radius` regardless, a mismatch invisible until the first real
+    /// consumer combined a nonzero border with per-corner geometry.
     PerCornerBorder {
         w: f64,
         h: f64,
@@ -206,7 +200,7 @@ impl GeometryCache {
 
     /// Mirrors `TextRenderer::evict_stale_layouts`'s own real per-node-
     /// cache-leak fix (the same review-found class of gap, `text.rs`'s
-    /// own doc comment) -- a `Rect`/`Splitter` removed from the tree
+    /// own doc comment) -- a `Rect` removed from the tree
     /// left its tessellated path(s) cached here forever otherwise. Call
     /// once per frame, alongside `evict_stale_layouts`/
     /// `sync_image_textures`.
@@ -357,8 +351,7 @@ mod tests {
         );
     }
 
-    /// The real point Split Button's own outlined variant needed fixed:
-    /// a per-corner border must actually paint a *different* top-left
+    /// A per-corner border must actually paint a *different* top-left
     /// corner than the plain (non-per-corner) uniform border built
     /// from that same corner's own radius -- proven by comparing the
     /// path's own real starting point (see the comment above for why
