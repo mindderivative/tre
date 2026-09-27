@@ -1,11 +1,6 @@
-"""M4 Phase 2 (§10): real, repeatable coverage of `Window.press_key` --
-`Window.click()`'s own keyboard counterpart, and the first Python-facing
-entry point for Tab/Shift-Tab focus movement and Enter/Space activation.
-Neither had one before this: `Window` only exposed `click()` (pointer
-press+release).
-
-Same "requires `maturin develop` first, imports the real compiled
-extension" discipline as `test_click_dispatch.py`.
+"""Keyboard focus and activation of focusable boxes: Tab and Shift-Tab move
+focus (wrapping), Enter and Space fire `click` on the focused node, and
+Enter with nothing focused does nothing.
 """
 
 from tre import Window

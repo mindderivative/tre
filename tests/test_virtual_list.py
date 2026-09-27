@@ -1,10 +1,8 @@
-"""§14 step 15 Stage C (§11.7), M100: real, repeatable coverage of
-`window.create("virtual_list", ...)` at the FFI boundary -- what
-`tests/test_kinds.py`'s row-building tests don't cover: a raising
-`size_hint` or `materialize` is logged and non-fatal, the window takes
-part in cyclic GC when its materializer captures it, and wheel input
-over the list or a plain node is safe. M100 removed `add_virtual_list`
-and `set_virtual_list_window`: `tre` builds the visible rows itself.
+"""Virtual lists through `window.create("virtual_list", ...)`, beyond the
+row-building tests in `test_kinds.py`: a raising `size_hint` or `materialize`
+is logged and non-fatal, the window takes part in cyclic GC when its
+materializer captures it, and wheel input over the list or a plain node is
+safe. `tre` builds the visible rows itself.
 """
 
 import gc
@@ -40,7 +38,7 @@ def test_a_raising_size_hint_is_logged_and_non_fatal(capfd):
                materialize=lambda _i: box(window), width=100, height=100)
     window.advance(0)
     assert "item 2 is cursed" in capfd.readouterr().err
-    # M100: its offsets are unresolved, so it has no extent -- a wheel over
+    # Its offsets are unresolved, so it has no extent -- a wheel over
     # it once panicked the engine.
     window.simulate("wheel", node=rows, delta_y=50)
 

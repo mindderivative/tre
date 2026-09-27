@@ -1,61 +1,35 @@
-"""M6 Phase 3 (§8): real, repeatable coverage of `Window.add_rect`/
-`add_canvas`'s new optional `x`/`y` kwargs -- `Position::Absolute`
-exposure from Python, the concrete blocker M5 Phase 4 hit while trying
-to write a positioned node-graph example.
-
-No Python-level pixel readback exists anywhere in this project (M6
-Phase 2's own corrected scope finding) and there is no raw-coordinate
-hit-test entry point either -- `Window.click(node)` always resolves to
-`node`'s *own* current center point before dispatching. So these tests
-prove positioning the same real way every other FFI test in this suite
-proves a claim: through real dispatch, not introspection. A node with
-no explicit `x`/`y` sits at its default flex-row position (the window's
-own root padding-box origin, `(16, 16)`, for the first child -- real
-data from `PyWindow::new`'s own `PADDING` constant). A second node
-explicitly positioned via `x=16, y=16` (added afterward, so topmost in
-paint order) overlaps it exactly *only if* the explicit position
-genuinely took effect -- `window.click(the_first_node)` resolves to the
-first node's own center, but real hit-testing at that point then finds
-whichever node is actually there, topmost-wins. If positioning silently
-fell back to the old flex-row-only behavior, the second node would
-instead sit in-flow (not at `(16, 16)`), and the click would still
-reach the first node instead.
-
-Also covers M6 Phase 4's own real proof: `Window.click(node)` resolves
-its dispatch point via `Tree::absolute_position`, which is now
-transform-aware -- a node whose own `transform` has moved it (M6 Phase
-2) must still be found by `click`, not missed via a stale,
-untransformed dispatch point.
+"""Absolute positioning: a box or canvas created with `position="absolute"`,
+`x`, `y` wins the hit test over the in-flow node it overlaps, and a simulated
+click still finds a node its translation has moved. Hit testing is the probe,
+since the click lands at the target node's center.
 """
 
 from tre import Window
 from helpers import add
 
 
-def test_add_rect_with_explicit_position_overlaps_the_default_flow_position():
+def test_an_absolute_box_overlaps_the_default_flow_position():
     window = Window(width=200, height=200)
 
     hits = []
     default_positioned = add(window, "box", fill=(0, 0, 0, 255), width=40, height=40)
     default_positioned.on("click", lambda: hits.append("default"))
 
-    # PADDING = 16.0 (PyWindow::new) -- the first, unpositioned child's
-    # own real, default flex-row position.
+    # 16 is the root's padding -- the first in-flow child's position.
     explicitly_positioned = add(window, "box", fill=(255, 0, 0, 255), width=40, height=40, position="absolute", x=16.0, y=16.0)
     explicitly_positioned.on("click", lambda: hits.append("explicit"))
 
     window.simulate("click", node=default_positioned)
 
     assert hits == ["explicit"], (
-        "the explicitly-positioned (topmost) node must win real hit-testing at the "
+        "the explicitly-positioned (topmost) node must win hit-testing at the "
         f"default node's own center point, got {hits!r}"
     )
 
 
-def test_add_rect_without_x_or_y_is_unchanged():
-    """The real backward-compatibility claim: omitting `x`/`y` entirely
-    must behave byte-for-byte like before this phase -- a plain node in
-    the implicit flex-row flow, clickable at its own resolved position."""
+def test_a_box_without_x_or_y_stays_in_flow():
+    """Without `x`/`y` a node stays in the root's flex row, clickable at
+    its laid-out position."""
     window = Window(width=200, height=200)
     hits = []
     node = add(window, "box", fill=(0, 0, 0, 255), width=40, height=40)
@@ -66,7 +40,7 @@ def test_add_rect_without_x_or_y_is_unchanged():
     assert hits == [True]
 
 
-def test_add_canvas_with_explicit_position_overlaps_the_default_flow_position():
+def test_an_absolute_canvas_overlaps_the_default_flow_position():
     window = Window(width=200, height=200)
 
     hits = []
@@ -79,28 +53,20 @@ def test_add_canvas_with_explicit_position_overlaps_the_default_flow_position():
     window.simulate("click", node=default_positioned)
 
     assert hits == ["explicit"], (
-        "an explicitly-positioned Canvas (topmost) must win real hit-testing at the "
+        "an explicitly-positioned canvas (topmost) must win hit-testing at the "
         f"default node's own center point, got {hits!r}"
     )
 
 
-def test_click_still_finds_a_node_after_its_own_transform_moves_it():
-    """M6 Phase 4 (§8): the post-M5-review gap this phase closes --
-    `Window.click(node)` resolves its dispatch point via `Tree::
-    absolute_position`, which now correctly accounts for `node`'s own
-    animated `transform` (M6 Phase 2). Before this phase, a node with a
-    real transform would visibly move (real hit-testing has been
-    transform-aware since M5 Phase 2), but `click`'s own dispatch point
-    would still be computed from the node's stale, untransformed
-    position -- missing it entirely."""
+def test_click_still_finds_a_node_after_its_translation_moves_it():
+    """A simulated click aims at the node's transformed position, not its
+    untransformed layout box."""
     window = Window(width=200, height=200)
     hits = []
     node = add(window, "box", fill=(0, 0, 0, 255), width=40, height=40)
     node.on("click", lambda: hits.append(True))
 
-    # duration_ms=0 -- an instant snap, matching this project's own
-    # established convention for testing an animation's endpoint
-    # synchronously.
+    # duration_ms=0 -- an instant snap.
     window.advance(0)
     node.animate("translate_x", 60.0, duration_ms=0)
     node.animate("translate_y", 60.0, duration_ms=0)
@@ -109,6 +75,6 @@ def test_click_still_finds_a_node_after_its_own_transform_moves_it():
     window.simulate("click", node=node)
 
     assert hits == [True], (
-        "click must still find the node at its real, transformed position, not its "
+        "click must still find the node at its transformed position, not its "
         f"stale untransformed one, got {hits!r}"
     )

@@ -44,4 +44,4 @@ Each step: the full standing chain, the tracker, a local commit, memory.
 
 ## Status
 
-**Started (2026-09-27).** Phase 2 Step 2 next.
+**Complete (2026-09-27).** M103, the release, next.

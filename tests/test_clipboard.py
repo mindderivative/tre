@@ -1,12 +1,10 @@
-"""M17, M53, M100: a text input's clipboard shortcuts and the OS clipboard.
+"""A text input's clipboard shortcuts and the OS clipboard.
 
 `window.simulate("key_down", key="c", ctrl=True)` reaches the same
-Ctrl+C/X/V/A handling a live key press does (`dispatch::process_input`),
-and `read_clipboard`/`write_clipboard` reach the OS clipboard itself. Where
-no clipboard service is reachable -- some headless and sandboxed
-environments -- the tests that need one skip (`needs_clipboard`), the
-convention `app.rs`'s own `arboard_genuinely_round_trips_through_a_real_
-clipboard` Rust test follows. Select-all and typed input need none.
+Ctrl+C/X/V/A handling a live key press does, and `read_clipboard`/
+`write_clipboard` reach the OS clipboard itself. Where no clipboard service
+is reachable (some headless and sandboxed environments) the tests that need
+one skip (`needs_clipboard`). Select-all and typed input need none.
 """
 
 import pytest

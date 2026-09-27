@@ -1,7 +1,8 @@
-"""M97 Phase 2 Step 5: the migration gate's switch, `TRE_FORBID_REMOVED=1`
-(`tre/_removed.py`) -- its tables kept in step with the migration table in
-`docs/design/target-api.md`, and what it forbids and leaves alone. The switch
-patches classes for the rest of a process, so it's exercised in a fresh one.
+"""The migration gate's switch, `TRE_FORBID_REMOVED=1` (`tre/_removed.py`):
+its tables kept in step with the migration table in
+`docs/design/target-api.md` and `docs/migrating-0.3.5.md`, and what it
+forbids and leaves alone. The switch patches classes for the rest of a
+process, so it's exercised in a fresh one.
 """
 
 from __future__ import annotations
@@ -113,7 +114,7 @@ PAGE = SPEC.parent.parent / "migrating-0.3.5.md"
 
 
 def test_the_published_migration_page_names_every_forbidden_name() -> None:
-    """M100: the migration page users read covers everything the switch
+    """The migration page users read covers everything the switch
     forbids."""
     page = PAGE.read_text()
     for owner, members in _removed.REMOVED.items():

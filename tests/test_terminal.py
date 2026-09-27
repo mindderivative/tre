@@ -1,25 +1,8 @@
-"""M30 Phase 9 Step 4 (§5, §8, §10): real, repeatable coverage of
-`Window.add_terminal` -- a real, live pseudo-terminal (`portable_pty`
-spawns a real shell, `vt100` parses its real byte stream), not a
-simulated one. No official MD3 page exists (confirmed via the same
-directory-listing technique this milestone already uses).
-
-**A real, structural difference from every other component's own test
-suite in this project, stated honestly, not glossed over:** every
-other FFI test proves its claim through synchronous `Tree::dispatch`
-calls alone (`window.click`/`press_key`/`type_text`), no real render
-loop needed. A `Terminal`'s own real content only ever arrives via its
-background PTY reader thread, drained once per real frame tick inside
-`App.run`'s own per-window closure (`app.rs`) -- so proving a real
-shell genuinely responds needs a real, if brief, `App.run(max_frames=
-...)` call, not just synchronous dispatch. Every test below that needs
-real shell output spawns `/bin/sh` (POSIX, minimal, fast to start,
-universally available in CI) and sets up its own real input *before*
-its one real `app.run()` call, the same "one blocking call" real
-structure every other example in this project already uses -- calling
-`App.run()` a second time on the same `App`/`Window` is not a
-supported, tested pattern here (confirmed empirically while writing
-this file: a real second call silently never re-opened the window).
+"""Terminal nodes: a real `/bin/sh` on a PTY. Creation, click-to-focus, the
+`text` grid, `selection`, resizing with `cols`/`rows`, wheel scrollback, and
+input with nothing focused. Shell output only reaches the grid inside a
+frame, so one test runs a bounded `App.run()` -- the only one in the pytest
+process -- and skips when no display renders a frame.
 """
 
 import sys
@@ -33,26 +16,19 @@ from helpers import add
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Terminal is POSIX-only in this v1")
 
 
-def test_add_terminal_returns_a_node():
+def test_create_terminal_returns_a_node():
     window = Window(width=400, height=300)
     node = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     assert isinstance(node, Node)
 
 
-def test_add_terminal_positions_like_every_other_add_method():
+def test_create_terminal_accepts_an_absolute_position():
     window = Window(width=400, height=300)
     node = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)}, position="absolute", x=10, y=20)
     assert isinstance(node, Node)
 
 
 def test_a_click_focuses_the_terminal():
-    """A real, confirmed bug found live while building this step:
-    click-to-focus was originally scoped to TextField only (M18 Phase
-    1's own real finding) -- a real end-to-end test caught that a
-    click on a Terminal never focused it at all, so typed input
-    silently never reached the shell. Fixed by widening the same real
-    click-to-focus check `Tree::dispatch` already has.
-    """
     window = Window(width=400, height=300)
     term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     assert term.get("focused") is False
@@ -60,69 +36,31 @@ def test_a_click_focuses_the_terminal():
     assert term.get("focused") is True
 
 
-def test_get_text_on_a_fresh_terminal_returns_an_empty_grid():
+def test_text_of_a_fresh_terminal_is_an_empty_grid():
     window = Window(width=400, height=300)
     term = add(window, "terminal", shell="/bin/sh", cols=10, rows=3, palette={"background": (0, 0, 0, 255)})
     assert term.get("text") == "\n\n"
 
 
-def test_get_text_on_a_non_terminal_node_raises_a_clear_error():
+def test_text_on_a_box_raises_a_clear_error():
     window = Window(width=400, height=300)
     rect = add(window, "box", fill=(255, 0, 0, 255), width=40, height=40)
     with pytest.raises(ValueError):
-        # `get_text` is shared with Text/TextField/Terminal only.
+        # `text` applies to text, text_input, and terminal nodes only.
         rect.get("text")
 
 
-def test_a_real_shell_genuinely_responds_to_typed_input():
-    """The real point of this step: a genuine shell process, spawned
-    on a real PTY, receiving real keystrokes and producing real
-    output that lands in the rendered cell grid -- not a mock, not a
-    simulation.
+def test_a_real_shell_responds_to_typed_input():
+    """A real shell on a real PTY: typed commands run and their output
+    lands in the grid, Ctrl+C interrupts a running `sleep`, the wheel
+    reveals scrollback, and a selection over echoed output round-trips.
 
-    M32 Phase 4 (§4, §8) extends this exact test (rather than adding a
-    new one with its own `App.run()` call) to also prove a real
-    Ctrl+C/SIGINT genuinely interrupts a running process, and M32
-    Phase 5 (§4, §8) extends it again to prove real scrollback --
-    [[feedback_no_second_app_run_in_pytest]]'s own real, confirmed
-    finding means this file's one `App.run()` call must stay the only
-    one across the whole pytest process, so all three real claims
-    share it.
-
-    **M83: a real, CI-observed flake fixed here, not just a local
-    tuning tweak.** `max_frames` forces `ControlFlow::Poll` with zero
-    per-frame pacing (`engine-platform/src/lib.rs`'s own `still_
-    animating = real_still_animating || win.max_frames.is_some()`) --
-    a bounded run spins through its whole frame budget as fast as the
-    machine can issue redraws, never really waiting on real terminal
-    activity. On a fast, idle dev machine, 60 such frames still take
-    enough real wall-clock time for the OS to interleave the shell
-    process in. On CI (a debug, non-`--release` build, on a shared,
-    already-acknowledged-noisy-neighbor `ubuntu-latest` runner --
-    `ci.yml`'s own frame-time-benchmark comment says as much elsewhere
-    in this repo), that entire budget can burn through before the
-    shell gets scheduled at all, well before the fork/exec race the
-    pre-Ctrl+C pause below was already trying to cover. Reproduced
-    locally under both a debug build and real, taskset-pinned CPU
-    contention without triggering it (confirmed not a *local*
-    reproduction, only a CI one) -- the fix widens both real-time
-    budgets involved generously rather than guessing at a precise
-    minimum, since `ControlFlow::Poll`'s own zero-cost-when-fast
-    nature means extra headroom here is free on a fast machine and
-    only matters on a slow one.
-
-    **M88 correction: M83 misdiagnosed this.** The CI failure was never
-    timing. CI's Linux runner has no display at all ("neither
-    WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set"), so
-    `App.run()` returns immediately without rendering a single frame,
-    and PTY output only reaches the cell grid inside a frame -- the
-    test saw an empty grid (`'\n\n\n\n'`) however long it waited, and
-    kept failing on `main` after M83 landed. The run now queues a
-    marker via `App.thread_handle()` (M87) before starting; if it never
-    ran, no frame happened and the test skips with that reason rather
-    than failing on something it can't observe. M83's wider budgets are
-    kept: harmless, and still sensible headroom on a slow machine that
-    *does* have a display.
+    All of it shares one `App.run()`: a second real event loop in one
+    pytest process can break other render-loop tests. With no display
+    (e.g. headless CI) `App.run()` renders no frames, so PTY output never
+    drains; a `call_soon` marker detects that and the test skips. The
+    600-frame budget and the pause before Ctrl+C are headroom for slow
+    machines.
     """
     window = Window(width=420, height=200)
     term = add(window, "terminal", shell="/bin/sh", cols=40, rows=5, scrollback_lines=200, palette={"background": (0, 0, 0, 255)})
@@ -132,22 +70,15 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     window.simulate("input", text="echo HELLO_FROM_TERMINAL")
     window.simulate("key_down", key="enter")
 
-    # M32 Phase 5: real output lines typed early, before everything
-    # below -- more than the 5-row viewport can hold at once, forcing
-    # real scrollback content the later `window.scroll` call reveals.
+    # More lines than the 5-row viewport holds, so there is scrollback
+    # for the wheel below to reveal.
     window.simulate("input", text="for i in 1 2 3 4 5 6 7 8; do echo SCROLLBACK_LINE_$i; done")
     window.simulate("key_down", key="enter")
 
-    # M32 Phase 4: a real, running `sleep 100`, interrupted by a real
-    # Ctrl+C before it can ever finish -- `write_input` is a real,
-    # immediate OS write to the PTY (not deferred to a render loop), so
-    # this ordering is the real order the shell receives it in,
-    # independent of `App.run()` below. A short real wall-clock pause
-    # gives the shell time to actually fork/exec `sleep` first -- the
-    # identical real timing this phase's own empirical check needed.
-    # Typed last/most-recently, so its own real output stays in the
-    # bottom (unscrolled) viewport even after the scrollback-generating
-    # loop above.
+    # A running `sleep 100`, interrupted by Ctrl+C. Input is written to
+    # the PTY immediately, not deferred to a frame, so this is the order
+    # the shell receives it in; the pause lets the shell fork/exec `sleep`
+    # first. Typed last, so its output stays in the unscrolled viewport.
     window.simulate("input", text="sleep 100")
     window.simulate("key_down", key="enter")
     time.sleep(0.5)
@@ -157,46 +88,38 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
 
     app = App()
     app.add_window(window)
-    # M88: a frame probe -- see this test's own doc comment.
+    # A frame probe -- see the docstring.
     frames_ran = []
     app.thread_handle().call_soon(lambda: frames_ran.append(True))
-    # M83: widened 60 -> 600 -- still sensible headroom on a slow host
-    # that has a display (see the M88 correction in the doc comment).
     app.run(max_frames=600)
     if not frames_ran:
         pytest.skip("no display reachable: App.run() rendered no frames, so PTY output never drained")
 
     text = term.get("text")
     assert "REACHED_AFTER_SIGINT" in text, (
-        f"the shell must have genuinely regained control right after the real SIGINT -- if "
+        f"the shell must have regained control right after the SIGINT -- if "
         f"sleep 100 were still running, this later command would never have executed, got "
         f"{text!r}"
     )
     assert "HELLO_FROM_TERMINAL" not in text, (
-        "the real first line typed must have already scrolled off a 5-row viewport by now"
+        "the first line typed must have already scrolled off a 5-row viewport by now"
     )
 
-    # M32 Phase 5: no second `App.run()` needed -- a wheel
-    # resyncs `TerminalState` synchronously (`TerminalSession::scroll_
-    # by`'s own real `sync_state` call), no live render loop required.
-    # A deliberately huge scroll clamps to the real top of history
-    # (`vt100::Screen::set_scrollback`'s own real clamping), revealing
-    # the very first real line typed -- and pushing the most recent one
-    # back out of view.
+    # A wheel resyncs the grid synchronously, no frame needed. A huge
+    # scroll clamps to the top of history, revealing the first line typed
+    # and pushing the most recent one out of view.
     window.simulate("wheel", node=term, delta_y=-400.0)  # up: a negative wheel delta_y
     scrolled_text = term.get("text")
     assert "HELLO_FROM_TERMINAL" in scrolled_text, (
-        f"a real scroll must reveal real, previously-scrolled-off history, got {scrolled_text!r}"
+        f"a scroll must reveal previously-scrolled-off history, got {scrolled_text!r}"
     )
     assert "REACHED_AFTER_SIGINT" not in scrolled_text, (
-        "scrolled all the way to the real top of history, the most recent line must no longer "
+        "scrolled all the way to the top of history, the most recent line must no longer "
         "be in view"
     )
 
-    # M32 Phase 6 (§4, §5, §8): a real selection over genuinely echoed
-    # shell output -- `HELLO_FROM_TERMINAL` is still in view after the
-    # scroll above (the real point of the assertion just above), so its
-    # own real byte range can be selected and read back hermetically.
+    # A selection over echoed shell output: `HELLO_FROM_TERMINAL` is in
+    # view after the scroll, so its range can be selected and read back.
     line = next(line for line in scrolled_text.split("\n") if "HELLO_FROM_TERMINAL" in line)
     col = line.index("HELLO_FROM_TERMINAL")
     row = scrolled_text.split("\n").index(line)
@@ -205,24 +128,17 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     assert term.get("selection") == selection
 
 
-def test_scroll_on_a_terminal_with_no_content_does_not_raise():
-    """M32 Phase 5 (§4, §8): a real, synchronous edge case -- scrolling
-    a freshly spawned terminal with zero real scrollback yet must not
-    panic or raise, just clamp to `0` (`vt100::Screen::set_scrollback`'s
-    own real clamping).
-    """
+def test_wheel_on_a_terminal_with_no_scrollback_does_not_raise():
+    """A fresh terminal has no scrollback; a wheel clamps to 0."""
     window = Window(width=400, height=300)
     term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     window.simulate("wheel", node=term, delta_y=100.0)
     window.simulate("wheel", node=term, delta_y=-100.0)
 
 
-def test_scroll_on_a_non_terminal_node_still_bubbles_to_a_virtual_list():
-    """M32 Phase 5 (§4, §8): `Window.scroll`'s new `Terminal` branch
-    must be a true no-op for every other real `NodeKind` -- the
-    existing `VirtualList` scroll-bubbling behavior stays exactly as
-    it was before this phase.
-    """
+def test_wheel_on_a_virtual_list_is_unaffected_by_terminal_handling():
+    """The terminal's wheel handling leaves other kinds, like a virtual
+    list, alone."""
     window = Window(width=400, height=300)
     items = add(
         window,
@@ -237,11 +153,8 @@ def test_scroll_on_a_non_terminal_node_still_bubbles_to_a_virtual_list():
 
 
 def test_a_terminal_selection_round_trips_through_set_and_get():
-    """M32 Phase 6 (§4, §5, §8): seeds a selection directly (no live
-    mouse drag needed) and reads it back -- M100: through
-    `get("selection")` (was `Window.copy_terminal_selection`, which read
-    the selected text). A collapsed selection reads back as set.
-    """
+    """A selection set directly (no drag needed) reads back as set,
+    collapsed ones included."""
     window = Window(width=400, height=300)
     term = add(window, "terminal", shell="/bin/sh", cols=10, rows=1, palette={"background": (0, 0, 0, 255)})
     assert term.get("selection") is None, "no selection exists yet"
@@ -252,34 +165,26 @@ def test_a_terminal_selection_round_trips_through_set_and_get():
     assert term.get("selection") == (0, 2, 0, 2)
 
 
-def test_set_terminal_selection_on_a_non_terminal_node_raises():
+def test_selection_on_a_box_raises():
     window = Window(width=400, height=300)
     rect = add(window, "box", fill=(255, 0, 0, 255), width=50, height=50)
     with pytest.raises(ValueError):
         rect.set(selection=(0, 0, 0, 1))
 
 
-def test_resize_terminal_updates_terminal_state_synchronously():
-    """M33 Phase 1 (§4, §5, §8): no `App.run()` needed to observe this
-    -- `TerminalSession::resize` calls `sync_state` the identical real,
-    synchronous way `scroll_by` already does (M32 Phase 5), so
-    `get_text()` reflects the real new grid shape the instant `Window.
-    resize_terminal` returns. The real kernel-level PTY resize itself
-    (a live shell's own `stty size` genuinely reporting the new size)
-    is proven by a real, direct empirical script instead -- combining
-    it into this file's one shared `App.run()`-based test below would
-    add a fourth real content generator to an already-dense 5-row
-    viewport already proven fragile to reorder twice this session.
-    """
+def test_setting_cols_and_rows_resizes_the_grid_synchronously():
+    """`set(cols=..., rows=...)` resyncs the grid immediately, so
+    `get("text")` has the new shape with no frame. The PTY-level resize
+    (`stty size` in a live shell) isn't checked here."""
     window = Window(width=600, height=400)
     term = add(window, "terminal", shell="/bin/sh", cols=10, rows=3, palette={"background": (0, 0, 0, 255)})
     assert len(term.get("text").split("\n")) == 3
 
     term.set(cols=20, rows=6)
-    assert len(term.get("text").split("\n")) == 6, "resize_terminal must resync TerminalState"
+    assert len(term.get("text").split("\n")) == 6, "setting cols/rows must resync the grid"
 
 
-def test_resize_terminal_on_a_non_terminal_node_raises():
+def test_cols_and_rows_on_a_box_raise():
     window = Window(width=400, height=300)
     rect = add(window, "box", fill=(255, 0, 0, 255), width=50, height=50)
     with pytest.raises(ValueError):
@@ -287,10 +192,8 @@ def test_resize_terminal_on_a_non_terminal_node_raises():
 
 
 def test_one_monospace_cell_measures_positive_and_scales_with_font_size():
-    """M32 Phase 1 (§5, §8, §10): a terminal's cell is one character of
-    the bundled monospace face -- M100: measured with `measure_text`
-    (was `get_monospace_cell_size`), proven real (positive, genuinely
-    scales with `font_size`), not just "doesn't raise".
+    """A terminal cell is one character of the bundled monospace face,
+    measured with `measure_text`: positive, and growing with `font_size`.
     """
     window = Window(width=400, height=300)
     width_14, height_14 = window.measure_text("M", font_family=MONOSPACE_FONT_FAMILY, font_size=14.0)
@@ -301,14 +204,11 @@ def test_one_monospace_cell_measures_positive_and_scales_with_font_size():
     assert height_28 > height_14
 
 
-def test_press_key_without_a_focused_terminal_falls_through_harmlessly():
-    """`press_key`/`type_text`'s own real terminal-routing check must
-    be a true no-op when nothing terminal-shaped is focused -- proven
-    against a real Terminal node that simply isn't focused, not just
-    an empty window.
-    """
+def test_keys_and_input_without_a_focused_terminal_fall_through_harmlessly():
+    """Key and text input reach a terminal only when it's focused; with
+    an unfocused terminal in the tree they are harmless."""
     window = Window(width=400, height=300)
     add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
-    # No window.click(term) -- nothing is focused.
+    # No click on the terminal -- nothing is focused.
     window.simulate("key_down", key="enter")
     window.simulate("input", text="hello")

@@ -1,11 +1,7 @@
-"""M36 Phase 1 (§5, §7, §11.7): real, repeatable coverage of
-`Window.add_scroll_view` -- a real, general scrollable viewport over
-one child, grounded directly in the sibling `pyCopper` project's own
-`ScrollViewElement`. The real clip/scroll-shift claims themselves are
-proven at the pixel level (`crates/engine-render/tests/scroll_view.rs`)
-and the real scroll-clamp/hit-test-after-scroll math at the Rust level
-(`crates/engine-core/src/tree.rs`'s own `scroll_view`/`hit_test_after_
-a_real_scroll` tests); this suite proves the real FFI surface.
+"""Scroll views: `window.create("scroll_view", ...)` in either orientation,
+content attached with `add_child` and still clickable, wheel input on both
+axes, and rejecting an unknown orientation. Clipping and scroll offset are
+covered by `engine-render`'s `scroll_view.rs` and `engine-core`'s tree tests.
 """
 
 import pytest
@@ -14,7 +10,7 @@ from tre import Node, Window
 from helpers import add
 
 
-def test_add_scroll_view_returns_a_node():
+def test_create_scroll_view_returns_a_node():
     window = Window(width=800, height=600)
     view = add(window, "scroll_view", width=200, height=100)
     assert isinstance(view, Node)
@@ -26,14 +22,14 @@ def test_a_horizontal_scroll_view_does_not_raise():
     assert isinstance(view, Node)
 
 
-def test_real_content_can_be_composed_in_via_add_child():
+def test_content_can_be_attached_with_add_child():
     window = Window(width=800, height=600)
     view = add(window, "scroll_view", width=200, height=100)
     content = add(window, "box", fill=(255, 0, 0, 255), width=200, height=1000)
     view.add_child(content)
 
 
-def test_a_real_click_on_content_composed_into_a_scroll_view_reaches_its_own_handler():
+def test_a_click_on_scroll_view_content_reaches_its_listener():
     window = Window(width=800, height=600)
     view = add(window, "scroll_view", width=200, height=100)
     content = add(window, "box", fill=(255, 0, 0, 255), width=200, height=1000)
@@ -45,7 +41,7 @@ def test_a_real_click_on_content_composed_into_a_scroll_view_reaches_its_own_han
     assert clicked == [True]
 
 
-def test_scroll_with_delta_x_does_not_raise_on_a_horizontal_scroll_view():
+def test_wheel_with_delta_x_does_not_raise_on_a_horizontal_scroll_view():
     window = Window(width=800, height=600)
     view = add(window, "scroll_view", width=100, height=50, orientation="horizontal")
     content = add(window, "box", fill=(0, 255, 0, 255), width=1000, height=50)
@@ -53,10 +49,7 @@ def test_scroll_with_delta_x_does_not_raise_on_a_horizontal_scroll_view():
     window.simulate("wheel", node=view, delta_y=0.0, delta_x=500.0)
 
 
-def test_scroll_still_defaults_delta_x_to_zero_for_existing_callers():
-    """Real backward-compatibility proof: every pre-existing real
-    caller of `Window.scroll(node, delta_y)` must keep working
-    unchanged after `delta_x` was added."""
+def test_wheel_with_only_delta_y_does_not_raise():
     window = Window(width=800, height=600)
     view = add(window, "scroll_view", width=200, height=100)
     content = add(window, "box", fill=(255, 0, 0, 255), width=200, height=1000)

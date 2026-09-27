@@ -1,8 +1,7 @@
-"""M94 Phase 3: the proof widget -- a slider built only from a box and the
-M94 building blocks (listeners, pointer capture, keys, accessibility
-properties, `a11y_action`), with no built-in slider behind it. It has to
-do what the built-in one does: set its value from a press, follow a drag
-even off the track, clamp, step with the arrow keys, and expose its value
+"""A slider built only from a box and the building blocks -- listeners,
+pointer capture, keys, accessibility properties, `a11y_action` -- with no
+built-in slider behind it: it sets its value from a press, follows a drag
+even off the track, clamps, steps with the arrow keys, and exposes its value
 and range to assistive technology.
 """
 

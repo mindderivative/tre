@@ -1,15 +1,16 @@
-"""Shared test helpers (M100): building nodes through the target API.
+"""Shared test helpers.
 
-`add` is what the removed `window.add_*` factories did -- create a node and
-attach it to the window's root -- so tests that just need a node in the tree
-stay one line.
+`add` creates a node with `window.create` and attaches it to the window's
+root, so a test that just needs a node in the tree stays one line.
+`CODE_EDITOR` is the props for a monospace, multiline text input that shows
+whitespace.
 """
 
 from typing import Any
 
 from tre import MONOSPACE_FONT_FAMILY, Node, Window
 
-#: A text input set up the way the removed `add_code_editor` was.
+#: Props for a code-editor-style text input.
 CODE_EDITOR: dict[str, Any] = {
     "font_family": MONOSPACE_FONT_FAMILY,
     "multiline": True,

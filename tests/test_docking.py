@@ -1,10 +1,7 @@
-"""Docking (§11.4), reduced to D10's bare bones in M99: zones, docked
-panels, the active panel, and a drag that reports where it is and where
-it ended. The framework draws the handle and the target highlight.
-
-Drags are driven the way a real pointer drives them -- `window.simulate`
-pointer events through the same `process_input` pipeline `App.run()`
-uses -- so these tests cover the live path, not a test-only one.
+"""Docking: zones, docked panels, the active panel, and a drag that reports
+where it is and where it ended. The framework draws the handle and the
+target highlight. Drags are driven by `window.simulate` pointer events,
+through the same input pipeline `App.run()` uses.
 """
 
 import pytest

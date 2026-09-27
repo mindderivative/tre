@@ -1,23 +1,12 @@
-"""M56 (§8, §16.2): real, repeatable coverage of `Event.target` (M100:
-formerly `Event.node`) -- the live `Node` handle every dispatched `Event`
-carries.
-
-`Node` exposes no Python-facing `id`/`__eq__` (confirmed via `_core.pyi`
--- no such attribute exists), so "is `event.target` the *same* node the
-handler registered on" is proven behaviorally throughout: mutate through
-`event.target`, observe the identical effect on the originally-held
-handle, rather than an equality/identity assertion neither `Node` nor
-this test suite has any way to make more directly.
-
-Same "requires `maturin develop` first, imports the real compiled
-extension" discipline as `test_event_payload.py`.
+"""`Event.target`: the `Node` a click, `pointer_enter`, `focus`, or `change`
+listener is called for, read back through the handle it carries.
 """
 
 from tre import Node, Window
 from helpers import add
 
 
-def test_event_node_is_a_real_node_instance():
+def test_event_target_is_a_node():
     window = Window(width=100, height=100)
     button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
 
@@ -28,7 +17,7 @@ def test_event_node_is_a_real_node_instance():
     assert isinstance(events[0].target, Node)
 
 
-def test_event_node_is_correct_for_a_real_click():
+def test_event_target_is_the_clicked_node():
     window = Window(width=100, height=100)
     field = add(window, "text_input", width=60, height=24)
     field.set(text="marker")
@@ -40,7 +29,7 @@ def test_event_node_is_correct_for_a_real_click():
     assert seen == ["marker"]
 
 
-def test_event_node_is_correct_for_a_real_hover_enter():
+def test_event_target_is_the_entered_node():
     window = Window(width=100, height=100)
     field = add(window, "text_input", width=60, height=24)
     field.set(text="marker")
@@ -52,7 +41,7 @@ def test_event_node_is_correct_for_a_real_hover_enter():
     assert seen == ["marker"]
 
 
-def test_event_node_is_correct_for_a_real_focus_enter():
+def test_event_target_is_the_focused_node():
     window = Window(width=100, height=100)
     field = add(window, "text_input", width=60, height=24)
     field.set(text="marker")
@@ -64,7 +53,7 @@ def test_event_node_is_correct_for_a_real_focus_enter():
     assert seen == ["marker"]
 
 
-def test_event_node_is_correct_for_a_real_change():
+def test_event_target_is_the_changed_node():
     window = Window(width=100, height=100)
     field = add(window, "text_input", width=60, height=24)
 
@@ -74,6 +63,6 @@ def test_event_node_is_correct_for_a_real_change():
     window.simulate("focus", node=field)
     window.simulate("input", text="hello")
 
-    assert seen == ["hello"], "event.target must reflect the real post-change content"
+    assert seen == ["hello"], "event.target must reflect the post-change text"
 
 

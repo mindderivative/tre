@@ -1,5 +1,5 @@
-"""M96 Phase 2: `window.create` for text, text input, image, scroll view, and
-terminal nodes, and each kind's own `set`/`get` properties.
+"""`window.create` for text, text input, image, scroll view, terminal, canvas,
+and virtual list nodes, and each kind's own `set`/`get` properties.
 """
 
 from __future__ import annotations

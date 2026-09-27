@@ -1,13 +1,6 @@
-"""M31 Phase 1 (§5, §8): real, repeatable coverage of the Line-Number
-Gutter pattern -- composed entirely from existing primitives (`Window.
-add_code_editor`/`add_text`, `Node.set_on_change`), no new engine-py
-API added by this phase at all. The real per-line pixel-alignment
-claim is proven at the Rust level
-(`crates/engine-render/src/text.rs::
-a_plain_texts_own_multiline_content_lines_up_with_a_matching_
-multiline_textfields_own_lines`); this suite proves the real FFI-level
-behavior -- a gutter built this way tracks a real, live-edited
-buffer's own line count correctly.
+"""A line-number gutter composed from a multiline text input, a text node, and a
+`change` listener: it starts with the buffer's line count and grows and
+shrinks as edits add and merge lines.
 """
 
 from tre import Node, Window
@@ -33,13 +26,13 @@ def test_a_single_line_buffer_starts_the_gutter_at_one():
     assert gutter.get("text") == "1"
 
 
-def test_a_multi_line_buffer_seeds_the_gutter_with_every_real_line():
+def test_a_multi_line_buffer_seeds_the_gutter_with_every_line():
     window = Window(width=400, height=300)
     _editor, gutter = _editor_and_gutter(window, content="a\nb\nc\nd")
     assert gutter.get("text") == "1\n2\n3\n4"
 
 
-def test_a_real_enter_keypress_grows_the_gutter_live():
+def test_an_enter_keypress_grows_the_gutter_live():
     window = Window(width=400, height=300)
     editor, gutter = _editor_and_gutter(window, content="one\ntwo")
     assert gutter.get("text") == "1\n2"
@@ -50,17 +43,17 @@ def test_a_real_enter_keypress_grows_the_gutter_live():
     window.simulate("input", text="three")
 
     assert editor.get("text") == "one\ntwo\nthree"
-    assert gutter.get("text") == "1\n2\n3", "a real inserted line must grow the gutter live"
+    assert gutter.get("text") == "1\n2\n3", "an inserted line must grow the gutter live"
 
 
-def test_a_real_backspace_that_merges_two_lines_shrinks_the_gutter():
+def test_a_backspace_that_merges_two_lines_shrinks_the_gutter():
     window = Window(width=400, height=300)
     editor, gutter = _editor_and_gutter(window, content="one\ntwo\nthree")
     assert gutter.get("text") == "1\n2\n3"
 
     window.simulate("click", node=editor)
     window.simulate("key_down", key="home")  # start of "three"
-    window.simulate("key_down", key="backspace")  # merges "two" and "three" onto one real line
+    window.simulate("key_down", key="backspace")  # merges "two" and "three" onto one line
 
     assert editor.get("text") == "one\ntwothree"
-    assert gutter.get("text") == "1\n2", "merging two real lines must shrink the gutter live"
+    assert gutter.get("text") == "1\n2", "merging two lines must shrink the gutter live"

@@ -1,8 +1,7 @@
-"""M95 Phase 1: `window.create` for `box` and `path`, and a path's own
-properties -- SVG `data`, `view_box`, stroke trim -- through `set`, `get`,
-and `animate`. The geometry itself (fitting, trimming, morphing) is
-covered by `engine-core`'s own `path` tests; its paint, by M95 Phase 3's
-pixel tests.
+"""`window.create` for `box` and `path`, and a path's own properties -- SVG
+`data`, `view_box`, stroke trim -- through `set`, `get`, and `animate`. The
+geometry (fitting, trimming, morphing) is covered by `engine-core`'s `path`
+tests; its paint, by `engine-render`'s `m95_paint.rs`.
 """
 
 from __future__ import annotations

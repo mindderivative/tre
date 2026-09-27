@@ -1,6 +1,7 @@
-"""M94 Phase 1: `node.on`/`window.on` listeners, the M93 propagation model,
-pointer capture, keys, text, and window events -- all driven headlessly
-through `Window.simulate`, which shares `App.run()`'s own input pipeline.
+"""`node.on`/`window.on` listeners: registration, bubbling and `stop()`,
+pointer capture, the pointer, wheel, key, text, change, and focus events and
+their fields, and window events -- driven by `window.simulate`, which feeds
+the same input pipeline `App.run()` does.
 """
 
 from __future__ import annotations
@@ -134,6 +135,12 @@ def test_secondary_click_bubbles() -> None:
     assert seen == ["secondary_click"]
 
 
+def test_secondary_click_with_no_listener_is_a_safe_no_op() -> None:
+    w = window()
+    anchor = add(w, "box", fill=WHITE, width=80, height=40)
+    w.simulate("secondary_click", node=anchor)  # must not raise
+
+
 def test_pointer_up_precedes_click() -> None:
     w = window()
     node = add(w, "box", fill=BLACK, width=40, height=40)
@@ -250,6 +257,15 @@ def test_key_events_reach_the_root_when_nothing_is_focused() -> None:
     assert seen == ["escape"]
 
 
+def test_key_events_carry_alt_and_meta() -> None:
+    w = window()
+    seen: list[tuple[bool | None, bool | None, bool | None, bool | None]] = []
+    w.root.on("key_down", lambda e: seen.append((e.alt, e.meta, e.shift, e.ctrl)))
+    w.simulate("key_down", key="a", alt=True, meta=True)
+    w.simulate("key_down", key="a")
+    assert seen == [(True, True, False, False), (False, False, False, False)]
+
+
 def test_input_and_change_for_typing() -> None:
     w = window()
     box = add(w, "box", fill=BLACK, width=200, height=150)
@@ -287,6 +303,21 @@ def test_change_is_for_user_edits_never_a_programmatic_set() -> None:
     field.focus()
     w.simulate("input", text="!")
     assert seen == [("hello", "hello!")]
+
+
+def test_a_backspace_change_reports_the_text_before_and_after() -> None:
+    """`old_value` is the text the edit destroyed, snapshotted before it."""
+    w = window()
+    field = add(w, "text_input", width=200, height=40, text="hello")
+    seen: list[tuple[Any, Any]] = []
+    field.on("change", lambda e: seen.append((e.old_value, e.new_value)))
+
+    field.set(text="goodbye")
+    assert seen == []
+
+    w.simulate("click", node=field)  # focus it
+    w.simulate("key_down", key="backspace")
+    assert seen == [("goodbye", "goodby")]
 
 
 def test_focus_and_unfocus_bubble_for_focus_within() -> None:

@@ -1,5 +1,5 @@
-"""M94 Phase 2: `node.set`/`node.get` for accessibility, focus, and
-interaction properties; `node.focus()`; Tab order; click-to-focus; and the
+"""`node.set`/`node.get` for accessibility, focus, and interaction
+properties; `node.focus()`; Tab order; click-to-focus; and the
 `a11y_action` event.
 """
 

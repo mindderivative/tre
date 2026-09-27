@@ -53,11 +53,10 @@
 # Python smoke test (§14 step 6): ARCHITECTURE.md §13's own "Decision
 # recorded" -- primary-OS CI for the Python bindings starts as soon as
 # `engine-py` exists (this step), not deferred until the API stabilizes.
-# `maturin develop` + `import tre` + the real pytest suite +
-# `examples/animate_rect.py` (which opens a real window when one's
-# reachable, or exits 0 gracefully here via the same finding #261
-# convention `App.run()` now implements -- fixed in this same step after
-# it was first found raising instead of exiting cleanly).
+# `maturin develop` + `import tre` + the real pytest suite + every
+# `examples/*.py` (each checks its building block headlessly, then opens a
+# real window when one's reachable or exits 0 gracefully here via the
+# finding #261 convention `App.run()` implements).
 name: CI
 
 on:
@@ -156,8 +155,12 @@ jobs:
       - name: Python FFI test suite
         run: python -m pytest tests/ -v
 
-      - name: Run the real .py animation script
-        run: python examples/animate_rect.py
+      - name: Run every example
+        run: |
+          for example in examples/*.py; do
+            echo "== $example"
+            timeout 120 python "$example"
+          done
 
   # §14 step 7's own trigger (see file header comment) -- minimal,
   # compile-focused, not the full Linux job's breadth (no Python/maturin,

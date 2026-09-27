@@ -1,4 +1,4 @@
-"""M96 Phase 1: node lifetime and thread safety.
+"""Node lifetime and thread safety.
 
 - A node made by `window.create` (or detached by `remove()`) is freed, with
   its listeners, once no Python handle points anywhere into its subtree. A

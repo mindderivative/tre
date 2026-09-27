@@ -1,6 +1,6 @@
-"""M97 Phase 2 Step 2: `docs/design/legacy-behavior.md` -- the page's
-rebuild recipes, run against its own numbers, and its claims about the
-legacy widgets checked against the widgets themselves.
+"""`docs/design/legacy-behavior.md`: the page's rebuild recipes, run against
+its own numbers, and its claims about the legacy widgets checked against the
+widgets themselves.
 """
 
 from __future__ import annotations

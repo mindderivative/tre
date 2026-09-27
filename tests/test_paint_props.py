@@ -1,8 +1,7 @@
-"""M95 Phase 2: the target API's paint names on every node, per-corner
-radii, shadows, easing, `get_target`/`stop_animation`, and the
-theme-free text-input, scroll-view, and terminal colors -- through
-`set`, `get`, and `animate`. What they paint is covered by
-`engine-render`'s own pixel tests.
+"""Paint properties on every node through `set`, `get`, and `animate`:
+per-corner radii, shadows, easing, `get_target`/`stop_animation`, and the
+text-input, scroll-view, and terminal colors. What they paint is covered by
+`engine-render`'s pixel tests.
 """
 
 from __future__ import annotations

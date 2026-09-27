@@ -1,6 +1,5 @@
-"""M96 Phase 1: tree structure -- `insert_child`, `children`, `parent`,
-`remove` (detach, R5), and `destroy` -- and the move semantics a keyed
-reconciler relies on.
+"""Tree structure -- `insert_child`, `children`, `parent`, `remove` (detach),
+and `destroy` -- and the move semantics a keyed reconciler relies on.
 """
 
 from __future__ import annotations
