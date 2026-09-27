@@ -1,10 +1,12 @@
-# LOG — Branch `0.3.5.1`: Milestone 104
+# LOG — Branch `0.4.0`: Milestone 1
 
-- Tesserae filed issue #14. The user: "tesserae submitted an issue about the
-  dock_panel", then "lets use 0.3.5.1 as this i a minor bug fix".
-- `dock_panel` routes a docked panel through `move_panel`; `Tree::add_child`
-  moves an already-attached child. 5 pytest + 1 cargo tests; 3 fail unfixed.
+- The user: "Scaffold 0.4.0 and start a new build tracker. Annotate as 0.4.0
+  and restart the Milestones at 1. 0.4.0 will cover vello_hybrid fix. Any
+  current issues for 0.3.5 will stay in as 0.3.5.x."
+- Branch `0.4.0` off `main` at `a67376d`; version 0.4.0; the 0.3.x tracker
+  archived as `BUILD_TRACKER_ARCHIVE_0.3.md`; a new `BUILD_TRACKER.md` with
+  M1–M6 proposed. `vello_hybrid` 0.2.0 is still the latest release.
 
 ## Status
 
-**Released (2026-09-27).** `v0.3.5.1` is out; Tesserae told.
+**Scaffolded (2026-09-27).** M1's decisions wait on the user.

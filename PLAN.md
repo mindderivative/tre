@@ -1,11 +1,28 @@
-# PLAN — Branch `0.3.5.1`: Milestone 104, `dock_panel` Moves a Docked Panel
+# PLAN — Branch `0.4.0`: Milestone 1, Scope and Fork Setup
 
-*(Replaces the M103 plan — M103 is complete. Every step is in `BUILD_TRACKER.md`.)*
+*(The `0.4.0` line's first plan. Its tracker, `BUILD_TRACKER.md`, restarts at
+M1; the 0.3 line is archived in `BUILD_TRACKER_ARCHIVE_0.3.md`.)*
 
-Issue #14: `dock_panel` on a panel docked elsewhere left it in its old zone's
-list, and `set_active_panel` then put it under two parents. Fix: `dock_panel`
-moves it as a drop does, and `Tree::add_child` moves an attached node.
+## Goal
+
+Real GPU-level partial redraw through a `vello_hybrid` fork (issue #4): a
+patched renderer that can skip the full clear and clear a scissored rect, a
+persistent offscreen target, and dirty-region tracking (M2–M5), then the
+release (M6).
+
+## Steps
+
+**Phase 1 — Decisions** (nothing is built before the user confirms these)
+1. Re-verify issue #4's patch points against current `vello_hybrid`; fork
+   0.2.0 (still the latest release) or upstream `main`.
+2. The user's decisions: fork mechanics (a `mindderivative/vello` fork via
+   `[patch.crates-io]` at a pinned revision, or vendored), dirty-region
+   granularity (one rect or several), and partial redraw on by default or
+   opt-in for `0.4.0`.
+
+**Phase 2 — Fork setup**
+1. The fork created and pinned, building unchanged, every test passing.
 
 ## Status
 
-**Released (2026-09-27).** `v0.3.5.1` is out; Tesserae told.
+**Scaffolded (2026-09-27).** Phase 1 Step 1 next, on the user's go-ahead.

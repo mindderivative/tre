@@ -678,7 +678,7 @@ impl Tree {
 
     /// M37 (§5, §7, §11.7): the real fix for a genuine, previously
     /// undiscovered bug M36's own investigation found (documented in
-    /// `BUILD_TRACKER.md`'s own M36 trailer): `VirtualList`'s real
+    /// `BUILD_TRACKER_ARCHIVE_M1-M50.md`, M36): `VirtualList`'s real
     /// scroll offset used to be applied *only* as an extra
     /// `engine-render::paint_node` translate, never reflected back
     /// into `layout_style` -- so a real point-based hit-test at a

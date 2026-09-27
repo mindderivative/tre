@@ -2,7 +2,7 @@
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust — the building blocks of a desktop UI.**
 
-Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made `tre` a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the build is in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
+Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made `tre` a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.0` line (partial redraw through a `vello_hybrid` fork) is tracked in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
 
 ---
 
@@ -364,7 +364,7 @@ python examples/switch.py
 
 ## 14. Build Order
 
-Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER.md`](BUILD_TRACKER.md).
+Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md) (the 0.3 line) and [`BUILD_TRACKER.md`](BUILD_TRACKER.md) (`0.4.0`).
 
 ---
 
@@ -373,7 +373,7 @@ Historical. The original fifteen-step de-risking order (a static rect through `v
 | Risk | Detail | Mitigation |
 |---|---|---|
 | Vello churn | `vello_hybrid` is pre-1.0 and its architecture has been rewritten between releases | Pin exact versions; confine Vello calls to `engine-render`; pixel tests for every capability |
-| Partial redraw | `vello_hybrid` offers no scissored or no-clear render, so every frame repaints fully | Idle loop sleeps (§6); the fork that adds it is issue #4, reserved for 0.4.0 |
+| Partial redraw | `vello_hybrid` offers no scissored or no-clear render, so every frame repaints fully | Idle loop sleeps (§6); the fork that adds it is issue #4, the `0.4.0` line (`BUILD_TRACKER.md`, M1–M6) |
 | `accesskit` churn | Breaking changes between minor versions | Pin exactly; verify against the pinned source |
 | Wheel packaging | A repaired wheel vendors system libraries | Test the built wheel end to end (§13) |
 | Terminal portability | `portable-pty`'s Windows backend isn't exercised | The terminal kind is POSIX-verified; Windows is untested |

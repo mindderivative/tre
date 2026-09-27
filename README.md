@@ -72,6 +72,8 @@ Every rendering capability has a headless, GPU-backed pixel test under
 headlessly through `window.simulate` and `window.advance`.
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) is the design reference, and
-[`BUILD_TRACKER.md`](BUILD_TRACKER.md) the milestone-by-milestone history.
+[`BUILD_TRACKER.md`](BUILD_TRACKER.md) tracks the current `0.4.0` line; the
+milestone-by-milestone history through `v0.3.5.1` is in
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md).
 `tre` is a from-scratch second iteration of an earlier Vulkan engine,
 archived under [`archive/`](archive/) with its lessons learned.

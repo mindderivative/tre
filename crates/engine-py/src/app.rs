@@ -956,7 +956,7 @@ impl App {
                     // frames, and reconfiguring the wgpu surface (a
                     // genuine swapchain rebuild) on every single one is
                     // the real, measured root cause of the "trailing
-                    // behind the cursor" symptom `BUILD_TRACKER.md`'s own
+                    // behind the cursor" symptom the 0.3 line's
                     // M40 investigation root-caused. The real, exact
                     // *value* still updates here, live, with zero lag
                     // (unchanged) -- only the expensive GPU reconfigure

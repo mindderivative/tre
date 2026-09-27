@@ -16,7 +16,7 @@ Declarative views, the MD3 component catalog, and MD3 theming move to
 the framework (Tesserae). Every name is chosen so a framework author can
 tell at a glance what it is.
 
-Decisions D1–D11 (approved) are in `BUILD_TRACKER.md`'s Program section.
+Decisions D1–D11 (approved) are in `BUILD_TRACKER_ARCHIVE_0.3.md`'s Program section.
 This page adds design choices **R1–R12**, approved with it.
 
 Three principles run through every section:

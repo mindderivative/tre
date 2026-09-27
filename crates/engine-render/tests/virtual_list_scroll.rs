@@ -198,7 +198,7 @@ fn a_real_scroll_offset_shifts_materialized_children_up_by_that_many_pixels() {
         // per-frame loop always calls `compute_layout` before painting
         // regardless, so this is invisible in real usage). Fixes the
         // real hit-test-after-scroll bug this same paint-time-only
-        // translate used to cause (`BUILD_TRACKER.md`'s own M36
+        // translate used to cause (`BUILD_TRACKER_ARCHIVE_M1-M50.md`, M36
         // trailer has the full real investigation).
         let available = Size {
             width: AvailableSpace::Definite(f32::from(WIDTH)),

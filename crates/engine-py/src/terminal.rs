@@ -414,7 +414,7 @@ fn screen_cell_to_terminal_cell(cell: Option<&vt100::Cell>) -> TerminalCell {
     // combining-character sequences both collapse to this one glyph,
     // not rendered precisely. `bittty`-backed real terminals handle
     // both; this v1 doesn't yet, a real, separate gap from the four
-    // this milestone's own `BUILD_TRACKER.md` entry already names.
+    // the 0.3 line's terminal milestone already names.
     let ch = cell.contents().chars().next().unwrap_or(' ');
     TerminalCell {
         ch,

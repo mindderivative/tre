@@ -2025,7 +2025,7 @@ mod tests {
     }
 
     /// M31 Phase 1 (§5, §8): the real finding that closes this phase's
-    /// own "real, open technical question" (`BUILD_TRACKER.md`'s own
+    /// own "real, open technical question" (the 0.3 line's M31
     /// Phase 1 scoping note) without any new per-line-position API at
     /// all -- `draw` (plain `Text`) and `draw_field` (`TextField`) both
     /// build their `Layout` through this exact same `shaped_layout`
