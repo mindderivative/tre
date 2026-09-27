@@ -43,7 +43,7 @@ use crate::listeners::{self, WindowEventType, WindowListenerMap};
 use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
-use crate::window::{PyWindow, SharedActiveTree, SharedOsWindow, SharedSize, SharedTheme};
+use crate::window::{PyWindow, SharedActiveTree, SharedOsWindow, SharedSize};
 
 #[pyclass]
 pub struct App(ThreadBound<AppState>);
@@ -80,14 +80,12 @@ struct WindowSetup {
     handlers: HandlerMap,
     /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, plain
     /// data (no `Py<PyAny>`), extracted the same way `handlers` is.
-    context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
     /// M4 Phase 9 (§11.4): real docking state, extracted the same way.
     dock: SharedDockState,
     /// M7 Phase 3 (§7.1): the window's own theme, extracted the same
     /// way -- the real live-switch path (`on_input`'s new `ThemeChanged`
     /// arm, below) needs to mutate it, so it stays a shared handle,
     /// never copied to a plain snapshot.
-    theme: SharedTheme,
     /// M9 Phase 2 (§5): the window's own `on_complete` registry,
     /// extracted the same way -- the real `on_frame` closure needs to
     /// mutate it (removing a callback the instant it's invoked).
@@ -380,9 +378,7 @@ struct WindowRuntime {
     height: SharedSize,
     gpu: GpuState,
     handlers: HandlerMap,
-    context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
     dock: SharedDockState,
-    theme: SharedTheme,
     completions: SharedCompletions,
     /// M18 Phase 2 (§8, §10): which `TextField` (if any) a real
     /// press-and-drag is currently extending a selection in -- plain,
@@ -492,9 +488,7 @@ impl App {
                     width: window.width.clone(),
                     height: window.height.clone(),
                     handlers: window.handlers.clone(),
-                    context_menus: window.context_menus.clone(),
                     dock: window.dock.clone(),
-                    theme: window.theme.clone(),
                     completions: window.completions.clone(),
                     terminals: window.terminals.clone(),
                     active: window.active.clone(),
@@ -561,9 +555,7 @@ impl App {
                         height: setup.height.clone(),
                         gpu,
                         handlers: setup.handlers.clone(),
-                        context_menus: setup.context_menus.clone(),
                         dock: setup.dock.clone(),
-                        theme: setup.theme.clone(),
                         completions: setup.completions.clone(),
                         text_drag: None,
                         terminal_drag: None,
@@ -606,7 +598,6 @@ impl App {
                     runtime.tree = active.tree.clone();
                     runtime.root = active.root;
                     runtime.handlers = active.handlers.clone();
-                    runtime.context_menus = active.context_menus.clone();
                 }
 
                 let now = crate::clock::now(&runtime.tree);
@@ -819,7 +810,6 @@ impl App {
                     runtime.tree = active.tree.clone();
                     runtime.root = active.root;
                     runtime.handlers = active.handlers.clone();
-                    runtime.context_menus = active.context_menus.clone();
                 }
 
                 // M94: modifier state is shared by every window's event
@@ -892,8 +882,6 @@ impl App {
                     &NodeContext {
                         tree: &runtime.tree,
                         handlers: &runtime.handlers,
-                        context_menus: &runtime.context_menus,
-                        theme: &runtime.theme,
                         completions: &runtime.completions,
                     },
                     runtime.root,
@@ -1052,27 +1040,9 @@ impl App {
                         // only the drag-tracking itself ends.
                         runtime.terminal_drag = None;
                     }
-                    // M7 Phase 3 (§7.1, Step 3): the real, winit-driven
-                    // live theme switch -- `Window.set_theme`'s own
-                    // no-live-window-needed counterpart, this is where
-                    // an actual OS appearance change reaches. Updates
-                    // which of the theme's two schemes is active, then
-                    // re-pushes the freshly resolved "on-surface" color
-                    // into every already-opted-in node the identical
-                    // way `set_theme` itself does.
+                    // A real OS appearance change: tre themes nothing
+                    // itself (M99), so it only tells the framework.
                     InputEvent::ThemeChanged { dark } => {
-                        let mut state = runtime.theme.borrow_mut();
-                        state.set_dark(dark);
-                        let tint = state.on_surface();
-                        drop(state);
-                        let mut tree = runtime.tree.borrow_mut();
-                        tree.set_all_interaction_tints(tint);
-                        // M20 Phase 1 (§7.1, §7.3): a real live OS
-                        // theme switch must re-tint Checkbox/Slider
-                        // component colors too, the identical way
-                        // `Window.set_theme` itself already does.
-                        tree.set_all_component_tints(tint);
-                        drop(tree);
                         listeners::deliver_window(
                             &runtime.window_listeners,
                             py,
@@ -1196,8 +1166,6 @@ impl App {
                         cut_focused_selection_to_clipboard(
                             &runtime.tree,
                             &runtime.handlers,
-                            &runtime.context_menus,
-                            &runtime.theme,
                             &runtime.completions,
                             py,
                         );
@@ -1214,8 +1182,6 @@ impl App {
                             &runtime.tree,
                             runtime.root,
                             &runtime.handlers,
-                            &runtime.context_menus,
-                            &runtime.theme,
                             &runtime.completions,
                             py,
                         );
@@ -1286,13 +1252,9 @@ impl App {
                 // real bug caught and fixed in `window_input.rs`'s
                 // `click`/`hover`/`scroll`/`right_click`, for the
                 // identical reason.
-                let (tree_rc, handlers, context_menus) = {
+                let (tree_rc, handlers) = {
                     let active = runtime.active.borrow();
-                    (
-                        active.tree.clone(),
-                        active.handlers.clone(),
-                        active.context_menus.clone(),
-                    )
+                    (active.tree.clone(), active.handlers.clone())
                 };
                 let node = from_access_id(request.target_node);
                 let mut tree = tree_rc.borrow_mut();
@@ -1309,8 +1271,6 @@ impl App {
                         run_dispatch_outcome(
                             &handlers,
                             &tree_rc,
-                            &context_menus,
-                            &runtime.theme,
                             &runtime.completions,
                             &outcome,
                             None,
@@ -1344,8 +1304,6 @@ impl App {
                             crate::dispatch::fire_focus_transition(
                                 &handlers,
                                 &tree_rc,
-                                &context_menus,
-                                &runtime.theme,
                                 &runtime.completions,
                                 old,
                                 new,
@@ -1370,8 +1328,6 @@ impl App {
                             crate::dispatch::fire_focus_transition(
                                 &handlers,
                                 &tree_rc,
-                                &context_menus,
-                                &runtime.theme,
                                 &runtime.completions,
                                 old,
                                 new,
@@ -1401,8 +1357,6 @@ impl App {
                             &NodeContext {
                                 tree: &tree_rc,
                                 handlers: &handlers,
-                                context_menus: &context_menus,
-                                theme: &runtime.theme,
                                 completions: &runtime.completions,
                             },
                             node,

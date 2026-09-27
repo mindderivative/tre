@@ -54,19 +54,15 @@ the event-loop thread at the top of the next frame.
 
 ## Creating nodes
 
-These are the primitive, general-purpose factories every composite MD3
-component (`Button`, `Card`, `Dialog`, and 50-odd others) is itself built
-from — see [MD3 Components](components.md) for the full catalog, and
-[Docking & Shell Layout](docking-and-shell.md) for `build_shell` and the
-docking methods:
+The general-purpose factories (0.3.5 removed the MD3 component catalog built
+on them; a framework builds its own). See [Docking](docking-and-shell.md) for
+the docking methods:
 
 | Method | Creates |
 | --- | --- |
 | `add_rect(background, width, height, x=None, y=None, border_color=None, border_width=None)` | A plain colored rectangle, optionally bordered |
-| `add_text(content, foreground, width, height, typography_role=None, font_family="Roboto", font_weight=None, font_size=None, line_height=None, x=None, y=None)` | A plain, non-editable text label — `typography_role` resolves an MD3 type-scale role instead of literal font values, see [Theming & Accessibility](theming-and-accessibility.md) |
-| `add_checkbox(background, width, height, checked=False, x=None, y=None)` | An MD3 checkbox |
-| `add_slider(background, width, height, value=0.0, x=None, y=None)` | An MD3 slider (drag-to-set built in) |
-| `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)` | An MD3 text field — `multiline`/`show_whitespace` mirror `add_code_editor`'s own two fields |
+| `add_text(content, foreground, width, height, typography_role=None, font_family="Roboto", font_weight=None, font_size=None, line_height=None, x=None, y=None)` | A plain, non-editable text label — `typography_role` resolves an MD3 type-scale role instead of literal font values |
+| `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)` | A text field — `multiline`/`show_whitespace` mirror `add_code_editor`'s own two fields |
 | `add_code_editor(content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None)` | A monospace code editor — folding, syntax spans, whitespace glyphs |
 | `add_terminal(shell, cols, rows, background, font_size=14.0, scrollback_lines=1000, x=None, y=None)` | A real PTY-backed terminal emulator |
 | `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed image from already-decoded RGBA8 pixels |
@@ -74,16 +70,12 @@ docking methods:
 | `add_video(width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed video surface — frames pushed via `node.push_frame(...)` |
 | `add_icon(name, foreground, size, x=None, y=None)` | A curated Material Symbols vector icon |
 | `add_scroll_view(width, height, orientation="vertical", x=None, y=None)` | A scrollable viewport over exactly one child |
-| `add_splitter(background, width, height, initial_position=0.5)` | A drag-resizable pane divider |
 | `add_canvas(width, height, draw, x=None, y=None)` | A custom-drawn surface — see [Canvas & Virtualized Lists](canvas-and-lists.md) |
 | `add_virtual_list(item_count, materialize, item_extent=None, size_hint=None, width=None, height=None)` | A virtualized list — see [Canvas & Virtualized Lists](canvas-and-lists.md) |
 
 `x`/`y` are independently optional: give either to absolutely-position
 the node (relative to the window's own root padding box), or omit both to
-use the default flex-row flow. `border_color`/`border_width` follow
-`add_rect`'s lead across most `Rect`-backed factories in the full
-catalog (components.md) — omitted above where a factory has no
-meaningful "behind the content" border (`Image`/`Video`/`Icon`).
+use the default flex-row flow.
 
 ## Events
 
@@ -206,15 +198,3 @@ node.remove()                     # remove this node and its whole subtree
 `add_child` rejects (with `ValueError`) attaching a node as a child of its
 own descendant, and rejects attaching a node that belongs to a different
 `Window`'s tree.
-
-## Context menus
-
-```python
-menu_content = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=160, height=120)
-anchor_node.set_context_menu(menu_content)
-```
-
-Registers `menu_content` as `anchor_node`'s right-click context menu,
-opened by `window.right_click(anchor_node)` or a real right-click. The
-content node must be unattached or will be detached from its current
-parent first, and must belong to the same `Window`.

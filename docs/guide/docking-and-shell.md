@@ -1,63 +1,7 @@
-# Docking & Shell Layout
+# Docking
 
-## App shell
-
-```python
-menu_bar = window.add_rect(background=(0xEE, 0xEE, 0xEE, 0xFF), width=400, height=32)
-status_bar = window.add_rect(background=(0xEE, 0xEE, 0xEE, 0xFF), width=400, height=24)
-
-content = window.build_shell(menu_bar=menu_bar, toolbar=None, status_bar=status_bar)
-content.add_child(window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=400, height=144))
-```
-
-`build_shell(menu_bar=None, toolbar=None, status_bar=None)` builds a
-`Column`-flex shell container sized to the window's full width/height,
-re-parenting whichever named chrome regions you pass (each must already
-be a node you built) into it in `menu_bar` → `toolbar` → *(content)* →
-`status_bar` order. It returns the empty `content` node — a
-`flex_grow: 1.0` container that fills whatever space the given chrome
-regions don't take. `build_shell` is a composition convenience; it
-doesn't build the chrome nodes' own content, only names which node plays
-which role.
-
-## Shell chrome widgets
-
-`build_shell`'s `menu_bar`/`toolbar`/`status_bar` regions, and a window's
-own content area, are typically built from these real MD3 navigation/
-chrome components — see [MD3 Components](components.md) for every
-factory's full signature:
-
-```python
-bar = window.add_top_app_bar("Inbox", leading_icon="menu")
-tabs = window.add_tabs(["All", "Unread", "Starred"], selected=0)
-rail = window.add_navigation_rail(["Home", "Search", "Profile"], icons=["home", "search", None])
-
-content = window.build_shell(menu_bar=bar, toolbar=None, status_bar=None)
-content.add_child(tabs)
-```
-
-- `add_top_app_bar(title, leading_icon=None, trailing_icons=None,
-  width=None)` — the window's own title/action strip, the most common
-  `menu_bar=` argument to `build_shell`.
-- `add_toolbar(variant="docked", orientation=None, vibrant=False,
-  width=None, height=None)` — `variant` is `"docked"` (part of the
-  shell) or `"floating"` (a raised, positioned strip, typically placed
-  with explicit `x`/`y` instead of via `build_shell`).
-- `add_tabs(labels, icons=None, selected=None, width=None)` — a real
-  animated-indicator tab row; the app owns switching visible content on
-  `set_on_change`, `add_tabs` itself only tracks which label is active.
-- `add_navigation_rail(labels, icons, selected=None)` — the compact,
-  always-icon side rail, MD3's own recommended nav pattern at desktop
-  window widths.
-- `add_navigation_drawer(labels, icons, selected=None, modal=False,
-  width=..., height=None)` — the wider, label-and-icon drawer.
-  `modal=True` makes it a real dismissable overlay
-  (`Window.open_navigation_drawer`/`close_navigation_drawer`, the same
-  `open_overlay`/`close_overlay` primitive [Overlays](components.md#overlays)
-  uses); `modal=False` is a permanent layout child instead, typically
-  docked via the mechanism below rather than shown/hidden.
-- `add_status_bar(text, width=None)` — a plain bottom strip, the usual
-  `status_bar=` argument to `build_shell`.
+*0.3.5 removed `build_shell` and the MD3 shell chrome:* a framework builds
+its own app shell from the building blocks.
 
 ## Docking
 
@@ -95,27 +39,3 @@ window.start_panel_drag(handle_node)
 window.drag_panel_over(mouse_x, mouse_y)   # called repeatedly while dragging
 window.drop_panel_at(mouse_x, mouse_y)     # called once on release
 ```
-
-## Container-transform navigation
-
-```python
-window.begin_container_transform(
-    trigger=list_item,
-    destination=detail_view,
-    duration_ms=300,
-    content_stagger_ms=90,
-    on_complete=lambda: window.end_container_transform(list_item),
-)
-```
-
-Starts MD3's container-transform choreography between `trigger` and
-`destination` — `destination` must already be attached to the tree,
-laid out, and carry its own real target appearance (this call captures
-that as the animation's target, then morphs from `trigger`'s captured
-from-state). `curve` is fixed at `MotionCurve::Emphasized`, the curve
-MD3 names as typical for this transition. `on_complete`, when given,
-fires once the whole transition genuinely finishes — a common pattern is
-to call `end_container_transform(trigger)` from it, which detaches
-`trigger` from its own parent (the "trigger node is hidden or removed"
-step of the pattern). See `examples/navigation.py` for a complete
-list-to-detail navigation built this way.

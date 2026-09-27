@@ -23,7 +23,6 @@
 //! registered handler for this node, call it" shape.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -41,7 +40,6 @@ use crate::event::{Event, NodeContext};
 use crate::node_handles;
 use crate::node_layout::{ALIGN, FLEX_DIRECTION, JUSTIFY, lookup};
 use crate::thread_bound::ThreadBound;
-use crate::window::SharedTheme;
 
 /// `set_syntax_spans`'s own real `(start, end, (r, g, b, a))` element
 /// type, named purely to keep that signature under clippy's type-
@@ -70,8 +68,6 @@ impl NodeState {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
             completions: self.completions.clone(),
         })
     }
@@ -98,8 +94,6 @@ impl NodeState {
             crate::dispatch::fire_focus_transition(
                 &self.handlers,
                 &self.tree,
-                &self.context_menus,
-                &self.theme,
                 &self.completions,
                 old,
                 new,
@@ -149,13 +143,11 @@ pub struct NodeState {
     /// with the owning `PyWindow`/`View` the same way `handlers` is --
     /// no `Py<PyAny>` involved at all (unlike `handlers`), so no
     /// GC-traversal obligation the way a stored Python callback needs.
-    pub(crate) context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
     /// M7 Phase 3 (§7.1): shared with the owning `PyWindow` the same
     /// way `context_menus` is -- no `Py<PyAny>` involved, no GC
     /// obligation. A `View`-created `Node` gets a fresh, private,
     /// never-`Window`-linked instance instead (`view.rs`), matching
     /// this phase's own stated scope.
-    pub(crate) theme: SharedTheme,
     /// M9 Phase 2 (§5): `animate(..., on_complete=...)`'s own registry,
     /// shared with the owning `PyWindow` the same way `handlers` is --
     /// real `Py<PyAny>` callbacks live here, but `PyWindow`'s own
@@ -932,43 +924,6 @@ impl Node {
         )
     }
 
-    /// M4 Phase 7 (§11.3): registers `content` as this node's real
-    /// right-click context menu -- opened for real by
-    /// `dispatch::open_context_menu` on a `DispatchOutcome::
-    /// SecondaryActivated`. `open_overlay`'s own contract requires
-    /// `content` to be unattached (its `add_child` has no dedup, so
-    /// attaching an already-attached node would corrupt the tree,
-    /// confirmed by reading `add_child`'s real implementation) --
-    /// `content` typically already has a parent, since every existing
-    /// node-creation method (`add_rect`, etc.) attaches immediately, so
-    /// this detaches it first via `Tree::detach`, the same real,
-    /// existing mechanism docking's own tab-switching already uses to
-    /// keep a node "alive, parentless, ready for `add_child` elsewhere
-    /// later."
-    ///
-    /// M10 Phase 2 (§8): `content` must belong to this same `Node`'s
-    /// own `Window` -- `NodeId` is only unique within the `Tree` that
-    /// minted it, so a foreign `Node` would store a foreign id that
-    /// could alias an unrelated real node the next time it's read back
-    /// (the exact real gap `Node.add_child`'s own `Rc::ptr_eq` check
-    /// already closed, M6 Phase 1 -- mirrored here verbatim).
-    fn set_context_menu(&self, content: PyRef<'_, Node>) -> PyResult<()> {
-        if !Rc::ptr_eq(&self.tree, &content.tree) {
-            return Err(EngineError::ForeignNode.into());
-        }
-        let mut tree = self.tree.borrow_mut();
-        if let Some(parent) = tree
-            .get(content.id)
-            .expect("set_context_menu: content NodeId not found in this Tree")
-            .parent
-        {
-            tree.detach(parent, content.id);
-        }
-        drop(tree);
-        self.context_menus.borrow_mut().insert(self.id, content.id);
-        Ok(())
-    }
-
     /// M4 Phase 5 (§7.3): opts this node into ripple/hover state-layer
     /// animation -- a thin call into `Tree::interaction_mut`, the same
     /// real, already-correctly-wired mechanism `Tree::dispatch`'s
@@ -994,10 +949,9 @@ impl Node {
     /// Principle 6's "only a node that opts in pays the cost" applies
     /// to each independently.
     fn enable_interaction(&self) {
-        let tint = self.theme.borrow().on_surface();
-        if let Some(state) = self.tree.borrow_mut().interaction_mut(self.id) {
-            state.tint = tint;
-        }
+        // Opts in with the default black tint: M99 removed theming, and
+        // M99 Phase 2 removes the state layer itself (D8).
+        self.tree.borrow_mut().interaction_mut(self.id);
     }
 
     /// M6 Phase 1 (§8): attaches `child` under this node, rejecting a
@@ -1128,8 +1082,6 @@ impl Node {
                 let ctx = NodeContext {
                     tree: &self.tree,
                     handlers: &self.handlers,
-                    context_menus: &self.context_menus,
-                    theme: &self.theme,
                     completions: &self.completions,
                 };
                 call_handler(&self.handlers, id, EventKind::Change, py, |py| {
@@ -1183,8 +1135,6 @@ impl Node {
                 let ctx = NodeContext {
                     tree: &self.tree,
                     handlers: &self.handlers,
-                    context_menus: &self.context_menus,
-                    theme: &self.theme,
                     completions: &self.completions,
                 };
                 call_handler(&self.handlers, id, EventKind::Change, py, |py| {
@@ -1241,8 +1191,6 @@ impl Node {
                 let ctx = NodeContext {
                     tree: &self.tree,
                     handlers: &self.handlers,
-                    context_menus: &self.context_menus,
-                    theme: &self.theme,
                     completions: &self.completions,
                 };
                 call_handler(&self.handlers, id, EventKind::Change, py, |py| {

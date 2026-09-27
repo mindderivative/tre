@@ -108,29 +108,6 @@ def test_a_real_right_click_also_reaches_the_text_field():
     assert field.is_focused() is True, "a real right-click on a TextField must move real focus there"
 
 
-def test_clicking_a_non_text_field_still_does_not_move_focus():
-    window = Window(width=200, height=100)
-    checkbox = window.add_checkbox(background=(0xEE, 0xEE, 0xEE, 0xFF), width=24, height=24)
-    window.click(checkbox)
-    assert (
-        checkbox.is_focused() is False
-    ), "click-to-focus is scoped to TextField only, not every node kind"
-
-
-def test_shift_tab_from_a_focused_field_moves_focus_away():
-    window = Window(width=200, height=100)
-    field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)
-    other = window.add_checkbox(background=(0x63, 0x50, 0xA4, 0xFF), width=24, height=24)
-    other.set_on_click(lambda: None)  # the established way a node opts into Tab-reachability
-
-    window.press_key("tab")
-    assert field.is_focused() is True
-
-    window.press_key("tab")
-    assert other.is_focused() is True
-    assert field.is_focused() is False, "focus must genuinely move, not stay on both"
-
-
 def test_type_text_inserts_into_the_focused_field():
     window = Window(width=200, height=100)
     field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)

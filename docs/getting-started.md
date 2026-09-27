@@ -58,9 +58,8 @@ def on_click():
     label.set_text(f"{clicks} clicks")
 
 
-button = window.add_checkbox(background=(0x67, 0x50, 0xA4, 0xFF), width=32, height=32)
+button = window.add_rect(background=(0x67, 0x50, 0xA4, 0xFF), width=96, height=32)
 button.set_on_click(on_click)
-button.enable_interaction()  # opts into the MD3 ripple/hover state layer
 
 app = App()
 app.add_window(window)
@@ -69,7 +68,7 @@ app.run()
 
 - [`Node.set_on_click`](api/python/node.md#set_on_click) registers a
   Python callback fired on a real click (mouse or keyboard activation —
-  see [Theming & Accessibility](guide/theming-and-accessibility.md)).
+  see [Accessibility & Fonts](guide/theming-and-accessibility.md)).
 - [`Node.enable_interaction`](api/python/node.md#enable_interaction) opts
   the node into the default MD3 ripple/hover visual — without it, the
   click still fires, just with no visual feedback.
@@ -93,8 +92,6 @@ specific ones) can be driven this way — see
   tour: every node kind, events, animation, focus.
 - [Working with Files](guide/working-with-files.md) — load themes and
   images from files on disk.
-- [MD3 Components](guide/components.md) — `Checkbox`, `Slider`,
-  `TextField`, `Image`, `Icon` in depth.
 - Browse [`examples/`](https://github.com/mindderivative/tre/tree/main/examples)
   in the repository — each script is a small, self-contained, real proof
   of one mechanism (`examples/slider.py` for keyboard-driven `Slider`

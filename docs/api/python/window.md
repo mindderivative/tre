@@ -44,29 +44,12 @@ overridable by the explicit font arguments. `width`/
 support to size a label from its own content). For editable text, see
 [`add_text_field`](#add_text_field).
 
-### `add_checkbox`
-
-**`add_checkbox(background, width, height, checked=False, x=None, y=None)`**
-
-An MD3 checkbox. See [MD3 Components → Selection & Input](../../guide/components.md#selection-input).
-
-### `add_slider`
-
-**`add_slider(background, width, height, value=0.0, x=None, y=None)`**
-
-An MD3 slider with drag-to-set built in. `value` seeds its position,
-clamped to `0.0..=1.0`; read and animate it as the `"value"` property.
-`background` is the thumb's fill. See [MD3 Components → Selection & Input](../../guide/components.md#selection-input).
-
 ### `add_text_field`
 
 **`add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)`**
 
-An MD3 text field with real keyboard editing. `multiline`/
-`show_whitespace` mirror `add_code_editor`'s own two fields, both
-`False` by default (the pre-existing behavior for every caller that
-doesn't pass them). See
-[MD3 Components → Text Fields, Code Editor & Terminal](../../guide/components.md#text-fields-code-editor-terminal).
+A text field with real keyboard editing. `multiline`/`show_whitespace`
+mirror `add_code_editor`'s own two fields, both `False` by default.
 
 ### `add_image_from_bytes`
 
@@ -102,14 +85,7 @@ read or decoded, `ValueError` for an unknown `fit`. See
 
 A curated Material Symbols vector icon (`home`, `search`, `menu`,
 `close`, `check`, `arrow_back`, `add`, `settings`). Raises `ValueError`
-for an unknown `name`. See [MD3 Components → Media & Graphics](../../guide/components.md#media-graphics).
-
-### `add_splitter`
-
-**`add_splitter(background, width, height, initial_position=0.5)`**
-
-A drag-resizable pane divider. See
-[MD3 Components → Layout & Structure](../../guide/components.md#layout-structure).
+for an unknown `name`.
 
 ### `add_canvas`
 
@@ -127,33 +103,11 @@ A virtualized list of `item_count` logical rows. Give exactly one of
 `item_extent`/`size_hint`. Raises `ValueError` if neither or both are
 given. See [Canvas & Virtualized Lists](../../guide/canvas-and-lists.md#virtualized-lists).
 
-## The full MD3 catalog
-
-The 6 factories above are the general-purpose primitives. `Window` also
-exposes 50 more `add_*` factories for real MD3 components (buttons,
-cards, dialogs, navigation, a terminal, a code editor, and more) — see
-[MD3 Components](../../guide/components.md) for the complete, organized
-catalog rather than duplicating all 56 signatures here.
-
 ## Overlays
 
-*New in 0.3.4:* `show_layer`/`hide_layer` build all of these from your own
-nodes — see [Layers](layers.md). The older pairs below stay until 0.3.5.
-
-Dialogs, menus, snackbars, the side sheet, and a modal navigation
-drawer each open/close via a matched pair of `Window` methods, all real
-thin wrappers over the same `Tree::open_overlay`/`close_overlay`
-primitive:
-
-| Open | Close |
-| --- | --- |
-| `open_dialog(dialog)` | `close_dialog(dialog)` |
-| `open_menu(anchor, menu)` | `close_menu(menu)` |
-| `open_snackbar(snackbar)` | `close_snackbar(snackbar)` |
-| `open_side_sheet(sheet)` | `close_side_sheet(sheet)` |
-| `open_navigation_drawer(drawer)` | `close_navigation_drawer(drawer)` |
-
-See [MD3 Components → Overlays](../../guide/components.md#overlays).
+Build dialogs, menus, tooltips, snackbars, and sheets from your own nodes
+with `show_layer`/`hide_layer` — see [Layers](layers.md). 0.3.5 removed the
+older `open_*`/`close_*` pairs and the MD3 factories they opened.
 
 ## Terminal
 
@@ -192,69 +146,6 @@ Sends a Ctrl+`letter` control byte to the focused terminal —
 `letter` must be one ASCII letter (case-insensitive), or `ValueError`.
 Returns whether a terminal was focused to receive it; it never touches a
 `TextField` (use `copy`/`cut`/`paste` for those).
-
-## Layout composition
-
-### `build_shell`
-
-**`build_shell(menu_bar=None, toolbar=None, status_bar=None) -> Node`**
-
-Builds an `AppShell`-style column container sized to the window's full
-width/height, re-parenting the given chrome nodes into it, and returns
-the empty `content` container (`flex_grow: 1.0`). See
-[Docking & Shell Layout → App shell](../../guide/docking-and-shell.md#app-shell).
-
-## Theming
-
-### `set_theme`
-
-**`set_theme(seed, dark=False, default_theme=None, custom_theme=None, default_theme_spec=None, custom_theme_spec=None)`**
-
-Builds a full MD3 dynamic color scheme from a `(r, g, b, a)` seed color
-and makes it active — every already-built themed node (created via a
-composition-only `add_*` factory that reads the theme, e.g.
-`add_button`/`add_checkbox`) is retroactively re-themed in place.
-`default_theme_spec`/`custom_theme_spec` are [theme documents](../../guide/theming-and-accessibility.md#theme-documents)
-as `dict`s, layering color/shape/elevation/typography overrides for the
-imperative catalog on top. `default_theme`/`custom_theme` *(file
-conveniences)* read the same documents from YAML files; each is mutually
-exclusive with its `*_spec` twin.
-
-```python
-window.set_theme(
-    seed=(0x67, 0x50, 0xA4, 0xFF),
-    custom_theme_spec={
-        "colors": {"primary": "#00FF00"},
-        "components": {"button": {"corner_radius": "small"}},
-    },
-)
-```
-
-### `theme`
-
-**`theme -> Theme`** *(read-only property)*
-
-Read-only access to this window's own live theme resolution — the
-exact same lookups every composition-only factory (`add_button`,
-`add_fab`, etc.) already makes internally, reachable from Python for
-building your own MD3-consistent compositions. A fresh `Theme` wrapper
-each access (cheap) — reads always see the window's current live
-state, including after a real `set_theme()` call.
-
-```python
-if window.theme.is_set():
-    primary = window.theme.role("primary")  # (r, g, b, a) or None
-```
-
-`Theme`'s own methods:
-
-| Method | Returns |
-| --- | --- |
-| `role(name) -> (r, g, b, a) \| None` | The resolved MD3 color for a role name (e.g. `"primary"`); `None` when no theme is set, or `name` isn't a real role |
-| `is_set() -> bool` | Whether a real theme has been resolved at all |
-| `shape(component, variant=None) -> float \| None` | The resolved corner-radius override for `component` (and `variant`, if given); `None` if there's no override — fall back to your own formula default |
-| `elevation(component, variant=None) -> float \| None` | `shape`'s own sibling for elevation — identical contract |
-| `typography(role) -> (family, weight, size, line_height) \| None` | A real, shipped MD3 default for a recognized typography role, regardless of whether a theme is set; `None` only for an unrecognized role name |
 
 ## Events, properties, and `simulate` (0.3.4)
 
@@ -336,11 +227,6 @@ context-menu "Copy"/"Cut"/"Paste" item's `on_click` should call:
 On some sandboxed Linux setups with no clipboard manager, clipboard
 content may only be served while the process that wrote it is running.
 
-## Context menus
-
-Registered on the [`Node`](node.md) itself via `set_context_menu` — see
-`right_click` above for how a registered menu opens.
-
 ## Docking
 
 | Method | Purpose |
@@ -357,18 +243,6 @@ Registered on the [`Node`](node.md) itself via `set_context_menu` — see
 `side` is one of `"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`.
 See [Docking & Shell Layout](../../guide/docking-and-shell.md#docking) for
 a full walkthrough.
-
-## Container transform
-
-### `begin_container_transform`
-
-**`begin_container_transform(trigger, destination, duration_ms=300, content_stagger_ms=90, on_complete=None)`**
-
-### `end_container_transform`
-
-**`end_container_transform(trigger)`**
-
-See [Docking & Shell Layout → Container-transform navigation](../../guide/docking-and-shell.md#container-transform-navigation).
 
 ## Canvas
 

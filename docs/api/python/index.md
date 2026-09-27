@@ -12,7 +12,6 @@ as Tesserae.
 | [`LoopHandle`](app.md#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s event loop, via `App.thread_handle()` |
 | [`Window`](window.md) | Owns a node tree, its size/title; creates nodes, dispatches input, docking, theming |
 | [`Node`](node.md) | A handle to one node — events, animation, property reads/writes |
-| [`Theme`](window.md#theme) | Read-only access to a `Window`'s live MD3 theme resolution, via `window.theme` |
 | [`Event`](node.md#the-event-payload) | The payload a handler receives when it takes one argument |
 | [`CanvasContext`](canvas-context.md) | The draw surface passed to a `Canvas` node's `draw` callback |
 

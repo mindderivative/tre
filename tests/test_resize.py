@@ -67,26 +67,3 @@ def test_resize_shrinking_the_window_does_not_raise():
     window.resize(200, 150)
 
 
-def test_an_interactive_add_dialog_call_after_a_resize_still_works():
-    """M33 Phase 2 (§4, §5, §8): the exact real scenario the prior
-    phase's own doc comment named as broken -- an interactive `add_*`
-    factory method (here, `Dialog`'s own full-window scrim, sized
-    directly from `self.width`/`self.height`) called after a real
-    resize must still build and open correctly, not silently size
-    against stale construction-time dimensions. No Python-level getter
-    exists to assert on the scrim's own real pixel box directly (a
-    real, separate, pre-existing gap), so this proves the real flow
-    doesn't raise, the same real class of proof this codebase already
-    relies on elsewhere a direct pixel assertion isn't reachable from
-    Python.
-    """
-    window = Window(width=400, height=300)
-    window.resize(1200, 900)
-
-    dialog = window.add_dialog(
-        headline="Resized",
-        supporting_text="does this dialog build correctly after a real resize?",
-        width=300,
-        height=200,
-    )
-    window.open_dialog(dialog)

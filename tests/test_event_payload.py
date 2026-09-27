@@ -98,27 +98,6 @@ def test_a_keyword_only_parameter_does_not_make_the_event_required():
     assert calls == [None]
 
 
-def test_a_time_picker_dial_change_gives_a_real_hour_minute_tuple():
-    """`ChangedValue::Time` (M54 Phase 1) -- the one real `Changed`
-    value shape that's neither a plain number nor a string, confirmed
-    to cross the FFI boundary as a real Python `(hour, minute)` tuple.
-    """
-    window = Window(width=200, height=200)
-    dial = window.add_time_picker_dial(hour=3, minute=15, size=160)
-    dial.enable_interaction()
-
-    events = []
-    dial.set_on_change(lambda event: events.append(event))
-
-    window.click(dial)  # a zero-movement press+release, a real drag start/end
-
-    assert len(events) == 1
-    event = events[0]
-    assert event.kind == "change"
-    assert event.old_value == (3, 15)
-    assert event.new_value == (3, 15)
-
-
 def test_event_source_is_a_stable_value_distinguishing_two_real_nodes():
     """`Event.source` (a plain opaque `u64`, M54 scoping's own resolved
     design fork) is real and usable for at least the one thing a bare

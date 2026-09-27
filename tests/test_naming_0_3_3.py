@@ -24,7 +24,6 @@ def test_add_text_takes_foreground():
     [
         ("add_text", {"content": "Hi", "background": BLACK, "width": 60, "height": 20}),
         ("add_icon", {"name": "home", "color": BLACK, "size": 24}),
-        ("add_loading_indicator", {"color": BLACK}),
     ],
 )
 def test_the_old_glyph_color_keywords_are_gone(factory, kwargs):
@@ -53,83 +52,9 @@ def test_foreground_is_not_a_property_of_a_fill_kind():
         rect.animate("foreground", (255, 0, 0, 255), duration_ms=0)
 
 
-# --- B: toolbar vibrant ------------------------------------------------------
-
-
-def test_add_toolbar_takes_vibrant():
-    Window(width=800, height=600).add_toolbar(vibrant=True)
-
-
-# --- C: selected for Switch and RadioButton ---------------------------------
-
-
-def test_add_switch_takes_selected_and_node_reads_it_back():
-    switch = Window().add_switch(selected=True)
-    assert switch.get_selected() is True
-    switch.set_selected(False)
-    assert switch.get_selected() is False
-
-
-def test_add_switch_rejects_the_old_on_keyword():
-    with pytest.raises(TypeError, match="on"):
-        Window().add_switch(on=True)
-
-
-# --- D: a slider's value ----------------------------------------------------
-
-
-def test_slider_value_is_readable_and_animatable_as_value():
-    slider = Window().add_slider(background=BLACK, width=100, height=20, value=0.25)
-    assert slider.get("value") == pytest.approx(0.25)
-    slider.animate("value", 0.75, duration_ms=0)
-
-
-def test_the_old_thumb_position_property_names_its_replacement():
-    slider = Window().add_slider(background=BLACK, width=100, height=20)
-    with pytest.raises(ValueError, match="renamed to \"value\""):
-        slider.get("thumb_position")
-    with pytest.raises(ValueError, match="renamed to \"value\""):
-        slider.animate("thumb_position", 0.5)
-
-
 # --- E: orientation ----------------------------------------------------------
 
 
-def test_divider_and_scroll_view_take_orientation():
-    window = Window()
-    window.add_divider(length=100, orientation="vertical")
-    window.add_scroll_view(width=100, height=50, orientation="horizontal")
-
-
-@pytest.mark.parametrize("factory", ["add_divider", "add_scroll_view"])
-def test_an_unknown_orientation_is_a_clear_error(factory):
-    window = Window()
-    kwargs = {"length": 100} if factory == "add_divider" else {"width": 100, "height": 50}
+def test_an_unknown_orientation_is_a_clear_error():
     with pytest.raises(ValueError, match="unknown orientation"):
-        getattr(window, factory)(orientation="diagonal", **kwargs)
-
-
-def test_the_old_orientation_booleans_are_gone():
-    window = Window()
-    with pytest.raises(TypeError, match="vertical"):
-        window.add_divider(length=100, vertical=True)
-    with pytest.raises(TypeError, match="horizontal"):
-        window.add_scroll_view(width=100, height=50, horizontal=True)
-
-
-# --- F: lowercase enum values ------------------------------------------------
-
-
-# --- G: text-string parameters -----------------------------------------------
-
-
-def test_link_dialog_and_popover_take_their_new_text_parameters():
-    window = Window()
-    window.add_link(content="Docs", width=80)
-    window.add_dialog(headline="Title", supporting_text="Body", width=200, height=120)
-    window.add_popover(subhead="Title", supporting_text="Body", width=200, height=100)
-
-
-# --- H: typography_role ------------------------------------------------------
-
-
+        Window().add_scroll_view(width=100, height=50, orientation="diagonal")

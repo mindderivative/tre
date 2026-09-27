@@ -175,11 +175,9 @@ An exception raised inside any handler is caught, logged, and non-fatal.
 
 **`enable_interaction()`**
 
-Opts this node into the default MD3 ripple/hover state-layer animation.
-Independent of whether the node has any event handlers — a purely-
-hoverable, non-clickable node is a supported case. If the window's
-`set_theme` was already called, immediately applies the current theme's
-on-surface tint.
+Opts this node into the default ripple/hover state-layer animation, in
+black. Independent of whether the node has any event handlers — a purely-
+hoverable, non-clickable node is a supported case.
 
 ## Tree structure
 
@@ -225,14 +223,6 @@ Switching screens is `old.remove()` then `window.root.add_child(new)`:
 - **A detached subtree keeps everything else**: scroll offsets, a text
   input's text, caret, and selection, and running animations, which keep
   advancing on the window's clock. Attach it again and it's as you left it.
-
-### `set_context_menu`
-
-**`set_context_menu(content)`**
-
-Registers `content` as this node's right-click context menu, opened via
-`Window.right_click`/a real right-click. `content` must belong to the
-same `Window`; it's detached from its current parent first if needed.
 
 ## Checkbox-specific
 

@@ -985,16 +985,7 @@ impl Node {
             crate::clock::now(&self.tree),
         );
         if let Some((old, new)) = transition {
-            fire_focus_transition(
-                &self.handlers,
-                &self.tree,
-                &self.context_menus,
-                &self.theme,
-                &self.completions,
-                old,
-                new,
-                py,
-            );
+            fire_focus_transition(&self.handlers, &self.tree, &self.completions, old, new, py);
         }
     }
 }

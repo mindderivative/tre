@@ -51,10 +51,9 @@ nav:
   - Getting Started: getting-started.md
   - Guide:
       - Imperative API: guide/imperative-api.md
-      - MD3 Components: guide/components.md
-      - Docking & Shell Layout: guide/docking-and-shell.md
+      - Docking: guide/docking-and-shell.md
       - Canvas & Virtualized Lists: guide/canvas-and-lists.md
-      - Theming & Accessibility: guide/theming-and-accessibility.md
+      - Accessibility & Fonts: guide/theming-and-accessibility.md
       - Working with Files: guide/working-with-files.md
   - Python API Reference:
       - Overview: api/python/index.md

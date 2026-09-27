@@ -39,17 +39,6 @@ mkdocs serve   # live preview at http://127.0.0.1:8000
   tonal-palette scheme resolution), elevation shadows, hover/press
   state layers with real ripple, shape morphing, and MD3 motion
   curves.
-- **A real, wide MD3 component catalog** — 56 `Window.add_*` factories
-  spanning buttons, selection controls, cards, chips, navigation,
-  overlays (dialogs, menus, snackbars), a real PTY-backed `Terminal`,
-  and a `CodeEditor` with folding and syntax highlighting — not just a
-  handful of samples. See `docs/guide/components.md` for the full
-  catalog.
-- **Full theming, not just color** — MD3 dynamic color (HCT/tonal-
-  palette resolution), a named shape/elevation token system
-  (`corner_radius: small`, `elevation: level_2`), and a real,
-  Flutter-sourced MD3 type scale apps can reference by role instead of
-  literal font values.
 - **Desktop shell primitives** — multi-window apps, a fixed-zone
   docking system, splitters, virtualized/variable-height lists,
   context menus and other overlays, an `AppShell` navigation pattern,

@@ -40,13 +40,6 @@ def test_add_code_editor_seeds_the_real_initial_content():
     assert node.get_text() == "def f():\n    pass"
 
 
-def test_a_themed_code_editor_does_not_raise():
-    window = Window(width=400, height=300)
-    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
-    node = window.add_code_editor(content="", background=(255, 255, 255, 255), width=300, height=150)
-    assert isinstance(node, Node)
-
-
 def test_a_click_focuses_the_code_editor():
     window = Window(width=400, height=300)
     editor = window.add_code_editor(content="x", background=(255, 255, 255, 255), width=300, height=150)

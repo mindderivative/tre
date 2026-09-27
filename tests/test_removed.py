@@ -61,10 +61,23 @@ def test_every_forbidden_name_is_in_the_migration_table() -> None:
 
 #: Forbidden names 0.3.5 has already removed, by milestone.
 GONE = {
-    # M98: the declarative and reactivity layers.
-    "tre": {"View", "Component", "Signal", "Computed", "Effect", "ViewModel", "batch", "untrack"},
-    "Window": {"from_view", "show_view"},
-}
+    # M98: the declarative and reactivity layers. M99: theming.
+    "tre": {
+        "View", "Component", "Signal", "Computed", "Effect", "ViewModel", "batch", "untrack",
+        "Theme",
+    },
+    "Window": {
+        "from_view", "show_view",
+        # M99 Phase 1 Step 1: the MD3 factories, the legacy overlays and
+        # menus, the shell, the container transform, and theming.
+        *_removed._FACTORIES_MOVED,
+        "build_menu", "open_menu", "close_menu", "open_dialog", "close_dialog",
+        "open_snackbar", "close_snackbar", "open_side_sheet", "close_side_sheet",
+        "open_navigation_drawer", "close_navigation_drawer", "build_shell",
+        "begin_container_transform", "end_container_transform", "set_theme", "theme",
+    },
+    "Node": {"set_context_menu"},
+}  # fmt: skip
 
 
 def test_every_forbidden_name_exists_today_or_is_already_gone() -> None:
@@ -78,7 +91,7 @@ def test_every_forbidden_name_exists_today_or_is_already_gone() -> None:
 
 def test_off_by_default() -> None:
     assert os.environ.get("TRE_FORBID_REMOVED") != "1", "run the suite without the switch"
-    assert tre.Theme is not None
+    assert tre.CanvasContext is not None
     assert callable(tre.Window(10, 10, "off").add_rect)
 
 

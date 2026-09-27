@@ -1,7 +1,7 @@
 # Working with Files
 
-`tre`'s engine takes **data**: a theme as a `dict`, an image as decoded
-RGBA pixels, a font as raw bytes. The rest of this guide is written around
+`tre`'s engine takes **data**: an image as decoded RGBA pixels, a font as
+raw bytes. The rest of this guide is written around
 those data forms, because that is what a framework built on `tre` hands it.
 
 This page is for using `tre` **directly, without a framework**, where
@@ -19,12 +19,11 @@ runs.
 | File convenience | What `tre` does | Data form |
 | --- | --- | --- |
 | `window.add_image("logo.png", ...)` | Decodes the file | [`window.add_image_from_bytes(rgba, ...)`](../api/python/window.md#add_image_from_bytes) |
-| `default_theme=`/`custom_theme=` paths | Reads the theme YAML | [`default_theme_spec=`/`custom_theme_spec=`](theming-and-accessibility.md#theme-documents) |
 | — (fonts) | `tre` never reads font files | [`tre.register_font(bytes)`](theming-and-accessibility.md#custom-fonts) |
 
 *Removed in 0.3.5:* view files, `include:`, component files, stylesheet
-files, and `poll_reload()` went with `View` — declarative views belong to
-a framework built on `tre`.
+files, and `poll_reload()` went with `View`, and theme files with theming —
+both belong to a framework built on `tre`.
 
 ## Images from files
 
@@ -45,19 +44,6 @@ picture = window.add_image_from_bytes(
 )
 ```
 
-## Stylesheet and theme files
-
-```python
-window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme="brand_theme.yaml")
-```
-
-`default_theme=`/`custom_theme=` take a theme file (`seed`, `colors`,
-`components`, `typography`) — the schema is in
-[Theming & Accessibility → Theme documents](theming-and-accessibility.md#theme-documents).
-Omitting `default_theme` uses the theme shipped inside `tre`. Each path
-parameter has a `*_spec` twin taking the same content as a `dict`;
-passing both raises `ValueError`.
-
 ## Fonts
 
 There's no file-based font API: `tre` accepts fonts only as bytes. Read
@@ -70,7 +56,7 @@ import tre
 tre.register_font(Path("fonts/Inter-Regular.ttf").read_bytes())  # ["Inter"]
 ```
 
-See [Theming & Accessibility → Custom fonts](theming-and-accessibility.md#custom-fonts).
+See [Accessibility & Fonts → Custom fonts](theming-and-accessibility.md#custom-fonts).
 
 ## Hot reload inside `App.run()`
 

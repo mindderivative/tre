@@ -33,7 +33,6 @@ use taffy::prelude::{AvailableSpace, Size};
 
 use crate::event::{Event, NodeContext, changed_value_to_py};
 use crate::listeners::{self, EventType};
-use crate::window::SharedTheme;
 
 /// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
 /// `App::run`'s own top is *not* the one guaranteed place a `tracing`
@@ -371,8 +370,6 @@ pub(crate) fn read_new_changed_value(
 pub(crate) fn run_dispatch_outcome(
     handlers: &HandlerMap,
     tree: &Rc<RefCell<Tree>>,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    theme: &SharedTheme,
     completions: &SharedCompletions,
     outcome: &DispatchOutcome,
     event: Option<&InputEvent>,
@@ -381,8 +378,6 @@ pub(crate) fn run_dispatch_outcome(
     let ctx = NodeContext {
         tree,
         handlers,
-        context_menus,
-        theme,
         completions,
     };
     match outcome {
@@ -452,16 +447,7 @@ pub(crate) fn run_dispatch_outcome(
         // (`app.rs`) calls directly, since that path never reaches
         // `Tree::dispatch`/this function at all.
         DispatchOutcome::FocusChanged { old, new } => {
-            fire_focus_transition(
-                handlers,
-                tree,
-                context_menus,
-                theme,
-                completions,
-                *old,
-                *new,
-                py,
-            );
+            fire_focus_transition(handlers, tree, completions, *old, *new, py);
         }
         // M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning is a
         // context menu, handled by `open_context_menu` below -- a
@@ -548,14 +534,11 @@ pub(crate) fn process_input(
     run_dispatch_outcome(
         ctx.handlers,
         ctx.tree,
-        ctx.context_menus,
-        ctx.theme,
         ctx.completions,
         &outcome,
         Some(event),
         py,
     );
-    open_context_menu(ctx.tree, ctx.context_menus, root, &outcome);
     outcome
 }
 
@@ -575,8 +558,6 @@ pub(crate) fn process_input(
 pub(crate) fn fire_focus_transition(
     handlers: &HandlerMap,
     tree: &Rc<RefCell<Tree>>,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    theme: &SharedTheme,
     completions: &SharedCompletions,
     old: Option<NodeId>,
     new: Option<NodeId>,
@@ -585,8 +566,6 @@ pub(crate) fn fire_focus_transition(
     let ctx = NodeContext {
         tree,
         handlers,
-        context_menus,
-        theme,
         completions,
     };
     if let Some(old) = old {
@@ -600,47 +579,6 @@ pub(crate) fn fire_focus_transition(
         });
     }
     listeners::route_focus(&ctx, old, new, py);
-}
-
-/// M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning -- opens
-/// `anchor`'s registered context menu, if any, via the existing real
-/// `Tree::open_overlay` (§14 step 13). Guards against reopening a menu
-/// that's already open (checked via `overlay_meta`) rather than
-/// double-`add_child`-ing the same content, which `open_overlay`'s own
-/// contract doesn't protect against itself. Deliberately does not wire
-/// dismissal (`OverlayMeta.dismiss_on_outside_click`/`dismiss_on_
-/// escape`) -- a real, separate, still-open gap (`overlay.rs`'s own
-/// doc comment has named it since M3 step 13), not manufactured here
-/// just because this phase touches the same struct.
-pub(crate) fn open_context_menu(
-    tree: &Rc<RefCell<engine_core::Tree>>,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    root: NodeId,
-    outcome: &DispatchOutcome,
-) {
-    let DispatchOutcome::SecondaryActivated(anchor) = outcome else {
-        return;
-    };
-    let anchor = *anchor;
-    let Some(&content) = context_menus.borrow().get(&anchor) else {
-        return;
-    };
-    let mut tree = tree.borrow_mut();
-    if tree.overlay_meta(content).is_some() {
-        return;
-    }
-    tree.open_overlay(
-        root,
-        anchor,
-        content,
-        engine_core::OverlayMeta {
-            anchor: Some(anchor),
-            dismiss_on_outside_click: true,
-            dismiss_on_escape: true,
-            modal: false,
-            ..Default::default()
-        },
-    );
 }
 
 /// M9 Phase 2 (§5): `Tree::tick_all`'s own real "meaning-dependent"
@@ -766,16 +704,12 @@ pub(crate) fn copy_focused_selection_to_clipboard(tree: &Rc<RefCell<Tree>>) -> b
 pub(crate) fn cut_focused_selection_to_clipboard(
     tree: &Rc<RefCell<Tree>>,
     handlers: &HandlerMap,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    theme: &SharedTheme,
     completions: &SharedCompletions,
     py: Python<'_>,
 ) -> bool {
     let ctx = NodeContext {
         tree,
         handlers,
-        context_menus,
-        theme,
         completions,
     };
     let field_and_text = tree.borrow().focused().and_then(|field| {
@@ -829,8 +763,6 @@ pub(crate) fn paste_clipboard_into_focused(
     tree: &Rc<RefCell<Tree>>,
     root: NodeId,
     handlers: &HandlerMap,
-    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    theme: &SharedTheme,
     completions: &SharedCompletions,
     py: Python<'_>,
 ) -> bool {
@@ -843,16 +775,7 @@ pub(crate) fn paste_clipboard_into_focused(
                 &interaction_config(),
                 crate::clock::now(tree),
             );
-            run_dispatch_outcome(
-                handlers,
-                tree,
-                context_menus,
-                theme,
-                completions,
-                &outcome,
-                Some(&event),
-                py,
-            );
+            run_dispatch_outcome(handlers, tree, completions, &outcome, Some(&event), py);
             true
         }
         Err(err) => {

@@ -232,8 +232,6 @@ impl PyWindow {
             id: active.root,
             tree: active.tree.clone(),
             handlers: active.handlers.clone(),
-            context_menus: active.context_menus.clone(),
-            theme: self.theme.clone(),
             completions: self.completions.clone(),
         })
     }
@@ -382,8 +380,6 @@ impl PyWindow {
             id,
             tree: active.tree.clone(),
             handlers: active.handlers.clone(),
-            context_menus: active.context_menus.clone(),
-            theme: self.theme.clone(),
             completions: self.completions.clone(),
         });
         drop(active);
@@ -570,14 +566,9 @@ impl PyWindow {
         fields: Option<&Bound<'_, PyDict>>,
         py: Python<'_>,
     ) -> PyResult<()> {
-        let (tree, root, handlers, context_menus) = {
+        let (tree, root, handlers) = {
             let active = self.active.borrow();
-            (
-                active.tree.clone(),
-                active.root,
-                active.handlers.clone(),
-                active.context_menus.clone(),
-            )
+            (active.tree.clone(), active.root, active.handlers.clone())
         };
         let node_id = match &node {
             Some(node) if !Rc::ptr_eq(&node.tree, &tree) => {
@@ -590,8 +581,6 @@ impl PyWindow {
         let ctx = NodeContext {
             tree: &tree,
             handlers: &handlers,
-            context_menus: &context_menus,
-            theme: &self.theme,
             completions: &self.completions,
         };
         let mut f = Fields::new(event, fields)?;
@@ -716,16 +705,7 @@ impl PyWindow {
                     None
                 };
                 if let Some((old, new)) = transition {
-                    fire_focus_transition(
-                        &handlers,
-                        &tree,
-                        &context_menus,
-                        &self.theme,
-                        &self.completions,
-                        old,
-                        new,
-                        py,
-                    );
+                    fire_focus_transition(&handlers, &tree, &self.completions, old, new, py);
                 }
             }
             "a11y_action" => {
@@ -779,16 +759,6 @@ impl PyWindow {
                 let dark = f.required("dark", dark)?;
                 f.done()?;
                 // What `App.run()` does for a real OS light/dark switch.
-                let tint = {
-                    let mut theme = self.theme.borrow_mut();
-                    theme.set_dark(dark);
-                    theme.on_surface()
-                };
-                {
-                    let mut tree = tree.borrow_mut();
-                    tree.set_all_interaction_tints(tint);
-                    tree.set_all_component_tints(tint);
-                }
                 listeners::deliver_window(
                     &self.window_listeners,
                     py,

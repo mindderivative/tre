@@ -85,44 +85,6 @@ def test_the_elevation_table_is_the_painters_formula(level: int) -> None:
     assert f"| {level} | `{rows}` |" in DOC.read_text()
 
 
-def test_the_engine_never_toggles_a_checkbox() -> None:
-    w = tre.Window(100, 100, "checkbox")
-    checkbox = w.add_checkbox(background=BLACK, width=18, height=18)
-    w.simulate("click", node=checkbox)
-    assert checkbox.get_checked() is False
-    assert checkbox.get("check_progress") == 0.0
-
-
-def test_slider_arrow_keys_step_a_twentieth() -> None:
-    w = tre.Window(300, 100, "slider")
-    slider = w.add_slider(background=BLACK, width=200, height=20, value=0.5)
-    slider.focus()
-    w.simulate("key_down", key="arrow_right")
-    assert slider.get("value") == pytest.approx(0.55)
-    w.simulate("key_down", key="arrow_left")
-    w.simulate("key_down", key="arrow_left")
-    assert slider.get("value") == pytest.approx(0.45)
-
-
-def test_the_legacy_group_reflow_compounds_and_never_restores() -> None:
-    """The page's stated bug: each layout pass while a child is held
-    reflows again, and releasing leaves the widths where they ended."""
-    w = tre.Window(600, 100, "group")
-    _, children = w.add_button_group(labels=["A", "B", "C"], width=100, height=40)
-
-    def widths() -> list[float]:
-        return [c.get("layout_width") for c in children]
-
-    assert widths() == [100, 100, 100]
-    w.simulate("pointer_down", node=children[1])
-    first = widths()
-    second = widths()
-    assert 100 < first[1] < second[1], "the pressed child keeps growing"
-    assert sum(first) == sum(second) == 300, "the row keeps its width"
-    w.simulate("pointer_up", node=children[1])
-    assert widths() != [100, 100, 100]
-
-
 def test_set_on_click_makes_a_node_a_tab_stop_that_enter_and_space_activate() -> None:
     w = tre.Window(200, 100, "click")
     legacy, rebuilt = w.create("box", width=40, height=20), w.create("box", width=40, height=20)

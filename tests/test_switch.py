@@ -11,50 +11,11 @@ import pytest
 from tre import Node, Window
 
 
-def test_add_switch_returns_a_node():
-    window = Window(width=200, height=200)
-    node = window.add_switch()
-    assert isinstance(node, Node)
-
-
-def test_add_switch_defaults_to_off():
-    window = Window(width=200, height=200)
-    switch = window.add_switch()
-    assert switch.get("toggle_progress") == 0.0
-    assert switch.get_selected() is False
-
-
-def test_on_true_seeds_toggle_progress_at_one():
-    window = Window(width=200, height=200)
-    switch = window.add_switch(selected=True)
-    assert switch.get("toggle_progress") == 1.0
-    assert switch.get_selected() is True
-
-
-def test_set_on_and_animate_toggle_progress_reach_the_real_switch():
-    window = Window(width=200, height=200)
-    switch = window.add_switch()
-
-    switch.set_selected(True)  # must not raise -- plain, non-animated state write
-    switch.animate("toggle_progress", 1.0, duration_ms=0)  # must not raise
-
-    switch.set_selected(False)
-    switch.animate("toggle_progress", 0.0, duration_ms=0)  # must not raise
-
-
 def test_set_selected_rejects_a_non_switch_node():
     window = Window(width=200, height=200)
     rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
     with pytest.raises(ValueError, match="Rect has no property 'selected'"):
         rect.set_selected(True)
-
-
-def test_the_pre_0_3_3_on_accessors_are_gone():
-    # M90: a Switch's state is `selected`, MD3's own term, shared with
-    # RadioButton -- `set_on`/`get_on` no longer exist.
-    switch = Window(width=200, height=200).add_switch()
-    assert not hasattr(switch, "set_on")
-    assert not hasattr(switch, "get_on")
 
 
 def test_toggle_progress_property_is_unknown_on_a_non_switch_node():
@@ -66,28 +27,3 @@ def test_toggle_progress_property_is_unknown_on_a_non_switch_node():
         rect.get("toggle_progress")
 
 
-def test_a_themed_switch_does_not_raise():
-    window = Window(width=200, height=200)
-    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
-    node = window.add_switch(selected=True)
-    assert isinstance(node, Node)
-
-
-def test_the_already_generic_click_and_ripple_mechanism_works_on_a_switch():
-    window = Window(width=200, height=200)
-    switch = window.add_switch()
-    switch.enable_interaction()  # must not raise
-
-    calls = []
-
-    def on_click():
-        switch.set_selected(True)
-        switch.animate("toggle_progress", 1.0, duration_ms=0)
-        calls.append("clicked")
-
-    switch.set_on_click(on_click)
-    window.click(switch)
-    assert calls == ["clicked"], (
-        "a real click must reach a Switch's own registered handler, the same generic "
-        "dispatch/ripple mechanism every other NodeKind already uses"
-    )

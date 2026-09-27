@@ -12,7 +12,8 @@ blocking `App.run()` call; each `Window` owns its own node tree and size:
 
 M98: the declarative layer -- `View`, `Component`, `{{ }}` bindings -- and
 the reactivity layer (`Signal`, `Computed`, `Effect`, `ViewModel`, `batch`,
-`untrack`) are gone; a framework (Tesserae) owns both.
+`untrack`) are gone; M99: so are the MD3 widgets and theming. A framework
+(Tesserae) owns all of them.
 """
 
 from tre._core import (
@@ -21,7 +22,6 @@ from tre._core import (
     Event,
     LoopHandle,
     Node,
-    Theme,
     Window,
     register_font,
 )
@@ -42,7 +42,6 @@ __all__ = [
     "LoopHandle",
     "MONOSPACE_FONT_FAMILY",
     "Node",
-    "Theme",
     "Window",
     "register_font",
 ]

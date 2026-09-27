@@ -27,16 +27,6 @@ project's design decisions.
 - **Material Design 3 visual language** — dynamic color (full HCT/
   tonal-palette scheme resolution), elevation shadows, hover/press state
   layers with real ripple, shape morphing, and MD3 motion curves.
-- **A real, wide MD3 component catalog** — 60 `Window.add_*` factories spanning
-  [buttons, selection controls, cards, chips, navigation, overlays
-  (dialogs, menus, snackbars), a real PTY-backed `Terminal`, and a
-  `CodeEditor` with folding and syntax highlighting](guide/components.md),
-  not just a handful of samples.
-- **Full theming, not just color** — MD3 dynamic color (HCT/tonal-
-  palette resolution), a named shape/elevation token system
-  (`corner_radius: small`, `elevation: level_2`), and a real,
-  Flutter-sourced MD3 type scale apps can reference by role instead of
-  literal font values — see [Theming & Accessibility](guide/theming-and-accessibility.md).
 - **Desktop shell primitives** — multi-window apps, a
   [fixed-zone docking system](guide/docking-and-shell.md), splitters,
   [virtualized/variable-height lists](guide/canvas-and-lists.md), context

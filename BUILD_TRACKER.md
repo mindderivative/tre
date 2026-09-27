@@ -63,7 +63,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | `v0.3.4` Release: PR #11 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) — closes issue #10 |
 | M97 — Tesserae Migration Gate | `██████████` 100% | ✅ Complete (2026-09-26) — `v0.3.4` released; Tesserae confirmed, with the switch in CI, that it uses nothing 0.3.5 removes |
 | M98 — Remove the Declarative Layer | `██████████` 100% | ✅ Complete (2026-09-25) — `engine-spec`, `View`, `Component`, bindings, and reactivity removed |
-| M99 — Remove MD3 Components, Kinds, and Theming | `░░░░░░░░░░` 0% | ⬜ Approved, not started — unblocked by M97 (2026-09-26) |
+| M99 — Remove MD3 Components, Kinds, and Theming | `██░░░░░░░░` 17% | 🚧 In progress — Phase 1 Step 1 done: the MD3 factories and theming are gone (2026-09-26) |
 | M100 — Apply the Naming Convention | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M101 — Consolidation and Size Pass | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M102 — Docs, Examples, and Tests Rewrite | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1446,10 +1446,10 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 99 — Remove MD3 Components, Kinds, and Theming
 
-**Status: ⬜ Proposed.** Starts only after M97's gate.
+**Status: 🚧 In progress (2026-09-26).** User: "push and start M99", after M97's gate closed (Tesserae's CI run with the switch). **Decided by the user:** the 61 example files that use what M99 removes, `demo/showcase.py` included, are deleted ("Delete them now"); M102 writes the new set and showcase on the final building blocks. Phase 2 Step 1 also takes the `Icon` kind, per D4, once `engine-md3`'s icon data is gone.
 
-### Phase 1 — Factories and Theming ⬜
-- Step 1: delete the MD3 composition factories, `build_shell`, container transform, the `Theme` class, `set_theme`, and the retheme hooks; with `set_theme` go the theme types M98 moved into `engine-py`, `default_theme.yaml`, and `serde_yaml_ng` and `pythonize` — ⬜
+### Phase 1 — Factories and Theming 🚧
+- Step 1: delete the MD3 composition factories, `build_shell`, container transform, the `Theme` class, `set_theme`, and the retheme hooks; with `set_theme` go the theme types M98 moved into `engine-py`, `default_theme.yaml`, and `serde_yaml_ng` and `pythonize` — ✅ (`window_factory.rs` 11,000 → about 900 lines, keeping `add_rect`, `add_text`, `add_image`, `add_image_from_bytes`, `add_video`, `add_icon`, `add_text_field`, `add_code_editor`, `add_terminal`, `get_monospace_cell_size`, `resize_terminal`, and `add_scroll_view` until M100 renames them; gone: the 47 MD3 factories (the kind-backed ones too -- their kinds' engine code goes in Phase 2), `build_menu` and the `open_*`/`close_*` overlay pairs, `build_shell`, `begin_`/`end_container_transform`, `Theme`, `set_theme`, `window.theme`, the retheme hooks, `ThemeState`, `theme_spec.rs`, `default_theme.yaml`, and `pythonize`/`serde`/`serde_yaml_ng`; also `Node.set_context_menu` and its `context_menus` plumbing, which only opened `build_menu` menus -- its replacement is `on("secondary_click")` plus `show_layer`; the theme parameter threaded through `node`, `dispatch`, `event`, `app`, and the input paths is gone, and a real OS light/dark switch now only fires the `color_scheme` window event; `tools/dump_widget.py` and `tools/md3_handover.py` retired with their tests, their generated pages kept as records; 38 test files emptied and deleted, 22 trimmed by the names each test calls; 62 example files deleted per the user's decision (the 61 counted plus `context_menu.py`), 15 remain; docs: `guide/components.md` deleted, the Window, Node, imperative, getting-started, docking, accessibility, and files pages trimmed; cargo 453 passed; pytest 491 passed, 2 skipped; 15/15 examples; mkdocs strict clean; 105/105 public names documented)
 - Step 2: reduce docking to the bare-bones mechanism M93 defines per D10 -- the docking model, panel drag and drop, and drop-target resolution stay; tab-strip, handle, and highlight presentation move to the framework — ⬜
 - Step 3: delete the `engine-md3` crate; its color science, scales, and icon data are handed to Tesserae first — ⬜
 

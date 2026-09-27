@@ -32,7 +32,6 @@
 //! itself, so exposing it as a plain attribute stays consistent.)
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{ChangedValue, EventKind, NodeId, PointerButton, Tree, node_id_as_u64};
@@ -40,7 +39,6 @@ use pyo3::prelude::*;
 
 use crate::dispatch::{HandlerMap, SharedCompletions};
 use crate::node::{Node, NodeState};
-use crate::window::SharedTheme;
 
 /// M56 (§8, §16.2): the 5 real handles every `Node` needs besides its
 /// own `id` -- the identical bundle `Node`'s own struct already carries
@@ -58,8 +56,6 @@ use crate::window::SharedTheme;
 pub(crate) struct NodeContext<'a> {
     pub(crate) tree: &'a Rc<RefCell<Tree>>,
     pub(crate) handlers: &'a HandlerMap,
-    pub(crate) context_menus: &'a Rc<RefCell<HashMap<NodeId, NodeId>>>,
-    pub(crate) theme: &'a SharedTheme,
     pub(crate) completions: &'a SharedCompletions,
 }
 
@@ -261,8 +257,6 @@ impl Event {
                 id,
                 tree: ctx.tree.clone(),
                 handlers: ctx.handlers.clone(),
-                context_menus: ctx.context_menus.clone(),
-                theme: ctx.theme.clone(),
                 completions: ctx.completions.clone(),
             }),
         )

@@ -88,12 +88,6 @@ def test_get_still_reads_animatable_numbers() -> None:
     assert node.get("opacity") == 1.0
 
 
-def test_value_on_a_built_in_slider_stays_its_numeric_value() -> None:
-    w = window()
-    slider = w.add_slider(BLACK, 200, 24, value=0.25)
-    assert slider.get("value") == pytest.approx(0.25)
-
-
 def test_focus_moves_focus_and_fires_listeners() -> None:
     w = window()
     node = w.add_rect(BLACK, 40, 40)

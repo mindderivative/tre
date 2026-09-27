@@ -1,40 +1,49 @@
-# PLAN — Branch `0.3.5`: Milestone 98, Remove the Declarative Layer
+# PLAN — Branch `0.3.5`: Milestone 99, Remove MD3 Components, Kinds, and Theming
 
-*(Replaces the M97 Phase 2 plan — Steps 1–5 are done and handed to Tesserae,
-whose Step 6 run cleared M98. Every step is in `BUILD_TRACKER.md`.)*
+*(Replaces the M98 plan — M98 is complete. Every step is in `BUILD_TRACKER.md`.)*
 
 ## Goal
 
-Take the declarative layer out of `tre`: the `engine-spec` crate, `View`,
-`Component`, the `{{ }}` binding evaluator, and the reactivity layer
-(`Signal`, `Computed`, `Effect`, `ViewModel`, `batch`, `untrack`), with their
-tests, examples, and docs. Tesserae owns all of it now.
+Take Material Design 3 out of `tre`: the composed widget factories, the
+MD3-specific node kinds and their engine behavior, theming, and the
+`engine-md3` crate. `tre` keeps the building blocks Tesserae rebuilt them on.
+Tesserae confirmed (M97, CI run 36293860118) it uses none of it.
 
-## Decision (the user, 2026-09-25)
+## Decisions (the user)
 
-`Window.set_theme` stays until M99, which removes it with the MD3 widgets it
-themes. It's built on `engine-spec`'s theme types, so those move into
-`engine-py` (without the View-only `styles:` part), and `serde_yaml_ng` and
-`pythonize` — which parse its theme files and theme dicts — stay until M99
-too. Only `notify` (the view-file watcher) goes now.
+- M98's: `Window.set_theme` stayed until now; it goes here, with
+  `theme_spec.rs`, `default_theme.yaml`, `serde_yaml_ng`, and `pythonize`.
+- M99's (2026-09-26, "Delete them now"): the 61 example files that use what
+  M99 removes, `demo/showcase.py` included, are deleted; M102 writes a new,
+  smaller set and a new showcase on the final building blocks.
 
 ## Steps
 
-1. **Rust.** Delete `crates/engine-spec`. In `engine-py`, delete `view.rs`,
-   `component.rs`, and `binding.rs`, the dependency-recording functions,
-   and `Window.from_view`/`show_view`; move the theme types `set_theme`
-   needs into a new `theme_spec.rs`. Drop `engine-render`'s `spec_view`
-   test. Workspace builds, clippy clean.
-2. **Python, tests, examples, docs.** `tre/__init__.py` loses the
-   reactivity layer; `_core.pyi` loses `View`, `Component`, and the
-   recording functions. Delete the declarative tests, examples, their YAML,
-   `tools/migrate_views_0_3_3.py`, and the showcase's declarative phase;
-   trim mixed tests to their imperative cases. Remove the View, reactivity,
-   and declarative-guide pages and fix every link to them. The design pages
-   stay as the record, noting where their pinning tests went.
-3. **Full standing chain,** then the tracker and memory.
+**Phase 1 — Factories and theming**
+1. The MD3 composition factories, the legacy overlay `open_*`/`close_*`
+   methods and `build_menu`, `build_shell`, the container transform, the
+   `Theme` class, `set_theme`, `window.theme`, the retheme hooks, and the
+   theme parsing that came from `engine-spec`.
+2. Docking reduced to D10's bare bones: `set_active_panel`,
+   `start_panel_drag(panel)`, and new `dock_target`/`dock_drop` window
+   events replace the tab strip, drag handle, highlight, and the scripted
+   drag methods.
+3. The `engine-md3` crate (and `add_icon`, whose icons live there); the MD3
+   handover's generators retire with it, and its pages stay as the record.
+
+**Phase 2 — Engine-side MD3 behavior**
+1. The MD3 kinds -- `Checkbox`, `RadioButton`, `Switch`, `Slider`, the
+   three progress indicators, `LoadingIndicator`, `TimePickerDial`,
+   `Carousel`, `Splitter`, `Link`, and `Icon` (D4: a `path` does it) --
+   with their dispatch, ticking, painting, accessibility, and `Node`
+   methods.
+2. The interaction state layer and ripple (D8), the MD3 elevation levels,
+   the shape-morph library, and the named motion curves.
+3. File conveniences (D6); the full standing chain.
+
+Each step: the examples and tests for what it removes go with it, the docs
+follow, the tracker, a local commit, memory.
 
 ## Status
 
-**Complete (2026-09-25).** M99 waits on Tesserae's M40–M42 (its
-legacy widgets and `set_theme` calls).
+Phase 1 Step 1 done (2026-09-26). Step 2, docking, next.

@@ -38,13 +38,6 @@ def test_add_terminal_returns_a_node():
     assert isinstance(node, Node)
 
 
-def test_a_themed_terminal_does_not_raise():
-    window = Window(width=400, height=300)
-    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
-    node = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
-    assert isinstance(node, Node)
-
-
 def test_add_terminal_positions_like_every_other_add_method():
     window = Window(width=400, height=300)
     node = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255), x=10, y=20)

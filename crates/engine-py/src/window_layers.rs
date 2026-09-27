@@ -141,23 +141,10 @@ impl PyWindow {
         let Some((old, new)) = transition else {
             return;
         };
-        let (tree, handlers, context_menus) = {
+        let (tree, handlers) = {
             let active = self.active.borrow();
-            (
-                active.tree.clone(),
-                active.handlers.clone(),
-                active.context_menus.clone(),
-            )
+            (active.tree.clone(), active.handlers.clone())
         };
-        fire_focus_transition(
-            &handlers,
-            &tree,
-            &context_menus,
-            &self.theme,
-            &self.completions,
-            old,
-            new,
-            py,
-        );
+        fire_focus_transition(&handlers, &tree, &self.completions, old, new, py);
     }
 }

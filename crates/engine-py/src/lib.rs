@@ -23,7 +23,6 @@ mod node_layout;
 mod node_props;
 mod shaper;
 mod terminal;
-mod theme_spec;
 mod thread_bound;
 mod thread_handle;
 mod window;
@@ -42,7 +41,7 @@ pub use error::EngineError;
 pub use event::Event;
 pub use node::Node;
 pub use thread_handle::LoopHandle;
-pub use window::{PyWindow, Theme};
+pub use window::PyWindow;
 
 /// The compiled extension module Python actually imports, as
 /// `tre._core` (`pyproject.toml`'s `module-name`) -- `python/tre/
@@ -54,7 +53,6 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Node>()?;
     m.add_class::<CanvasContext>()?;
     m.add_class::<Event>()?;
-    m.add_class::<Theme>()?;
     m.add_class::<LoopHandle>()?;
     m.add_function(wrap_pyfunction!(register_font, m)?)?;
     Ok(())
