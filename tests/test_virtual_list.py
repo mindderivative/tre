@@ -102,8 +102,8 @@ def test_wheel_input_over_a_virtual_list_or_a_plain_node_is_safe():
     window = Window(width=200, height=100)
     rows = add(window, "virtual_list", item_count=20, item_extent=20.0,
                materialize=lambda _i: box(window), width=100, height=100)
-    window.scroll(rows, 50.0)
-    window.scroll(rows, -1000.0)
+    window.simulate("wheel", node=rows, delta_y=50.0)
+    window.simulate("wheel", node=rows, delta_y=-1000.0)
 
     plain = add(window, "box", fill=(0, 0, 0, 255), width=10, height=10)
-    window.scroll(plain, 50.0)
+    window.simulate("wheel", node=plain, delta_y=50.0)

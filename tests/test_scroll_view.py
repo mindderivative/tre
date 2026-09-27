@@ -39,7 +39,7 @@ def test_a_real_click_on_content_composed_into_a_scroll_view_reaches_its_own_han
 
     clicked = []
     content.on("click", lambda: clicked.append(True))
-    window.click(content)
+    window.simulate("click", node=content)
     assert clicked == [True]
 
 
@@ -48,7 +48,7 @@ def test_scroll_with_delta_x_does_not_raise_on_a_horizontal_scroll_view():
     view = add(window, "scroll_view", width=100, height=50, orientation="horizontal")
     content = add(window, "box", fill=(0, 255, 0, 255), width=1000, height=50)
     view.add_child(content)
-    window.scroll(view, 0.0, delta_x=500.0)
+    window.simulate("wheel", node=view, delta_y=0.0, delta_x=500.0)
 
 
 def test_scroll_still_defaults_delta_x_to_zero_for_existing_callers():
@@ -59,4 +59,4 @@ def test_scroll_still_defaults_delta_x_to_zero_for_existing_callers():
     view = add(window, "scroll_view", width=200, height=100)
     content = add(window, "box", fill=(255, 0, 0, 255), width=200, height=1000)
     view.add_child(content)
-    window.scroll(view, 50.0)
+    window.simulate("wheel", node=view, delta_y=50.0)

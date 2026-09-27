@@ -56,7 +56,7 @@ def test_a_click_dispatched_after_a_real_resize_still_works():
     rect.on("click", lambda: clicked.append(True))
 
     window.resize(800, 600)
-    window.click(rect)
+    window.simulate("click", node=rect)
 
     assert clicked == [True], "a real click after a real resize must still reach its own handler"
 

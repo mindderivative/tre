@@ -29,7 +29,7 @@ rows = window.create(
     width=168, height=168,
 )
 window.root.add_child(rows)
-window.scroll(rows, ROW_HEIGHT * 3)  # scroll down three rows
+window.simulate("wheel", node=rows, delta_y=ROW_HEIGHT * 3)  # scroll down three rows
 
 app = App()
 app.add_window(window)

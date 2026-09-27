@@ -106,25 +106,21 @@ removed the built-in MD3 ripple and state layer (`enable_interaction`).
 
 ### Driving events without a live window
 
-`Window` exposes direct, synthetic dispatch methods, useful for tests and
-headless scripts — no live rendered window is needed:
+`window.simulate(event, node=None, **fields)` drives the same input pipeline
+a live window does, so a test or headless script needs no display:
 
 ```python
-window.click(node)
-window.hover(node)
-window.scroll(node, delta_y=10.0)
-window.right_click(node)          # opens a registered context menu, if any
-window.press_key("tab")           # "tab"/"enter"/"space"/"escape"/"backspace"/
-                                   # "delete"/"left"/"right"/"home"/"end"
-window.type_text("hello")         # only affects the focused text input
-window.copy()                     # returns the focused text input's selected text
-window.cut()
-window.paste("clipboard text")
+window.simulate("click", node=node)
+window.simulate("pointer_move", node=node)        # hover
+window.simulate("wheel", node=node, delta_y=10.0)
+window.simulate("secondary_click", node=node)
+window.simulate("key_down", key="tab")            # "enter", "escape", "arrow_left", ...
+window.simulate("input", text="hello")            # typing into the focused text input
+window.simulate("key_down", key="c", ctrl=True)   # copy its selection
 ```
 
-`click`/`hover`/`scroll`/`right_click` each compute layout first, then
-dispatch at the node's real, current center point — exactly what a real
-mouse interaction there would produce.
+Pointer events aim at the node's center, or at `x`/`y` local to it — see
+[Events and Listeners](../api/python/events.md#testing-without-a-display).
 
 ## Animation
 

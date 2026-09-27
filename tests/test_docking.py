@@ -47,7 +47,7 @@ def test_a_drag_reports_the_zone_under_the_pointer_and_moves_the_panel():
     # Attached and laid out in its new place: a click lands on it.
     calls = []
     panel.on("click", lambda: calls.append("clicked"))
-    window.click(panel)
+    window.simulate("click", node=panel)
     assert calls == ["clicked"]
 
 

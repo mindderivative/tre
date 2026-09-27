@@ -24,7 +24,7 @@ def test_hover_enter_fires_when_the_pointer_arrives_on_the_node():
     calls = []
     button.on("pointer_enter", lambda: calls.append("entered"))
 
-    window.hover(button)
+    window.simulate("pointer_move", node=button)
 
     assert calls == ["entered"]
 
@@ -38,10 +38,10 @@ def test_hover_exit_fires_when_the_pointer_leaves_to_a_sibling():
     a.on("pointer_leave", lambda: calls.append("a exited"))
     b.on("pointer_enter", lambda: calls.append("b entered"))
 
-    window.hover(a)
+    window.simulate("pointer_move", node=a)
     assert calls == []  # first-time entry onto `a` -- no exit yet, and `a` has no enter handler
 
-    window.hover(b)
+    window.simulate("pointer_move", node=b)
     assert calls == ["a exited", "b entered"]
 
 
@@ -61,8 +61,8 @@ def test_hover_enter_and_exit_give_a_one_arg_handler_a_real_event_with_position(
     a.on("pointer_leave", lambda event: events.append(event))
     b.on("pointer_enter", lambda event: events.append(event))
 
-    window.hover(a)
-    window.hover(b)
+    window.simulate("pointer_move", node=a)
+    window.simulate("pointer_move", node=b)
 
     assert len(events) == 2
     exit_event, enter_event = events
@@ -85,7 +85,7 @@ def test_hovering_a_node_with_no_registered_handler_is_a_safe_no_op():
     window = Window(width=120, height=60)
     button = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
 
-    window.hover(button)  # must not raise
+    window.simulate("pointer_move", node=button)  # must not raise
 
 
 def test_hover_fires_even_without_calling_enable_interaction():
@@ -101,7 +101,7 @@ def test_hover_fires_even_without_calling_enable_interaction():
     button.on("pointer_enter", lambda: calls.append("entered"))
     # No enable_interaction() call here on purpose.
 
-    window.hover(button)
+    window.simulate("pointer_move", node=button)
 
     assert calls == ["entered"]
 

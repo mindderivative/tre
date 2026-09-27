@@ -24,7 +24,7 @@ def test_click_fires_the_registered_handler():
     button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     button.on("click", lambda: calls.append("clicked"))
 
-    window.click(button)
+    window.simulate("click", node=button)
 
     assert calls == ["clicked"]
 
@@ -42,7 +42,7 @@ def test_click_gives_a_one_arg_handler_a_real_event_with_position_and_button():
     events = []
     button.on("click", lambda event: events.append(event))
 
-    window.click(button)
+    window.simulate("click", node=button)
 
     assert len(events) == 1
     event = events[0]
@@ -68,8 +68,8 @@ def test_a_real_keyboard_activation_gives_a_one_arg_handler_none_position_and_bu
     events = []
     button.on("click", lambda event: events.append(event))
 
-    window.press_key("tab")
-    window.press_key("enter")
+    window.simulate("key_down", key="tab")
+    window.simulate("key_down", key="enter")
 
     assert len(events) == 1
     event = events[0]
@@ -82,7 +82,7 @@ def test_click_on_a_node_with_no_registered_handler_is_a_safe_no_op():
     window = Window(width=200, height=200)
     button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
 
-    window.click(button)  # must not raise
+    window.simulate("click", node=button)  # must not raise
 
 
 def test_click_only_fires_the_clicked_nodes_own_handler_not_a_sibling():
@@ -93,7 +93,7 @@ def test_click_only_fires_the_clicked_nodes_own_handler_not_a_sibling():
     a.on("click", lambda: calls.append("a"))
     b.on("click", lambda: calls.append("b"))
 
-    window.click(b)
+    window.simulate("click", node=b)
 
     assert calls == ["b"]
 
@@ -122,7 +122,7 @@ def test_a_raising_click_handler_is_caught_logged_and_non_fatal(capfd):
     button = add(window, "box", fill=(0, 0, 0, 255), width=50, height=50)
     button.on("click", raiser)
 
-    window.click(button)  # must not raise/propagate into Python
+    window.simulate("click", node=button)  # must not raise/propagate into Python
 
     assert calls == ["ran"]
     captured = capfd.readouterr()

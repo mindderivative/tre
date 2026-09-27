@@ -25,7 +25,9 @@ use taffy::prelude::Style;
 use taffy::prelude::{AvailableSpace, Size};
 
 use crate::clock;
-use crate::dispatch::{fire_focus_transition, process_input, run_completions, wants_event};
+use crate::dispatch::{
+    WindowIo, fire_focus_transition, process_input, run_completions, wants_event,
+};
 use crate::error::EngineError;
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType};
@@ -581,6 +583,11 @@ impl PyWindow {
             handlers: &handlers,
             completions: &self.completions,
         };
+        let io = WindowIo {
+            dock: &self.dock,
+            listeners: &self.window_listeners,
+            terminals: &self.terminals,
+        };
         let mut f = Fields::new(event, fields)?;
         let need_node = |f: &Fields<'_>| -> PyResult<NodeId> {
             node_id.ok_or_else(|| {
@@ -628,20 +635,13 @@ impl PyWindow {
                 f.done()?;
                 with_modifiers(modifiers, || {
                     for input in &inputs {
-                        process_input(&ctx, &self.dock, &self.window_listeners, root, input, py);
+                        process_input(&ctx, &io, root, input, py);
                     }
                 });
             }
             "pointer_leave" => {
                 f.done()?;
-                process_input(
-                    &ctx,
-                    &self.dock,
-                    &self.window_listeners,
-                    root,
-                    &InputEvent::PointerLeft,
-                    py,
-                );
+                process_input(&ctx, &io, root, &InputEvent::PointerLeft, py);
             }
             "key_down" | "key_up" => {
                 let modifiers = f.modifiers()?;
@@ -671,6 +671,14 @@ impl PyWindow {
                         }
                     });
                 } else if pressed
+                    && modifiers.ctrl
+                    && let (Some(letter), None) = (key.chars().next(), key.chars().nth(1))
+                    && let Some(shortcut) = engine_core::ctrl_shortcut(letter, modifiers.shift)
+                {
+                    // M100: Ctrl+letter means what it means live -- copy,
+                    // cut, paste, select all, a terminal's control byte.
+                    inputs.push(shortcut);
+                } else if pressed
                     && key.chars().count() == 1
                     && !(modifiers.ctrl || modifiers.alt || modifiers.meta)
                 {
@@ -678,7 +686,7 @@ impl PyWindow {
                 }
                 with_modifiers(modifiers, || {
                     for input in &inputs {
-                        process_input(&ctx, &self.dock, &self.window_listeners, root, input, py);
+                        process_input(&ctx, &io, root, input, py);
                     }
                 });
             }
@@ -686,14 +694,7 @@ impl PyWindow {
                 let text = f.string("text")?;
                 let text = f.required("text", text)?;
                 f.done()?;
-                process_input(
-                    &ctx,
-                    &self.dock,
-                    &self.window_listeners,
-                    root,
-                    &InputEvent::TextInput(text),
-                    py,
-                );
+                process_input(&ctx, &io, root, &InputEvent::TextInput(text), py);
             }
             "focus" | "unfocus" => {
                 let id = need_node(&f)?;

@@ -328,6 +328,25 @@ pub enum EventKind {
     FocusExit,
 }
 
+/// M100: what Ctrl+`letter` means, shared by the live keyboard path
+/// (`engine-platform`) and `window.simulate`, so both reach the same
+/// handling: `c`/`x`/`v` copy, cut, and paste; Ctrl+Shift+C is a
+/// terminal's copy; every other ASCII letter is a `ControlChar` (a
+/// terminal's control byte, or a text input's select-all for `a`).
+/// `None` for anything that isn't a single ASCII letter.
+pub fn ctrl_shortcut(letter: char, shift: bool) -> Option<InputEvent> {
+    if !letter.is_ascii_alphabetic() {
+        return None;
+    }
+    Some(match letter.to_ascii_lowercase() {
+        'c' if shift => InputEvent::TerminalCopyRequested,
+        'c' => InputEvent::Copy,
+        'x' => InputEvent::Cut,
+        'v' => InputEvent::PasteRequested,
+        other => InputEvent::ControlChar(other),
+    })
+}
+
 /// M54 Phase 1 (§8, §16.2): the real, exact set of value shapes a
 /// `Changed` outcome's own pre-mutation value can take -- found by
 /// tracing every real `DispatchOutcome::Changed` producer in `tree.rs`

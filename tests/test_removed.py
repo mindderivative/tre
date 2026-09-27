@@ -88,6 +88,9 @@ GONE = {
         "add_video", "add_canvas", "add_scroll_view", "add_virtual_list", "add_terminal",
         "get_monospace_cell_size", "resize_terminal", "copy_terminal_selection",
         "set_virtual_list_window", "redraw_canvas",
+        # M100 Phase 1 Step 2: the synthetic-input surface (D9).
+        *_removed._SIMULATED,
+        "copy_to_system_clipboard", "cut_to_system_clipboard", "paste_from_system_clipboard",
     },
     "Node": {
         "set_context_menu",

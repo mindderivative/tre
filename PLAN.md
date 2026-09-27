@@ -38,4 +38,4 @@ memory.
 
 ## Status
 
-Step 1 done (2026-09-26). Step 2, the headless-testing surface, next.
+Steps 1–2 done (2026-09-27). Step 3, the migration page and Tesserae's `_removed.py`, next.

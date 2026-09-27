@@ -168,16 +168,11 @@ fn translate_clipboard_shortcut(logical_key: &WinitKey, shift: bool) -> Option<I
     };
     let mut chars = c.chars();
     let ch = chars.next()?;
-    if chars.next().is_some() || !ch.is_ascii_alphabetic() {
+    if chars.next().is_some() {
         return None;
     }
-    match ch.to_ascii_lowercase() {
-        'c' if shift => Some(InputEvent::TerminalCopyRequested),
-        'c' => Some(InputEvent::Copy),
-        'x' => Some(InputEvent::Cut),
-        'v' => Some(InputEvent::PasteRequested),
-        letter => Some(InputEvent::ControlChar(letter)),
-    }
+    // M100: the letter's meaning is shared with `window.simulate`.
+    engine_core::ctrl_shortcut(ch, shift)
 }
 
 /// M4 Phase 8 (§11.7/§11.8 groundwork): `winit::event::MouseScrollDelta`

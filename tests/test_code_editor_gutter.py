@@ -44,10 +44,10 @@ def test_a_real_enter_keypress_grows_the_gutter_live():
     editor, gutter = _editor_and_gutter(window, content="one\ntwo")
     assert gutter.get("text") == "1\n2"
 
-    window.click(editor)
-    window.press_key("end")
-    window.press_key("enter")
-    window.type_text("three")
+    window.simulate("click", node=editor)
+    window.simulate("key_down", key="end")
+    window.simulate("key_down", key="enter")
+    window.simulate("input", text="three")
 
     assert editor.get("text") == "one\ntwo\nthree"
     assert gutter.get("text") == "1\n2\n3", "a real inserted line must grow the gutter live"
@@ -58,9 +58,9 @@ def test_a_real_backspace_that_merges_two_lines_shrinks_the_gutter():
     editor, gutter = _editor_and_gutter(window, content="one\ntwo\nthree")
     assert gutter.get("text") == "1\n2\n3"
 
-    window.click(editor)
-    window.press_key("home")  # start of "three"
-    window.press_key("backspace")  # merges "two" and "three" onto one real line
+    window.simulate("click", node=editor)
+    window.simulate("key_down", key="home")  # start of "three"
+    window.simulate("key_down", key="backspace")  # merges "two" and "three" onto one real line
 
     assert editor.get("text") == "one\ntwothree"
     assert gutter.get("text") == "1\n2", "merging two real lines must shrink the gutter live"

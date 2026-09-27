@@ -26,13 +26,12 @@ use std::rc::Rc;
 use engine_core::{
     CompletionHandle, DispatchOutcome, EventKind, InputEvent, NodeId, NodeKind, PointerButton, Tree,
 };
-use peniko::kurbo::Point;
 use pyo3::prelude::*;
-use taffy::prelude::{AvailableSpace, Size};
 
 use crate::dock::{self, SharedDockState};
 use crate::event::{Event, NodeContext, changed_value_to_py};
 use crate::listeners::{self, EventType, WindowEventType, WindowListenerMap};
+use crate::terminal::TerminalSession;
 
 /// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
 /// `App::run`'s own top is *not* the one guaranteed place a `tracing`
@@ -234,32 +233,6 @@ impl CompletionRegistry {
 
 pub(crate) type SharedCompletions = Rc<RefCell<CompletionRegistry>>;
 
-/// Real review finding: `window.rs`'s `click`/`hover`/`scroll`/
-/// `right_click` and `view.rs`'s `click`/`hover`/`right_click` each
-/// built this identical "compute layout, then find a node's real
-/// center point" block by hand -- 7 near-copies differing only in
-/// which root to lay out from and which `AvailableSpace` to lay out
-/// against (`Window`'s own real, fixed size vs. `View`'s own
-/// `MaxContent`, since it has no window size of its own). Factored
-/// out here, the same already-established real home for logic shared
-/// between `window.rs` and `view.rs` (`interaction_config`/
-/// `run_dispatch_outcome`/`open_context_menu`, all just below).
-pub(crate) fn node_center(
-    tree: &Rc<RefCell<Tree>>,
-    root: NodeId,
-    available: Size<AvailableSpace>,
-    node: NodeId,
-) -> Point {
-    let mut tree = tree.borrow_mut();
-    tree.compute_layout(root, available);
-    let (x, y) = tree.absolute_position(node);
-    let layout = tree.layout(node);
-    Point::new(
-        x + f64::from(layout.size.width) / 2.0,
-        y + f64::from(layout.size.height) / 2.0,
-    )
-}
-
 /// M54 Phase 2 (§8, §16.2): `Changed`'s own real `new_value`, read
 /// fresh from `tree` -- deliberately *not* carried on `DispatchOutcome`
 /// itself (`ChangedValue` only ever holds the pre-mutation value,
@@ -450,23 +423,38 @@ pub(crate) fn deliver_change(
     });
 }
 
+/// M100: a window's state the input pipeline reaches beyond its tree --
+/// docking, window listeners, and terminal sessions.
+pub(crate) struct WindowIo<'a> {
+    pub(crate) dock: &'a SharedDockState,
+    pub(crate) listeners: &'a WindowListenerMap,
+    pub(crate) terminals: &'a SharedTerminals,
+}
+
+/// A window's terminal sessions, by node.
+pub(crate) type SharedTerminals = Rc<RefCell<HashMap<NodeId, TerminalSession>>>;
+
 /// M94: the one input pipeline, shared by `App.run()`'s live loop and
 /// `Window.simulate`: resolve the listener target before dispatch, let
 /// `Tree::dispatch` do everything mechanical, deliver the raw event to
 /// `node.on(...)` listeners, then the outcome to legacy handlers and
-/// listeners alike, then open whatever context menu a right-click
-/// requested. The caller has already computed layout. M99: a docking
-/// drag rides the same pipeline -- the pointer's moves report
+/// listeners alike. The caller has already computed layout. M99: a
+/// docking drag rides the same pipeline -- the pointer's moves report
 /// `dock_target` and the primary button's release drops the panel and
-/// reports `dock_drop` (window events, hence `window_listeners`).
+/// reports `dock_drop`. M100: so do a focused terminal's keys, which go
+/// to its PTY instead of the tree, a wheel over a terminal, and the
+/// Ctrl shortcuts a text input or terminal handles itself -- so
+/// `simulate` drives every one of them exactly as a live key does.
 pub(crate) fn process_input(
     ctx: &NodeContext<'_>,
-    dock: &SharedDockState,
-    window_listeners: &WindowListenerMap,
+    io: &WindowIo<'_>,
     root: NodeId,
     event: &InputEvent,
     py: Python<'_>,
 ) -> DispatchOutcome {
+    if send_to_focused_terminal(ctx, io, event) {
+        return DispatchOutcome::None;
+    }
     listeners::note_input_modality(event);
     let target = listeners::target_before(&ctx.tree.borrow(), root, event);
     let outcome = ctx
@@ -479,7 +467,7 @@ pub(crate) fn process_input(
     for layer in dismissed {
         listeners::deliver(ctx, py, listeners::EventType::Dismiss, layer, None, |_| {});
     }
-    dock_drag(ctx, dock, window_listeners, root, event, py);
+    dock_drag(ctx, io.dock, io.listeners, root, event, py);
     run_dispatch_outcome(
         ctx.handlers,
         ctx.tree,
@@ -488,7 +476,97 @@ pub(crate) fn process_input(
         Some(event),
         py,
     );
+    shortcuts(ctx, io, root, event, py);
     outcome
+}
+
+/// The focused node, when it's a terminal.
+fn focused_terminal(tree: &Tree) -> Option<NodeId> {
+    tree.focused()
+        .filter(|&id| matches!(tree.get(id).map(|n| &n.kind), Some(NodeKind::Terminal(_))))
+}
+
+/// M30 Phase 9 Step 4, M32 Phase 4: a focused terminal claims a key
+/// entirely -- its bytes, or a Ctrl+letter's control byte (SIGINT for
+/// Ctrl+C), go to the PTY, and the tree never sees it (Tab included, which
+/// would otherwise move focus away). Whether it claimed `event`.
+fn send_to_focused_terminal(ctx: &NodeContext<'_>, io: &WindowIo<'_>, event: &InputEvent) -> bool {
+    let Some(terminal) = focused_terminal(&ctx.tree.borrow()) else {
+        return false;
+    };
+    let bytes = crate::terminal::input_bytes_for(event)
+        .or_else(|| crate::terminal::control_byte_for(event).map(|byte| vec![byte]));
+    let Some(bytes) = bytes else {
+        return false;
+    };
+    if let Some(session) = io.terminals.borrow_mut().get_mut(&terminal) {
+        session.write_input(&bytes);
+    }
+    true
+}
+
+/// M100: what a text input or terminal does with the clipboard shortcuts
+/// and a wheel -- moved here from the live loop, so `simulate` reaches
+/// them too. Copy, cut, and paste act on the focused text input (paste
+/// types the clipboard's text, so `input` and `change` fire as for any
+/// typing); Ctrl+A selects all of it; Ctrl+Shift+C copies a focused
+/// terminal's selection; a wheel over a terminal scrolls its history.
+fn shortcuts(
+    ctx: &NodeContext<'_>,
+    io: &WindowIo<'_>,
+    root: NodeId,
+    event: &InputEvent,
+    py: Python<'_>,
+) {
+    match event {
+        InputEvent::Copy => {
+            copy_focused_selection_to_clipboard(ctx.tree);
+        }
+        InputEvent::Cut => {
+            cut_focused_selection_to_clipboard(ctx.tree, ctx.handlers, ctx.completions, py);
+        }
+        InputEvent::PasteRequested => {
+            if let Some(text) = read_clipboard() {
+                process_input(ctx, io, root, &InputEvent::TextInput(text), py);
+            }
+        }
+        InputEvent::ControlChar('a') => {
+            let focused = ctx.tree.borrow().focused();
+            if let Some(field) = focused {
+                ctx.tree.borrow_mut().select_all_text_field(field);
+            }
+        }
+        InputEvent::TerminalCopyRequested => {
+            let selected = {
+                let tree = ctx.tree.borrow();
+                focused_terminal(&tree).and_then(|id| tree.terminal_selected_text(id))
+            };
+            if let Some(text) = selected {
+                write_clipboard(&text);
+            }
+        }
+        // M32 Phase 5: a wheel over a terminal moves its viewport into
+        // scrollback -- a positive wheel `y` (away from the user) reveals
+        // older history.
+        InputEvent::Scroll { delta, position } => {
+            let hit = {
+                let tree = ctx.tree.borrow();
+                tree.hit_test(root, *position).filter(|&id| {
+                    matches!(tree.get(id).map(|n| &n.kind), Some(NodeKind::Terminal(_)))
+                })
+            };
+            if let Some(terminal) = hit {
+                let lines = match delta {
+                    engine_core::ScrollDelta::Lines(_, y) => *y,
+                    engine_core::ScrollDelta::Pixels(_, y) => y / 20.0,
+                };
+                if let Some(session) = io.terminals.borrow_mut().get_mut(&terminal) {
+                    session.scroll_by(&mut ctx.tree.borrow_mut(), terminal, lines.round() as i64);
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// M99: moves a docking drag along with the pointer -- see `dock.rs`.
@@ -649,11 +727,37 @@ pub(crate) fn call_handler(
     }
 }
 
+thread_local! {
+    /// M100: one long-lived `arboard::Clipboard` per thread. On X11 the
+    /// instance that wrote the clipboard is what serves its content, until
+    /// it's dropped -- a fresh instance per call (as before) lost the text
+    /// the moment the call returned, unless a clipboard manager copied it.
+    static CLIPBOARD: RefCell<Option<arboard::Clipboard>> = const { RefCell::new(None) };
+}
+
+/// Runs `f` on this thread's clipboard, opening it on first use; `None`
+/// when no clipboard service can be reached (logged).
+fn with_clipboard<R>(f: impl FnOnce(&mut arboard::Clipboard) -> R) -> Option<R> {
+    CLIPBOARD.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        if slot.is_none() {
+            match arboard::Clipboard::new() {
+                Ok(clipboard) => *slot = Some(clipboard),
+                Err(err) => {
+                    tracing::warn!(%err, "no OS clipboard service reachable");
+                    return None;
+                }
+            }
+        }
+        slot.as_mut().map(f)
+    })
+}
+
 /// M100: the OS clipboard's text, or `None` when it holds none or can't
 /// be reached (some headless environments have no clipboard service --
 /// logged, never raised). `Window.read_clipboard` and every paste use it.
 pub(crate) fn read_clipboard() -> Option<String> {
-    match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+    match with_clipboard(|cb| cb.get_text())? {
         Ok(text) => Some(text),
         Err(arboard::Error::ContentNotAvailable) => None,
         Err(err) => {
@@ -667,12 +771,13 @@ pub(crate) fn read_clipboard() -> Option<String> {
 /// reached (logged, never raised). `Window.write_clipboard` and every
 /// copy or cut use it.
 pub(crate) fn write_clipboard(text: &str) -> bool {
-    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-        Ok(()) => true,
-        Err(err) => {
+    match with_clipboard(|cb| cb.set_text(text)) {
+        Some(Ok(())) => true,
+        Some(Err(err)) => {
             tracing::warn!(%err, "failed to write to the OS clipboard");
             false
         }
+        None => false,
     }
 }
 
@@ -742,36 +847,5 @@ pub(crate) fn cut_focused_selection_to_clipboard(
         Event::change(py, field, &ctx, old, new)
     });
     deliver_change(&ctx, field, old_for_listeners, py);
-    true
-}
-
-/// `copy_focused_selection_to_clipboard`'s own real Paste sibling --
-/// reads the real OS clipboard, then dispatches the resulting text
-/// exactly like a real typed character (`InputEvent::TextInput`, M15
-/// Phase 2's own existing mechanism, reused completely, no new
-/// insertion path). `Tree::dispatch` already resolves "which field, if
-/// any, is currently focused" internally for `TextInput` -- the same
-/// real behavior a genuine Ctrl+V already has, so this never needs its
-/// own focused-field check first. Returns whether the real clipboard
-/// *read* succeeded, not whether the text landed anywhere -- the
-/// identical real distinction `Window.paste`'s own hermetic sibling
-/// doesn't need to make (it's handed the text directly), but a genuine
-/// OS read can genuinely fail on its own.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn paste_clipboard_into_focused(
-    tree: &Rc<RefCell<Tree>>,
-    root: NodeId,
-    handlers: &HandlerMap,
-    completions: &SharedCompletions,
-    py: Python<'_>,
-) -> bool {
-    let Some(text) = read_clipboard() else {
-        return false;
-    };
-    let event = InputEvent::TextInput(text);
-    let outcome = tree
-        .borrow_mut()
-        .dispatch(root, event.clone(), crate::clock::now(tree));
-    run_dispatch_outcome(handlers, tree, completions, &outcome, Some(&event), py);
     true
 }

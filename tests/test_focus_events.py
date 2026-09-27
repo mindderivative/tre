@@ -25,7 +25,7 @@ def test_window_focus_gives_a_one_arg_handler_a_real_event():
     events = []
     a.on("focus", lambda event: events.append(event))
 
-    window.focus(a)
+    window.simulate("focus", node=a)
 
     assert len(events) == 1
     event = events[0]
@@ -44,10 +44,10 @@ def test_focus_exit_fires_when_focus_moves_to_a_sibling():
     a.on("unfocus", lambda: calls.append("a exited"))
     b.on("focus", lambda: calls.append("b entered"))
 
-    window.focus(a)
+    window.simulate("focus", node=a)
     assert calls == []  # first-time focus onto `a` -- no exit yet, and `a` has no enter handler
 
-    window.focus(b)
+    window.simulate("focus", node=b)
     assert calls == ["a exited", "b entered"]
 
 
@@ -55,7 +55,7 @@ def test_focusing_a_node_with_no_registered_handler_is_a_safe_no_op():
     window = Window(width=200, height=100)
     a = add(window, "box", fill=(0xFF, 0xFF, 0xFF, 0xFF), width=40, height=40)
 
-    window.focus(a)  # must not raise
+    window.simulate("focus", node=a)  # must not raise
 
 
 def test_refocusing_the_already_focused_node_does_not_report_a_stale_transition():
@@ -65,10 +65,10 @@ def test_refocusing_the_already_focused_node_does_not_report_a_stale_transition(
     calls = []
     a.on("focus", lambda: calls.append("entered"))
 
-    window.focus(a)
+    window.simulate("focus", node=a)
     assert calls == ["entered"]
 
-    window.focus(a)
+    window.simulate("focus", node=a)
     assert calls == ["entered"], "focusing an already-focused node must not fire a stale transition"
 
 
@@ -83,7 +83,7 @@ def test_real_click_to_focus_on_a_text_field_fires_focus_enter():
     events = []
     field.on("focus", lambda event: events.append(event))
 
-    window.click(field)
+    window.simulate("click", node=field)
 
     assert len(events) == 1
     assert events[0].type == "focus"
@@ -101,7 +101,7 @@ def test_real_right_click_to_focus_on_a_text_field_fires_focus_enter():
     events = []
     field.on("focus", lambda event: events.append(event))
 
-    window.right_click(field)
+    window.simulate("secondary_click", node=field)
 
     assert len(events) == 1
     assert events[0].type == "focus"
@@ -114,7 +114,7 @@ def test_real_tab_navigation_fires_focus_enter():
     events = []
     a.on("focus", lambda event: events.append(event))
 
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
     assert len(events) == 1
     assert events[0].type == "focus"
@@ -132,7 +132,7 @@ def test_a_raising_focus_handler_is_caught_logged_and_non_fatal(capfd):
         raise RuntimeError("boom from a focus handler")
 
     a.on("focus", on_focus_enter)
-    window.focus(a)  # must not raise
+    window.simulate("focus", node=a)  # must not raise
 
     captured = capfd.readouterr()
     assert "boom from a focus handler" in captured.err

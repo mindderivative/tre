@@ -44,7 +44,7 @@ def test_add_rect_with_explicit_position_overlaps_the_default_flow_position():
     explicitly_positioned = add(window, "box", fill=(255, 0, 0, 255), width=40, height=40, position="absolute", x=16.0, y=16.0)
     explicitly_positioned.on("click", lambda: hits.append("explicit"))
 
-    window.click(default_positioned)
+    window.simulate("click", node=default_positioned)
 
     assert hits == ["explicit"], (
         "the explicitly-positioned (topmost) node must win real hit-testing at the "
@@ -61,7 +61,7 @@ def test_add_rect_without_x_or_y_is_unchanged():
     node = add(window, "box", fill=(0, 0, 0, 255), width=40, height=40)
     node.on("click", lambda: hits.append(True))
 
-    window.click(node)
+    window.simulate("click", node=node)
 
     assert hits == [True]
 
@@ -76,7 +76,7 @@ def test_add_canvas_with_explicit_position_overlaps_the_default_flow_position():
     explicitly_positioned = add(window, "canvas", width=40, height=40, draw=lambda ctx: None, position="absolute", x=16.0, y=16.0)
     explicitly_positioned.on("click", lambda: hits.append("explicit"))
 
-    window.click(default_positioned)
+    window.simulate("click", node=default_positioned)
 
     assert hits == ["explicit"], (
         "an explicitly-positioned Canvas (topmost) must win real hit-testing at the "
@@ -103,7 +103,7 @@ def test_click_still_finds_a_node_after_its_own_transform_moves_it():
     # synchronously.
     node.animate("transform", (60.0, 60.0, 1.0), duration_ms=0)
 
-    window.click(node)
+    window.simulate("click", node=node)
 
     assert hits == [True], (
         "click must still find the node at its real, transformed position, not its "

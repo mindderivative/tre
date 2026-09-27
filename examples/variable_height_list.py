@@ -31,7 +31,7 @@ rows = window.create(
     width=168, height=168,
 )
 window.root.add_child(rows)
-window.scroll(rows, 150.0)  # scroll down into the non-uniform rows
+window.simulate("wheel", node=rows, delta_y=150.0)  # scroll down into the non-uniform rows
 
 app = App()
 app.add_window(window)

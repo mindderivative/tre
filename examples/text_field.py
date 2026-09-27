@@ -49,24 +49,24 @@ field = window.create("text_input", width=220, height=32, text="hello")
 window.root.add_child(field)
 
 print(f"before Tab: focused={field.get("focused")}, text={field.get("text")!r}")
-window.press_key("tab")
+window.simulate("key_down", key="tab")
 print(f"after Tab: focused={field.get("focused")}, text={field.get("text")!r}")
 assert field.get("focused"), "a real Tab press must reach the one real TextField in this window"
 
 # Real keyboard-driven editing (M15 Phase 2): type past the end, then
 # navigate back to the start and insert there too, proving both
 # insertion and real cursor movement.
-window.type_text(" world")
+window.simulate("input", text=" world")
 print(f"after typing ' world': text={field.get("text")!r}")
 assert field.get("text") == "hello world"
 
-window.press_key("home")
-window.type_text(">> ")
+window.simulate("key_down", key="home")
+window.simulate("input", text=">> ")
 print(f"after Home + typing '>> ': text={field.get("text")!r}")
 assert field.get("text") == ">> hello world"
 
-window.press_key("end")
-window.press_key("backspace")
+window.simulate("key_down", key="end")
+window.simulate("key_down", key="backspace")
 print(f"after End + Backspace: text={field.get("text")!r}")
 assert field.get("text") == ">> hello worl"
 
@@ -78,11 +78,11 @@ assert field.get("text") == ">> hello worl"
 # own finding: `Tree::set_access` had zero other real callers.)
 spacer = window.create("text_input", width=60, height=24)
 window.root.add_child(spacer)
-window.press_key("tab")
+window.simulate("key_down", key="tab")
 print(f"after Tab-away: focused={field.get("focused")}")
 assert not field.get("focused")
 
-window.click(field)
+window.simulate("click", node=field)
 print(f"after Window.click(field): focused={field.get("focused")}")
 assert field.get("focused"), "a real click on a TextField must move real focus there"
 

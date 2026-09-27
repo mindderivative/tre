@@ -43,17 +43,17 @@ def test_a_click_focuses_the_code_editor():
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="x", width=300, height=150, font_size=14)
     assert editor.get("focused") is False
-    window.click(editor)
+    window.simulate("click", node=editor)
     assert editor.get("focused") is True
 
 
 def test_enter_inserts_a_real_newline_not_consumed_like_a_plain_text_field():
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="ab", width=300, height=150, font_size=14)
-    window.click(editor)
-    window.press_key("home")
-    window.press_key("right")
-    window.press_key("enter")
+    window.simulate("click", node=editor)
+    window.simulate("key_down", key="home")
+    window.simulate("key_down", key="arrow_right")
+    window.simulate("key_down", key="enter")
     assert editor.get("text") == "a\nb", (
         "Enter on a real Code Editor must insert a genuine newline, unlike a plain "
         f"single-line TextField, got {editor.get("text")!r}"
@@ -63,51 +63,51 @@ def test_enter_inserts_a_real_newline_not_consumed_like_a_plain_text_field():
 def test_home_jumps_to_the_current_line_not_the_whole_buffer():
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="one\ntwo\nthree", width=300, height=150, font_size=14)
-    window.click(editor)
+    window.simulate("click", node=editor)
     # A fresh field's own real cursor starts at content's own end,
     # inside "three" -- Home here must only ever reach "three"'s own
     # real start, never byte 0.
-    window.press_key("home")
-    window.type_text("X")
+    window.simulate("key_down", key="home")
+    window.simulate("input", text="X")
     assert editor.get("text") == "one\ntwo\nXthree"
 
 
 def test_end_jumps_to_the_current_lines_own_end():
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="one\ntwo\nthree", width=300, height=150, font_size=14)
-    window.click(editor)
+    window.simulate("click", node=editor)
     for _ in range(len("one\ntwo\nthree")):
-        window.press_key("left")
-    window.press_key("right")
-    window.press_key("right")
-    window.press_key("right")  # cursor now right after "one"
-    window.press_key("end")
-    window.type_text("X")
+        window.simulate("key_down", key="arrow_left")
+    window.simulate("key_down", key="arrow_right")
+    window.simulate("key_down", key="arrow_right")
+    window.simulate("key_down", key="arrow_right")  # cursor now right after "one"
+    window.simulate("key_down", key="end")
+    window.simulate("input", text="X")
     assert editor.get("text") == "oneX\ntwo\nthree"
 
 
 def test_arrow_up_navigates_to_the_previous_line():
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="line1\nline2\nline3", width=300, height=150, font_size=14)
-    window.click(editor)
+    window.simulate("click", node=editor)
     # Cursor starts at content's own end, inside "line3" -- two real
     # ArrowUp presses must land somewhere on "line1".
-    window.press_key("up")
-    window.press_key("up")
-    window.press_key("home")
-    window.type_text("X")
+    window.simulate("key_down", key="arrow_up")
+    window.simulate("key_down", key="arrow_up")
+    window.simulate("key_down", key="home")
+    window.simulate("input", text="X")
     assert editor.get("text") == "Xline1\nline2\nline3"
 
 
 def test_arrow_down_navigates_to_the_next_line():
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="line1\nline2\nline3", width=300, height=150, font_size=14)
-    window.click(editor)
+    window.simulate("click", node=editor)
     for _ in range(len("line1\nline2\nline3")):
-        window.press_key("left")
-    window.press_key("down")
-    window.press_key("home")
-    window.type_text("X")
+        window.simulate("key_down", key="arrow_left")
+    window.simulate("key_down", key="arrow_down")
+    window.simulate("key_down", key="home")
+    window.simulate("input", text="X")
     assert editor.get("text") == "line1\nXline2\nline3"
 
 
@@ -124,15 +124,15 @@ def test_arrow_up_and_down_remember_a_real_goal_column_through_a_shorter_line():
     """
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="alphabet\nhi\nbanana", width=300, height=150, font_size=14)
-    window.click(editor)
+    window.simulate("click", node=editor)
     # Cursor starts at content's own end, inside "banana" -- real
     # column 6. One ArrowUp clamps onto "hi" (only 2 real columns);
     # a second, consecutive ArrowUp must recall the real *original*
     # column 6, landing right before "alphabet"'s own 'e' (index 6),
     # not "hi"'s own clamped column 2 (which would land before 'p').
-    window.press_key("up")
-    window.press_key("up")
-    window.type_text("X")
+    window.simulate("key_down", key="arrow_up")
+    window.simulate("key_down", key="arrow_up")
+    window.simulate("input", text="X")
     assert editor.get("text") == "alphabXet\nhi\nbanana"
 
 
@@ -145,11 +145,11 @@ def test_a_non_vertical_move_resets_the_remembered_goal_column():
     """
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="alphabet\nhi\nbanana", width=300, height=150, font_size=14)
-    window.click(editor)
-    window.press_key("up")  # lands on "hi"'s own end (clamped from column 6 to 2)
-    window.press_key("left")  # ordinary horizontal move -- real column now 1
-    window.press_key("up")
-    window.type_text("X")
+    window.simulate("click", node=editor)
+    window.simulate("key_down", key="arrow_up")  # lands on "hi"'s own end (clamped from column 6 to 2)
+    window.simulate("key_down", key="arrow_left")  # ordinary horizontal move -- real column now 1
+    window.simulate("key_down", key="arrow_up")
+    window.simulate("input", text="X")
     assert editor.get("text") == "aXlphabet\nhi\nbanana"
 
 
@@ -161,11 +161,11 @@ def test_tab_inserts_a_real_tab_character_instead_of_moving_focus():
     """
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="ab", width=300, height=150, font_size=14)
-    window.click(editor)
+    window.simulate("click", node=editor)
     assert editor.get("focused")
-    window.press_key("home")
-    window.press_key("right")
-    window.press_key("tab")
+    window.simulate("key_down", key="home")
+    window.simulate("key_down", key="arrow_right")
+    window.simulate("key_down", key="tab")
     assert editor.get("text") == "a\tb"
     assert editor.get("focused"), "claiming Tab for indentation must never lose focus over it"
 
@@ -181,9 +181,9 @@ def test_tab_still_moves_focus_away_from_a_single_line_text_field():
     # land -- with only one focusable node in the tree, focus
     # traversal would trivially wrap back onto itself either way.
     add(window, "text_input", text="", width=200, height=30)
-    window.click(field)
+    window.simulate("click", node=field)
     assert field.get("focused")
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
     assert not field.get("focused"), "Tab on a single-line field must still move focus away"
     assert field.get("text") == "ab", "Tab must not insert anything into a single-line field"
 
@@ -205,8 +205,8 @@ def test_whitespace_indicators_never_touch_the_real_content():
     editor = add(window, "text_input", **CODE_EDITOR, text="a b\tc", width=300, height=150, font_size=14)
     assert editor.get("text") == "a b\tc"
 
-    window.click(editor)
-    window.type_text(" x\ty")
+    window.simulate("click", node=editor)
+    window.simulate("input", text=" x\ty")
     assert editor.get("text") == "a b\tc x\ty", (
         "typing more spaces/tabs into a whitespace-indicator-showing editor "
         "must still land in get_text() completely unsubstituted"
@@ -282,16 +282,16 @@ def test_arrow_down_snaps_the_cursor_out_of_a_folded_range_it_would_otherwise_la
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text="one\ntwo\nthree\nfour", width=300, height=150, font_size=14)
     editor.set(folded_ranges=[(4, 15)])  # "two\nthree\nfo" folded away
-    window.click(editor)
+    window.simulate("click", node=editor)
     for _ in range(len("one\ntwo\nthree\nfour")):
-        window.press_key("left")
-    window.press_key("right")
-    window.press_key("right")  # cursor now at real column 2, inside "one"
+        window.simulate("key_down", key="arrow_left")
+    window.simulate("key_down", key="arrow_right")
+    window.simulate("key_down", key="arrow_right")  # cursor now at real column 2, inside "one"
     # ArrowDown's own natural landing (real column 2 into "two", byte 6)
     # sits strictly inside the fold 4..15 -- must snap forward to byte
     # 15, right after the fold's own real marker, into "four".
-    window.press_key("down")
-    window.type_text("X")
+    window.simulate("key_down", key="arrow_down")
+    window.simulate("input", text="X")
     assert editor.get("text") == "one\ntwo\nthree\nfXour"
 
 
@@ -313,8 +313,8 @@ def test_folding_and_syntax_highlighting_compose_without_raising():
     editor = add(window, "text_input", **CODE_EDITOR, text="def add(a, b):\n    return a + b", width=300, height=150, font_size=14)
     editor.set(folded_ranges=[(15, 33)])
     editor.set(syntax_spans=[(0, 3, (0xC0, 0x1C, 0x28, 0xFF))])
-    window.click(editor)
-    window.type_text("X")
+    window.simulate("click", node=editor)
+    window.simulate("input", text="X")
     assert editor.get("text") == "def add(a, b):\n    return a + bX"
 
 
@@ -337,14 +337,14 @@ def test_navigating_and_editing_still_works_correctly_in_a_genuinely_overflowing
     content = "\n".join(f"line{i}" for i in range(30))
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text=content, width=300, height=80, font_size=14)
-    window.click(editor)
+    window.simulate("click", node=editor)
     # Cursor starts at content's own real end (line29) -- 40 ArrowUps
     # walks well past the real ~4-line visible viewport, all the way
     # back up to line0's own start.
     for _ in range(40):
-        window.press_key("up")
-    window.press_key("home")
-    window.type_text("X")
+        window.simulate("key_down", key="arrow_up")
+    window.simulate("key_down", key="home")
+    window.simulate("input", text="X")
     assert editor.get("text").startswith("Xline0\n"), (
         "typing at the real content start after scrolling far past the visible viewport must "
         "still land on the real, correct line"
@@ -361,8 +361,8 @@ def test_navigating_and_editing_still_works_correctly_in_a_genuinely_overflowing
     # character-longer content is the decisive, position-independent
     # proof the click found a real, valid insertion point.
     before = editor.get("text")
-    window.click(editor)
-    window.type_text("Y")
+    window.simulate("click", node=editor)
+    window.simulate("input", text="Y")
     assert len(editor.get("text")) == len(before) + 1, (
         "a real click after scrolling must still focus and insert at a real, valid position"
     )
@@ -385,13 +385,13 @@ def test_navigating_horizontally_still_works_correctly_in_a_genuinely_overflowin
     content = "a" * 60
     window = Window(width=400, height=300)
     editor = add(window, "text_input", **CODE_EDITOR, text=content, width=100, height=80, font_size=14)
-    window.click(editor)
+    window.simulate("click", node=editor)
     # Cursor starts at content's own real end (column 60) -- far past
     # the real ~10-character visible viewport at font_size 14. 60
     # ArrowLefts walks all the way back to column 0.
     for _ in range(60):
-        window.press_key("left")
-    window.type_text("X")
+        window.simulate("key_down", key="arrow_left")
+    window.simulate("input", text="X")
     assert editor.get("text").startswith("X"), (
         "typing at the real line start after scrolling far past the visible horizontal "
         "viewport must still land at the real, correct column"

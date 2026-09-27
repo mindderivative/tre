@@ -181,4 +181,5 @@ window.simulate("resize", width=800, height=600)
 Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
 window-space `x`/`y` without a node. Any event also takes `shift`, `ctrl`,
 `alt`, and `meta`. A simulated key press edits text and moves focus exactly
-as a real one does. An unknown event or field raises `ValueError`.
+as a real one does — Ctrl+C/X/V/A included (M100: they reach the text input's
+clipboard handling), and a focused terminal takes every key, as it does live. An unknown event or field raises `ValueError`.

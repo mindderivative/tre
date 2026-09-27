@@ -75,17 +75,10 @@ older `open_*`/`close_*` pairs and the MD3 factories they opened.
 ## Terminal
 
 A `"terminal"` node is driven by real mouse and keyboard dispatch like any
-other focusable node.
-
-### `press_ctrl`
-
-**`press_ctrl(letter) -> bool`**
-
-Sends a Ctrl+`letter` control byte to the focused terminal —
-`press_ctrl("c")` sends SIGINT (`0x03`), like Ctrl+C in any terminal.
-`letter` must be one ASCII letter (case-insensitive), or `ValueError`.
-Returns whether a terminal was focused to receive it; it never touches a
-text input (use `copy`/`cut`/`paste` for those).
+other focusable node. While one is focused, it takes every key: text and
+named keys go to its shell, and Ctrl+`letter` sends that letter's control
+byte (Ctrl+C is SIGINT). Ctrl+Shift+C copies its selection to the
+clipboard; a wheel over it scrolls its history.
 
 ## Events, properties, and `simulate` (0.3.4)
 
@@ -128,27 +121,26 @@ The first call pins the window's clock at the real current time; from then
 on only `advance` moves it. Each window keeps its own time, and
 `App.run()` returns every window it opens to the real clock.
 
-## Synthetic input dispatch
+## Testing without a display
 
-These work without a live rendered window — each computes layout, then
-dispatches at the target node's real, current center point.
+**`simulate(event, node=None, **fields)`** delivers a synthetic event through
+the same input pipeline as a live one — listeners, focus, text editing, a
+focused terminal, the clipboard shortcuts, and docking drags all behave as
+they would for a real mouse or keyboard:
 
-| Method | Simulates |
-| --- | --- |
-| `click(node)` | A primary-button press + release |
-| `hover(node)` | The pointer moving over `node` (fires `pointer_enter`/`pointer_leave`) |
-| `scroll(node, delta_y)` | A mouse wheel scroll (bubbles to the nearest `VirtualList` ancestor) |
-| `right_click(node)` | A secondary-button press + release |
-| `press_key(key, shift=False)` | A keypress — see accepted keys below |
-| `type_text(text)` | A produced text-input event (affects the focused text input only) |
-| `copy()` | Ctrl+C — returns the focused field's selected text, or `None` (hermetic, no real OS clipboard) |
-| `cut()` | Ctrl+X — also edits the field and fires `change` (hermetic) |
-| `paste(text)` | Ctrl+V with explicit text — same mechanism as `type_text` (hermetic) |
-| `select_all()` | Ctrl+A — selects the focused `TextField`'s whole content (cursor lands at the end); returns whether a field was focused |
+```python
+window.simulate("click", node=button)
+window.simulate("pointer_move", node=card)          # hover
+window.simulate("wheel", node=rows, delta_y=60)     # positive scrolls down
+window.simulate("key_down", key="tab", shift=True)  # focus backward
+window.simulate("input", text="hello")              # typing into the focused input
+window.simulate("key_down", key="c", ctrl=True)     # copy its selection
+```
 
-Accepted `key` values for `press_key`: `"tab"`, `"enter"`, `"space"`,
-`"escape"`, `"backspace"`, `"delete"`, `"left"`, `"right"`, `"home"`,
-`"end"`. Anything else raises `ValueError`.
+Every event and field is in [Events and Listeners](events.md#testing-without-a-display).
+*0.3.5 removed the older synthetic methods* — `click`, `hover`, `focus`,
+`scroll`, `right_click`, `press_key`, `type_text`, `press_ctrl`, `copy`,
+`cut`, `paste`, and `select_all` — which `simulate` covers.
 
 ### Clipboard
 
@@ -157,18 +149,12 @@ Accepted `key` values for `press_key`: `"tab"`, `"enter"`, `"space"`,
 bool`** puts `text` on it, `False` when it can't be reached. Neither raises: a
 headless environment may have no clipboard service, which is logged.
 
-`copy`/`cut`/`paste` above are deliberately hermetic — they never touch
-the OS clipboard, which keeps tests deterministic. These three are
-their real counterparts, the same path live Ctrl+C/X/V takes:
-
-| Method | Returns |
-| --- | --- |
-| `copy_to_system_clipboard() -> bool` | `True` only on a complete write; `False` when nothing is focused/selected or the OS clipboard is unreachable (logged, never raised) |
-| `cut_to_system_clipboard() -> bool` | Like copy, then removes the selection and fires `change` — only once the write succeeded, so a failed write never loses the selection |
-| `paste_from_system_clipboard() -> bool` | Whether the OS clipboard *read* succeeded (inserting into the focused field, if any) |
-
-On some sandboxed Linux setups with no clipboard manager, clipboard
-content may only be served while the process that wrote it is running.
+A focused text input handles Ctrl+C, Ctrl+X, Ctrl+V, and Ctrl+A itself —
+copy, cut (which fires `change`), paste (typed input, so `input` fires), and
+select all — and never copies from an `obscured` input. A window keeps what
+it wrote on the clipboard for as long as it runs. *0.3.5 replaced
+`copy_to_system_clipboard`, `cut_to_system_clipboard`, and
+`paste_from_system_clipboard` with these.*
 
 ## Docking
 

@@ -64,7 +64,7 @@ def test_a_real_tab_press_reaches_the_text_field():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24)
 
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
     assert field.get("focused") is True, "a real Tab press must reach the one real TextField"
 
@@ -83,7 +83,7 @@ def test_a_real_click_also_reaches_the_text_field():
     field = add(window, "text_input", width=180, height=24)
     assert field.get("focused") is False
 
-    window.click(field)
+    window.simulate("click", node=field)
 
     assert field.get("focused") is True, "a real click on a TextField must move real focus there"
 
@@ -102,7 +102,7 @@ def test_a_real_right_click_also_reaches_the_text_field():
     field = add(window, "text_input", width=180, height=24)
     assert field.get("focused") is False
 
-    window.right_click(field)
+    window.simulate("secondary_click", node=field)
 
     assert field.get("focused") is True, "a real right-click on a TextField must move real focus there"
 
@@ -110,9 +110,9 @@ def test_a_real_right_click_also_reaches_the_text_field():
 def test_type_text_inserts_into_the_focused_field():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24)
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
-    window.type_text("hi")
+    window.simulate("input", text="hi")
 
     assert field.get("text") == "hi"
 
@@ -120,7 +120,7 @@ def test_type_text_inserts_into_the_focused_field():
 def test_type_text_with_no_focused_field_is_a_safe_no_op():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24, text="untouched")
-    window.type_text("x")  # must not raise, and must not touch the unfocused field
+    window.simulate("input", text="x")  # must not raise, and must not touch the unfocused field
     assert field.get("text") == "untouched"
 
 
@@ -135,19 +135,19 @@ def test_type_text_with_no_focused_field_is_a_safe_no_op():
 def test_add_text_field_defaults_to_single_line_enter_does_not_insert_a_newline():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24)
-    window.press_key("tab")
-    window.type_text("hi")
-    window.press_key("enter")
+    window.simulate("key_down", key="tab")
+    window.simulate("input", text="hi")
+    window.simulate("key_down", key="enter")
     assert field.get("text") == "hi", "the real, pre-existing single-line default is unaffected"
 
 
 def test_add_text_field_multiline_true_makes_enter_insert_a_real_newline():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=60, multiline=True)
-    window.press_key("tab")
-    window.type_text("hi")
-    window.press_key("enter")
-    window.type_text("there")
+    window.simulate("key_down", key="tab")
+    window.simulate("input", text="hi")
+    window.simulate("key_down", key="enter")
+    window.simulate("input", text="there")
     assert field.get("text") == "hi\nthere", (
         "multiline=True must reach the exact real TextFieldState.multiline field "
         "add_code_editor already sets internally"
@@ -165,24 +165,24 @@ def test_add_text_field_show_whitespace_does_not_raise():
 def test_backspace_and_delete_edit_the_real_focused_field():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24, text="hello")
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
-    window.press_key("backspace")
+    window.simulate("key_down", key="backspace")
     assert field.get("text") == "hell"
 
-    window.press_key("home")
-    window.press_key("delete")
+    window.simulate("key_down", key="home")
+    window.simulate("key_down", key="delete")
     assert field.get("text") == "ell"
 
 
 def test_arrow_and_home_end_keys_move_the_cursor_without_changing_content():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24, text="hello")
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
-    window.press_key("home")
-    window.press_key("right")
-    window.type_text("X")
+    window.simulate("key_down", key="home")
+    window.simulate("key_down", key="arrow_right")
+    window.simulate("input", text="X")
 
     assert field.get("text") == "hXello", "the cursor must have genuinely moved before typing"
 
@@ -210,13 +210,13 @@ def test_set_text_rejects_a_non_text_field_node():
 def test_typing_fires_a_real_on_change_handler():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24)
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
     calls = []
     field.on("change", lambda: calls.append(field.get("text")))
 
-    window.type_text("a")
-    window.type_text("b")
+    window.simulate("input", text="a")
+    window.simulate("input", text="b")
 
     assert calls == ["a", "ab"], "each real edit must fire on_change again, with the real current text"
 
@@ -224,15 +224,15 @@ def test_typing_fires_a_real_on_change_handler():
 def test_pure_cursor_movement_does_not_fire_on_change():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24, text="hi")
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
     calls = []
     field.on("change", lambda: calls.append("called"))
 
-    window.press_key("left")
-    window.press_key("right")
-    window.press_key("home")
-    window.press_key("end")
+    window.simulate("key_down", key="arrow_left")
+    window.simulate("key_down", key="arrow_right")
+    window.simulate("key_down", key="home")
+    window.simulate("key_down", key="end")
 
     assert calls == [], "pure cursor navigation must not fire Change -- content never changed"
 
@@ -240,15 +240,15 @@ def test_pure_cursor_movement_does_not_fire_on_change():
 def test_backspace_at_start_and_delete_at_end_do_not_fire_on_change():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24, text="hi")
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
     calls = []
     field.on("change", lambda: calls.append("called"))
 
-    window.press_key("home")
-    window.press_key("backspace")  # already at start -- a real no-op
-    window.press_key("end")
-    window.press_key("delete")  # already at end -- a real no-op
+    window.simulate("key_down", key="home")
+    window.simulate("key_down", key="backspace")  # already at start -- a real no-op
+    window.simulate("key_down", key="end")
+    window.simulate("key_down", key="delete")  # already at end -- a real no-op
 
     assert calls == [], "a genuine no-op edit must not fire Change"
 
@@ -256,13 +256,13 @@ def test_backspace_at_start_and_delete_at_end_do_not_fire_on_change():
 def test_shift_arrow_selects_and_backspace_deletes_the_real_selected_range():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24, text="hello")
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
-    window.press_key("home")
-    window.press_key("right", shift=True)
-    window.press_key("right", shift=True)  # selects "he"
+    window.simulate("key_down", key="home")
+    window.simulate("key_down", key="arrow_right", shift=True)
+    window.simulate("key_down", key="arrow_right", shift=True)  # selects "he"
 
-    window.press_key("backspace")
+    window.simulate("key_down", key="backspace")
 
     assert field.get("text") == "llo", "Backspace over a real selection must delete the whole range"
 
@@ -270,12 +270,12 @@ def test_shift_arrow_selects_and_backspace_deletes_the_real_selected_range():
 def test_typing_over_a_real_selection_replaces_it():
     window = Window(width=200, height=100)
     field = add(window, "text_input", width=180, height=24, text="hello")
-    window.press_key("tab")
+    window.simulate("key_down", key="tab")
 
-    window.press_key("home")
-    window.press_key("right", shift=True)
-    window.press_key("right", shift=True)  # selects "he"
+    window.simulate("key_down", key="home")
+    window.simulate("key_down", key="arrow_right", shift=True)
+    window.simulate("key_down", key="arrow_right", shift=True)  # selects "he"
 
-    window.type_text("HI")
+    window.simulate("input", text="HI")
 
     assert field.get("text") == "HIllo"

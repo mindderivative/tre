@@ -32,8 +32,8 @@ def test_real_text_field_edits_give_old_and_new_string_content():
     field.set(text="goodbye")
     assert events == []
 
-    window.click(field)  # focus it
-    window.press_key("backspace")
+    window.simulate("click", node=field)  # focus it
+    window.simulate("key_down", key="backspace")
     assert events == [("goodbye", "goodby")]
 
 

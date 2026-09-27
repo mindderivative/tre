@@ -56,7 +56,7 @@ def test_a_click_focuses_the_terminal():
     window = Window(width=400, height=300)
     term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     assert term.get("focused") is False
-    window.click(term)
+    window.simulate("click", node=term)
     assert term.get("focused") is True
 
 
@@ -126,17 +126,17 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     """
     window = Window(width=420, height=200)
     term = add(window, "terminal", shell="/bin/sh", cols=40, rows=5, scrollback_lines=200, palette={"background": (0, 0, 0, 255)})
-    window.click(term)
+    window.simulate("click", node=term)
     assert term.get("focused") is True
 
-    window.type_text("echo HELLO_FROM_TERMINAL")
-    window.press_key("enter")
+    window.simulate("input", text="echo HELLO_FROM_TERMINAL")
+    window.simulate("key_down", key="enter")
 
     # M32 Phase 5: real output lines typed early, before everything
     # below -- more than the 5-row viewport can hold at once, forcing
     # real scrollback content the later `window.scroll` call reveals.
-    window.type_text("for i in 1 2 3 4 5 6 7 8; do echo SCROLLBACK_LINE_$i; done")
-    window.press_key("enter")
+    window.simulate("input", text="for i in 1 2 3 4 5 6 7 8; do echo SCROLLBACK_LINE_$i; done")
+    window.simulate("key_down", key="enter")
 
     # M32 Phase 4: a real, running `sleep 100`, interrupted by a real
     # Ctrl+C before it can ever finish -- `write_input` is a real,
@@ -148,13 +148,12 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     # Typed last/most-recently, so its own real output stays in the
     # bottom (unscrolled) viewport even after the scrollback-generating
     # loop above.
-    window.type_text("sleep 100")
-    window.press_key("enter")
+    window.simulate("input", text="sleep 100")
+    window.simulate("key_down", key="enter")
     time.sleep(0.5)
-    sent = window.press_ctrl("c")
-    assert sent is True, "a real focused terminal must report the control byte was sent"
-    window.type_text("echo REACHED_AFTER_SIGINT")
-    window.press_key("enter")
+    window.simulate("key_down", key="c", ctrl=True)  # SIGINT
+    window.simulate("input", text="echo REACHED_AFTER_SIGINT")
+    window.simulate("key_down", key="enter")
 
     app = App()
     app.add_window(window)
@@ -177,14 +176,14 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
         "the real first line typed must have already scrolled off a 5-row viewport by now"
     )
 
-    # M32 Phase 5: no second `App.run()` needed -- `Window.scroll`
+    # M32 Phase 5: no second `App.run()` needed -- a wheel
     # resyncs `TerminalState` synchronously (`TerminalSession::scroll_
     # by`'s own real `sync_state` call), no live render loop required.
     # A deliberately huge scroll clamps to the real top of history
     # (`vt100::Screen::set_scrollback`'s own real clamping), revealing
     # the very first real line typed -- and pushing the most recent one
     # back out of view.
-    window.scroll(term, 400.0)
+    window.simulate("wheel", node=term, delta_y=-400.0)  # up: a negative wheel delta_y
     scrolled_text = term.get("text")
     assert "HELLO_FROM_TERMINAL" in scrolled_text, (
         f"a real scroll must reveal real, previously-scrolled-off history, got {scrolled_text!r}"
@@ -214,8 +213,8 @@ def test_scroll_on_a_terminal_with_no_content_does_not_raise():
     """
     window = Window(width=400, height=300)
     term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
-    window.scroll(term, 100.0)
-    window.scroll(term, -100.0)
+    window.simulate("wheel", node=term, delta_y=100.0)
+    window.simulate("wheel", node=term, delta_y=-100.0)
 
 
 def test_scroll_on_a_non_terminal_node_still_bubbles_to_a_virtual_list():
@@ -234,7 +233,7 @@ def test_scroll_on_a_non_terminal_node_still_bubbles_to_a_virtual_list():
         width=200,
         height=100,
     )
-    window.scroll(items, 50.0)
+    window.simulate("wheel", node=items, delta_y=50.0)
 
 
 def test_a_terminal_selection_round_trips_through_set_and_get():
@@ -287,8 +286,6 @@ def test_resize_terminal_on_a_non_terminal_node_raises():
         rect.set(cols=10, rows=5)
 
 
-
-
 def test_one_monospace_cell_measures_positive_and_scales_with_font_size():
     """M32 Phase 1 (§5, §8, §10): a terminal's cell is one character of
     the bundled monospace face -- M100: measured with `measure_text`
@@ -313,36 +310,5 @@ def test_press_key_without_a_focused_terminal_falls_through_harmlessly():
     window = Window(width=400, height=300)
     add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
     # No window.click(term) -- nothing is focused.
-    window.press_key("enter")
-    window.type_text("hello")
-
-
-def test_press_ctrl_returns_false_without_a_focused_terminal():
-    """M32 Phase 4 (§4, §8): the real, deliberate scope boundary
-    `press_ctrl`'s own doc comment states -- unlike `press_key`/
-    `type_text`, it never falls through to `Tree::dispatch`, it just
-    reports nothing was sent.
-    """
-    window = Window(width=400, height=300)
-    add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
-    assert window.press_ctrl("c") is False
-
-
-def test_press_ctrl_returns_true_for_a_real_focused_terminal():
-    window = Window(width=400, height=300)
-    term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
-    window.click(term)
-    assert window.press_ctrl("c") is True
-    assert window.press_ctrl("z") is True, "every real Ctrl+<letter>, not just c/x/v"
-
-
-def test_press_ctrl_rejects_anything_that_isnt_exactly_one_ascii_letter():
-    window = Window(width=400, height=300)
-    term = add(window, "terminal", shell="/bin/sh", cols=40, rows=10, palette={"background": (0, 0, 0, 255)})
-    window.click(term)
-    with pytest.raises(ValueError):
-        window.press_ctrl("")
-    with pytest.raises(ValueError):
-        window.press_ctrl("cc")
-    with pytest.raises(ValueError):
-        window.press_ctrl("1")
+    window.simulate("key_down", key="enter")
+    window.simulate("input", text="hello")

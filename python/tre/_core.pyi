@@ -344,104 +344,10 @@ class Window:
         `ValueError`.
         """
         ...
-    # -- node factories --------------------------------------------------
-
-    # -- synthetic input dispatch (no real window/display needed) -------
-    def click(self, node: Node) -> None:
-        """Dispatches a real primary-button press+release at `node`'s
-        own current center point.
-        """
-        ...
-    def hover(self, node: Node) -> None:
-        """Dispatches a real pointer-moved to `node`'s own center
-        point, firing hover-enter/exit exactly like a real mouse would.
-        """
-        ...
-    def focus(self, node: Node) -> None:
-        """Directly focuses `node` (M55) -- no real `InputEvent`
-        represents "focus this specific node," so this calls the same
-        real mechanism click-to-focus/Tab navigation/AccessKit's own
-        `Action::Focus` all use, firing a registered `FocusEnter`/
-        `FocusExit` handler exactly like any of those would.
-        """
-        ...
+    # -- size and clipboard ----------------------------------------------
     def resize(self, width: int, height: int) -> None:
-        """A direct, programmatic "resize this window" entry point --
-        the same no-live-window-needed pattern `click`/`hover` use.
-        Resizes the root node's own real layout box (a fresh
-        `compute_layout` reflects the new size) and updates `self.
-        width`/`height`, which every other synthetic method here and
-        every interactive `add_*` factory method reads for its own
-        layout. A real, live OS window resize also updates the same
-        real, shared `width`/`height` -- an interactive `add_*` call
-        made from a live click handler after a real resize sizes
-        against the window's real current dimensions, not its
-        construction-time ones.
-        """
-        ...
-    def scroll(self, node: Node, delta_y: float, delta_x: float = 0.0) -> None:
-        """Dispatches a real wheel scroll at `node`'s own center point
-        -- bubbles up to the nearest `VirtualList`/`Carousel`/
-        `ScrollView` ancestor, the same real "scroll bubbling" behavior
-        a genuine mouse wheel already has. If `node` is itself a real
-        `Terminal`, this moves its own real viewport into scrollback
-        instead (positive `delta_y` reveals older history, matching a
-        real wheel-up notch; `delta_x` is ignored there). `delta_x` is
-        for a real horizontal `ScrollView` -- ignored by every other
-        real scrollable kind, which stay vertical-only.
-        """
-        ...
-    def right_click(self, node: Node) -> None: ...
-    def press_key(self, key: str, shift: bool = False) -> None:
-        """`key` is one of `"Tab"`, `"Enter"`, `"Space"`, `"Escape"`,
-        `"Backspace"`, `"Delete"`, `"ArrowLeft"`, `"ArrowRight"`,
-        `"Home"`, `"End"`.
-        """
-        ...
-    def type_text(self, text: str) -> None:
-        """Dispatches `text` as real per-character keyboard input to
-        whichever node currently has focus.
-        """
-        ...
-    def press_ctrl(self, letter: str) -> bool:
-        """Sends a real Ctrl+`<letter>` control byte to the currently
-        focused `Terminal` -- `letter="c"` sends the real SIGINT byte
-        (`0x03`), the same as pressing Ctrl+C in any real terminal
-        emulator. `letter` must be exactly one ASCII letter (case-
-        insensitive), or raises `ValueError`. Returns whether a
-        `Terminal` was actually focused to receive it -- `False`
-        touches nothing else (never a `TextField`'s own clipboard
-        state; use `copy`/`cut`/`paste` below for that).
-        """
-        ...
-    def copy(self) -> str | None:
-        """**Hermetic** -- never touches the real system clipboard.
-        Returns the current selection's text, or `None` if nothing is
-        selected. A real, no-live-window-needed synthetic entry point
-        for testing (M17 Phase 1); use `copy_to_system_clipboard()`
-        (M53) for the real thing -- e.g. wiring a context-menu "Copy"
-        item.
-        """
-        ...
-    def cut(self) -> str | None:
-        """**Hermetic** -- never touches the real system clipboard.
-        Like `copy()`, but also deletes the selection. Use `cut_to_
-        system_clipboard()` (M53) for the real thing.
-        """
-        ...
-    def paste(self, text: str) -> None:
-        """**Hermetic** -- takes `text` directly rather than reading the
-        real system clipboard. Inserts it at the current cursor
-        position, replacing any selection. Use `paste_from_system_
-        clipboard()` (M53) to actually read the real clipboard first.
-        """
-        ...
-    def select_all(self) -> bool:
-        """M53: selects the currently-focused `TextField`'s own entire
-        content -- the real `Ctrl+A` convention (cursor lands at the
-        end, not the start). Returns whether a real `TextField` was
-        actually focused to receive it; a true no-op otherwise.
-        """
+        """Resizes the window's root layout box programmatically, without a
+        live window. A live OS resize updates the same shared size."""
         ...
     def read_clipboard(self) -> str | None:
         """M100: the OS clipboard's text, or `None` when it holds no text or
@@ -451,43 +357,6 @@ class Window:
     def write_clipboard(self, text: str) -> bool:
         """M100: puts `text` on the OS clipboard; `False` when it can't be
         reached (logged, never raised)."""
-        ...
-    def copy_to_system_clipboard(self) -> bool:
-        """M53: `copy()`'s own **real**, non-hermetic sibling -- writes
-        the currently-focused `TextField`'s own real selection to the
-        real OS clipboard, the same real path a genuine Ctrl+C uses.
-        Returns `True` only on a genuine, complete write -- `False`
-        both when nothing is focused/selected and when the real OS
-        clipboard is unreachable (a real, possible condition in some
-        headless/sandboxed environments -- logged, never raised). This
-        is the real method a context-menu "Copy" item's own `on_click`
-        callback should call.
-        """
-        ...
-    def cut_to_system_clipboard(self) -> bool:
-        """`copy_to_system_clipboard()`'s own real Cut sibling --
-        genuinely removes the currently-focused field's own selection
-        and fires a real `Change` handler, but only once the real
-        clipboard write actually succeeds (a failed write never
-        destroys the selection with no way to recover it).
-        """
-        ...
-    def paste_from_system_clipboard(self) -> bool:
-        """`copy_to_system_clipboard()`'s own real Paste sibling --
-        reads the real OS clipboard and inserts it into whichever field
-        is currently focused, the same real path a genuine Ctrl+V uses.
-        Returns whether the real clipboard *read* succeeded, not
-        whether a field happened to be focused to receive it -- a
-        genuine OS read can fail on its own, independent of this
-        `Window`'s own tree state. **Real, environment-dependent limit,
-        not silently glossed over:** on some sandboxed setups (no real
-        clipboard manager installed), the OS clipboard's own content
-        may only be served while the *writing* process's own clipboard
-        handle is still alive -- a `paste_from_system_clipboard()` call
-        made after that handle has already gone out of scope can
-        legitimately return `False` even though the preceding
-        `copy_to_system_clipboard()` genuinely succeeded.
-        """
         ...
 
     # -- docking ----------------------------------------------------------
@@ -512,8 +381,6 @@ class Window:
         `dock_drop`. Raises `ValueError` if `panel` isn't docked.
         """
         ...
-
-    # -- virtual list / canvas plumbing -----------------------------------
 
 class App:
     """Collects one or more `Window`s and drives them all together in

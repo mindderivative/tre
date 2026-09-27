@@ -126,9 +126,13 @@ def test_an_obscured_field_never_copies_or_cuts() -> None:
     field.set(obscured=True)
     w.simulate("focus", node=field)
     w.simulate("input", text="secret")
-    w.select_all()
-    w.cut()
+    w.simulate("key_down", key="a", ctrl=True)
+    w.write_clipboard("untouched")
+    w.simulate("key_down", key="c", ctrl=True)
+    w.simulate("key_down", key="x", ctrl=True)
     assert field.get("text") == "secret"
+    if w.read_clipboard() is not None:  # a reachable clipboard
+        assert w.read_clipboard() == "untouched"
 
 
 def test_scroll_view_scrollbar_props() -> None:

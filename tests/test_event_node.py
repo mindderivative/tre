@@ -23,7 +23,7 @@ def test_event_node_is_a_real_node_instance():
 
     events = []
     button.on("click", lambda event: events.append(event))
-    window.click(button)
+    window.simulate("click", node=button)
 
     assert isinstance(events[0].target, Node)
 
@@ -35,7 +35,7 @@ def test_event_node_is_correct_for_a_real_click():
 
     seen = []
     field.on("click", lambda event: seen.append(event.target.get("text")))
-    window.click(field)
+    window.simulate("click", node=field)
 
     assert seen == ["marker"]
 
@@ -47,7 +47,7 @@ def test_event_node_is_correct_for_a_real_hover_enter():
 
     seen = []
     field.on("pointer_enter", lambda event: seen.append(event.target.get("text")))
-    window.hover(field)
+    window.simulate("pointer_move", node=field)
 
     assert seen == ["marker"]
 
@@ -59,7 +59,7 @@ def test_event_node_is_correct_for_a_real_focus_enter():
 
     seen = []
     field.on("focus", lambda event: seen.append(event.target.get("text")))
-    window.focus(field)
+    window.simulate("focus", node=field)
 
     assert seen == ["marker"]
 

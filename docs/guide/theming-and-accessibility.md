@@ -37,14 +37,14 @@ A node is in the Tab order once it's focusable:
 Drive focus and keyboard interaction directly, without a live window:
 
 ```python
-window.press_key("tab")            # move focus forward
-window.press_key("tab", shift=True)  # move focus backward
-window.press_key("enter")          # activate the focused node
+window.simulate("key_down", key="tab")              # move focus forward
+window.simulate("key_down", key="tab", shift=True)  # move focus backward
+window.simulate("key_down", key="enter")            # activate the focused node
 node.get("focused")                # True if this node currently has focus
 ```
 
-Accepted `press_key` values: `"tab"`, `"enter"`, `"space"`, `"escape"`,
-`"backspace"`, `"delete"`, `"left"`, `"right"`, `"home"`, `"end"`.
+Named keys are snake_case — `"tab"`, `"enter"`, `"space"`, `"escape"`,
+`"backspace"`, `"delete"`, `"arrow_left"`, `"home"`, `"end"`, and so on.
 
 ## Screen readers
 
@@ -56,15 +56,14 @@ click or Tab press would use, not a separate code path.
 
 ## Clipboard
 
-```python
-selected = window.copy()   # returns the focused TextField's selected text, or None
-cut_text = window.cut()    # also edits the field and fires Change
-window.paste("some text")  # inserts at the cursor, same as typing
-```
+A focused text input handles Ctrl+C, Ctrl+X, Ctrl+V, and Ctrl+A itself, and
+never copies from an `obscured` (password) input. `window.read_clipboard()`
+and `window.write_clipboard(text)` reach the OS clipboard directly — both
+return a "couldn't" value (`None`, `False`) rather than raising where no
+clipboard service is reachable:
 
-`copy`/`cut`/`paste` are deliberately **hermetic** in this synthetic form
-— they never touch the real OS clipboard, only the pure text-selection
-state, which keeps headless tests deterministic. The real OS-clipboard
-path is driven automatically by `App.run()`'s own live keyboard handling
-(a real Ctrl+C/X/V while a `TextField` is focused) and isn't reachable
-synthetically without a live window.
+```python
+window.simulate("key_down", key="a", ctrl=True)  # select all
+window.simulate("key_down", key="c", ctrl=True)  # copy
+copied = window.read_clipboard()
+```

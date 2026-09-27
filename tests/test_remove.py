@@ -30,7 +30,7 @@ def test_remove_detaches_a_node_so_a_new_sibling_can_take_its_place():
 
     calls = []
     old_child.on("click", lambda: calls.append("old"))
-    window.click(old_child)
+    window.simulate("click", node=old_child)
     assert calls == ["old"], "sanity check: the child must be real and clickable before removal"
 
     old_child.remove()  # must not raise
@@ -39,7 +39,7 @@ def test_remove_detaches_a_node_so_a_new_sibling_can_take_its_place():
     new_child.on("click", lambda: calls.append("new"))
     parent.add_child(new_child)
 
-    window.click(new_child)
+    window.simulate("click", node=new_child)
     assert calls == ["old", "new"], (
         "the new child, occupying the same real position the removed one did, "
         "must be the one a real dispatched click reaches now"
@@ -60,5 +60,5 @@ def test_remove_of_a_node_with_real_children_does_not_corrupt_the_tree():
     unrelated = add(window, "box", fill=(0, 0, 255, 255), width=50, height=50)
     calls = []
     unrelated.on("click", lambda: calls.append("clicked"))
-    window.click(unrelated)
+    window.simulate("click", node=unrelated)
     assert calls == ["clicked"]

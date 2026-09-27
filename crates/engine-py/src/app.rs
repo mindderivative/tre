@@ -33,14 +33,12 @@ use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
 use crate::dispatch::{
-    HandlerMap, SharedCompletions, copy_focused_selection_to_clipboard,
-    cut_focused_selection_to_clipboard, paste_clipboard_into_focused, process_input,
-    run_completions, run_dispatch_outcome,
+    HandlerMap, SharedCompletions, WindowIo, process_input, run_completions, run_dispatch_outcome,
 };
 use crate::dock::SharedDockState;
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType, WindowListenerMap};
-use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
+use crate::terminal::TerminalSession;
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
 use crate::window::{PyWindow, SharedActiveTree, SharedOsWindow, SharedSize};
@@ -819,62 +817,9 @@ impl App {
                     return;
                 }
 
-                // M30 Phase 9 Step 4 (§5, §8, §10): a real, live
-                // Terminal's own keyboard routing -- inspects the raw
-                // `event` directly, the identical real "meaning-
-                // dependent, not routed through `Tree::dispatch`'s own
-                // generic `DispatchOutcome`" precedent `Docking`'s own
-                // real winit wiring already established (M4 Phase 9):
-                // `engine-core` has no real notion of a PTY to write to
-                // (§4), and `NodeKind::Terminal` isn't matched by
-                // `dispatch_text_field_key` at all, so a keystroke
-                // reaching the generic dispatch below while a terminal
-                // is focused would either do nothing or (for `Tab`)
-                // wrongly move focus away instead of sending a real
-                // completion-triggering byte. When a focused node is a
-                // real `Terminal`, this claims the keystroke entirely --
-                // the generic dispatch below never runs for it.
-                let focused_terminal = {
-                    let tree_ref = runtime.tree.borrow();
-                    tree_ref.focused().filter(|&id| {
-                        matches!(
-                            tree_ref.get(id).map(|node| &node.kind),
-                            Some(NodeKind::Terminal(_))
-                        )
-                    })
-                };
-                if let Some(bytes) = input_bytes_for(&event)
-                    && let Some(terminal_id) = focused_terminal
-                {
-                    if let Some(session) = runtime.terminals.borrow_mut().get_mut(&terminal_id) {
-                        session.write_input(&bytes);
-                    }
-                    return;
-                }
-                // M32 Phase 4 (§4, §8): the real point of this phase --
-                // a real Ctrl+`<letter>` reaching a focused `Terminal`
-                // is its own real ASCII control byte (SIGINT for Ctrl+C
-                // included), not `Tree::dispatch`'s own generic (and,
-                // for `Copy`/`Cut`/`PasteRequested`, clipboard-bound)
-                // handling below. **Deliberately checked only when a
-                // real `Terminal` is genuinely focused:** when it isn't,
-                // `control_byte_for` is never even called here, so
-                // ordinary `TextField` copy/cut/paste (the match arms
-                // below) and every other unclaimed Ctrl+`<letter>`
-                // (a true no-op via `Tree::dispatch`'s own new plumbing-
-                // only `ControlChar` arm) stay completely unaffected --
-                // zero behavior change for the non-terminal case this
-                // phase doesn't touch.
-                if let Some(terminal_id) = focused_terminal
-                    && let Some(byte) = control_byte_for(&event)
-                {
-                    if let Some(session) = runtime.terminals.borrow_mut().get_mut(&terminal_id) {
-                        session.write_input(&[byte]);
-                    }
-                    return;
-                }
                 // M94: dispatch, `node.on(...)` listeners, legacy handlers,
-                // and (M99) docking drags -- one pipeline shared with
+                // (M99) docking drags, and (M100) terminal keys and the
+                // clipboard shortcuts -- one pipeline shared with
                 // `Window.simulate` (`dispatch::process_input`). `event`
                 // itself is still needed below, for the text-field and
                 // terminal pointer handling.
@@ -884,8 +829,11 @@ impl App {
                         handlers: &runtime.handlers,
                         completions: &runtime.completions,
                     },
-                    &runtime.dock,
-                    &runtime.window_listeners,
+                    &WindowIo {
+                        dock: &runtime.dock,
+                        listeners: &runtime.window_listeners,
+                        terminals: &runtime.terminals,
+                    },
                     runtime.root,
                     &event,
                     py,
@@ -1103,120 +1051,6 @@ impl App {
                             WindowEventType::ScaleFactor,
                             |e| e.scale_factor = Some(scale_factor),
                         );
-                    }
-                    // M17 Phase 1 (§8), refactored M53 Phase 2: the
-                    // real, winit-driven Ctrl+C path -- now a thin call
-                    // into `copy_focused_selection_to_clipboard`
-                    // (`dispatch.rs`), shared with `Window.copy_to_
-                    // system_clipboard`'s own identical real logic.
-                    // Real behavior byte-for-byte unchanged; only the
-                    // call site moved.
-                    InputEvent::Copy => {
-                        copy_focused_selection_to_clipboard(&runtime.tree);
-                    }
-                    // M32 Phase 6 (§4, §5, §8): `Copy`'s own real
-                    // Terminal-specific sibling -- a genuine Ctrl+
-                    // Shift+C (`engine_platform::translate_clipboard_
-                    // shortcut`'s own real one exception to "shift
-                    // doesn't change the shortcut"). Reads whichever
-                    // `Terminal`'s own real mouse-drag selection is
-                    // currently set (`Tree::terminal_selected_text`, a
-                    // pure read -- `engine-core` never touches a real
-                    // clipboard, §4) and writes it to the real OS
-                    // clipboard, the identical real write path `Copy`
-                    // just above already uses. A true no-op if nothing
-                    // is currently focused, the focused node isn't a
-                    // `Terminal`, or its own selection is empty/
-                    // collapsed.
-                    InputEvent::TerminalCopyRequested => {
-                        let selected = runtime
-                            .tree
-                            .borrow()
-                            .focused()
-                            .and_then(|id| runtime.tree.borrow().terminal_selected_text(id));
-                        if let Some(text) = selected {
-                            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    tracing::warn!(
-                                        %err,
-                                        "failed to write the real terminal selection to the OS clipboard"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    // M17 Phase 1 (§8), refactored M53 Phase 2: `Copy`'s
-                    // own real Cut sibling -- now a thin call into
-                    // `cut_focused_selection_to_clipboard` (`dispatch.
-                    // rs`), shared with `Window.cut_to_system_
-                    // clipboard`'s own identical real logic. Real
-                    // behavior byte-for-byte unchanged; only the call
-                    // site moved.
-                    InputEvent::Cut => {
-                        cut_focused_selection_to_clipboard(
-                            &runtime.tree,
-                            &runtime.handlers,
-                            &runtime.completions,
-                            py,
-                        );
-                    }
-                    // M17 Phase 1 (§8), refactored M53 Phase 2: the
-                    // real, winit-driven Ctrl+V path -- now a thin call
-                    // into `paste_clipboard_into_focused` (`dispatch.
-                    // rs`), shared with `Window.paste_from_system_
-                    // clipboard`'s own identical real logic. Real
-                    // behavior byte-for-byte unchanged; only the call
-                    // site moved.
-                    InputEvent::PasteRequested => {
-                        paste_clipboard_into_focused(
-                            &runtime.tree,
-                            runtime.root,
-                            &runtime.handlers,
-                            &runtime.completions,
-                            py,
-                        );
-                    }
-                    // M32 Phase 5 (§4, §8): a real mouse wheel over a
-                    // `Terminal` moves its own real viewport into
-                    // scrollback -- the identical real "hit-test at the
-                    // wheel's own position" mechanism `Tree::dispatch`'s
-                    // own `Scroll` handling already uses for `VirtualList`
-                    // /`Carousel` (that handling already ran, harmlessly,
-                    // for this same event just above: a `Terminal` has no
-                    // `VirtualList`/`Carousel` ancestor to find, so it's a
-                    // true no-op there). `engine-core` has no real notion
-                    // of a `vt100::Screen` to scroll (§4), so this is the
-                    // one place both a live hit-test and real terminal
-                    // access exist together.
-                    InputEvent::Scroll { delta, position } => {
-                        let hit_terminal = {
-                            let tree_ref = runtime.tree.borrow();
-                            tree_ref.hit_test(runtime.root, position).filter(|&id| {
-                                matches!(
-                                    tree_ref.get(id).map(|node| &node.kind),
-                                    Some(NodeKind::Terminal(_))
-                                )
-                            })
-                        };
-                        if let Some(terminal_id) = hit_terminal {
-                            let delta_y = match delta {
-                                engine_core::ScrollDelta::Lines(_, y) => y,
-                                engine_core::ScrollDelta::Pixels(_, y) => y / 20.0,
-                            };
-                            // A real wheel "up" (away from the user, a
-                            // positive `y`) reveals older history --
-                            // `scroll_by`'s own real sign convention.
-                            if let Some(session) =
-                                runtime.terminals.borrow_mut().get_mut(&terminal_id)
-                            {
-                                session.scroll_by(
-                                    &mut runtime.tree.borrow_mut(),
-                                    terminal_id,
-                                    delta_y.round() as i64,
-                                );
-                            }
-                        }
                     }
                     _ => {}
                 }
