@@ -94,7 +94,11 @@ class Tracker:
 
 _CODE_RE = re.compile(r"`([^`]+)`")
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
-_STRIKE_RE = re.compile(r"~~([^~]+)~~")
+# Non-greedy rather than `[^~]+`: struck text may contain a lone `~`
+# ("~35 factories"), which the old class rejected, leaving raw `~~`.
+_STRIKE_RE = re.compile(r"~~(.+?)~~")
+# `[text](https://...)` -- the trackers link issues and PRs this way.
+_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
 
 def inline_md(text: str) -> str:
@@ -113,6 +117,7 @@ def inline_md(text: str) -> str:
         return f"\x00CODE{len(code_spans) - 1}\x00"
 
     escaped = _CODE_RE.sub(_stash_code, escaped)
+    escaped = _LINK_RE.sub(r'<a href="\2" target="_blank" rel="noopener">\1</a>', escaped)
     escaped = _BOLD_RE.sub(r"<strong>\1</strong>", escaped)
     escaped = _STRIKE_RE.sub(
         r'<span style="text-decoration:line-through;opacity:.55">\1</span>', escaped
@@ -459,6 +464,7 @@ PAGE_TEMPLATE = """<title>{project} Build Tracker</title>
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     line-height: 1.5; }}
   .mono {{ font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: 0.86em; }}
+  a {{ color: var(--accent); text-underline-offset: 2px; }}
   h1, .display {{ font-family: "Manrope", -apple-system, sans-serif; text-wrap: balance; }}
   .page {{ max-width: 880px; margin: 0 auto; padding: 28px 20px 64px; }}
 
