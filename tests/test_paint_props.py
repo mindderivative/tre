@@ -41,13 +41,6 @@ def test_corner_radius_is_one_number_or_four() -> None:
     assert box.get("corner_radius") == 8.0
 
 
-def test_fill_on_an_icon_is_its_tint() -> None:
-    w = window()
-    icon = w.add_icon("home", (0, 0, 0, 255), 24)
-    icon.set(fill=RED)
-    assert icon.get("fill") == RED
-
-
 def test_animate_targets_and_stop() -> None:
     w = window()
     box = w.create("box", fill=(0, 0, 0, 255))

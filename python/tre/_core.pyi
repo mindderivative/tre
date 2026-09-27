@@ -663,7 +663,6 @@ class Window:
         foreground: Color,
         width: float,
         height: float,
-        typography_role: str | None = None,
         font_family: str | None = None,
         font_weight: float | None = None,
         font_size: float | None = None,
@@ -672,14 +671,9 @@ class Window:
         y: float | None = None,
     ) -> Node:
         """A plain label -- `foreground` is its text color (a label has
-        no fill of its own; M90 renamed this from `background`). `typography_role` is a real
-        MD3 type-scale role name (e.g. `"body_large"`); it supplies
-        `font_family`/`font_weight`/`font_size`/`line_height` as
-        defaults, each of which may still be individually overridden.
-        With no role and no explicit values, falls back to `"Roboto"`/
-        `400.0`/`16.0`/the font's own natural line-height metrics --
-        this method's own pre-existing defaults. Raises `ValueError` for
-        an unrecognized `typography_role`.
+        no fill of its own; M90 renamed this from `background`). Unset
+        font fields fall back to `"Roboto"`/`400.0`/`16.0`/the font's own
+        natural line height. M99 removed the MD3 `typography_role`.
         """
         ...
     def add_image(
@@ -734,18 +728,6 @@ class Window:
         initialized as fully transparent until the first real
         `push_frame` call. `fit` is `add_image`'s own identical
         `"cover"`/`"contain"`/`"fill"` parameter.
-        """
-        ...
-    def add_icon(
-        self,
-        name: str,
-        foreground: Color,
-        size: float,
-        x: float | None = None,
-        y: float | None = None,
-    ) -> Node:
-        """`name` is a Material Symbols icon name from this project's
-        own curated set.
         """
         ...
     def add_text_field(

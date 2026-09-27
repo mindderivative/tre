@@ -249,48 +249,16 @@ def test_add_text_line_height_defaults_to_none():
     assert isinstance(node, Node)
 
 
-# --- M62 Phase 4 (§7.1, §16.3): add_text's real typography_role parity ----
+# --- M99: the MD3 type-scale role went with engine-md3 ---------------------
 
 
-def test_add_text_accepts_a_typography_role():
-    # No Python-level getter exists for a Text node's own real font
-    # properties (the identical honest limitation `line_height`'s own
-    # tests above already state) -- proves the real FFI call succeeds
-    # with a real MD3 role name. `crates/engine-spec/src/build.rs`'s own
-    # `text_role_resolves_every_field_to_the_real_named_type_style` is
-    # where the actual field-by-field resolution is proven, for the
-    # declarative surface -- the real mechanism both surfaces share.
+def test_add_text_no_longer_takes_a_typography_role():
     window = Window(width=200, height=200)
-    node = window.add_text(
-        content="Heading",
-        foreground=(0, 0, 0, 0),
-        width=200,
-        height=40,
-        typography_role="headline_small",
-    )
-    assert isinstance(node, Node)
-
-
-def test_add_text_typography_role_can_be_overridden_by_a_literal_field():
-    window = Window(width=200, height=200)
-    node = window.add_text(
-        content="Heading",
-        foreground=(0, 0, 0, 0),
-        width=200,
-        height=40,
-        typography_role="headline_small",
-        font_size=30.0,
-    )
-    assert isinstance(node, Node)
-
-
-def test_add_text_unknown_typography_role_raises_value_error():
-    window = Window(width=200, height=200)
-    with pytest.raises(ValueError, match="typography_role"):
+    with pytest.raises(TypeError, match="typography_role"):
         window.add_text(
             content="Heading",
             foreground=(0, 0, 0, 0),
             width=200,
             height=40,
-            typography_role="subtitle_huge",
+            typography_role="headline_small",
         )

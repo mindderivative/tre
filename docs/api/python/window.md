@@ -34,15 +34,15 @@ ints 0–255.
 
 ### `add_text`
 
-**`add_text(content, foreground, width, height, typography_role=None, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None)`**
+**`add_text(content, foreground, width, height, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None)`**
 
 A plain, non-editable text label. `foreground` is its text color; a
-label has no fill of its own. `typography_role` picks an MD3 type-scale
-role (e.g. `"body_large"`) supplying the font defaults, each
-overridable by the explicit font arguments. `width`/
-`height` are required (there's no intrinsic-sizing/measure-function
-support to size a label from its own content). For editable text, see
-[`add_text_field`](#add_text_field).
+label has no fill of its own. Unset font arguments fall back to
+Roboto, weight 400, size 16, and the font's natural line height.
+`width`/`height` are required (there's no intrinsic-sizing support to
+size a label from its own content — see [`measure_text`](#measure_text)).
+For editable text, see [`add_text_field`](#add_text_field).
+*0.3.5 removed `typography_role` with the MD3 type scale.*
 
 ### `add_text_field`
 
@@ -79,13 +79,11 @@ node `add_image_from_bytes` does. Raises `OSError` if the file can't be
 read or decoded, `ValueError` for an unknown `fit`. See
 [Working with Files → Images from files](../../guide/working-with-files.md#images-from-files).
 
-### `add_icon`
+### Icons
 
-**`add_icon(name, foreground, size, x=None, y=None)`**
-
-A curated Material Symbols vector icon (`home`, `search`, `menu`,
-`close`, `check`, `arrow_back`, `add`, `settings`). Raises `ValueError`
-for an unknown `name`.
+*0.3.5 removed `add_icon` with `engine-md3`'s icon set:* draw an icon as a
+`"path"` node from its SVG `d` and `viewBox` — see
+[Paint, Paths, and Animation](paint.md).
 
 ### `add_canvas`
 

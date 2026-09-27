@@ -16,7 +16,6 @@ cargo doc --workspace --no-deps --open
 | Crate | Role |
 | --- | --- |
 | [`engine-core`](https://github.com/mindderivative/tre/tree/main/crates/engine-core) | Pure-Rust node tree, the `Animated<T>` animation core, and the generic `AppHandler`/`InputEvent` interfaces the other crates build on. No `pyo3`, no `winit`, MD3-agnostic. |
-| [`engine-md3`](https://github.com/mindderivative/tre/tree/main/crates/engine-md3) | Material Design 3 theming: dynamic color science (HCT/tonal palettes/scheme roles), curated icons, container-transform choreography. Depends on `engine-core`, never the reverse. |
 | [`engine-render`](https://github.com/mindderivative/tre/tree/main/crates/engine-render) | Vello scene building, GPU rendering, and `parley` text shaping, including the process-global font registry (`register_font`). Depends on `engine-core` (walks `Node`/`PaintProperties` for painting); no `winit`/`engine-platform` dependency. |
 | [`engine-platform`](https://github.com/mindderivative/tre/tree/main/crates/engine-platform) | `winit` `EventLoop`/`ApplicationHandler`, the `accesskit_winit` adapter, and `EventLoopWaker` (a `Send` handle that wakes an idle loop from any thread) — the only crate depending on `winit`. |
 | [`engine-py`](https://github.com/mindderivative/tre/tree/main/crates/engine-py) | PyO3 bindings — the only crate depending on `pyo3`, and the only stability contract for framework users. Everything under [Python API Reference](python/index.md) lives here. |

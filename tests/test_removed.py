@@ -78,6 +78,8 @@ GONE = {
         # M99 Phase 1 Step 2: docking's bare bones.
         "set_active_tab", "set_dock_handle", "set_drop_zone_highlight", "drag_panel_over",
         "drop_panel_at",
+        # M99 Phase 1 Step 3: engine-md3's icons.
+        "add_icon",
     },
     "Node": {"set_context_menu"},
 }  # fmt: skip

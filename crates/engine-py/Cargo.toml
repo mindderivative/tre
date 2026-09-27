@@ -18,7 +18,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 engine-core = { path = "../engine-core" }
-engine-md3 = { path = "../engine-md3" }
 engine-render = { path = "../engine-render" }
 engine-platform = { path = "../engine-platform" }
 # "extension-module" is deliberately NOT enabled here -- see

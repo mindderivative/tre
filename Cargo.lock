@@ -892,17 +892,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "engine-md3"
-version = "0.3.5"
-dependencies = [
- "engine-core",
- "material-colors",
- "peniko",
- "serde_json",
- "taffy",
-]
-
-[[package]]
 name = "engine-platform"
 version = "0.3.5"
 dependencies = [
@@ -920,7 +909,6 @@ version = "0.3.5"
 dependencies = [
  "arboard",
  "engine-core",
- "engine-md3",
  "engine-platform",
  "engine-render",
  "image",
@@ -1943,17 +1931,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
-]
-
-[[package]]
-name = "material-colors"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e226ffda362d5bc26bb8f730d637a0851eedfb05e35d92108c9d8b48d2e47941"
-dependencies = [
- "ahash",
- "indexmap",
- "serde",
 ]
 
 [[package]]
@@ -3106,19 +3083,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
-]
-
-[[package]]
-name = "serde_json"
-version = "1.0.151"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
-dependencies = [
- "itoa",
- "memchr",
- "serde",
- "serde_core",
- "zmij",
 ]
 
 [[package]]
@@ -4824,12 +4788,6 @@ name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
-
-[[package]]
-name = "zmij"
-version = "1.0.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zune-core"

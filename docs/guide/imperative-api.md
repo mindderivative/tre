@@ -61,14 +61,13 @@ the docking methods:
 | Method | Creates |
 | --- | --- |
 | `add_rect(background, width, height, x=None, y=None, border_color=None, border_width=None)` | A plain colored rectangle, optionally bordered |
-| `add_text(content, foreground, width, height, typography_role=None, font_family="Roboto", font_weight=None, font_size=None, line_height=None, x=None, y=None)` | A plain, non-editable text label — `typography_role` resolves an MD3 type-scale role instead of literal font values |
+| `add_text(content, foreground, width, height, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None)` | A plain, non-editable text label |
 | `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)` | A text field — `multiline`/`show_whitespace` mirror `add_code_editor`'s own two fields |
 | `add_code_editor(content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None)` | A monospace code editor — folding, syntax spans, whitespace glyphs |
 | `add_terminal(shell, cols, rows, background, font_size=14.0, scrollback_lines=1000, x=None, y=None)` | A real PTY-backed terminal emulator |
 | `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed image from already-decoded RGBA8 pixels |
 | `add_image(path, width, height, fit="fill", x=None, y=None)` | The same, reading and decoding a PNG/JPEG file — see [Working with Files](working-with-files.md#images-from-files) |
 | `add_video(width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed video surface — frames pushed via `node.push_frame(...)` |
-| `add_icon(name, foreground, size, x=None, y=None)` | A curated Material Symbols vector icon |
 | `add_scroll_view(width, height, orientation="vertical", x=None, y=None)` | A scrollable viewport over exactly one child |
 | `add_canvas(width, height, draw, x=None, y=None)` | A custom-drawn surface — see [Canvas & Virtualized Lists](canvas-and-lists.md) |
 | `add_virtual_list(item_count, materialize, item_extent=None, size_hint=None, width=None, height=None)` | A virtualized list — see [Canvas & Virtualized Lists](canvas-and-lists.md) |

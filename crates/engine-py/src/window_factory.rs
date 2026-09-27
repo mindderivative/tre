@@ -14,8 +14,8 @@
 use std::rc::Rc;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, ContentFit, IconState, ImageState, NodeId, NodeKind,
-    PaintProperties, Role, TextAlign, TextFieldState, TextState, Tree,
+    AccessNodeData, Action, Animated, ContentFit, ImageState, NodeId, NodeKind, PaintProperties,
+    Role, TextAlign, TextFieldState, TextState, Tree,
 };
 use engine_render::MONOSPACE_FONT_FAMILY;
 use peniko::Color;
@@ -26,25 +26,6 @@ use crate::error::EngineError;
 use crate::node::{Node, validate_rgba_frame_len};
 use crate::terminal::TerminalSession;
 use crate::window::{PyWindow, positioned_style};
-
-/// M30 Phase 1 Step 3 (§5, §7): `add_icon`'s own real curated-icon-
-/// name-to-`BezPath` lookup (`engine_md3::icons::path_for`), factored
-/// out once it gained a second real caller (`add_icon_button`) and a
-/// third (`add_fab`/`add_extended_fab`, this step) -- the same real
-/// "duplicated at 2+ call sites, worth a shared helper" threshold
-/// `positioned_style`/`wrap_node` already established in this file and
-/// `window.rs` respectively, not a new convention invented here.
-fn resolve_icon_path(name: &str) -> PyResult<peniko::kurbo::BezPath> {
-    let d = engine_md3::icons::path_for(name).ok_or_else(|| {
-        let known: Vec<&str> = engine_md3::icons::names().collect();
-        pyo3::exceptions::PyValueError::new_err(format!(
-            "unknown icon {name:?} -- expected one of {known:?}"
-        ))
-    })?;
-    Ok(peniko::kurbo::BezPath::from_svg(d).unwrap_or_else(|e| {
-        panic!("engine_md3::icons's own curated path data for {name:?} must parse: {e}")
-    }))
-}
 
 /// M90: the one `orientation=` vocabulary shared by `add_divider`,
 /// `add_scroll_view`, and `add_toolbar` -- returns whether it's
@@ -176,11 +157,11 @@ impl PyWindow {
     /// convention `paint_node`'s own `NodeKind::Text` arm and the
     /// declarative `required_background(..., "Text")` path both already
     /// establish -- not a new convention invented here. `width`/`height`
-    /// are required, the same as every other `add_*` method except
-    /// `add_icon` (a single `size`) -- no measure-function/intrinsic-
-    /// sizing wiring exists for `Text` to lean on instead, confirmed
-    /// before choosing this shape rather than assumed.
-    #[pyo3(signature = (content, foreground, width, height, typography_role=None, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None))]
+    /// are required, the same as every other `add_*` method -- no
+    /// measure-function/intrinsic-sizing wiring exists for `Text` to
+    /// lean on instead, confirmed before choosing this shape rather than
+    /// assumed.
+    #[pyo3(signature = (content, foreground, width, height, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_text(
         &self,
@@ -188,7 +169,6 @@ impl PyWindow {
         foreground: (u8, u8, u8, u8),
         width: f32,
         height: f32,
-        typography_role: Option<&str>,
         font_family: Option<&str>,
         font_weight: Option<f32>,
         font_size: Option<f32>,
@@ -197,39 +177,12 @@ impl PyWindow {
         y: Option<f32>,
     ) -> PyResult<Node> {
         let background = foreground;
-        // M62 Phase 4 (§7.1, §16.3): `add_text`'s own real imperative
-        // parity with declarative `kind: Text`'s `text.role` -- `role_
-        // style`, if given, supplies each of the 4 real fields below as
-        // a default; any of `font_family`/`font_weight`/`font_size`/
-        // `line_height`, if *also* given, overrides just that one field
-        // on top of it. With no role at all, the exact pre-Phase-4
-        // fallbacks below (`"Roboto"`/`400.0`/`16.0`) reproduce this
-        // method's own real, pre-existing Python-level defaults
-        // byte-for-byte -- widening these 3 params from concrete
-        // defaulted values to `Option` is what makes "the caller didn't
-        // pass this" distinguishable from "the caller passed exactly
-        // the old default," the real reason this signature had to
-        // change at all.
-        let role_style = typography_role
-            .map(|role| {
-                engine_md3::type_style_named(role).ok_or_else(|| {
-                    pyo3::exceptions::PyValueError::new_err(format!(
-                        "add_text: unknown typography_role {role:?}"
-                    ))
-                })
-            })
-            .transpose()?;
-        let resolved_family = font_family
-            .map(str::to_string)
-            .or_else(|| role_style.map(|s| s.font_family.to_string()))
-            .unwrap_or_else(|| "Roboto".to_string());
-        let resolved_weight = font_weight
-            .or(role_style.map(|s| s.font_weight))
-            .unwrap_or(400.0);
-        let resolved_size = font_size
-            .or(role_style.map(|s| s.font_size))
-            .unwrap_or(16.0);
-        let resolved_line_height = line_height.or(role_style.map(|s| s.line_height));
+        // M99: the MD3 type-scale role (`typography_role`) went with
+        // `engine-md3`; unset fields fall back to the old defaults.
+        let resolved_family = font_family.unwrap_or("Roboto").to_string();
+        let resolved_weight = font_weight.unwrap_or(400.0);
+        let resolved_size = font_size.unwrap_or(16.0);
+        let resolved_line_height = line_height;
 
         let (r, g, b, a) = background;
         let mut tree = self.tree.borrow_mut();
@@ -407,55 +360,6 @@ impl PyWindow {
                 Size {
                     width: length(width),
                     height: length(height),
-                },
-                x,
-                y,
-            ),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(self.root, id);
-        Ok(self.wrap_node(id))
-    }
-
-    /// M23 Phase 1 (§1, §3): creates a real `NodeKind::Icon` from one
-    /// of this project's own real curated Material Symbols icons
-    /// (`engine_md3::icons::path_for`) -- deliberately takes one
-    /// square `size`, not `width`+`height` the way every other
-    /// `add_*` method does: Material Symbols icons are a real,
-    /// uniformly square icon system by design (every fetched icon's
-    /// own SVG `width`/`height` attributes are identical), so a
-    /// single size parameter is a genuine ergonomic fit, not an
-    /// invented shortcut. `color` is the icon's own real, plain fill
-    /// tint -- MD3 icons have no separate "background" the way a
-    /// boxed component does, so unlike `add_rect`/`add_checkbox` this
-    /// takes no `background` param at all (mirroring `add_canvas`/
-    /// `add_image`'s own real precedent for a kind with no meaningful
-    /// separate background). An unknown `name` is a real, clear
-    /// `PyValueError` -- `parse_dock_side`/`parse_content_fit`'s own
-    /// established "fail loudly at the boundary" pattern, not routed
-    /// through `EngineError` since this is a pure name-lookup failure
-    /// with no I/O involved, the same reason those two live directly
-    /// here rather than in `error.rs`.
-    #[pyo3(signature = (name, foreground, size, x=None, y=None))]
-    fn add_icon(
-        &self,
-        name: &str,
-        foreground: (u8, u8, u8, u8),
-        size: f32,
-        x: Option<f32>,
-        y: Option<f32>,
-    ) -> PyResult<Node> {
-        let color = foreground;
-        let path = resolve_icon_path(name)?;
-        let (r, g, b, a) = color;
-
-        let mut tree = self.tree.borrow_mut();
-        let id = tree.insert(
-            NodeKind::Icon(IconState::new(path, Color::from_rgba8(r, g, b, a))),
-            positioned_style(
-                Size {
-                    width: length(size),
-                    height: length(size),
                 },
                 x,
                 y,

@@ -14,7 +14,10 @@
    `start_panel_drag(panel)`, and the `dock_target`/`dock_drop` window events;
    the drag moved into `process_input`, so live and simulated drags share
    one path; cargo 453, pytest 492, 15 examples, docs clean.
+3. Phase 1 Step 3: `engine-md3` deleted, with `add_icon` and `add_text`'s
+   `typography_role` (Tesserae uses neither); cargo 426, pytest 477, 15
+   examples, docs clean.
 
 ## Status
 
-**In progress.** Phase 1 Step 3 (`engine-md3`) next.
+**In progress.** Phase 2 Step 1 (the MD3 kinds) next.

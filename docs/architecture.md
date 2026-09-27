@@ -12,8 +12,7 @@ against as of `v0.3.2` — lives in the repository root:
 engine-py  (PyO3 boundary — the only crate depending on pyo3)
    │
    ├── engine-platform  (winit event loop, accesskit_winit)
-   ├── engine-render    (Vello scene building, GPU rendering)
-   └── engine-md3       (MD3 dynamic color, icons, container-transform)
+   └── engine-render    (Vello scene building, GPU rendering)
          │
          └── engine-core  (node tree, Animated<T>, generic interfaces)
 ```
