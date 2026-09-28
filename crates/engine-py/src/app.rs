@@ -18,7 +18,7 @@
 //! `Rc<RefCell<Tree>>` is `!Send` by design (§9). Revisit if a later
 //! step introduces real GIL contention from a second thread.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -26,7 +26,8 @@ use std::sync::Arc;
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
 use engine_render::{
-    FrameRenderer, GeometryCache, PersistentTarget, TextPlacement, TextRenderer, build_tree_scene,
+    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, TextPlacement,
+    TextRenderer, build_tree_scene, build_tree_scene_in,
 };
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
@@ -99,6 +100,7 @@ struct WindowSetup {
     /// M94: see `PyWindow::window_listeners`/`os_window`.
     window_listeners: WindowListenerMap,
     os_window: SharedOsWindow,
+    partial_redraw: Rc<Cell<bool>>,
 }
 
 /// M18 Phase 1/2 (§8, §10, §11.9, §11.10): the real per-glyph hit-test
@@ -184,6 +186,8 @@ struct GpuState {
     /// into (no `COPY_DST` in its capabilities): that window renders
     /// straight into the swapchain image, as before 0.4.0.
     persistent: Option<PersistentTarget>,
+    /// 0.4.0 M5: what changed since the last frame, for partial redraw.
+    damage: DamageTracker,
 }
 
 impl GpuState {
@@ -255,6 +259,7 @@ impl GpuState {
             text_renderer: TextRenderer::new(),
             geometry_cache: GeometryCache::new(),
             persistent,
+            damage: DamageTracker::new(),
         }
     }
 
@@ -287,8 +292,11 @@ impl GpuState {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
-        if let Some(target) = &mut self.persistent {
-            target.ensure_size(&self.device, width, height);
+        if let Some(target) = &mut self.persistent
+            && target.ensure_size(&self.device, width, height)
+        {
+            // A recreated target lost its frame: redraw it all.
+            self.damage.reset();
         }
     }
 
@@ -427,6 +435,8 @@ struct WindowRuntime {
     /// M94: see `PyWindow::window_listeners`/`os_window`.
     window_listeners: WindowListenerMap,
     os_window: SharedOsWindow,
+    /// 0.4.0 M5: `window.set(partial_redraw=...)`, read every frame.
+    partial_redraw: Rc<Cell<bool>>,
 }
 
 #[pymethods]
@@ -504,6 +514,7 @@ impl App {
                     terminals: window.terminals.clone(),
                     window_listeners: window.window_listeners.clone(),
                     os_window: window.os_window.clone(),
+                    partial_redraw: window.partial_redraw.clone(),
                 }
             })
             .collect();
@@ -573,6 +584,7 @@ impl App {
                         terminals: setup.terminals.clone(),
                         window_listeners: setup.window_listeners.clone(),
                         os_window: setup.os_window.clone(),
+                        partial_redraw: setup.partial_redraw.clone(),
                     },
                 );
             },
@@ -689,53 +701,91 @@ impl App {
                         .resize(runtime.width.get(), runtime.height.get());
                 }
 
+                // 0.4.0 M5: what changed since the last frame. A newly
+                // registered font can reshape text no node's state records,
+                // so it redraws everything, as does a window without a
+                // persistent target or with partial redraw switched off.
+                let (width, height) = (
+                    render_extent(runtime.width.get()),
+                    render_extent(runtime.height.get()),
+                );
+                let damage = {
+                    let gpu = &mut runtime.gpu;
+                    if fonts_changed || gpu.persistent.is_none() || !runtime.partial_redraw.get() {
+                        gpu.damage.reset();
+                    }
+                    let tree_ref = runtime.tree.borrow();
+                    let damage = gpu.damage.damage(
+                        &tree_ref,
+                        runtime.root,
+                        width,
+                        height,
+                        &mut gpu.text_renderer,
+                    );
+                    if gpu.persistent.is_none() || !runtime.partial_redraw.get() {
+                        Damage::Full
+                    } else {
+                        damage
+                    }
+                };
+                tracing::trace!(?damage, "frame damage");
+
                 let (wgpu::CurrentSurfaceTexture::Success(output)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(output)) =
                     runtime.gpu.surface.get_current_texture()
                 else {
+                    // The tracker already recorded this frame's tree as
+                    // drawn; it wasn't, so the next frame redraws it all.
+                    runtime.gpu.damage.reset();
                     return any_active;
                 };
                 let view = output
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
 
+                let rects = match &damage {
+                    Damage::Rects(rects) => Some(rects.as_slice()),
+                    _ => None,
+                };
                 let scene = {
                     let tree_ref = runtime.tree.borrow();
                     // M22 Phase 1 (§5): every real `Image` node needs a
-                    // real, uploaded GPU texture bound before `render`
-                    // -- see `ImageTextureCache::sync`'s own doc
-                    // comment. A window with no `Image` nodes pays only
-                    // the cost of an empty `Tree::image_nodes` walk.
+                    // real, uploaded GPU texture bound before `render`.
                     runtime.gpu.frame_renderer.sync_image_textures(
                         &tree_ref,
                         &runtime.gpu.device,
                         &runtime.gpu.queue,
                     );
-                    // Review follow-through (M28 Phase 1, §5/§6): the
-                    // exact same per-frame GC `sync_image_textures`
-                    // already does for GPU textures, now also applied
-                    // to `TextRenderer`'s own per-node shaped-`Layout`
-                    // cache -- a text node removed from the tree must
-                    // not keep its stale shaping around forever.
+                    // Review follow-through (M28, M34): per-frame GC of the
+                    // shaped-text and path caches for removed nodes.
                     runtime.gpu.text_renderer.evict_stale_layouts(&tree_ref);
-                    // M34 Phase 1 (§5, §8): the identical real per-
-                    // frame GC `text_renderer`'s own cache already
-                    // gets, now applied to `geometry_cache` too.
                     runtime.gpu.geometry_cache.evict_stale(&tree_ref);
-                    build_tree_scene(
-                        &tree_ref,
-                        runtime.root,
-                        render_extent(runtime.width.get()),
-                        render_extent(runtime.height.get()),
-                        runtime.gpu.frame_renderer.resources_mut(),
-                        &mut runtime.gpu.text_renderer,
-                        &mut runtime.gpu.geometry_cache,
-                    )
+                    let gpu = &mut runtime.gpu;
+                    match &damage {
+                        // Nothing changed: the kept frame is copied as is.
+                        Damage::None => None,
+                        Damage::Full => Some(build_tree_scene(
+                            &tree_ref,
+                            runtime.root,
+                            width,
+                            height,
+                            gpu.frame_renderer.resources_mut(),
+                            &mut gpu.text_renderer,
+                            &mut gpu.geometry_cache,
+                        )),
+                        Damage::Rects(rects) => Some(build_tree_scene_in(
+                            &tree_ref,
+                            runtime.root,
+                            width,
+                            height,
+                            rects,
+                            gpu.frame_renderer.resources_mut(),
+                            &mut gpu.text_renderer,
+                            &mut gpu.geometry_cache,
+                        )),
+                    }
                 };
-                let render_size = RenderSize {
-                    width: render_extent(runtime.width.get()),
-                    height: render_extent(runtime.height.get()),
-                };
+                let render_size = RenderSize { width, height };
                 let mut encoder = runtime
                     .gpu
                     .device
@@ -745,14 +795,17 @@ impl App {
                     .persistent
                     .as_ref()
                     .map_or(&view, PersistentTarget::view);
-                gpu.frame_renderer.render(
-                    &scene,
-                    &gpu.device,
-                    &gpu.queue,
-                    &mut encoder,
-                    &render_size,
-                    target_view,
-                );
+                if let Some(scene) = &scene {
+                    gpu.frame_renderer.render_into(
+                        scene,
+                        &gpu.device,
+                        &gpu.queue,
+                        &mut encoder,
+                        &render_size,
+                        target_view,
+                        rects,
+                    );
+                }
                 if let Some(target) = &gpu.persistent {
                     target.copy_to(&mut encoder, &output.texture);
                 }

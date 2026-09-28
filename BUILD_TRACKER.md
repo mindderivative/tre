@@ -16,12 +16,12 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M2 — Migrate to `vello_gpu` | `██████████` 100% | ✅ Complete (2026-09-28) — `tre` on upstream `vello_gpu` and `wgpu` 30, every test unchanged, CI green on Linux, macOS, and Windows |
 | M3 — A Persistent Offscreen Target and Blit | `██████████` 100% | ✅ Complete (2026-09-28) — each window renders into a texture that keeps its frame, copied to the screen byte-exact |
 | M4 — Dirty-Region Tracking | `██████████` 100% | ✅ Complete (2026-09-28) — `DamageTracker` reports what changed each frame as at most 4 rects, or a full redraw |
-| M5 — Partial Redraw End to End, Measured | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M5 — Partial Redraw End to End, Measured | `███░░░░░░░` 33% | 🚧 In Progress — Step 1 done: every window redraws only what changed, byte-identical to a full redraw; `window.set(partial_redraw=False)` turns it off |
 | M6 — Release `0.4.0` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
 **Just closed:** M4 (2026-09-28) -- `DamageTracker` reports what changed each frame: at most 4 rects, or a full redraw past half the window. It compares each node's painted rect and a fingerprint of its paint state against the last frame rather than hooking mutations, so a missed mutation path can't leave stale pixels, and 18 tests cover every kind of change.
 
-**Up next:** M5, partial redraw end to end -- the frame renders only inside the damage rects, into the persistent target, with a full-redraw fallback, then correctness against full redraw and measurement.
+**Up next:** M5 Step 2 -- partial against full redraw, pixel for pixel, across every example's animations; then Step 3, measurement against `v0.3.5.1`.
 
 **Known gaps:**
 - Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.
@@ -73,10 +73,10 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 5 — Partial Redraw End to End, Measured
 
-**Status: ⬜ Proposed.**
+**Status: 🚧 In Progress.** Step 1 done (2026-09-28).
 
-### Phase 1 — Integration ⬜
-- Step 1: the frame loop renders only the dirty region through the patched renderer into the offscreen target, falling back to a full redraw on resize, scale change, or a large region — ⬜
+### Phase 1 — Integration 🚧
+- Step 1: the frame loop renders only the dirty region through the patched renderer into the offscreen target, falling back to a full redraw on resize, scale change, or a large region — ✅ (2026-09-28: each window's `DamageTracker` runs after layout and before the scene is built; `None` renders nothing and re-presents the kept frame, `Rects` builds the scene with the new `build_tree_scene_in` -- culled to the rects' bounds, inside one clip layer of them -- and renders with `ClearSettings::Rects` through the new `FrameRenderer::render_into`, and `Full` renders as before; the tracker resets on a target recreate, a font registration, and a frame whose surface texture couldn't be acquired; `window.set(partial_redraw=False)` / `get("partial_redraw")` switch it off, on by default; 7 new GPU tests in `tests/partial_redraw.rs` find partial redraw byte-identical to full for a colour change under a translucent overlap, a move that uncovers, a shadow, text, group opacity, a removal, and no change; a live 800x600 window animating one card renders 1 full frame then 59 partial ones, and 60 full with the switch off)
 - Step 2: correctness -- pixel tests comparing partial against full redraw across every example's animations — ⬜
 - Step 3: measurement against `v0.3.5.1`, the same way M101 of the 0.3 line measured: frame time for a small animation in a large window, and no regression for a full-window change — ⬜
 

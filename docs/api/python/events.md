@@ -115,7 +115,9 @@ window.get("scale_factor")  # 1.0 until App.run() opens the window
 ```
 
 `window.set(title=...)` changes the title, live if the window is open.
-`window.get(name)` reads `width`, `height`, `title`, or `scale_factor`. `root`
+`window.set(partial_redraw=False)` redraws the whole window every frame
+instead of only what changed ([Window](window.md)). `window.get(name)` reads
+`width`, `height`, `title`, `scale_factor`, or `partial_redraw`. `root`
 is the window's root node.
 
 ## Event

@@ -142,14 +142,72 @@ pub fn build_tree_scene(
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
 ) -> Scene {
+    build_scene(tree, root, width, height, None, resources, text, geometry)
+}
+
+/// 0.4.0 M5: `build_tree_scene` for a partial redraw -- only what paints
+/// inside `rects` (window pixels, non-overlapping, from `Damage::Rects`):
+/// the scene is clipped to them, and nodes outside their bounding box are
+/// culled. Rendered with `TargetInit::Clear(ClearSettings::Rects)` over
+/// the kept last frame, it matches a full redraw inside the rects.
+#[allow(clippy::too_many_arguments)]
+pub fn build_tree_scene_in(
+    tree: &Tree,
+    root: NodeId,
+    width: u16,
+    height: u16,
+    rects: &[Rect],
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
+) -> Scene {
+    build_scene(
+        tree,
+        root,
+        width,
+        height,
+        Some(rects),
+        resources,
+        text,
+        geometry,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_scene(
+    tree: &Tree,
+    root: NodeId,
+    width: u16,
+    height: u16,
+    rects: Option<&[Rect]>,
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
+) -> Scene {
     let mut scene = Scene::new(width, height);
     scene.set_transform(Affine::IDENTITY);
     // M8 Phase 1 (§11.8): the real, canvas-space "currently visible"
-    // rect -- the whole viewport at the top of the walk. Threaded
-    // through `paint_node`'s own recursion so a later `NodeKind` (a
-    // real scrollable `VirtualList`, M8 Phase 2) can narrow it on the
-    // way into its own clipped children, not just check it once here.
-    let visible = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    // rect -- the whole viewport at the top of the walk, or (0.4.0 M5)
+    // the damage rects' bounding box -- threaded through `paint_node`'s
+    // own recursion so a clipping node can narrow it on the way into its
+    // children.
+    let window = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    let visible = match rects {
+        Some(rects) => rects
+            .iter()
+            .copied()
+            .reduce(|a, b| a.union(b))
+            .unwrap_or(Rect::ZERO)
+            .intersect(window),
+        None => window,
+    };
+    if let Some(rects) = rects {
+        let mut clip = BezPath::new();
+        for rect in rects {
+            clip.extend(rect.path_elements(0.1));
+        }
+        scene.push_clip_layer(&clip);
+    }
     paint_node(
         tree,
         root,
@@ -160,6 +218,9 @@ pub fn build_tree_scene(
         text,
         geometry,
     );
+    if rects.is_some() {
+        scene.pop_layer();
+    }
     scene
 }
 
@@ -913,6 +974,41 @@ impl FrameRenderer {
         render_size: &RenderSize,
         target: &wgpu::TextureView,
     ) {
+        self.render_into(scene, device, queue, encoder, render_size, target, None);
+    }
+
+    /// 0.4.0 M5: `render`, clearing only `rects` (window pixels) and
+    /// keeping the rest of `target` -- for a scene from
+    /// `build_tree_scene_in` with the same rects. `None` clears it all, as
+    /// `render` does.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_into(
+        &mut self,
+        scene: &Scene,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        render_size: &RenderSize,
+        target: &wgpu::TextureView,
+        rects: Option<&[Rect]>,
+    ) {
+        let clear_rects: Vec<vello_common::geometry::RectU16> = rects
+            .unwrap_or_default()
+            .iter()
+            .map(|r| {
+                let at = |v: f64| v.clamp(0.0, f64::from(u16::MAX)) as u16;
+                vello_common::geometry::RectU16::new(at(r.x0), at(r.y0), at(r.x1), at(r.y1))
+            })
+            .collect();
+        let clear = match rects {
+            // Transparent, as the full clear is: the scene's own background
+            // paints over it.
+            Some(_) => vello_gpu::ClearSettings::Rects {
+                color: peniko::color::AlphaColor::TRANSPARENT,
+                rects: &clear_rects,
+            },
+            None => vello_gpu::ClearSettings::default(),
+        };
         self.renderer
             .render(
                 scene,
@@ -924,9 +1020,7 @@ impl FrameRenderer {
                 target,
                 None,
                 self.images.bindings(),
-                // A full clear to transparent, as `vello_hybrid` 0.2.0 always
-                // did; partial redraw passes `SrcOver` or rect clears here.
-                vello_gpu::TargetInit::Clear(vello_gpu::ClearSettings::default()),
+                vello_gpu::TargetInit::Clear(clear),
             )
             .expect("vello_gpu render failed");
     }

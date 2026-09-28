@@ -277,12 +277,14 @@ class Window:
     def off(self, event: str) -> None:
         """M94: removes the window's listener for `event`, if any."""
         ...
-    def set(self, *, title: str = ...) -> None:
-        """M94: sets window properties -- today only `title`."""
+    def set(self, *, title: str = ..., partial_redraw: bool = ...) -> None:
+        """M94: sets window properties -- `title`, and (0.4.0 M5)
+        `partial_redraw`: `True` (the default) redraws only what changed
+        each frame, `False` redraws the whole window every frame."""
         ...
     def get(self, name: str) -> Any:
-        """M94: reads `width`, `height`, `title`, or `scale_factor`
-        (`1.0` until `App.run()` opens the window)."""
+        """M94: reads `width`, `height`, `title`, `scale_factor`
+        (`1.0` until `App.run()` opens the window), or `partial_redraw`."""
         ...
     def show_layer(
         self,

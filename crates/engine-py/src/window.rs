@@ -96,6 +96,10 @@ pub struct WindowState {
     /// and after. `window.set(title=...)` and `window.get("scale_factor")`
     /// reach it here; `App.run()` fills and clears it.
     pub(crate) os_window: SharedOsWindow,
+    /// 0.4.0 M5: whether this window redraws only what changed (the
+    /// default) -- `window.set(partial_redraw=False)` turns it off. Shared
+    /// with `App.run()`'s frame loop, which reads it every frame.
+    pub(crate) partial_redraw: Rc<Cell<bool>>,
 }
 
 /// M94: see `PyWindow::os_window`.
@@ -144,6 +148,7 @@ impl PyWindow {
             terminals: Rc::new(RefCell::new(HashMap::new())),
             window_listeners: Rc::new(RefCell::new(HashMap::new())),
             os_window: Rc::new(RefCell::new(None)),
+            partial_redraw: Rc::new(Cell::new(true)),
         }))
     }
 
