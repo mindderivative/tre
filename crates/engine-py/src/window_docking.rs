@@ -44,6 +44,15 @@ impl PyWindow {
         if !Rc::ptr_eq(&self.tree, &panel.tree) {
             return Err(EngineError::ForeignNode.into());
         }
-        dock::start_drag(&self.dock, panel.id)
+        dock::start_drag(&self.dock, &self.tree, panel.id)
+    }
+
+    /// M105 (issue #16): takes `panel` out of its zone and off the tree;
+    /// `dock_panel` can dock it again later.
+    fn undock_panel(&self, panel: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &panel.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        dock::undock_panel(&self.dock, &self.tree, panel.id)
     }
 }

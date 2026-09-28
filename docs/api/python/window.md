@@ -42,8 +42,9 @@ See [Layers](layers.md).
 [Events and Listeners](events.md#window-listeners).
 
 **`set(title=...)`** changes the title, live if the window is open.
-**`get(name)`** reads `width`, `height`, `title`, or `scale_factor` (`1.0`
-until `App.run()` opens the window).
+**`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
+until `App.run()` opens the window), or `dark` — the OS's current appearance,
+or `None` where it can't say ([Window properties](events.md#window-properties)).
 
 **`resize(width, height)`** sets the window's size from code, and the
 root's layout box follows. It fires no `resize` event — that reports a
@@ -118,6 +119,7 @@ on only `advance` moves it. Each window keeps its own time, and
 | `dock_panel(side, panel)` | Docks `panel` into `side`'s zone and shows it — moving it, if it's docked in another zone |
 | `set_active_panel(side, index)` | Shows the zone's `index`th panel |
 | `start_panel_drag(panel)` | Starts dragging a docked panel; the drag reports through the `dock_target`/`dock_drop` window events |
+| `undock_panel(panel)` | Takes `panel` out of its zone and off the tree; `dock_panel` can dock it again |
 
 `side` is one of `"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`.
 See [Docking](../../guide/docking.md) for a walkthrough.

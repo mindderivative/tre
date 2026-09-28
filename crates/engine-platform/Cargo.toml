@@ -20,6 +20,14 @@ engine-core = { path = "../engine-core" }
 peniko = "0.6.1"
 winit = "0.30.13"
 
+# M106 (issue #18): reads the OS's light/dark appearance from the XDG
+# settings portal, which `winit` doesn't on Linux (`src/appearance.rs`).
+# Already built here -- AccessKit's Linux backend (`accesskit_unix`)
+# depends on it with these same `default-features = false` and
+# `async-io`; `blocking-api` adds only the synchronous wrappers.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5.5", default-features = false, features = ["async-io", "blocking-api"] }
+
 [dev-dependencies]
 taffy = "0.14.0"
 

@@ -1,10 +1,24 @@
-# LOG — Branch `0.3.5.1`: Milestone 104
+# LOG — Branch `0.3.5.2`: Milestones 105-107
 
-- Tesserae filed issue #14. The user: "tesserae submitted an issue about the
-  dock_panel", then "lets use 0.3.5.1 as this i a minor bug fix".
-- `dock_panel` routes a docked panel through `move_panel`; `Tree::add_child`
-  moves an already-attached child. 5 pytest + 1 cargo tests; 3 fail unfixed.
+- Tesserae filed issue #16 (its M52 hot reload can't drop a panel). The user:
+  "Take a look at main branch issue #16 about undocking panels", then "yes"
+  to M105 on a new `0.3.5.2` branch off `main`.
+- Worked in a separate worktree (`../tre-0.3.5.2`, its own `.venv`), so the
+  `0.4.0` checkout and its build were left alone.
+- M105 committed (`db68531`).
+- The user: "Check for more issues, I believe you have 2 more" -- #18 and
+  #19. Answers: #18 "Read + live events", #19 name `tesserae-engine`, both
+  on `0.3.5.2`.
+- `winit` 0.30 reports the appearance on macOS and Windows only; Linux uses
+  the XDG portal through `zbus` (already built for AccessKit). Checked end
+  to end against a stand-in portal on a private bus.
+
+- M106 committed (`97234b9`).
+- M107: `tre` and `pytre` are taken on PyPI; `tesserae-engine` was free.
+  `twine check` passes; a fresh venv installs it and imports `tre`. A venv
+  that already had the old `tre` distribution kept it alongside, both
+  owning `tre/` -- the install docs now say to uninstall `tre` first.
 
 ## Status
 
-**Released (2026-09-27).** `v0.3.5.1` is out; Tesserae told.
+**Code complete (2026-09-28).** Push, release, and the PyPI publisher wait on the user.

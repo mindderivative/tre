@@ -69,10 +69,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M102 — Docs, Examples, and Tests Rewrite | `██████████` 100% | ✅ Complete (2026-09-27) — a guide page per building block and a complete-widget walkthrough; ARCHITECTURE.md, README, and Rust comments describe the current engine; 21 self-checking examples and a rebuilt showcase; tests named and described in current terms |
 | M103 — Release | `██████████` 100% | ✅ Complete (2026-09-27) — `v0.3.5` released; Tesserae's M46 moved it onto the release, CI green on `tre` 2e4ed35 |
 | M104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tre/issues/14)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.1`, closing issue #14 |
+| M105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16)) | `██████████` 100% | ✅ Complete (2026-09-27) — on branch `0.3.5.2`, not yet released |
+| M106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tre/issues/18)) | `██████████` 100% | ✅ Complete (2026-09-28) — on branch `0.3.5.2`, not yet released |
+| M107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tre/issues/19)) | `█████░░░░░` 50% | 🚧 Phase 1 done (2026-09-28) — the rename and the trusted-publishing job are on branch `0.3.5.2`; the first upload waits on the user registering the PyPI publisher and releasing |
 
-**Just closed:** M104 — [issue #14](https://github.com/mindderivative/tre/issues/14), filed by Tesserae while building its docking presentation: `dock_panel` on a panel docked in another zone left it in the old zone's list, so a later `set_active_panel` there put the panel under two parents. `dock_panel` now moves a docked panel exactly as a drop does, and `Tree::add_child` moves an already-attached node instead of double-parenting it -- the third appearance of that bug class, closed at its source. Released as `v0.3.5.1`, a patch release per the user.
+**Just closed:** M107 Phase 1 — [issue #19](https://github.com/mindderivative/tre/issues/19): `tre` is published to PyPI as `tesserae-engine` (the name `tre` there is an unrelated regex-bindings project; `tesserae-engine` was free on 2026-09-28), still imported as `tre`. `wheels.yml` gains a `pypi` job that uploads the release's wheels and sdist with trusted publishing, no stored token. Before it, M105 (`undock_panel`, issue #16) and M106 (`window.get("dark")` and `color_scheme` on Linux, issue #18), all on branch `0.3.5.2`, not yet pushed.
 
-**Up next:** nothing scheduled on the `tre` side. Tesserae moved onto `v0.3.5.1` and finished its M45 (docking and the app shell), with `Dock.move()` now a plain `dock_panel` call -- no `tre` issues open from it. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
+**Up next:** the user registers a pending trusted publisher on pypi.org for `tesserae-engine` (owner `mindderivative`, repository `tre`, workflow `wheels.yml`, environment `pypi`); then push `0.3.5.2`, PR, merge, and tag `v0.3.5.2` when the user says so -- the tag's `Wheels` run makes the first upload (M107 Phase 2). Tesserae then depends on `tesserae-engine`. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
 
 **Known gaps:**
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
@@ -1547,6 +1550,56 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - PR #15 merged via `gh pr merge --merge` (merge commit `9cba06b`), closing issue #14; local `main` fast-forwarded and re-verified -- `maturin develop --release` (`tre` 0.3.5.1), pytest 430 passed, 1 skipped, 21 examples — ✅
 - `git tag -a v0.3.5.1` on the merge commit, pushed; the `Wheels` run succeeded on every job and attached 24 assets, named `tre-0.3.5.1-...`, confirming the four-part version reaches the wheels; the release body set to the PR's release note — ✅
 - Tesserae told the release is out and that `dock_panel` now moves a docked panel, so its `Dock.move()` drag workaround can go — ✅
+
+---
+
+## Branch: `0.3.5.2` — Release Prep
+
+**Status: 🚧 In progress (2026-09-28).** A patch release for issues #16, #18 and #19, following `0.3.5.1`'s versioning: the Python package, branch, and tag are `0.3.5.2`; the crates stay `0.3.5`.
+
+- Branch `0.3.5.2` created off `main` at `a67376d`, in its own worktree so the `0.4.0` checkout was left alone — ✅
+- `pyproject.toml` version 0.3.5.1 → 0.3.5.2; `Cargo.toml` unchanged — ✅
+
+---
+
+## Milestone 105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16))
+
+**Status: ✅ Complete (2026-09-27).** User: "Take a look at main branch issue #16 about undocking panels", then "yes" to M105 on a new `0.3.5.2` branch. Tesserae's M52 hot-reloads its app shell file, and a panel removed from the file could only be dropped by restarting: `node.remove()` took it off the tree but left it in its zone's list, so `set_active_panel` attached it again. The issue proposed an explicit `Window.undock_panel(panel)` rather than changing `remove()`, since zones detach hidden panels with a plain detach too.
+
+### Phase 1 — Fix ✅
+- Step 1: `take_out_of_zone`, split out of `move_panel`, is the one path that takes a panel out of a zone; the new `Window.undock_panel(panel)` calls it and detaches the panel collectibly, as `node.remove()` does, and cancels a drag of it — ✅ (`crates/engine-py/src/dock.rs`, `window_docking.rs`; `ValueError` for a panel that isn't docked or belongs to another window)
+- Step 2: `active_tab` moves down with its panel when an earlier one leaves -- it used to stay put, so the zone switched to the panel after the shown one, a bug in M104's shipped move path — ✅ (the zone shows the next panel, else the previous, else nothing, when the shown one leaves)
+- Step 3: freed panels leave their zones -- `destroy()` on a docked panel left a dead id listed, and `set_active_panel` then panicked (`add_child: child NodeId not found`); `forget_freed` now runs first in every docking entry point and ends a drag of a freed panel — ✅ (`drag_to` and `drop` skip it when no drag is in progress, since they run on every pointer event)
+- Step 4: tests and docs — ✅ (13 new `tests/test_docking.py` tests -- the issue's own repro, next/previous/earlier-panel re-picks, the move-path shift, an emptied zone, re-docking, drag cancellation, the two `ValueError`s, and three freed-panel cases -- 12 of which fail on the unfixed code, checked by stashing the fix and rebuilding; `_core.pyi`, `docs/api/python/window.md`, `docs/guide/docking.md` with a new "Closing a panel" section, and `ARCHITECTURE.md`; cargo test all ok, pytest 443 passed and 1 skipped, clippy and fmt clean, 21 examples, docs strict, mypy clean)
+
+
+---
+
+## Milestone 106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tre/issues/18))
+
+**Status: ✅ Complete (2026-09-28).** User: "Check for more issues, I believe you have 2 more", then, asked how far to go on Linux, "Read + live events", and "Both on 0.3.5.2". Tesserae's `App(dark="system")` starts dark and learned the truth only at the OS's first switch, because nothing could read the current appearance. The issue proposed `window.get("dark")` over `winit`'s `Window::theme()`; `winit` 0.30.13's own source shows that answers only on macOS and Windows -- `None` on X11, only an app-set override on Wayland -- and that its `ThemeChanged` is emitted only on macOS, Windows, and the web, so on Linux `tre`'s `color_scheme` event had never fired either.
+
+### Phase 1 — Read and Follow the Appearance ✅
+- Step 1: `engine_platform::appearance` -- `current_dark(window)` asks `winit` first and the XDG settings portal (`org.freedesktop.appearance` / `color-scheme`, via `ReadOne`, or `Read` on older portals) on Linux, with a 250 ms timeout; `color-scheme` 0 ("no preference") reads as light, the default look on GNOME and KDE — ✅ (`zbus` 5.19 was already built for AccessKit's Linux backend; `engine-platform` names it with `blocking-api` added, one `Cargo.lock` line and no new package)
+- Step 2: `Window.get("dark")` -- `True`, `False`, or `None` where the platform can't say; on Linux it answers before `App.run()` too — ✅ (4 ms on this KDE Wayland desktop, `None` in 1 ms without a session bus)
+- Step 3: live changes on Linux -- `run_windowed_multi` starts a thread listening for the portal's `SettingChanged` (filtered to that namespace and key, repeats dropped) and forwards each change as `PlatformEvent::ThemeChanged`, which gives every open window the same `InputEvent::ThemeChanged` `winit` gives on macOS and Windows, so `color_scheme` fires through the existing path; the thread ends when its event loop has closed — ✅ (`crates/engine-platform/src/lib.rs`)
+- Step 4: tests and docs — ✅ (2 engine-platform tests; `tests/test_appearance.py` with 3 tests, one of them end to end -- `tests/portal_stub.py`, a stand-in portal on a private `dbus-run-session` bus, answers dark, then announces light, a repeat, another namespace's setting, and dark, and a real `App.run()` sees exactly two `color_scheme` events with `get("dark")` agreeing; it skips without `dbus-run-session`, PyGObject, or a display; `_core.pyi`, `docs/api/python/events.md`, `window.md`, `docs/guide/events-and-input.md`, and `ARCHITECTURE.md`; cargo 329 passed, pytest 446 passed and 1 skipped, clippy and fmt clean, 21 examples, docs strict, mypy clean; the macOS and Windows branches were read, not compiled, here -- CI builds both)
+
+
+---
+
+## Milestone 107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tre/issues/19))
+
+**Status: 🚧 In progress (2026-09-28).** User: "Check for more issues, I believe you have 2 more", then chose the distribution name `tesserae-engine` and this branch. `tre` shipped only as GitHub Release wheels, so `pip install tre` couldn't work and Tesserae, which wants to publish to PyPI, can't depend on it there (PyPI rejects direct-URL dependencies). `tre` on PyPI is an unrelated project (bindings for the TRE regex library), and so is `pytre`; `tesserae-engine` was free (checked against PyPI's JSON API). The first upload is permanent -- PyPI never takes the same version twice -- so it waits on the user.
+
+### Phase 1 — Rename and Publishing Job ✅
+- Step 1: `pyproject.toml` -- distribution name `tesserae-engine`, the import name still `tre` (`module-name = "tre._core"` unchanged); the description no longer promises Material Design 3 components, which left `tre` in M99; keywords, classifiers, and Documentation/Issues URLs for the PyPI page — ✅ (`twine check` passes the wheel and sdist, named `tesserae_engine-0.3.5.2`; installed in a fresh venv, `import tre` works and `importlib.metadata.version("tesserae-engine")` is `0.3.5.2`)
+- Step 2: `wheels.yml` gains a `pypi` job after the four build jobs -- it downloads the `wheels-*` and `sdist` artifacts only, never the standalone `.so`, and uploads them with `pypa/gh-action-pypi-publish` using trusted publishing (`id-token: write`, environment `pypi`, no stored token) — ✅ (the YAML parses and the job's needs, environment, and permissions check out; it first runs on the next `v*` tag)
+- Step 3: docs -- `docs/installation.md` leads with `pip install tesserae-engine` and warns that an earlier `tre-...` wheel must be uninstalled first, since pip leaves it installed alongside and both then own the `tre` package (seen in this branch's own venv); the README gains an install section, and its links are absolute so they work on the PyPI page; `docs/index.md` and `ARCHITECTURE.md` — ✅ (docs strict, pytest 446 passed and 1 skipped on the renamed build)
+
+### Phase 2 — First Upload ⬜
+- Step 1: the user registers a pending trusted publisher on pypi.org for project `tesserae-engine` -- owner `mindderivative`, repository `tre`, workflow `wheels.yml`, environment `pypi` -- and optionally gives the `pypi` GitHub environment required reviewers — ⬜
+- Step 2: tag `v0.3.5.2` once the branch is merged, and confirm the `pypi` job uploads every wheel and the sdist and that `pip install tesserae-engine` resolves — ⬜
 
 ---
 

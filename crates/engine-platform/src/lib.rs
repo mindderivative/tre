@@ -78,6 +78,8 @@
 //! build in this module already goes through `access_adapter::
 //! update_if_active`, which already gates on activation state.
 
+pub mod appearance;
+
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -290,6 +292,12 @@ enum PlatformEvent {
     /// itself already has, confirmed as the simpler, still-correct v1
     /// answer this phase's own scoping note left as an open question.
     Wake,
+    /// M106 (issue #18): the XDG settings portal announced a new light/
+    /// dark appearance -- Linux's stand-in for `winit`'s own
+    /// `WindowEvent::ThemeChanged`, which never fires there. Every open
+    /// window is told, as the OS tells each window on macOS and Windows.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    ThemeChanged(bool),
 }
 
 impl From<accesskit_winit::Event> for PlatformEvent {
@@ -438,6 +446,14 @@ where
     let event_loop = EventLoop::<PlatformEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let proxy = event_loop.create_proxy();
+
+    #[cfg(target_os = "linux")]
+    {
+        let proxy = proxy.clone();
+        appearance::portal::watch(move |dark| {
+            proxy.send_event(PlatformEvent::ThemeChanged(dark)).is_ok()
+        });
+    }
 
     setup(
         &WindowOpener {
@@ -668,6 +684,12 @@ where
                     win.window.request_redraw();
                 }
             }
+            PlatformEvent::ThemeChanged(dark) => {
+                for (&id, win) in &self.windows {
+                    (self.on_input)(id, InputEvent::ThemeChanged { dark });
+                    win.window.request_redraw();
+                }
+            }
         }
     }
 
@@ -886,9 +908,9 @@ where
             // source (`src/event.rs`): `WindowEvent::ThemeChanged(Theme)`
             // is real, `Theme` is `{ Light, Dark }`. Its own doc comment
             // states this is unsupported on iOS/Android/X11/Wayland/
-            // Orbital -- it simply never fires there, which is a real,
-            // known platform limitation of this event, not a bug in
-            // this translation.
+            // Orbital -- it simply never fires there. M106: on Linux the
+            // XDG settings portal stands in for it
+            // (`PlatformEvent::ThemeChanged`, from `appearance::portal`).
             WindowEvent::ThemeChanged(theme) => {
                 on_input(
                     window_id,

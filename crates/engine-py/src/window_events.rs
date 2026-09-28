@@ -445,8 +445,11 @@ impl PyWindow {
         Ok(())
     }
 
-    /// Reads a window property: `width`, `height`, `title`, or
-    /// `scale_factor` (`1.0` until `App.run()` opens the window).
+    /// Reads a window property: `width`, `height`, `title`,
+    /// `scale_factor` (`1.0` until `App.run()` opens the window), or
+    /// `dark` -- M106 (issue #18): the OS's current appearance, `True`
+    /// for dark, or `None` where the platform can't say (on macOS and
+    /// Windows, until `App.run()` opens the window).
     fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
         Ok(match name {
             "width" => f64::from(self.width.get())
@@ -466,9 +469,16 @@ impl PyWindow {
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
+            "dark" => {
+                let window = self.os_window.borrow().clone();
+                engine_platform::appearance::current_dark(window.as_deref())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "unknown window property {name:?} -- valid: width, height, title, scale_factor"
+                    "unknown window property {name:?} -- valid: width, height, title, scale_factor, dark"
                 )));
             }
         })

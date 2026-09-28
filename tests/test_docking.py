@@ -266,3 +266,132 @@ def test_a_keyboard_move_menu_needs_no_simulated_input():
         window.dock_panel(side, a)
         assert a.parent() == zone
         assert sum(z.children().count(a) for z in (left, right)) == 1
+
+
+# -- undock_panel takes a panel out of docking (issue #16) ---------------------
+
+
+def three_panels_left():
+    """A, B and C docked left, C shown; an empty right zone."""
+    window, left, right, a, b = two_panels_left()
+    c = window.create("box", width=10, height=10, label="C")
+    window.dock_panel("left", c)
+    return window, left, right, a, b, c
+
+
+def test_undock_panel_takes_it_out_of_its_zone_for_good():
+    """Issue #16's own repro: set_active_panel can't bring it back."""
+    window, left, right, a, b = two_panels_left()
+    window.undock_panel(b)
+    assert labels(left) == ["A"] and b.parent() is None
+    with pytest.raises(ValueError, match="out of range"):
+        window.set_active_panel("left", 1)
+    window.set_active_panel("left", 0)
+    assert labels(left) == ["A"] and b.parent() is None
+
+
+def test_undocking_the_shown_panel_shows_the_next_one():
+    window, left, right, a, b, c = three_panels_left()
+    window.set_active_panel("left", 1)  # B
+    window.undock_panel(b)
+    assert labels(left) == ["C"]
+
+
+def test_undocking_the_last_shown_panel_shows_the_previous_one():
+    window, left, right, a, b, c = three_panels_left()  # C shown
+    window.undock_panel(c)
+    assert labels(left) == ["B"]
+
+
+def test_undocking_an_earlier_panel_keeps_the_shown_one():
+    window, left, right, a, b, c = three_panels_left()
+    window.set_active_panel("left", 1)  # B
+    window.undock_panel(a)
+    assert labels(left) == ["B"]
+    window.set_active_panel("left", 1)  # indexes shifted down: C
+    assert labels(left) == ["C"]
+
+
+def test_moving_an_earlier_panel_away_keeps_the_shown_one():
+    """The same shift through dock_panel's move, which used to show the
+    panel after the shown one."""
+    window, left, right, a, b, c = three_panels_left()
+    window.set_active_panel("left", 1)  # B
+    window.dock_panel("right", a)
+    assert (labels(left), labels(right)) == (["B"], ["A"])
+
+
+def test_undocking_a_zones_only_panel_leaves_it_empty():
+    window, left, right, panel = two_zones()
+    window.undock_panel(panel)
+    assert left.children() == [] and panel.parent() is None
+    with pytest.raises(ValueError, match="out of range"):
+        window.set_active_panel("left", 0)
+
+
+def test_an_undocked_panel_can_be_docked_again():
+    window, left, right, a, b = two_panels_left()
+    window.undock_panel(a)
+    window.dock_panel("right", a)
+    assert (labels(left), labels(right)) == (["B"], ["A"])
+    window.start_panel_drag(a)  # docked again, so it drags
+    window.simulate("pointer_up", node=left)
+    assert labels(left) == ["A"] and labels(right) == []
+
+
+def test_undocking_the_dragged_panel_cancels_its_drag():
+    window, left, right, a, b = two_panels_left()
+    seen = record(window)
+    window.start_panel_drag(a)
+    window.undock_panel(a)
+    window.simulate("pointer_move", node=right)
+    window.simulate("pointer_up", node=right)
+    assert seen == []
+    assert labels(right) == [] and a.parent() is None
+
+
+def test_undock_panel_needs_a_docked_panel():
+    window, left, right, a, b = two_panels_left()
+    window.undock_panel(a)
+    with pytest.raises(ValueError, match="isn't a docked panel"):
+        window.undock_panel(a)
+    plain = add(window, "box", fill=(0, 0, 0, 0), width=10, height=10)
+    with pytest.raises(ValueError, match="isn't a docked panel"):
+        window.undock_panel(plain)
+
+
+def test_undock_panel_rejects_a_node_from_another_window():
+    window, left, right, panel = two_zones()
+    other = Window(width=100, height=100)
+    foreign = add(other, "box", fill=(0, 0, 0, 255), width=10, height=10)
+    with pytest.raises(ValueError, match="different Window"):
+        window.undock_panel(foreign)
+
+
+def test_a_destroyed_panel_leaves_its_zone():
+    """It used to stay listed, and showing it again panicked."""
+    window, left, right, a, b, c = three_panels_left()
+    window.set_active_panel("left", 1)  # B
+    a.destroy()
+    window.set_active_panel("left", 1)  # indexes shifted down: C
+    assert labels(left) == ["C"]
+    with pytest.raises(ValueError, match="out of range"):
+        window.set_active_panel("left", 2)
+
+
+def test_destroying_the_shown_panel_shows_the_next_one():
+    window, left, right, a, b, c = three_panels_left()
+    window.set_active_panel("left", 1)  # B
+    b.destroy()
+    window.dock_panel("right", a)  # any docking call catches up
+    assert (labels(left), labels(right)) == (["C"], ["A"])
+
+
+def test_destroying_the_dragged_panel_ends_its_drag():
+    window, left, right, a, b = two_panels_left()
+    seen = record(window)
+    window.start_panel_drag(a)
+    a.destroy()
+    window.simulate("pointer_move", node=right)
+    window.simulate("pointer_up", node=right)
+    assert seen == [] and labels(right) == []
