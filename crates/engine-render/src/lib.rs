@@ -21,6 +21,7 @@
 //! over a `wgpu::Device`/`Queue`/`TextureView` the caller already has,
 //! matching §4's crate-boundary rule.
 
+mod damage;
 mod fonts;
 mod geometry_cache;
 mod image_cache;
@@ -35,6 +36,7 @@ use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
+pub use damage::{Damage, DamageTracker, FULL_FRACTION, MAX_RECTS};
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
 pub use persistent_target::PersistentTarget;
@@ -234,6 +236,47 @@ fn image_sample_rect(
         }
     }
 }
+/// The transform a node paints under: its parent's, then its layout
+/// position, then its own transform parts. 0.4.0 M4: shared by the paint
+/// walk and `DamageTracker`, so the two can't disagree.
+pub(crate) fn composed_transform(
+    parent: Affine,
+    position: (f64, f64),
+    node: &engine_core::Node,
+    w: f64,
+    h: f64,
+) -> Affine {
+    parent * Affine::translate(position) * node.paint.local_transform(w, h)
+}
+
+/// The window-space bounding box of `rect` (node-local) under
+/// `composed` -- all four corners, so it stays right under rotation.
+pub(crate) fn transformed_bounds(composed: Affine, rect: Rect) -> Rect {
+    let corners = [
+        composed * Point::new(rect.x0, rect.y0),
+        composed * Point::new(rect.x1, rect.y0),
+        composed * Point::new(rect.x0, rect.y1),
+        composed * Point::new(rect.x1, rect.y1),
+    ];
+    let fold = |pick: fn(&Point) -> f64, start: f64, f: fn(f64, f64) -> f64| {
+        corners.iter().map(pick).fold(start, f)
+    };
+    Rect::new(
+        fold(|p| p.x, f64::INFINITY, f64::min),
+        fold(|p| p.y, f64::INFINITY, f64::min),
+        fold(|p| p.x, f64::NEG_INFINITY, f64::max),
+        fold(|p| p.y, f64::NEG_INFINITY, f64::max),
+    )
+}
+
+/// Whether `node` clips its children to its rounded box: scroll views
+/// and virtual lists always, anything with `clip_children` set.
+pub(crate) fn clips_children(node: &engine_core::Node) -> bool {
+    matches!(
+        node.kind,
+        NodeKind::VirtualList(_) | NodeKind::ScrollView(_)
+    ) || node.paint.clip_children
+}
 
 #[allow(clippy::too_many_arguments)]
 fn paint_node(
@@ -256,9 +299,8 @@ fn paint_node(
     let layout = tree.layout(id);
     let w = f64::from(layout.size.width);
     let h = f64::from(layout.size.height);
-    let composed = parent_transform
-        * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
-        * node.paint.local_transform(w, h);
+    let position = (f64::from(layout.location.x), f64::from(layout.location.y));
+    let composed = composed_transform(parent_transform, position, node, w, h);
 
     // M8 Phase 1 (§11.8): a whole-subtree skip, not a per-pixel clip --
     // this node's own real, composed, absolute bounding box (all four
@@ -270,23 +312,7 @@ fn paint_node(
     // in its subtree -- that doesn't overlap it; `tree` is an immutable
     // reference throughout this whole walk, so there's no side effect
     // to lose by skipping.
-    let corners = [
-        composed * Point::new(0.0, 0.0),
-        composed * Point::new(w, 0.0),
-        composed * Point::new(0.0, h),
-        composed * Point::new(w, h),
-    ];
-    let min_x = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-    let max_x = corners
-        .iter()
-        .map(|p| p.x)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let min_y = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-    let max_y = corners
-        .iter()
-        .map(|p| p.y)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let bounds = Rect::new(min_x, min_y, max_x, max_y);
+    let bounds = transformed_bounds(composed, Rect::new(0.0, 0.0, w, h));
     if !bounds.overlaps(visible) {
         return;
     }
@@ -647,11 +673,7 @@ fn paint_node(
     // visual clip today, confirmed via direct read before this change,
     // so narrowing `visible` for any of them would wrongly cull
     // legitimately-overflowing content nothing here actually hides).
-    if matches!(
-        node.kind,
-        NodeKind::VirtualList(_) | NodeKind::ScrollView(_)
-    ) || node.paint.clip_children
-    {
+    if clips_children(node) {
         // M32 Phase 3 (§5, §7, §11.7/§11.8): any `NodeKind` takes this
         // branch when `PaintProperties.clip_children` is genuinely set.
         // No scroll-offset translation for the general case, the

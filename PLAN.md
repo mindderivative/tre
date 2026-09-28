@@ -1,21 +1,26 @@
-# PLAN — Branch `0.4.0`: Milestone 4, Dirty-Region Tracking
+# PLAN — Branch `0.4.0`: Milestone 5, Partial Redraw End to End, Measured
 
-*(Replaces the M3 plan — M3 is complete. Every step is in `BUILD_TRACKER.md`.)*
+*(Replaces the M4 plan — M4 is complete. Every step is in `BUILD_TRACKER.md`.)*
 
 ## Goal
 
-Know which parts of a window changed each frame: a small set of rects,
-merged when they overlap, with a full redraw past a size limit (the user's
-D3). Nothing uses them yet -- M5 renders only inside them.
+The frame renders only what changed: `DamageTracker`'s rects clear and
+redraw inside the persistent target, the rest kept from the last frame. On
+by default with a switch to turn it off (D4), made safe by a test requiring
+identical pixels from partial and full redraw.
 
 ## Steps
 
-1. Accumulate each change's painted bounds, before and after: animations,
-   property sets, layout and structure changes, canvas redraws, layers,
-   including transforms, shadows, and clipping.
-2. Tests that every kind of change reports a rect covering it, and that a
-   change over most of the window falls back to a full redraw.
+1. Integration: per window, `DamageTracker` runs before the scene is built;
+   `Damage::None` skips rendering, `Rects` renders the scene clipped to the
+   rects with `TargetInit::Clear(ClearSettings::Rects)` and culls nodes
+   outside them, `Full` renders as now; `reset` when the target is recreated;
+   the off switch.
+2. Correctness: pixel tests that partial redraw matches full redraw across
+   every example's animations.
+3. Measurement against `v0.3.5.1`: a small animation in a large window, and
+   no regression for a full-window change.
 
 ## Status
 
-**Planned (2026-09-28).** Waiting on the user to start M4.
+**Planned (2026-09-28).** Waiting on the user to start M5.

@@ -15,13 +15,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M1 — Scope and Upstream Pin | `██████████` 100% | ✅ Complete (2026-09-28) — build on upstream `vello_gpu` at `b408cd00`, which already has issue #4's patch; M2's main cost is `wgpu` 29 → 30 |
 | M2 — Migrate to `vello_gpu` | `██████████` 100% | ✅ Complete (2026-09-28) — `tre` on upstream `vello_gpu` and `wgpu` 30, every test unchanged, CI green on Linux, macOS, and Windows |
 | M3 — A Persistent Offscreen Target and Blit | `██████████` 100% | ✅ Complete (2026-09-28) — each window renders into a texture that keeps its frame, copied to the screen byte-exact |
-| M4 — Dirty-Region Tracking | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M4 — Dirty-Region Tracking | `██████████` 100% | ✅ Complete (2026-09-28) — `DamageTracker` reports what changed each frame as at most 4 rects, or a full redraw |
 | M5 — Partial Redraw End to End, Measured | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M6 — Release `0.4.0` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** M3 (2026-09-28) -- each window now renders into a texture that keeps its frame, copied to the swapchain image every frame, byte-exact against a direct render in a new pixel test. Surfaces that can't be copied into keep rendering directly. No visible change; it's what partial redraw draws over.
+**Just closed:** M4 (2026-09-28) -- `DamageTracker` reports what changed each frame: at most 4 rects, or a full redraw past half the window. It compares each node's painted rect and a fingerprint of its paint state against the last frame rather than hooking mutations, so a missed mutation path can't leave stale pixels, and 18 tests cover every kind of change.
 
-**Up next:** M4, dirty-region tracking -- which parts of the window changed each frame, as a small set of rects with a full-redraw fallback (the user's D3).
+**Up next:** M5, partial redraw end to end -- the frame renders only inside the damage rects, into the persistent target, with a full-redraw fallback, then correctness against full redraw and measurement.
 
 **Known gaps:**
 - Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.
@@ -63,11 +63,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 4 — Dirty-Region Tracking
 
-**Status: ⬜ Proposed.** Issue #4's third piece, in `engine-core`: today's `Tree.dirty` is a whole-frame yes/no; partial redraw needs where.
+**Status: ✅ Complete (2026-09-28).** User: "push and start M4". Issue #4's third piece, in `engine-core`: today's `Tree.dirty` is a whole-frame yes/no; partial redraw needs where.
 
-### Phase 1 — Dirty Rects ⬜
-- Step 1: accumulate the painted bounds, before and after, of whatever changed each frame -- a ticking animation, a property set, a layout change, a structural change, a canvas redraw, a layer shown or hidden -- including transforms, shadows, and clipping — ⬜
-- Step 2: tests that every kind of change reports a rect covering it, and that a change spanning most of the window falls back to a full redraw — ⬜
+### Phase 1 — Dirty Rects ✅
+- Step 1: accumulate the painted bounds, before and after, of whatever changed each frame -- a ticking animation, a property set, a layout change, a structural change, a canvas redraw, a layer shown or hidden -- including transforms, shadows, and clipping — ✅ (new `engine_render::DamageTracker` returning `Damage::{None, Full, Rects}`; it compares rather than instrumenting -- mutations reach nodes through `get_mut`, direct writes inside `Tree`, ticks, layout, and tree-level focus, and a missed hook would be a stale-pixel bug under on-by-default partial redraw -- walking the tree with the paint walk's rules through helpers pulled out of `paint_node` (`composed_transform`, `transformed_bounds`, `clips_children`, behavior unchanged, all 111 `engine-render` tests passing) and recording per node its painted rect -- the box grown by shadows, a path's centered stroke, canvas commands past the box, and text that overflows it, measured by a new `TextRenderer::text_extent` that asks the paint path's own shaping cache with `draw`'s exact inputs, so it never reshapes; a single-line text input takes its row across its clip, since its text scrolls sideways unclipped -- transformed, clipped, rounded out with a 2 px margin; and a fingerprint of its paint properties, kind state, composed transform, effective group opacity, clip, place in its parent's paint order, and focus for text inputs and terminals, images by blob id rather than bytes; every state struct is destructured without `..`, so a new field won't compile until someone decides whether it paints; changed, new, and removed nodes give their old and new rects, overlapping rects merge, then the cheapest pairs until at most 4, and past half the window, or on a first frame, a resize, or `reset`, it's `Full`; `ARCHITECTURE.md` §6 describes it)
+- Step 2: tests that every kind of change reports a rect covering it, and that a change spanning most of the window falls back to a full redraw — ✅ (new `tests/damage.rs`, 18 CPU-only tests, all passing on their first run: an unchanged frame gives `None` and a first frame `Full`; a paint change damages only near its node; a layout move damages both places; an animation damages each frame until it arrives, then nothing; a shadow widens the damage past the box; a transform damages where the node is drawn; removal and hiding damage where it was; a z-order swap of overlapping siblings; an ancestor's opacity damages its subtree; wrapped text overflowing its box; focusing a text input damages its row; a new image frame with identical bytes; a canvas drawing past its box; scrolling stays inside the viewport; a clipping parent bounds its child's damage; ten scattered changes merge into at most 4 non-overlapping rects covering all ten; a change to the whole window is `Full`; `reset` and a resize are `Full`; cargo 348 passed, pytest 430 passed, 1 skipped, 21 examples, clippy, fmt)
 
 ---
 

@@ -633,6 +633,42 @@ impl TextRenderer {
             .layout
     }
 
+    /// 0.4.0 M4: the size of what `draw` paints for a text node with
+    /// these inputs, from its box's origin -- the shown lines' width and
+    /// height, or the box width where `draw` clips an overflowing line.
+    /// Asks `shaped_layout` exactly as `draw` does (`color` included, as
+    /// `draw`'s `TextPlacement` passes it), so it reuses the same cached
+    /// layout rather than shaping again.
+    pub fn text_extent(
+        &mut self,
+        state: &TextState,
+        max_width: f32,
+        color: Color,
+        node_id: NodeId,
+    ) -> (f32, f32) {
+        let layout = self.shaped_layout(
+            node_id,
+            &state.content,
+            &state.font_family,
+            state.font_weight,
+            state.font_size,
+            max_width,
+            state.align,
+            state.line_height,
+            &[],
+            color,
+            &state.options,
+        );
+        let clips_width =
+            !state.options.ellipsis && !state.options.wrap && layout.width() > max_width;
+        let width = if clips_width {
+            max_width
+        } else {
+            layout.width().max(max_width)
+        };
+        (width, visible_height(layout, &state.options))
+    }
+
     /// Shapes `state.content` at `state.font_family`/`state.font_size`,
     /// breaks it to fit `at.max_width`, and draws every resulting glyph
     /// run into `scene` at `(at.x, at.y)` -- the text node's
