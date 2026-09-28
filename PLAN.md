@@ -25,4 +25,4 @@ release (M6).
 
 ## Status
 
-**Phase 1 done (2026-09-28).** Decisions: pinned upstream `vello_gpu` commit, Git dependency, a small set of dirty rects with a full-redraw fallback, on by default with a switch. Phase 2 Step 1 next.
+**Complete (2026-09-28).** Pinned `linebender/vello` `b408cd00`; M2, the migration to `vello_gpu` (`wgpu` 29 → 30), next.

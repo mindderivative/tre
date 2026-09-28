@@ -12,16 +12,16 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 | Milestone | Progress | Status |
 |---|---|---|
-| M1 — Scope and Upstream Pin | `███████░░░` 67% | 🚧 In progress — decisions made: build on upstream `vello_gpu`, which already has issue #4's patch, at a pinned Git commit |
+| M1 — Scope and Upstream Pin | `██████████` 100% | ✅ Complete (2026-09-28) — build on upstream `vello_gpu` at `b408cd00`, which already has issue #4's patch; M2's main cost is `wgpu` 29 → 30 |
 | M2 — Migrate to `vello_gpu` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M3 — A Persistent Offscreen Target and Blit | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M4 — Dirty-Region Tracking | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M5 — Partial Redraw End to End, Measured | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M6 — Release `0.4.0` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** M1 Phase 1, the decisions (2026-09-28). Checking upstream first showed `linebender/vello` had renamed `vello_hybrid` to `vello_gpu` and added issue #4's patch itself -- a render that keeps the target's contents and clears only listed rectangles -- so `0.4.0` builds on a pinned upstream commit instead of a fork, and M2 becomes a migration rather than a patch.
+**Just closed:** M1 (2026-09-28). Upstream `linebender/vello` had renamed `vello_hybrid` to `vello_gpu` and added issue #4's patch itself, so `0.4.0` builds on it at a pinned commit, `b408cd00`, instead of a fork -- the user's decisions, with a small set of dirty rects and partial redraw on by default. A spike on that commit built with `wgpu` 30 and confirmed the no-clear and rect-clear render is public.
 
-**Up next:** M1 Phase 2 -- pin an upstream `vello_gpu` commit and size M2's migration from its dependency set. The user's decisions (2026-09-28): the pinned upstream commit as a Git dependency, a small set of dirty rects with a full-redraw fallback, and partial redraw on by default with a switch to turn it off.
+**Up next:** M2, the migration to `vello_gpu` -- its main cost is `wgpu` 29 → 30 across `tre`'s own GPU code, with no behavior change.
 
 **Known gaps:**
 - Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.
@@ -30,14 +30,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 1 — Scope and Upstream Pin
 
-**Status: 🚧 In progress.** Issue #4 called for a scope-confirmation pause before building; this milestone is that pause, then the pinned dependency. Checking upstream first changed the plan: `linebender/vello` renamed `vello_hybrid` to `vello_gpu` ([PR #1883](https://github.com/linebender/vello/pull/1883), 2026-09-08) and then added issue #4's patch itself ([PR #1869](https://github.com/linebender/vello/pull/1869), 2026-09-09) -- `render()` takes a `TargetInit`: `SrcOver` draws over the kept contents, and `ClearSettings::Rects` clears only listed rectangles. Neither is published: `vello_hybrid` 0.2.0 is still the latest release, and `vello_gpu` on crates.io is a 0.1.0 name reservation.
+**Status: ✅ Complete (2026-09-28).** Issue #4 called for a scope-confirmation pause before building; this milestone is that pause, then the pinned dependency. Checking upstream first changed the plan: `linebender/vello` renamed `vello_hybrid` to `vello_gpu` ([PR #1883](https://github.com/linebender/vello/pull/1883), 2026-09-08) and then added issue #4's patch itself ([PR #1869](https://github.com/linebender/vello/pull/1869), 2026-09-09) -- `render()` takes a `TargetInit`: `SrcOver` draws over the kept contents, and `ClearSettings::Rects` clears only listed rectangles. Neither is published: `vello_hybrid` 0.2.0 is still the latest release, and `vello_gpu` on crates.io is a 0.1.0 name reservation.
 
 ### Phase 1 — Decisions ✅
 - Step 1: issue #4's patch points re-verified against upstream — ✅ (0.2.0 is still the latest release, checked 2026-09-27; upstream `main` renamed the crate to `vello_gpu` and already has the no-clear and rect-clear render, so no patch is needed; its `render()` also gained `resources`, `depth_view`, and `texture_bindings` parameters; `tre` calls `vello_hybrid` 33 times in 29 files, most in tests)
 - Step 2: the user's decisions — ✅ (user, 2026-09-28: "D1 - pinned upstream commit, D2 - pinned Git dependency, D3 - small set with a full-redraw fallback, D4 - as recommended" -- build on upstream `vello_gpu` at a pinned commit rather than forking 0.2.0; depend on it as a Git dependency pinned to that commit, a `mindderivative/vello` fork only if a change upstream lacks is ever needed; track a small set of dirty rects, merged when they overlap, with a full redraw past a size limit; partial redraw on by default with a switch to turn it off, made safe by an M5 test requiring identical pixels from partial and full redraw)
 
-### Phase 2 — Upstream Pin ⬜
-- Step 1: choose the upstream commit and check its dependency set against `tre`'s -- `wgpu`, `peniko`, `kurbo`, `parley`, `glifo`, and `vello_common` versions, and the MSRV -- to size M2's migration — ⬜
+### Phase 2 — Upstream Pin ✅
+- Step 1: choose the upstream commit and check its dependency set against `tre`'s -- `wgpu`, `peniko`, `kurbo`, `parley`, `glifo`, and `vello_common` versions, and the MSRV -- to size M2's migration — ✅ (pinned `linebender/vello` `b408cd003d5e936c9cc456d18d41467bb6d0e12f`, upstream `main` on 2026-09-28 with green CI, 24 checks passed; `peniko` 0.6.1, `kurbo` 0.13.1, `skrifa` 0.44.0 match `tre`'s, and `parley` 0.11.1 builds on the same two; `vello_common` 0.2.0 and `glifo` 0.3.0 keep their version numbers but carry unreleased code, so both come from the same Git commit to keep types identical; `wgpu` goes 29.0.4 → 30.0.x, the one major bump, touching 68 direct uses in `tre`'s source (`engine-py` `app.rs`, `engine-render` `lib.rs`, `image_cache.rs`, `text.rs`) and 487 in pixel tests, most through shared setup; MSRV 1.89, this machine 1.98.1; a throwaway crate on that commit with `wgpu` 30 built in 36 s and printed both `TargetInit::SrcOver` and `TargetInit::Clear(ClearSettings::Rects { .. })`, confirming the no-clear and rect-clear render is public)
 
 ---
 
@@ -46,7 +46,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 **Status: ⬜ Proposed.** Replaces the planned `vello_hybrid` patch: upstream already has it (M1), so this milestone moves `tre` from `vello_hybrid` 0.2.0 to `vello_gpu` at M1's pinned commit, with no behavior change.
 
 ### Phase 1 — Migration ⬜
-- Step 1: `vello_hybrid` → `vello_gpu` as a pinned Git dependency, with the other Linebender crates moved in step; `render()` called with `TargetInit::Clear(ClearSettings::Viewport)`, today's behavior — ⬜
+- Step 1: `vello_hybrid` → `vello_gpu`, with `vello_common` and `glifo`, as Git dependencies pinned to `b408cd00`, and `wgpu` 29 → 30 in `tre`'s own GPU code; `render()` called with `TargetInit::Clear(ClearSettings::Viewport)`, today's behavior — ⬜
 - Step 2: every test, pixel test, example, and `frame_budget.rs` passing unchanged; the wheel builds with the Git dependency in CI on all three platforms — ⬜
 
 ---
