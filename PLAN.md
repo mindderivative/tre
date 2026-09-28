@@ -25,4 +25,4 @@ release (M6).
 
 ## Status
 
-**Scaffolded (2026-09-27).** Phase 1 Step 1 next, on the user's go-ahead.
+**Phase 1 done (2026-09-28).** Decisions: pinned upstream `vello_gpu` commit, Git dependency, a small set of dirty rects with a full-redraw fallback, on by default with a switch. Phase 2 Step 1 next.

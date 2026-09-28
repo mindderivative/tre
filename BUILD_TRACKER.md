@@ -12,43 +12,42 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 | Milestone | Progress | Status |
 |---|---|---|
-| M1 — Scope and Fork Setup | `░░░░░░░░░░` 0% | ⬜ Proposed — the decision gate issue #4 calls for |
-| M2 — The `vello_hybrid` Patch: No-Clear and Scissored Render | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M1 — Scope and Upstream Pin | `███████░░░` 67% | 🚧 In progress — decisions made: build on upstream `vello_gpu`, which already has issue #4's patch, at a pinned Git commit |
+| M2 — Migrate to `vello_gpu` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M3 — A Persistent Offscreen Target and Blit | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M4 — Dirty-Region Tracking | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M5 — Partial Redraw End to End, Measured | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M6 — Release `0.4.0` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** the `0.4.0` line scaffolded (2026-09-27) -- branch `0.4.0` off `main` at `a67376d` (post-`v0.3.5.1`), the version bumped to `0.4.0` in `Cargo.toml` and `pyproject.toml`, this tracker started with its milestones restarting at 1, and the 0.3.x tracker archived. User: "Scaffold 0.4.0 and start a new build tracker. Annotate as 0.4.0 and restart the Milestones at 1. 0.4.0 will cover vello_hybrid fix. Any current issues for 0.3.5 will stay in as 0.3.5.x."
+**Just closed:** M1 Phase 1, the decisions (2026-09-28). Checking upstream first showed `linebender/vello` had renamed `vello_hybrid` to `vello_gpu` and added issue #4's patch itself -- a render that keeps the target's contents and clears only listed rectangles -- so `0.4.0` builds on a pinned upstream commit instead of a fork, and M2 becomes a migration rather than a patch.
 
-**Up next:** M1, the scope decisions -- nothing is built before the user confirms them. The milestones below are the proposed shape, from issue #4's own three-part sizing (the patch, the offscreen target, dirty-region tracking), plus measurement and the release.
+**Up next:** M1 Phase 2 -- pin an upstream `vello_gpu` commit and size M2's migration from its dependency set. The user's decisions (2026-09-28): the pinned upstream commit as a Git dependency, a small set of dirty rects with a full-redraw fallback, and partial redraw on by default with a switch to turn it off.
 
 **Known gaps:**
 - Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.
 
 ---
 
-## Milestone 1 — Scope and Fork Setup
+## Milestone 1 — Scope and Upstream Pin
 
-**Status: ⬜ Proposed.** Issue #4 records the plan and its sizing -- three separate pieces of work plus ongoing fork maintenance against an upstream whose "scene scheduling and rendering architecture has been rewritten" since 0.1.0 -- and says a scope-confirmation pause is warranted before building. This milestone is that pause, and then the fork itself.
+**Status: 🚧 In progress.** Issue #4 called for a scope-confirmation pause before building; this milestone is that pause, then the pinned dependency. Checking upstream first changed the plan: `linebender/vello` renamed `vello_hybrid` to `vello_gpu` ([PR #1883](https://github.com/linebender/vello/pull/1883), 2026-09-08) and then added issue #4's patch itself ([PR #1869](https://github.com/linebender/vello/pull/1869), 2026-09-09) -- `render()` takes a `TargetInit`: `SrcOver` draws over the kept contents, and `ClearSettings::Rects` clears only listed rectangles. Neither is published: `vello_hybrid` 0.2.0 is still the latest release, and `vello_gpu` on crates.io is a 0.1.0 name reservation.
 
-### Phase 1 — Decisions ⬜
-- Step 1: re-verify issue #4's patch points against the current `vello_hybrid` source -- 0.2.0 is still the latest published release (checked 2026-09-27), but upstream `main` may have moved; decide whether to fork the 0.2.0 tag or upstream `main` — ⬜
-- Step 2: the user's decisions -- fork mechanics (a `mindderivative/vello` fork consumed through `[patch.crates-io]` at a pinned revision, or a vendored copy in this repo); dirty-region granularity (one bounding rect per frame, or a small set); and whether partial redraw is on by default or opt-in for `0.4.0` — ⬜
+### Phase 1 — Decisions ✅
+- Step 1: issue #4's patch points re-verified against upstream — ✅ (0.2.0 is still the latest release, checked 2026-09-27; upstream `main` renamed the crate to `vello_gpu` and already has the no-clear and rect-clear render, so no patch is needed; its `render()` also gained `resources`, `depth_view`, and `texture_bindings` parameters; `tre` calls `vello_hybrid` 33 times in 29 files, most in tests)
+- Step 2: the user's decisions — ✅ (user, 2026-09-28: "D1 - pinned upstream commit, D2 - pinned Git dependency, D3 - small set with a full-redraw fallback, D4 - as recommended" -- build on upstream `vello_gpu` at a pinned commit rather than forking 0.2.0; depend on it as a Git dependency pinned to that commit, a `mindderivative/vello` fork only if a change upstream lacks is ever needed; track a small set of dirty rects, merged when they overlap, with a full redraw past a size limit; partial redraw on by default with a switch to turn it off, made safe by an M5 test requiring identical pixels from partial and full redraw)
 
-### Phase 2 — Fork Setup ⬜
-- Step 1: the fork created and pinned, building unchanged -- every existing test and pixel test passing against it before any patch — ⬜
+### Phase 2 — Upstream Pin ⬜
+- Step 1: choose the upstream commit and check its dependency set against `tre`'s -- `wgpu`, `peniko`, `kurbo`, `parley`, `glifo`, and `vello_common` versions, and the MSRV -- to size M2's migration — ⬜
 
 ---
 
-## Milestone 2 — The `vello_hybrid` Patch: No-Clear and Scissored Render
+## Milestone 2 — Migrate to `vello_gpu`
 
-**Status: ⬜ Proposed.** Issue #4's first piece, in the fork.
+**Status: ⬜ Proposed.** Replaces the planned `vello_hybrid` patch: upstream already has it (M1), so this milestone moves `tre` from `vello_hybrid` 0.2.0 to `vello_gpu` at M1's pinned commit, with no behavior change.
 
-### Phase 1 — Patch ⬜
-- Step 1: a public render entry point that can skip the full-target clear -- `render_scene` already takes `clear: bool`, which `render()` hardcodes to `true` — ⬜
-- Step 2: a scissored clear of a caller-supplied rect, using the `set_scissor_rect` technique `clear_atlas_region` already uses internally — ⬜
-- Step 3: fork-level pixel tests -- untouched pixels outside the rect survive a render; the rect is cleared and redrawn — ⬜
+### Phase 1 — Migration ⬜
+- Step 1: `vello_hybrid` → `vello_gpu` as a pinned Git dependency, with the other Linebender crates moved in step; `render()` called with `TargetInit::Clear(ClearSettings::Viewport)`, today's behavior — ⬜
+- Step 2: every test, pixel test, example, and `frame_budget.rs` passing unchanged; the wheel builds with the Git dependency in CI on all three platforms — ⬜
 
 ---
 
