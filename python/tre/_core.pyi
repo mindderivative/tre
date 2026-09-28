@@ -389,6 +389,15 @@ class Window:
         `dock_drop`. Raises `ValueError` if `panel` isn't docked.
         """
         ...
+    def undock_panel(self, panel: Node) -> None:
+        """M105: takes `panel` out of docking -- out of its zone's panels,
+        whose later indexes shift down, and off the tree. If it was
+        shown, the zone shows the next panel, else the previous, else
+        nothing. A drag of it in progress is cancelled. It stays alive
+        while a handle to it exists, so `dock_panel` can dock it again,
+        as after `remove()`. Raises `ValueError` if `panel` isn't docked.
+        """
+        ...
 
 class App:
     """Collects one or more `Window`s and drives them all together in

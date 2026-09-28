@@ -281,7 +281,7 @@ Layers are ordinary nodes, so paint, hit testing, focus, and the accessibility t
 
 ### 11.4 Docking
 
-Five fixed zones — left, right, top, bottom, center — each a node the framework builds and registers (`add_dock_zone`). A zone holds panels and shows one (`dock_panel`, `set_active_panel`). `start_panel_drag(panel)` begins a drag in the ordinary input pipeline; the `dock_target` window event reports the zone under the pointer as it changes, and releasing the primary button moves the panel and reports `dock_drop`. The handle, the drop highlight, and tabs are the framework's (M99, D10). No arbitrary nested splits.
+Five fixed zones — left, right, top, bottom, center — each a node the framework builds and registers (`add_dock_zone`). A zone holds panels and shows one (`dock_panel`, `set_active_panel`); `undock_panel` takes one out (M105). `start_panel_drag(panel)` begins a drag in the ordinary input pipeline; the `dock_target` window event reports the zone under the pointer as it changes, and releasing the primary button moves the panel and reports `dock_drop`. The handle, the drop highlight, and tabs are the framework's (M99, D10). No arbitrary nested splits.
 
 ### 11.5 Splitters
 

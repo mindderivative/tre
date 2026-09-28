@@ -69,10 +69,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M102 — Docs, Examples, and Tests Rewrite | `██████████` 100% | ✅ Complete (2026-09-27) — a guide page per building block and a complete-widget walkthrough; ARCHITECTURE.md, README, and Rust comments describe the current engine; 21 self-checking examples and a rebuilt showcase; tests named and described in current terms |
 | M103 — Release | `██████████` 100% | ✅ Complete (2026-09-27) — `v0.3.5` released; Tesserae's M46 moved it onto the release, CI green on `tre` 2e4ed35 |
 | M104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tre/issues/14)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.1`, closing issue #14 |
+| M105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16)) | `██████████` 100% | ✅ Complete (2026-09-27) — on branch `0.3.5.2`, not yet released |
 
-**Just closed:** M104 — [issue #14](https://github.com/mindderivative/tre/issues/14), filed by Tesserae while building its docking presentation: `dock_panel` on a panel docked in another zone left it in the old zone's list, so a later `set_active_panel` there put the panel under two parents. `dock_panel` now moves a docked panel exactly as a drop does, and `Tree::add_child` moves an already-attached node instead of double-parenting it -- the third appearance of that bug class, closed at its source. Released as `v0.3.5.1`, a patch release per the user.
+**Just closed:** M105 — [issue #16](https://github.com/mindderivative/tre/issues/16), filed by Tesserae from its M52 hot reload of the shell file: nothing took a panel out of docking, and `node.remove()` left it in its zone's list, where `set_active_panel` showed it again. `Window.undock_panel(panel)` now takes it out through the take-out path `move_panel` uses. Two neighbouring bugs fixed with it: taking out a panel before the shown one switched the zone to the panel after (shipped in M104's move path), and a destroyed docked panel made `set_active_panel` panic in `add_child`. On branch `0.3.5.2`, not yet pushed.
 
-**Up next:** nothing scheduled on the `tre` side. Tesserae moved onto `v0.3.5.1` and finished its M45 (docking and the app shell), with `Dock.move()` now a plain `dock_panel` call -- no `tre` issues open from it. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
+**Up next:** push `0.3.5.2` and release it when the user says so; then Tesserae's M52 can drop its "restart to remove a panel" note. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
 
 **Known gaps:**
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
@@ -1547,6 +1548,27 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - PR #15 merged via `gh pr merge --merge` (merge commit `9cba06b`), closing issue #14; local `main` fast-forwarded and re-verified -- `maturin develop --release` (`tre` 0.3.5.1), pytest 430 passed, 1 skipped, 21 examples — ✅
 - `git tag -a v0.3.5.1` on the merge commit, pushed; the `Wheels` run succeeded on every job and attached 24 assets, named `tre-0.3.5.1-...`, confirming the four-part version reaches the wheels; the release body set to the PR's release note — ✅
 - Tesserae told the release is out and that `dock_panel` now moves a docked panel, so its `Dock.move()` drag workaround can go — ✅
+
+---
+
+## Branch: `0.3.5.2` — Release Prep
+
+**Status: 🚧 In progress (2026-09-27).** A patch release for issue #16, following `0.3.5.1`'s versioning: the Python package, branch, and tag are `0.3.5.2`; the crates stay `0.3.5`.
+
+- Branch `0.3.5.2` created off `main` at `a67376d`, in its own worktree so the `0.4.0` checkout was left alone — ✅
+- `pyproject.toml` version 0.3.5.1 → 0.3.5.2; `Cargo.toml` unchanged — ✅
+
+---
+
+## Milestone 105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16))
+
+**Status: ✅ Complete (2026-09-27).** User: "Take a look at main branch issue #16 about undocking panels", then "yes" to M105 on a new `0.3.5.2` branch. Tesserae's M52 hot-reloads its app shell file, and a panel removed from the file could only be dropped by restarting: `node.remove()` took it off the tree but left it in its zone's list, so `set_active_panel` attached it again. The issue proposed an explicit `Window.undock_panel(panel)` rather than changing `remove()`, since zones detach hidden panels with a plain detach too.
+
+### Phase 1 — Fix ✅
+- Step 1: `take_out_of_zone`, split out of `move_panel`, is the one path that takes a panel out of a zone; the new `Window.undock_panel(panel)` calls it and detaches the panel collectibly, as `node.remove()` does, and cancels a drag of it — ✅ (`crates/engine-py/src/dock.rs`, `window_docking.rs`; `ValueError` for a panel that isn't docked or belongs to another window)
+- Step 2: `active_tab` moves down with its panel when an earlier one leaves -- it used to stay put, so the zone switched to the panel after the shown one, a bug in M104's shipped move path — ✅ (the zone shows the next panel, else the previous, else nothing, when the shown one leaves)
+- Step 3: freed panels leave their zones -- `destroy()` on a docked panel left a dead id listed, and `set_active_panel` then panicked (`add_child: child NodeId not found`); `forget_freed` now runs first in every docking entry point and ends a drag of a freed panel — ✅ (`drag_to` and `drop` skip it when no drag is in progress, since they run on every pointer event)
+- Step 4: tests and docs — ✅ (13 new `tests/test_docking.py` tests -- the issue's own repro, next/previous/earlier-panel re-picks, the move-path shift, an emptied zone, re-docking, drag cancellation, the two `ValueError`s, and three freed-panel cases -- 12 of which fail on the unfixed code, checked by stashing the fix and rebuilding; `_core.pyi`, `docs/api/python/window.md`, `docs/guide/docking.md` with a new "Closing a panel" section, and `ARCHITECTURE.md`; cargo test all ok, pytest 443 passed and 1 skipped, clippy and fmt clean, 21 examples, docs strict, mypy clean)
 
 ---
 

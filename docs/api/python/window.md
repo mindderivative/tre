@@ -118,6 +118,7 @@ on only `advance` moves it. Each window keeps its own time, and
 | `dock_panel(side, panel)` | Docks `panel` into `side`'s zone and shows it — moving it, if it's docked in another zone |
 | `set_active_panel(side, index)` | Shows the zone's `index`th panel |
 | `start_panel_drag(panel)` | Starts dragging a docked panel; the drag reports through the `dock_target`/`dock_drop` window events |
+| `undock_panel(panel)` | Takes `panel` out of its zone and off the tree; `dock_panel` can dock it again |
 
 `side` is one of `"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`.
 See [Docking](../../guide/docking.md) for a walkthrough.
