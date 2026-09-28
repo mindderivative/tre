@@ -13,6 +13,12 @@
   the XDG portal through `zbus` (already built for AccessKit). Checked end
   to end against a stand-in portal on a private bus.
 
+- M106 committed (`97234b9`).
+- M107: `tre` and `pytre` are taken on PyPI; `tesserae-engine` was free.
+  `twine check` passes; a fresh venv installs it and imports `tre`. A venv
+  that already had the old `tre` distribution kept it alongside, both
+  owning `tre/` -- the install docs now say to uninstall `tre` first.
+
 ## Status
 
-**M106 complete (2026-09-28).** M107 next.
+**Code complete (2026-09-28).** Push, release, and the PyPI publisher wait on the user.

@@ -10,9 +10,13 @@ Three issues Tesserae filed, one patch release:
 2. **M106, issue #18 — done.** `window.get("dark")`; on Linux, where
    `winit` reports nothing, the XDG settings portal answers it and its
    changes fire `color_scheme`.
-3. **M107, issue #19.** Publish to PyPI as `tesserae-engine` (`tre` is
-   taken there; the import name stays `tre`), with trusted publishing.
+3. **M107, issue #19 — Phase 1 done.** Published to PyPI as
+   `tesserae-engine` (`tre` is taken there; the import name stays `tre`),
+   by a trusted-publishing `pypi` job in `wheels.yml`. Phase 2, the first
+   upload, needs the user: register the pending publisher on pypi.org
+   (owner `mindderivative`, repo `tre`, workflow `wheels.yml`, environment
+   `pypi`), then release -- the `v0.3.5.2` tag uploads.
 
 ## Status
 
-**In progress (2026-09-28).** M107 next; push and release wait on the user.
+**Code complete (2026-09-28).** Push, release, and the PyPI publisher wait on the user.

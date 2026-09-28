@@ -358,7 +358,7 @@ python examples/switch.py
 | `mkdocs build --strict` | The docs, with link and anchor checks |
 | `mypy --strict python/tre` | The type stubs |
 
-**Packaging.** `.github/workflows/wheels.yml` builds manylinux-repaired Linux wheels inside the manylinux container, plus macOS and Windows wheels, across supported Python versions, on a `v*` tag, and attaches them and an sdist to the GitHub Release. A repaired wheel vendors system libraries — TRE's own duplicate-`xkbcommon` segfault came from that — so the built artifact is tested end to end, not just `maturin develop`.
+**Packaging.** `.github/workflows/wheels.yml` builds manylinux-repaired Linux wheels inside the manylinux container, plus macOS and Windows wheels, across supported Python versions, on a `v*` tag, and attaches them and an sdist to the GitHub Release. The same wheels and sdist go to PyPI as `tesserae-engine` — `tre` there is another project — through trusted publishing, with no stored token (M107); the import name is still `tre`. A repaired wheel vendors system libraries — TRE's own duplicate-`xkbcommon` segfault came from that — so the built artifact is tested end to end, not just `maturin develop`.
 
 ---
 

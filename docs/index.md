@@ -65,7 +65,7 @@ complete switch.
 
 ## Where to go next
 
-- **[Installation](installation.md)** — a released wheel, or a build from
+- **[Installation](installation.md)** — `pip install tesserae-engine`, a released wheel, or a build from
   source.
 - **[Getting Started](getting-started.md)** — a first window, step by step.
 - **[Python API Reference](api/python/index.md)** — every class, method,

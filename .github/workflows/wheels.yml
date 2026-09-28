@@ -208,3 +208,32 @@ jobs:
           files: release/*
           generate_release_notes: true
           prerelease: false
+
+  # M107 (issue #19): the same wheels and sdist, uploaded to PyPI as
+  # `tesserae-engine` (the name `tre` is taken there) -- never the
+  # standalone `.so`, which isn't a distribution. Trusted publishing:
+  # PyPI accepts this job's short-lived OIDC token because the project's
+  # trusted publisher names this repository, this workflow file, and the
+  # `pypi` environment, so no API token is stored anywhere. The
+  # environment is also where required reviewers can gate an upload,
+  # which is permanent: PyPI never accepts the same version twice.
+  pypi:
+    needs: [linux, macos, windows, sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/tesserae-engine/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - run: ls -la dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

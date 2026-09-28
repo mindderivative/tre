@@ -2,17 +2,36 @@
 requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
+# M107 (issue #19): published to PyPI as `tesserae-engine` -- `tre` there
+# is an unrelated project (bindings for the TRE regex library). Only the
+# distribution name changes; the import name stays `tre`, as with
+# `pillow`/`PIL`.
 [project]
-name = "tre"
+name = "tesserae-engine"
 version = "0.3.5.2"
-description = "Python-facing GUI framework backend: Rust-native rendering, layout, animation, and accessibility engine with Material Design 3 components."
+description = "tre: a GPU-rendered retained-mode UI engine for Python, written in Rust -- nodes, flexbox layout, paint, animation, input, text, and accessibility, rendered with vello."
 authors = [{ name = "Phil Hodgins", email = "philip.a.hodgins@gmail.com" }]
 requires-python = ">=3.9"
 license = "MIT"
 readme = "README.md"
+keywords = ["gui", "ui", "gpu", "rendering", "layout", "accessibility", "vello"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: User Interfaces",
+]
 
 [project.urls]
+Documentation = "https://mindderivative.github.io/tre/"
 Repository = "https://github.com/mindderivative/tre"
+Issues = "https://github.com/mindderivative/tre/issues"
 Architecture = "https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md"
 
 [tool.maturin]
