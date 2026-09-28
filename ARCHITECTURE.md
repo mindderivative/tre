@@ -122,7 +122,7 @@ graph TD
     D --> O
 ```
 
-**Crate boundary rule.** `engine-core` knows nothing of Python, `winit`, or the GPU; it's tested in isolation. It depends on the plain `accesskit` data crate, which is small and OS-agnostic like `taffy`, so the accessibility tree is built next to the node tree it describes. `engine-render` walks `engine-core`'s tree to build a scene and never opens a window itself. `engine-platform` owns the `winit` loop, opens the windows, runs the AccessKit adapter, and translates `winit` input into `engine-core`'s `InputEvent`. `engine-py` is the only crate that imports `pyo3`; it also names `winit`'s `Window` type, to build a GPU surface on each window `engine-platform` hands it and to set its title.
+**Crate boundary rule.** `engine-core` knows nothing of Python, `winit`, or the GPU; it's tested in isolation. It depends on the plain `accesskit` data crate, which is small and OS-agnostic like `taffy`, so the accessibility tree is built next to the node tree it describes. `engine-render` walks `engine-core`'s tree to build a scene and never opens a window itself. `engine-platform` owns the `winit` loop, opens the windows, runs the AccessKit adapter, and translates `winit` input into `engine-core`'s `InputEvent`. It also reads the OS's light/dark appearance (`appearance`): through `winit` on macOS and Windows, and on Linux, where `winit` can't, from the XDG settings portal over D-Bus, whose changes it turns into the same `InputEvent::ThemeChanged` (M106). `engine-py` is the only crate that imports `pyo3`; it also names `winit`'s `Window` type, to build a GPU surface on each window `engine-platform` hands it and to set its title.
 
 **Runtime dispatch is inverted.** `engine_platform::run_windowed_multi` is generic over a set of closures — `on_window_created`, `on_frame`, `on_input`, `on_access_action`, `on_lifecycle`, and `build_access_update` — and calls them as the loop runs, never touching a `Tree` itself. `engine-py`'s `App.run()` supplies them; only it can reach Python. So the compile-time graph reads `engine-py → engine-platform` while input flows `engine-platform → engine-py's closures`.
 
@@ -321,7 +321,7 @@ tre/
 ├── crates/
 │   ├── engine-core/           # Tree, Animated<T>, layout, dispatch, focus, layers, docking model, AccessKit builder
 │   ├── engine-render/         # scene building, text shaping, paths, shadows, font registry; pixel tests in tests/
-│   ├── engine-platform/       # winit loop, input translation, accesskit_winit, EventLoopWaker
+│   ├── engine-platform/       # winit loop, input translation, accesskit_winit, EventLoopWaker, appearance
 │   └── engine-py/             # PyO3 classes, per-frame loop, listeners, terminal sessions
 ├── python/tre/                # __init__.py, _core.pyi (type stubs), _removed.py, py.typed
 ├── tests/                     # pytest suite (headless, through simulate and advance)

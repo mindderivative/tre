@@ -70,10 +70,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M103 — Release | `██████████` 100% | ✅ Complete (2026-09-27) — `v0.3.5` released; Tesserae's M46 moved it onto the release, CI green on `tre` 2e4ed35 |
 | M104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tre/issues/14)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.1`, closing issue #14 |
 | M105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16)) | `██████████` 100% | ✅ Complete (2026-09-27) — on branch `0.3.5.2`, not yet released |
+| M106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tre/issues/18)) | `██████████` 100% | ✅ Complete (2026-09-28) — on branch `0.3.5.2`, not yet released |
 
-**Just closed:** M105 — [issue #16](https://github.com/mindderivative/tre/issues/16), filed by Tesserae from its M52 hot reload of the shell file: nothing took a panel out of docking, and `node.remove()` left it in its zone's list, where `set_active_panel` showed it again. `Window.undock_panel(panel)` now takes it out through the take-out path `move_panel` uses. Two neighbouring bugs fixed with it: taking out a panel before the shown one switched the zone to the panel after (shipped in M104's move path), and a destroyed docked panel made `set_active_panel` panic in `add_child`. On branch `0.3.5.2`, not yet pushed.
+**Just closed:** M106 — [issue #18](https://github.com/mindderivative/tre/issues/18), filed by Tesserae, whose `App(dark="system")` had to guess the OS's appearance at start-up: `window.get("dark")` now reads it. `winit` 0.30 gives it only on macOS and Windows -- on Linux `Window::theme()` is `None` and `ThemeChanged` never fires, so `tre`'s `color_scheme` event had never fired there either. On Linux both now come from the XDG settings portal over D-Bus (`zbus`, already built for AccessKit). On branch `0.3.5.2` with M105, not yet pushed.
 
-**Up next:** push `0.3.5.2` and release it when the user says so; then Tesserae's M52 can drop its "restart to remove a panel" note. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
+**Up next:** M107 -- [issue #19](https://github.com/mindderivative/tre/issues/19), publishing to PyPI as `tesserae-engine` (the name `tre` is taken there), on the same branch. Then push `0.3.5.2` and release it when the user says so. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
 
 **Known gaps:**
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
@@ -1553,7 +1554,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Branch: `0.3.5.2` — Release Prep
 
-**Status: 🚧 In progress (2026-09-27).** A patch release for issue #16, following `0.3.5.1`'s versioning: the Python package, branch, and tag are `0.3.5.2`; the crates stay `0.3.5`.
+**Status: 🚧 In progress (2026-09-28).** A patch release for issues #16, #18 and #19, following `0.3.5.1`'s versioning: the Python package, branch, and tag are `0.3.5.2`; the crates stay `0.3.5`.
 
 - Branch `0.3.5.2` created off `main` at `a67376d`, in its own worktree so the `0.4.0` checkout was left alone — ✅
 - `pyproject.toml` version 0.3.5.1 → 0.3.5.2; `Cargo.toml` unchanged — ✅
@@ -1569,6 +1570,19 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 2: `active_tab` moves down with its panel when an earlier one leaves -- it used to stay put, so the zone switched to the panel after the shown one, a bug in M104's shipped move path — ✅ (the zone shows the next panel, else the previous, else nothing, when the shown one leaves)
 - Step 3: freed panels leave their zones -- `destroy()` on a docked panel left a dead id listed, and `set_active_panel` then panicked (`add_child: child NodeId not found`); `forget_freed` now runs first in every docking entry point and ends a drag of a freed panel — ✅ (`drag_to` and `drop` skip it when no drag is in progress, since they run on every pointer event)
 - Step 4: tests and docs — ✅ (13 new `tests/test_docking.py` tests -- the issue's own repro, next/previous/earlier-panel re-picks, the move-path shift, an emptied zone, re-docking, drag cancellation, the two `ValueError`s, and three freed-panel cases -- 12 of which fail on the unfixed code, checked by stashing the fix and rebuilding; `_core.pyi`, `docs/api/python/window.md`, `docs/guide/docking.md` with a new "Closing a panel" section, and `ARCHITECTURE.md`; cargo test all ok, pytest 443 passed and 1 skipped, clippy and fmt clean, 21 examples, docs strict, mypy clean)
+
+
+---
+
+## Milestone 106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tre/issues/18))
+
+**Status: ✅ Complete (2026-09-28).** User: "Check for more issues, I believe you have 2 more", then, asked how far to go on Linux, "Read + live events", and "Both on 0.3.5.2". Tesserae's `App(dark="system")` starts dark and learned the truth only at the OS's first switch, because nothing could read the current appearance. The issue proposed `window.get("dark")` over `winit`'s `Window::theme()`; `winit` 0.30.13's own source shows that answers only on macOS and Windows -- `None` on X11, only an app-set override on Wayland -- and that its `ThemeChanged` is emitted only on macOS, Windows, and the web, so on Linux `tre`'s `color_scheme` event had never fired either.
+
+### Phase 1 — Read and Follow the Appearance ✅
+- Step 1: `engine_platform::appearance` -- `current_dark(window)` asks `winit` first and the XDG settings portal (`org.freedesktop.appearance` / `color-scheme`, via `ReadOne`, or `Read` on older portals) on Linux, with a 250 ms timeout; `color-scheme` 0 ("no preference") reads as light, the default look on GNOME and KDE — ✅ (`zbus` 5.19 was already built for AccessKit's Linux backend; `engine-platform` names it with `blocking-api` added, one `Cargo.lock` line and no new package)
+- Step 2: `Window.get("dark")` -- `True`, `False`, or `None` where the platform can't say; on Linux it answers before `App.run()` too — ✅ (4 ms on this KDE Wayland desktop, `None` in 1 ms without a session bus)
+- Step 3: live changes on Linux -- `run_windowed_multi` starts a thread listening for the portal's `SettingChanged` (filtered to that namespace and key, repeats dropped) and forwards each change as `PlatformEvent::ThemeChanged`, which gives every open window the same `InputEvent::ThemeChanged` `winit` gives on macOS and Windows, so `color_scheme` fires through the existing path; the thread ends when its event loop has closed — ✅ (`crates/engine-platform/src/lib.rs`)
+- Step 4: tests and docs — ✅ (2 engine-platform tests; `tests/test_appearance.py` with 3 tests, one of them end to end -- `tests/portal_stub.py`, a stand-in portal on a private `dbus-run-session` bus, answers dark, then announces light, a repeat, another namespace's setting, and dark, and a real `App.run()` sees exactly two `color_scheme` events with `get("dark")` agreeing; it skips without `dbus-run-session`, PyGObject, or a display; `_core.pyi`, `docs/api/python/events.md`, `window.md`, `docs/guide/events-and-input.md`, and `ARCHITECTURE.md`; cargo 329 passed, pytest 446 passed and 1 skipped, clippy and fmt clean, 21 examples, docs strict, mypy clean; the macOS and Windows branches were read, not compiled, here -- CI builds both)
 
 ---
 

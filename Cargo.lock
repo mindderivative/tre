@@ -880,6 +880,7 @@ dependencies = [
  "peniko",
  "taffy",
  "winit",
+ "zbus",
 ]
 
 [[package]]

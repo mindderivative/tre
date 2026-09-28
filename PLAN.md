@@ -1,13 +1,18 @@
-# PLAN — Branch `0.3.5.2`: Milestone 105, `undock_panel`
+# PLAN — Branch `0.3.5.2`: Milestones 105-107
 
 *(Replaces the M104 plan — M104 is complete and released as `v0.3.5.1`. Every step is in `BUILD_TRACKER.md`.)*
 
-Issue #16: nothing takes a panel out of docking. `node.remove()` takes it off
-the tree but leaves it in its zone's list, so `set_active_panel` shows it
-again. Fix: `Window.undock_panel(panel)`, sharing `move_panel`'s take-out
-path; that path now keeps the shown panel when an earlier one leaves, and a
-freed panel leaves its zone instead of panicking `add_child`.
+Three issues Tesserae filed, one patch release:
+
+1. **M105, issue #16 — done.** `Window.undock_panel(panel)`; the take-out
+   path keeps the shown panel when an earlier one leaves; a freed panel
+   leaves its zone instead of panicking `add_child`.
+2. **M106, issue #18 — done.** `window.get("dark")`; on Linux, where
+   `winit` reports nothing, the XDG settings portal answers it and its
+   changes fire `color_scheme`.
+3. **M107, issue #19.** Publish to PyPI as `tesserae-engine` (`tre` is
+   taken there; the import name stays `tre`), with trusted publishing.
 
 ## Status
 
-**Complete (2026-09-27).** Awaiting the user's word to push and release `0.3.5.2`.
+**In progress (2026-09-28).** M107 next; push and release wait on the user.

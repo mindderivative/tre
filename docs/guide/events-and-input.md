@@ -103,7 +103,7 @@ or cuts.
 | Event | When |
 | --- | --- |
 | `resize` | its size changed (`width`, `height`) |
-| `color_scheme` | the OS switched light or dark (`dark`) |
+| `color_scheme` | the OS switched light or dark (`dark`); `window.get("dark")` reads it now |
 | `scale_factor` | it moved to a display with another scale (`scale_factor`) |
 | `close_requested` | the user asked to close it — `event.cancel()` keeps it open |
 | `closed` | it closed |

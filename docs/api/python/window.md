@@ -42,8 +42,9 @@ See [Layers](layers.md).
 [Events and Listeners](events.md#window-listeners).
 
 **`set(title=...)`** changes the title, live if the window is open.
-**`get(name)`** reads `width`, `height`, `title`, or `scale_factor` (`1.0`
-until `App.run()` opens the window).
+**`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
+until `App.run()` opens the window), or `dark` — the OS's current appearance,
+or `None` where it can't say ([Window properties](events.md#window-properties)).
 
 **`resize(width, height)`** sets the window's size from code, and the
 root's layout box follows. It fires no `resize` event — that reports a

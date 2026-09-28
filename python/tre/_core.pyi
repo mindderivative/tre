@@ -281,8 +281,12 @@ class Window:
         """M94: sets window properties -- today only `title`."""
         ...
     def get(self, name: str) -> Any:
-        """M94: reads `width`, `height`, `title`, or `scale_factor`
-        (`1.0` until `App.run()` opens the window)."""
+        """M94: reads `width`, `height`, `title`, `scale_factor` (`1.0`
+        until `App.run()` opens the window), or (M106) `dark`: the OS's
+        current appearance, `True` for dark, `False` for light, or `None`
+        where the platform can't say. Linux reads it from the XDG
+        settings portal, before `App.run()` too; macOS and Windows answer
+        once the window is open."""
         ...
     def show_layer(
         self,
