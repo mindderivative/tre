@@ -69,13 +69,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M102 — Docs, Examples, and Tests Rewrite | `██████████` 100% | ✅ Complete (2026-09-27) — a guide page per building block and a complete-widget walkthrough; ARCHITECTURE.md, README, and Rust comments describe the current engine; 21 self-checking examples and a rebuilt showcase; tests named and described in current terms |
 | M103 — Release | `██████████` 100% | ✅ Complete (2026-09-27) — `v0.3.5` released; Tesserae's M46 moved it onto the release, CI green on `tre` 2e4ed35 |
 | M104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tre/issues/14)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.1`, closing issue #14 |
-| M105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16)) | `██████████` 100% | ✅ Complete (2026-09-27) — on branch `0.3.5.2`, not yet released |
-| M106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tre/issues/18)) | `██████████` 100% | ✅ Complete (2026-09-28) — on branch `0.3.5.2`, not yet released |
-| M107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tre/issues/19)) | `█████░░░░░` 50% | 🚧 Phase 1 done (2026-09-28) — the rename and the trusted-publishing job are on branch `0.3.5.2`; the first upload waits on the user registering the PyPI publisher and releasing |
+| M105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.2`, closing issue #16 |
+| M106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tre/issues/18)) | `██████████` 100% | ✅ Complete (2026-09-28) — released as `v0.3.5.2`, closing issue #18 |
+| M107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tre/issues/19)) | `█████████░` 90% | 🚧 `v0.3.5.2` is on PyPI with all 22 wheels (2026-09-28); PyPI rejected its sdist over a missing `LICENSE`, fixed on branch `0.3.5.3` for the next release |
 
-**Just closed:** M107 Phase 1 — [issue #19](https://github.com/mindderivative/tre/issues/19): `tre` is published to PyPI as `tesserae-engine` (the name `tre` there is an unrelated regex-bindings project; `tesserae-engine` was free on 2026-09-28), still imported as `tre`. `wheels.yml` gains a `pypi` job that uploads the release's wheels and sdist with trusted publishing, no stored token. Before it, M105 (`undock_panel`, issue #16) and M106 (`window.get("dark")` and `color_scheme` on Linux, issue #18), all on branch `0.3.5.2`, not yet pushed.
+**Just closed:** `v0.3.5.2` released (PR #20, merge `3014087`), closing issues [#16](https://github.com/mindderivative/tre/issues/16), [#18](https://github.com/mindderivative/tre/issues/18) and [#19](https://github.com/mindderivative/tre/issues/19): `Window.undock_panel`, `window.get("dark")` with `color_scheme` finally firing on Linux, and `tre` on PyPI as `tesserae-engine` -- `pip install tesserae-engine` works, with all 22 wheels. PyPI rejected the sdist (maturin declared `License-File: LICENSE` without packing it). Tesserae told.
 
-**Up next:** the user registers a pending trusted publisher on pypi.org for `tesserae-engine` (owner `mindderivative`, repository `tre`, workflow `wheels.yml`, environment `pypi`); then push `0.3.5.2`, PR, merge, and tag `v0.3.5.2` when the user says so -- the tag's `Wheels` run makes the first upload (M107 Phase 2). Tesserae then depends on `tesserae-engine`. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
+**Up next:** ship the sdist fix (`license-files`, committed on local branch `0.3.5.3`) with the next release, when the user says so -- `0.3.5.2` stays wheels-only on PyPI, since a new sdist would come from different source than its tag. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
 
 **Known gaps:**
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
@@ -1555,7 +1555,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Branch: `0.3.5.2` — Release Prep
 
-**Status: 🚧 In progress (2026-09-28).** A patch release for issues #16, #18 and #19, following `0.3.5.1`'s versioning: the Python package, branch, and tag are `0.3.5.2`; the crates stay `0.3.5`.
+**Status: ✅ Released as `v0.3.5.2` (2026-09-28).** A patch release for issues #16, #18 and #19, following `0.3.5.1`'s versioning: the Python package, branch, and tag are `0.3.5.2`; the crates stay `0.3.5`.
 
 - Branch `0.3.5.2` created off `main` at `a67376d`, in its own worktree so the `0.4.0` checkout was left alone — ✅
 - `pyproject.toml` version 0.3.5.1 → 0.3.5.2; `Cargo.toml` unchanged — ✅
@@ -1590,16 +1590,29 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tre/issues/19))
 
-**Status: 🚧 In progress (2026-09-28).** User: "Check for more issues, I believe you have 2 more", then chose the distribution name `tesserae-engine` and this branch. `tre` shipped only as GitHub Release wheels, so `pip install tre` couldn't work and Tesserae, which wants to publish to PyPI, can't depend on it there (PyPI rejects direct-URL dependencies). `tre` on PyPI is an unrelated project (bindings for the TRE regex library), and so is `pytre`; `tesserae-engine` was free (checked against PyPI's JSON API). The first upload is permanent -- PyPI never takes the same version twice -- so it waits on the user.
+**Status: 🚧 In progress (2026-09-28) -- on PyPI with its wheels; the sdist waits on the next release.** User: "Check for more issues, I believe you have 2 more", then chose the distribution name `tesserae-engine` and this branch. `tre` shipped only as GitHub Release wheels, so `pip install tre` couldn't work and Tesserae, which wants to publish to PyPI, can't depend on it there (PyPI rejects direct-URL dependencies). `tre` on PyPI is an unrelated project (bindings for the TRE regex library), and so is `pytre`; `tesserae-engine` was free (checked against PyPI's JSON API). The first upload is permanent -- PyPI never takes the same version twice -- so it waits on the user.
 
 ### Phase 1 — Rename and Publishing Job ✅
 - Step 1: `pyproject.toml` -- distribution name `tesserae-engine`, the import name still `tre` (`module-name = "tre._core"` unchanged); the description no longer promises Material Design 3 components, which left `tre` in M99; keywords, classifiers, and Documentation/Issues URLs for the PyPI page — ✅ (`twine check` passes the wheel and sdist, named `tesserae_engine-0.3.5.2`; installed in a fresh venv, `import tre` works and `importlib.metadata.version("tesserae-engine")` is `0.3.5.2`)
 - Step 2: `wheels.yml` gains a `pypi` job after the four build jobs -- it downloads the `wheels-*` and `sdist` artifacts only, never the standalone `.so`, and uploads them with `pypa/gh-action-pypi-publish` using trusted publishing (`id-token: write`, environment `pypi`, no stored token) — ✅ (the YAML parses and the job's needs, environment, and permissions check out; it first runs on the next `v*` tag)
 - Step 3: docs -- `docs/installation.md` leads with `pip install tesserae-engine` and warns that an earlier `tre-...` wheel must be uninstalled first, since pip leaves it installed alongside and both then own the `tre` package (seen in this branch's own venv); the README gains an install section, and its links are absolute so they work on the PyPI page; `docs/index.md` and `ARCHITECTURE.md` — ✅ (docs strict, pytest 446 passed and 1 skipped on the renamed build)
 
-### Phase 2 — First Upload ⬜
-- Step 1: the user registers a pending trusted publisher on pypi.org for project `tesserae-engine` -- owner `mindderivative`, repository `tre`, workflow `wheels.yml`, environment `pypi` -- and optionally gives the `pypi` GitHub environment required reviewers — ⬜
-- Step 2: tag `v0.3.5.2` once the branch is merged, and confirm the `pypi` job uploads every wheel and the sdist and that `pip install tesserae-engine` resolves — ⬜
+### Phase 2 — First Upload 🚧
+- Step 1: the user registers a pending trusted publisher on pypi.org for project `tesserae-engine` -- owner `mindderivative`, repository `tre`, workflow `wheels.yml`, environment `pypi` -- and gives the `pypi` GitHub environment a required reviewer — ✅ (user: "I added the pending publisher and the pypi environment"; the environment read back through the GitHub API with `mindderivative` as required reviewer)
+- Step 2: tag `v0.3.5.2`, the user approves the `pypi` deployment, and the job uploads — ✅ (user: "I approved"; all 22 wheels uploaded and `pip install tesserae-engine` in a fresh venv installs the manylinux cp314 wheel, `import tre` works, and `undock_panel` and `get("dark")` are there -- the first attempt found no versions while PyPI's index caught up; the sdist was rejected with `400 License-File LICENSE does not exist in distribution file`, so the job and run show as failed)
+- Step 3: pack `LICENSE` in the sdist -- maturin wrote `License-File: LICENSE` into its metadata but never packed the file, which `twine check` doesn't catch; `license-files = ["LICENSE"]` in `pyproject.toml` packs it, checked by building and listing the sdist — 🚧 (committed as `9ad8f92` on local branch `0.3.5.3`; it reaches PyPI with the next release)
+
+---
+
+## `v0.3.5.2` Released
+
+**Status: ✅ Released (2026-09-28).** User: "push and release, and let tesserae know". M105-M107, closing [issues #16, #18 and #19](https://github.com/mindderivative/tre/pull/20).
+
+- `0.3.5.2` pushed; [PR #20](https://github.com/mindderivative/tre/pull/20) opened; CI green on all three jobs -- `test` (Linux, 432 passed and 15 skipped without a display, so the portal test skipped there), `test-macos`, `test-windows`, the first compile of M106's non-Linux branches — ✅
+- PR #20 merged via `gh pr merge --merge` (merge commit `3014087`), closing issues #16, #18 and #19; `main` re-verified in the worktree -- `maturin develop --release` (`tesserae-engine` 0.3.5.2), pytest 446 passed, 1 skipped, every example — ✅
+- `git tag -a v0.3.5.2` on the merge commit, pushed; every build job passed and the GitHub release carries 24 assets, now named `tesserae_engine-0.3.5.2-...`; the release body set to the PR's release note — ✅
+- The `pypi` job, approved by the user, uploaded all 22 wheels to [PyPI](https://pypi.org/project/tesserae-engine/); the sdist was rejected (M107 Phase 2) — ✅
+- Tesserae told: the release, `pip install tesserae-engine` and uninstalling an old `tre` wheel first, the three changes, that `tesserae` is taken on PyPI, and the missing sdist — ✅
 
 ---
 

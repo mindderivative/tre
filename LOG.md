@@ -19,6 +19,13 @@
   that already had the old `tre` distribution kept it alongside, both
   owning `tre/` -- the install docs now say to uninstall `tre` first.
 
+- The user registered the PyPI pending publisher and the `pypi` environment,
+  then: "push and release, and let tesserae know".
+- PR #20 merged (`3014087`); `v0.3.5.2` tagged; 24 release assets. After the
+  user approved the deployment, 22 wheels reached PyPI and
+  `pip install tesserae-engine` works; the sdist was rejected over a missing
+  `LICENSE` (fix `9ad8f92` on branch `0.3.5.3`). Tesserae told.
+
 ## Status
 
-**Code complete (2026-09-28).** Push, release, and the PyPI publisher wait on the user.
+**Released (2026-09-28).** The sdist fix waits on the next release.

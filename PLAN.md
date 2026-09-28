@@ -19,4 +19,6 @@ Three issues Tesserae filed, one patch release:
 
 ## Status
 
-**Code complete (2026-09-28).** Push, release, and the PyPI publisher wait on the user.
+**Released (2026-09-28).** `v0.3.5.2` is out and on PyPI as `tesserae-engine` with
+its 22 wheels; Tesserae told. PyPI rejected the sdist (no `LICENSE` packed) --
+fixed on local branch `0.3.5.3`, to ship with the next release.
