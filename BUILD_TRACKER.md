@@ -13,15 +13,15 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | Milestone | Progress | Status |
 |---|---|---|
 | M1 — Scope and Upstream Pin | `██████████` 100% | ✅ Complete (2026-09-28) — build on upstream `vello_gpu` at `b408cd00`, which already has issue #4's patch; M2's main cost is `wgpu` 29 → 30 |
-| M2 — Migrate to `vello_gpu` | `█████░░░░░` 50% | 🚧 In progress — `tre` builds on `vello_gpu` and `wgpu` 30 with every test passing unchanged; CI on all three platforms next |
+| M2 — Migrate to `vello_gpu` | `██████████` 100% | ✅ Complete (2026-09-28) — `tre` on upstream `vello_gpu` and `wgpu` 30, every test unchanged, CI green on Linux, macOS, and Windows |
 | M3 — A Persistent Offscreen Target and Blit | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M4 — Dirty-Region Tracking | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M5 — Partial Redraw End to End, Measured | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M6 — Release `0.4.0` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** M2 Step 1 (2026-09-28) -- `tre` now builds on upstream `vello_gpu` at `b408cd00` and `wgpu` 30, with every Rust test and pixel test, the Python suite, and every example passing unchanged. The API changes were small: an image draws as an external-texture paint, `render()` takes a depth view and a `TargetInit`, and `wgpu` 30 moved `present()` to the queue.
+**Just closed:** M2 (2026-09-28) -- `tre` runs on upstream `vello_gpu` at `b408cd00` and `wgpu` 30, with no behavior change: every Rust test and pixel test, the Python suite, and every example pass unchanged, and CI on [draft PR #17](https://github.com/mindderivative/tre/pull/17) is green on Linux, macOS, and Windows.
 
-**Up next:** M2 Step 2 -- CI on all three platforms builds the wheel with the Git dependency. `ci.yml` runs on pull requests to `main`, so this needs the branch pushed and a draft PR.
+**Up next:** M3, a persistent offscreen target -- rendering into a texture that keeps the previous frame, copied to the window each frame, the base partial redraw draws into.
 
 **Known gaps:**
 - Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.
@@ -43,11 +43,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 2 — Migrate to `vello_gpu`
 
-**Status: 🚧 In progress.** User: "push and lets get started on M2". Replaces the planned `vello_hybrid` patch: upstream already has it (M1), so this milestone moves `tre` from `vello_hybrid` 0.2.0 to `vello_gpu` at M1's pinned commit, with no behavior change.
+**Status: ✅ Complete (2026-09-28).** User: "push and lets get started on M2". Replaces the planned `vello_hybrid` patch: upstream already has it (M1), so this milestone moves `tre` from `vello_hybrid` 0.2.0 to `vello_gpu` at M1's pinned commit, with no behavior change.
 
-### Phase 1 — Migration 🚧
+### Phase 1 — Migration ✅
 - Step 1: `vello_hybrid` → `vello_gpu`, with `vello_common` and `glifo`, as Git dependencies pinned to `b408cd00`, and `wgpu` 29 → 30 in `tre`'s own GPU code; `render()` called with `TargetInit::Clear(ClearSettings::Viewport)`, today's behavior — ✅ (one `[workspace.dependencies]` table in the root `Cargo.toml` pins `vello_gpu`, `vello_common`, and `glifo` to the commit and `wgpu` to 30.0.1, and every crate refers to it -- the lock resolves one `wgpu`; API changes: `glyph_run` now needs `vello_gpu`'s `text` feature; `Scene::draw_texture_rects` and `SampleRect` are gone, so an image is an `ImageSource::ExternalTexture` paint over a filled rect, its sample transform as the paint transform; `render()` takes a `depth_view` (`None`) and a `TargetInit` (a full transparent clear, as 0.2.0 always did); `fill_glyphs` returns a `Result` -- the rest of a run still draws -- now warned once per process through `tracing`; `wgpu` 30 moved `present()` to the queue, made `get_mapped_range()` return a `Result`, added `RequestAdapterOptions::apply_limit_buckets` (set `false`, the adapter's real limits, as before), and `RenderSize`/`RenderTargetConfig` sizes are `u16`, clamped by a new `render_extent`; the pixel tests' readback and setup code updated the same way; `vello_gpu` still updates its size-dependent state from each `render()`'s size, checked in its source, so resizing needs no rebuild; comments describing the old image path and resize reasoning rewritten, and `ARCHITECTURE.md`, the README, and the docs name `vello_gpu`; cargo 327 passed, every pixel test included -- the same as on 0.2.0 -- `frame_budget.rs` median 0.628 ms, pytest 430 passed, 1 skipped, 21 examples, clippy, fmt, mypy, docs strict, API audit 43 names; a release wheel and an sdist build with the Git dependency, the wheel 10.43 MB against 10.32 MB, `glifo` now compiled in)
-- Step 2: every test, pixel test, example, and `frame_budget.rs` passing unchanged; the wheel builds with the Git dependency in CI on all three platforms — ⬜
+- Step 2: every test, pixel test, example, and `frame_budget.rs` passing unchanged; the wheel builds with the Git dependency in CI on all three platforms — ✅ (user: "yes" to pushing and a draft PR, since `ci.yml` runs only on pull requests to `main`; [draft PR #17](https://github.com/mindderivative/tre/pull/17), which stays a draft until M6, ran CI on `1cbda98`, green on all three jobs -- Linux: cargo 328 passed, the frame budget included, pytest 417 passed, 14 skipped with no display, every example; macOS and Windows: cargo 327 passed, 0 failed, so the pixel tests pass on each platform's GPU backend, not only Vulkan -- all fetching `vello_gpu` from the Git commit)
 
 ---
 
