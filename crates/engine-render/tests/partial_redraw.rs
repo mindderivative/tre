@@ -3,8 +3,15 @@
 //! redraw of the changed tree does. Each test renders a scene in full into
 //! a `PersistentTarget`, changes one thing, redraws only the damage into
 //! the same target, and compares it byte for byte with a fresh full render.
+//! The animation tests (Step 2) do the same every frame of a real
+//! animation in flight, for each property the examples animate.
 
-use engine_core::{NodeId, NodeKind, PaintProperties, Shadow, Shadows, TextState, Tree};
+use std::time::{Duration, Instant};
+
+use engine_core::{
+    MotionCurve, NodeId, NodeKind, PaintProperties, PathData, PathState, ScrollViewState, Shadow,
+    Shadows, TextState, Tree,
+};
 use engine_render::{
     Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, TextRenderer,
     build_tree_scene, build_tree_scene_in,
@@ -378,4 +385,250 @@ fn nothing_changed_renders_nothing_and_keeps_the_frame() {
     let before = window.pixels(&gpu);
     assert_eq!(window.frame(&gpu, &s.tree, s.root, true), Damage::None);
     assert!(before == window.pixels(&gpu));
+}
+
+// ---- Step 2: every frame of the examples' animations -----------------
+
+const FRAMES: u32 = 10;
+const DURATION: Duration = Duration::from_millis(400);
+/// The M3 standard easing curve, as `animation.py` passes it.
+const STANDARD: MotionCurve = MotionCurve::Bezier(0.2, 0.0, 0.0, 1.0);
+
+/// Runs an animation frame by frame: `step(scene, frame, now)` starts
+/// (frame 0) or retargets it, the tree ticks to `now`, and one window
+/// redraws only the damage while another redraws in full. Every frame's
+/// pixels must match, and at least one frame must have been partial.
+fn animation_matches_full(mut step: impl FnMut(&mut Scene, u32, Instant)) {
+    let gpu = Gpu::new();
+    let mut s = scene();
+    let mut partial = Window::new(&gpu);
+    let mut full = Window::new(&gpu);
+    partial.frame(&gpu, &s.tree, s.root, true);
+    full.frame(&gpu, &s.tree, s.root, false);
+
+    let start = Instant::now();
+    let mut partial_frames = 0;
+    // One frame past the end, where the animation settles on its target.
+    for frame in 0..=FRAMES + 1 {
+        let now = start + DURATION * frame / FRAMES;
+        step(&mut s, frame, now);
+        s.tree.tick_all(now);
+        layout(&mut s.tree, s.root);
+        let damage = partial.frame(&gpu, &s.tree, s.root, true);
+        if matches!(damage, Damage::Rects(_)) {
+            partial_frames += 1;
+        }
+        full.frame(&gpu, &s.tree, s.root, false);
+        let (a, b) = (partial.pixels(&gpu), full.pixels(&gpu));
+        let differing = a.iter().zip(&b).filter(|(a, b)| a != b).count();
+        assert_eq!(
+            differing, 0,
+            "frame {frame}: {differing} bytes differ between partial and full redraw ({damage:?})"
+        );
+    }
+    assert!(partial_frames > 0, "no frame was redrawn partially");
+}
+
+#[test]
+fn animated_opacity_and_corner_radius() {
+    // animation.py's first card: a linear fade that rounds its corners.
+    animation_matches_full(|s, frame, now| {
+        if frame == 0 {
+            let paint = &mut s.tree.get_mut(s.card).unwrap().paint;
+            paint
+                .opacity
+                .animate_to(0.2, DURATION, MotionCurve::Linear, now);
+            paint
+                .corner_radius
+                .animate_to(24.0, DURATION, MotionCurve::Linear, now);
+        }
+    });
+}
+
+#[test]
+fn animated_fill_retargeted_halfway() {
+    // animation.py's second card: an eased fill that turns back midway.
+    animation_matches_full(|s, frame, now| {
+        let fill = &mut s.tree.get_mut(s.tint).unwrap().paint.background;
+        match frame {
+            0 => fill.animate_to(
+                Color::from_rgba8(0x03, 0xDA, 0xC6, 0xC0),
+                DURATION,
+                STANDARD,
+                now,
+            ),
+            5 => fill.animate_to(
+                Color::from_rgba8(0x30, 0x90, 0xFF, 0x90),
+                DURATION,
+                STANDARD,
+                now,
+            ),
+            _ => {}
+        }
+    });
+}
+
+#[test]
+fn animated_scale_grows_the_shadow_with_it() {
+    // animation.py's chained card, switch.py's thumb, ripple.py's press.
+    animation_matches_full(|s, frame, now| {
+        let scale = &mut s.tree.get_mut(s.card).unwrap().paint.node_transform.scale;
+        match frame {
+            0 => scale.animate_to(1.2, DURATION / 2, STANDARD, now),
+            5 => scale.animate_to(1.0, DURATION / 2, STANDARD, now),
+            _ => {}
+        }
+    });
+}
+
+#[test]
+fn animated_shadows() {
+    // shadows.py: a card lifting to a higher elevation.
+    animation_matches_full(|s, frame, now| {
+        if frame == 0 {
+            s.tree.get_mut(s.card).unwrap().paint.shadows.animate_to(
+                Shadows(vec![Shadow {
+                    color: Color::from_rgba8(0, 0, 0, 0x60),
+                    offset_x: 2.0,
+                    offset_y: 14.0,
+                    blur: 16.0,
+                    spread: 3.0,
+                }]),
+                DURATION,
+                STANDARD,
+                now,
+            );
+        }
+    });
+}
+
+#[test]
+fn animated_translation_across_other_nodes() {
+    // reorder.py's rows and switch.py's thumb sliding over what's beneath.
+    animation_matches_full(|s, frame, now| {
+        if frame == 0 {
+            let t = &mut s.tree.get_mut(s.tint).unwrap().paint.node_transform;
+            t.translate_x.animate_to(60.0, DURATION, STANDARD, now);
+            t.translate_y.animate_to(-25.0, DURATION, STANDARD, now);
+        }
+    });
+}
+
+#[test]
+fn animated_rotation() {
+    animation_matches_full(|s, frame, now| {
+        if frame == 0 {
+            s.tree
+                .get_mut(s.tint)
+                .unwrap()
+                .paint
+                .node_transform
+                .rotation_deg
+                .animate_to(35.0, DURATION, MotionCurve::Linear, now);
+        }
+    });
+}
+
+#[test]
+fn animated_border_on_a_group() {
+    // stroke_color / stroke_width on a node with a child.
+    animation_matches_full(|s, frame, now| {
+        if frame == 0 {
+            let paint = &mut s.tree.get_mut(s.group).unwrap().paint;
+            paint.border_color.animate_to(
+                Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
+                DURATION,
+                STANDARD,
+                now,
+            );
+            paint.border_width.animate_to(4.0, DURATION, STANDARD, now);
+        }
+    });
+}
+
+#[test]
+fn animated_path_morph_and_trim() {
+    // path_morph.py: a shape morphing into another while its stroke trims.
+    let mut path = None;
+    animation_matches_full(|s, frame, now| {
+        if frame == 0 {
+            let id = s.tree.insert(
+                NodeKind::Path(PathState::new(
+                    PathData::from_svg("M0,0 L40,0 L40,40 L0,40 Z").unwrap(),
+                )),
+                placed(20.0, 95.0, 40.0, 40.0),
+                PaintProperties::new(Color::from_rgba8(0x80, 0xE0, 0x80, 0xFF), 0.0, 1.0),
+            );
+            s.tree.add_child(s.root, id);
+            path = Some(id);
+        }
+        if frame == 1 {
+            let node = s.tree.get_mut(path.unwrap()).unwrap();
+            node.paint.border_color.animate_to(
+                Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
+                DURATION,
+                STANDARD,
+                now,
+            );
+            node.paint
+                .border_width
+                .animate_to(2.0, DURATION, STANDARD, now);
+            let NodeKind::Path(state) = &mut node.kind else {
+                unreachable!()
+            };
+            state.data.animate_to(
+                PathData::from_svg("M20,0 L40,20 L20,40 L0,20 Z").unwrap(),
+                DURATION,
+                STANDARD,
+                now,
+            );
+            state.trim_end.animate_to(0.6, DURATION, STANDARD, now);
+        }
+    });
+}
+
+#[test]
+fn animated_scroll_offset() {
+    // A carousel snapping: a scroll view's content moving under its clip.
+    let mut view = None;
+    animation_matches_full(|s, frame, now| {
+        if frame == 0 {
+            let id = s.tree.insert(
+                NodeKind::ScrollView(ScrollViewState::new(false)),
+                placed(20.0, 95.0, 60.0, 50.0),
+                PaintProperties::new(Color::from_rgba8(0x10, 0x10, 0x10, 0xFF), 0.0, 1.0),
+            );
+            s.tree.add_child(s.root, id);
+            let content = s.tree.insert(
+                NodeKind::Container,
+                Style {
+                    size: Size {
+                        width: length(60.0),
+                        height: length(200.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+            );
+            s.tree.add_child(id, content);
+            for (i, y) in [10.0, 60.0, 110.0, 160.0].into_iter().enumerate() {
+                let shade = 0x40 + 0x30 * i as u8;
+                add(
+                    &mut s.tree,
+                    content,
+                    NodeKind::Rect,
+                    placed(5.0, y, 50.0, 30.0),
+                    Color::from_rgba8(shade, 0x60, 0xC0, 0xFF),
+                );
+            }
+            view = Some(id);
+        }
+        if frame == 1 {
+            let NodeKind::ScrollView(state) = &mut s.tree.get_mut(view.unwrap()).unwrap().kind
+            else {
+                unreachable!()
+            };
+            state.scroll.animate_to(120.0, DURATION, STANDARD, now);
+        }
+    });
 }
