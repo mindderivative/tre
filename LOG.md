@@ -1,4 +1,4 @@
-# LOG — Branch `0.4.0`: Milestone 5
+# LOG — Branch `0.4.0`: Milestone 5 (complete)
 
 - M4 complete: `DamageTracker` (compare painted rects and fingerprints,
   merge to 4 rects or full) with 18 tests; cargo 348.
@@ -21,4 +21,13 @@ scale + shadow, shadows, translation, rotation, a group's border, path
 morph + trim, scroll offset. Shrinking every rect by 3 px fails 9 of 16,
 so the tests see a too-small rect. cargo 364.
 
-Next: Step 3, measurement against v0.3.5.1.
+**Step 3 done, M5 complete (2026-09-28).** `tests/partial_redraw_bench.rs`
+(ignored): 1920x1080, 576 cards, GPU wait included, Radeon 890M.
+v0.3.5.1 measured with a port in a removed worktree, 5 alternating runs.
+Small animation: 0.56-1.00 ms vs 2.16-4.78 ms (3.7-4.9x less, every
+pair). Whole window: 2.30-5.34 ms vs 2.18-5.19 ms (within noise), after
+fixing what the first run found -- 117-180 ms from the cubic pair merge
+over 577 rects; past 64 rects the merge now takes their bounding box.
+Two new damage tests. cargo 366.
+
+Next: M6, release 0.4.0.

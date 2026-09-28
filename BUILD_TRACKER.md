@@ -16,15 +16,18 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M2 — Migrate to `vello_gpu` | `██████████` 100% | ✅ Complete (2026-09-28) — `tre` on upstream `vello_gpu` and `wgpu` 30, every test unchanged, CI green on Linux, macOS, and Windows |
 | M3 — A Persistent Offscreen Target and Blit | `██████████` 100% | ✅ Complete (2026-09-28) — each window renders into a texture that keeps its frame, copied to the screen byte-exact |
 | M4 — Dirty-Region Tracking | `██████████` 100% | ✅ Complete (2026-09-28) — `DamageTracker` reports what changed each frame as at most 4 rects, or a full redraw |
-| M5 — Partial Redraw End to End, Measured | `███████░░░` 67% | 🚧 In Progress — Steps 1–2 done: every window redraws only what changed, byte-identical to a full redraw every frame of every animated property the examples use; `window.set(partial_redraw=False)` turns it off |
+| M5 — Partial Redraw End to End, Measured | `██████████` 100% | ✅ Complete (2026-09-28) — every window redraws only what changed, byte-identical to a full redraw; a small animation in a 1920x1080 window costs 3.7–4.9x less GPU+CPU time a frame than `v0.3.5.1`, a whole-window change the same |
 | M6 — Release `0.4.0` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** M4 (2026-09-28) -- `DamageTracker` reports what changed each frame: at most 4 rects, or a full redraw past half the window. It compares each node's painted rect and a fingerprint of its paint state against the last frame rather than hooking mutations, so a missed mutation path can't leave stale pixels, and 18 tests cover every kind of change.
+**Just closed:** M5 (2026-09-28) -- partial redraw end to end: each window renders only inside its damage rects over the kept frame, or nothing at all when nothing changed, byte-identical to a full redraw after single changes and every frame of every property the examples animate. A small animation in a 1920x1080 window costs 3.7-4.9x less a frame than `v0.3.5.1`; a whole-window change costs the same, once the measurement's own find -- a cubic merge at 577 changed rects -- was capped. `window.set(partial_redraw=False)` turns it off.
 
-**Up next:** M5 Step 3 -- measurement against `v0.3.5.1`: frame time for a small animation in a large window, and no regression for a full-window change.
+**Up next:** M6, release `0.4.0`.
 
 **Known gaps:**
-- Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.
+- None open on this line.
+
+**Fixed gaps:**
+- ~~Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.~~ Fixed in M5 (2026-09-28): each window renders only inside its damage rects, into a target that keeps its frame, and nothing when nothing changed.
 
 ---
 
@@ -73,12 +76,12 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 5 — Partial Redraw End to End, Measured
 
-**Status: 🚧 In Progress.** Steps 1–2 done (2026-09-28).
+**Status: ✅ Complete (2026-09-28).** User: "yes" (push and start M5), then "continue".
 
-### Phase 1 — Integration 🚧
+### Phase 1 — Integration ✅
 - Step 1: the frame loop renders only the dirty region through the patched renderer into the offscreen target, falling back to a full redraw on resize, scale change, or a large region — ✅ (2026-09-28: each window's `DamageTracker` runs after layout and before the scene is built; `None` renders nothing and re-presents the kept frame, `Rects` builds the scene with the new `build_tree_scene_in` -- culled to the rects' bounds, inside one clip layer of them -- and renders with `ClearSettings::Rects` through the new `FrameRenderer::render_into`, and `Full` renders as before; the tracker resets on a target recreate, a font registration, and a frame whose surface texture couldn't be acquired; `window.set(partial_redraw=False)` / `get("partial_redraw")` switch it off, on by default; 7 new GPU tests in `tests/partial_redraw.rs` find partial redraw byte-identical to full for a colour change under a translucent overlap, a move that uncovers, a shadow, text, group opacity, a removal, and no change; a live 800x600 window animating one card renders 1 full frame then 59 partial ones, and 60 full with the switch off)
 - Step 2: correctness -- pixel tests comparing partial against full redraw across every example's animations — ✅ (2026-09-28: 9 new GPU tests in `tests/partial_redraw.rs` tick a real animation through 12 frames -- 10 in flight, then settling -- rendering each frame partially into one window and in full into another, and require identical bytes every frame plus at least one partial frame; they cover every property the examples animate -- opacity with corner radius, an eased fill retargeted halfway, scale with its shadow, shadows, translation over other nodes, rotation, a group's border, a path morph with its stroke trim, and a scroll view's offset; a mutation check shrinking every damage rect by 3 px fails 9 of the 16 tests, the 7 survivors being changes whose rects are deliberately generous; cargo 364)
-- Step 3: measurement against `v0.3.5.1`, the same way M101 of the 0.3 line measured: frame time for a small animation in a large window, and no regression for a full-window change — ⬜
+- Step 3: measurement against `v0.3.5.1`, the same way M101 of the 0.3 line measured: frame time for a small animation in a large window, and no regression for a full-window change — ✅ (2026-09-28: new `#[ignore]`d `tests/partial_redraw_bench.rs` times tick, layout, damage, scene, render, copy, submit, and a wait for the GPU, over a 1920x1080 window of 576 cards on this machine's integrated Radeon 890M (Vulkan); `v0.3.5.1` measured with a port of it in a detached worktree, removed afterward, 5 alternating runs each; one 48x48 card animating: medians 0.56-1.00 ms against 2.16-4.78 ms, 3.7-4.9x less in every paired run; every card animating: 2.30-5.34 ms against 2.18-5.19 ms, paired runs 6% lower to 10% higher, within this GPU's clock noise; the first run found a real regression there -- 117-180 ms a frame, the damage merge's pair search being cubic in 577 rects -- fixed by merging past 64 rects straight into their bounding box, with 2 new `tests/damage.rs` tests (600 changes across the window give `Full` in under 500 ms even in a debug build; 100 in a corner stay one partial rect); `v0.3.5.2` changed nothing in `engine-render` or `engine-core`, so these figures hold for it too; cargo 366)
 
 ---
 

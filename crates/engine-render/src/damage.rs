@@ -17,8 +17,10 @@
 //!
 //! The rects then merge into a small set (the user's decision D3): any
 //! that overlap merge, then the closest pairs until at most `MAX_RECTS`
-//! remain; past `FULL_FRACTION` of the window, or on a first frame, a size
-//! change, or a `reset`, the answer is a full redraw.
+//! remain -- or, past 64 of them, their bounding box, which keeps the
+//! merge's cost bounded when a whole grid animates; past `FULL_FRACTION` of
+//! the window, or on a first frame, a size change, or a `reset`, the answer
+//! is a full redraw.
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -37,6 +39,9 @@ use crate::{TextRenderer, clips_children, composed_transform, transformed_bounds
 pub const MAX_RECTS: usize = 4;
 /// Damage covering more than this fraction of the window redraws it all.
 pub const FULL_FRACTION: f64 = 0.5;
+/// More changed rects than this merge straight into their bounding box,
+/// keeping the pair merging's cubic cost bounded.
+const MAX_TRACKED: usize = 64;
 /// Pixels of antialiasing and glyph overhang added around every painted
 /// rect, beyond its geometry.
 const MARGIN: f64 = 2.0;
@@ -668,6 +673,13 @@ fn merge(rects: Vec<Rect>, window: Rect) -> Damage {
         .collect();
     if rects.is_empty() {
         return Damage::None;
+    }
+    // Pair merging is cubic in the count; past `MAX_TRACKED` changes (a
+    // whole grid animating), their bounding box stands in for them -- what
+    // four rects covering that many changes would come close to anyway.
+    if rects.len() > MAX_TRACKED {
+        let bounds = rects.iter().fold(rects[0], |acc, r| acc.union(*r));
+        rects = vec![bounds];
     }
     loop {
         merge_overlapping(&mut rects);

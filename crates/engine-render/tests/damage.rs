@@ -436,3 +436,53 @@ fn a_resize_or_reset_redraws_everything() {
     let resized = s.tracker.damage(&s.tree, s.root, W + 1, H, &mut s.text);
     assert_eq!(resized, Damage::Full, "a new window size");
 }
+
+#[test]
+fn hundreds_of_changes_across_the_window_redraw_it_all_quickly() {
+    // A whole grid animating: the cap keeps the merge from going cubic.
+    let mut s = Scene::new();
+    let nodes: Vec<NodeId> = (0..600)
+        .map(|i| {
+            s.rect(
+                4.0 + 16.0 * (i % 24) as f32,
+                4.0 + 12.0 * (i / 24) as f32,
+                6.0,
+                6.0,
+            )
+        })
+        .collect();
+    s.settle();
+    for node in &nodes {
+        s.tree.get_mut(*node).unwrap().paint.background.current = BLUE;
+    }
+    let started = Instant::now();
+    assert_eq!(s.frame(), Damage::Full);
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "600 changes took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn many_changes_in_one_corner_stay_a_partial_redraw() {
+    let mut s = Scene::new();
+    let nodes: Vec<NodeId> = (0..100)
+        .map(|i| {
+            s.rect(
+                10.0 + 12.0 * (i % 10) as f32,
+                10.0 + 9.0 * (i / 10) as f32,
+                4.0,
+                4.0,
+            )
+        })
+        .collect();
+    s.settle();
+    for node in &nodes {
+        s.tree.get_mut(*node).unwrap().paint.background.current = BLUE;
+    }
+    let damage = s.frame();
+    assert_eq!(rects(&damage).len(), 1, "{damage:?}");
+    assert!(covers(&damage, Rect::new(10.0, 10.0, 122.0, 95.0)));
+    assert!(within(&damage, Rect::new(10.0, 10.0, 122.0, 95.0), 3.0));
+}
