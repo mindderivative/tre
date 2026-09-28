@@ -191,10 +191,12 @@ flowchart TD
     TICK --> LAYOUT[taffy layout; virtual lists build their visible rows]
     LAYOUT --> PAINT[Paint walk: build the vello Scene]
     PAINT --> A11Y[AccessKit TreeUpdate from the same tree]
-    PAINT --> RENDER[vello_gpu render + present]
+    PAINT --> RENDER[vello_gpu render into the persistent target]
+    RENDER --> PRESENT[copy to the swapchain image + present]
 ```
 
 - **Layout** runs through Taffy's own cache: paint-only changes never dirty it. Parley re-shapes a text only when its content, font, size, or width changes (a per-node shaping cache keyed on those inputs).
+- **Persistent target** (0.4.0 M3). The scene renders into a per-window texture that keeps the previous frame, copied whole into each acquired swapchain image -- a swapchain image keeps nothing, and partial redraw needs the last frame. A surface that can't be copied into (no `COPY_DST` in its capabilities) renders straight into the swapchain image instead.
 - **Paint** re-encodes the scene each frame, as Vello's own consumers do; the cost lever is skipping expensive inputs (layout, shaping) and culling off-screen subtrees (§11.8), not patching scenes.
 - **Idle.** A tree's dirty flag records any change; when no window is dirty and nothing animates, the loop drops to `ControlFlow::Wait` and uses no CPU. `LoopHandle.call_soon` wakes it through an `EventLoopWaker`.
 - **Headless time.** `Window.advance(ms)` runs the same tick, completion drain, and layout on a pinned per-window clock, so tests need no frames.

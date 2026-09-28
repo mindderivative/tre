@@ -24,6 +24,7 @@
 mod fonts;
 mod geometry_cache;
 mod image_cache;
+mod persistent_target;
 mod text;
 
 use engine_core::{
@@ -36,6 +37,7 @@ use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
+pub use persistent_target::PersistentTarget;
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 
 /// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate

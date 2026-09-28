@@ -1,7 +1,7 @@
-# LOG — Branch `0.4.0`: Milestone 3
+# LOG — Branch `0.4.0`: Milestone 4
 
-- M2 complete: `tre` on `vello_gpu` at `b408cd00` and `wgpu` 30, no
-  behavior change; draft PR #17's CI green on Linux, macOS, and Windows.
+- M3 complete: `PersistentTarget` renders each window's frame into a kept
+  texture copied to the swapchain image, byte-exact; cargo 330.
 
 ## Status
 

@@ -25,7 +25,9 @@ use std::sync::Arc;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
-use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, build_tree_scene};
+use engine_render::{
+    FrameRenderer, GeometryCache, PersistentTarget, TextPlacement, TextRenderer, build_tree_scene,
+};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
@@ -176,6 +178,12 @@ struct GpuState {
     /// "long-lived, caller-owned, not rebuilt per call" shape `text_
     /// renderer` already has (`GeometryCache`'s own doc comment).
     geometry_cache: GeometryCache,
+    /// 0.4.0 M3: the texture the scene renders into, copied into each
+    /// acquired swapchain image -- it keeps the previous frame, which
+    /// partial redraw needs. `None` where the surface can't be copied
+    /// into (no `COPY_DST` in its capabilities): that window renders
+    /// straight into the swapchain image, as before 0.4.0.
+    persistent: Option<PersistentTarget>,
 }
 
 impl GpuState {
@@ -210,10 +218,24 @@ impl GpuState {
         }))
         .expect("failed to create wgpu device");
 
-        let config = surface
+        let mut config = surface
             .get_default_config(&adapter, width, height)
             .expect("surface is not supported by this adapter");
+        // 0.4.0 M3: render into a persistent target and copy it into the
+        // swapchain image, where the surface allows copies into it.
+        let copyable = surface
+            .get_capabilities(&adapter)
+            .usages
+            .contains(wgpu::TextureUsages::COPY_DST);
+        if copyable {
+            config.usage |= wgpu::TextureUsages::COPY_DST;
+            tracing::debug!("rendering through a persistent target, copied to the surface");
+        } else {
+            tracing::info!("this window's surface can't be copied into; rendering straight to it");
+        }
         surface.configure(&device, &config);
+        let persistent =
+            copyable.then(|| PersistentTarget::new(&device, config.format, width, height));
 
         let frame_renderer = FrameRenderer::new(
             &device,
@@ -232,6 +254,7 @@ impl GpuState {
             frame_renderer,
             text_renderer: TextRenderer::new(),
             geometry_cache: GeometryCache::new(),
+            persistent,
         }
     }
 
@@ -264,6 +287,9 @@ impl GpuState {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+        if let Some(target) = &mut self.persistent {
+            target.ensure_size(&self.device, width, height);
+        }
     }
 
     /// M40 Phase 1 (§4, §6, §9): whether the surface's own currently-
@@ -714,14 +740,22 @@ impl App {
                     .gpu
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                runtime.gpu.frame_renderer.render(
+                let gpu = &mut runtime.gpu;
+                let target_view = gpu
+                    .persistent
+                    .as_ref()
+                    .map_or(&view, PersistentTarget::view);
+                gpu.frame_renderer.render(
                     &scene,
-                    &runtime.gpu.device,
-                    &runtime.gpu.queue,
+                    &gpu.device,
+                    &gpu.queue,
                     &mut encoder,
                     &render_size,
-                    &view,
+                    target_view,
                 );
+                if let Some(target) = &gpu.persistent {
+                    target.copy_to(&mut encoder, &output.texture);
+                }
                 runtime.gpu.queue.submit([encoder.finish()]);
                 runtime.gpu.queue.present(output);
                 any_active

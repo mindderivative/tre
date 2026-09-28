@@ -14,14 +14,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — Scope and Upstream Pin | `██████████` 100% | ✅ Complete (2026-09-28) — build on upstream `vello_gpu` at `b408cd00`, which already has issue #4's patch; M2's main cost is `wgpu` 29 → 30 |
 | M2 — Migrate to `vello_gpu` | `██████████` 100% | ✅ Complete (2026-09-28) — `tre` on upstream `vello_gpu` and `wgpu` 30, every test unchanged, CI green on Linux, macOS, and Windows |
-| M3 — A Persistent Offscreen Target and Blit | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M3 — A Persistent Offscreen Target and Blit | `██████████` 100% | ✅ Complete (2026-09-28) — each window renders into a texture that keeps its frame, copied to the screen byte-exact |
 | M4 — Dirty-Region Tracking | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M5 — Partial Redraw End to End, Measured | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M6 — Release `0.4.0` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** M2 (2026-09-28) -- `tre` runs on upstream `vello_gpu` at `b408cd00` and `wgpu` 30, with no behavior change: every Rust test and pixel test, the Python suite, and every example pass unchanged, and CI on [draft PR #17](https://github.com/mindderivative/tre/pull/17) is green on Linux, macOS, and Windows.
+**Just closed:** M3 (2026-09-28) -- each window now renders into a texture that keeps its frame, copied to the swapchain image every frame, byte-exact against a direct render in a new pixel test. Surfaces that can't be copied into keep rendering directly. No visible change; it's what partial redraw draws over.
 
-**Up next:** M3, a persistent offscreen target -- rendering into a texture that keeps the previous frame, copied to the window each frame, the base partial redraw draws into.
+**Up next:** M4, dirty-region tracking -- which parts of the window changed each frame, as a small set of rects with a full-redraw fallback (the user's D3).
 
 **Known gaps:**
 - Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.
@@ -53,11 +53,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — A Persistent Offscreen Target and Blit
 
-**Status: ⬜ Proposed.** Issue #4's second piece, in `engine-render`/`engine-py`: a swapchain image keeps no previous frame, so partial redraw needs a texture that does.
+**Status: ✅ Complete (2026-09-28).** User: "push and start M3". Issue #4's second piece, in `engine-render`/`engine-py`: a swapchain image keeps no previous frame, so partial redraw needs a texture that does.
 
-### Phase 1 — Offscreen Target ⬜
-- Step 1: render into a persistent per-window `wgpu::Texture`, recreated on resize and scale-factor change, and blit it to the acquired swapchain image every frame — ⬜
-- Step 2: pixel tests that the blitted output matches the direct render exactly, and no regression in `frame_budget.rs` — ⬜
+### Phase 1 — Offscreen Target ✅
+- Step 1: render into a persistent per-window `wgpu::Texture`, recreated on resize and scale-factor change, and blit it to the acquired swapchain image every frame — ✅ (new `engine_render::PersistentTarget`: a texture in the surface format, `RENDER_ATTACHMENT | COPY_SRC`, `ensure_size` recreating it only when the size changes and reporting that its contents are then undefined, and `copy_to` a plain texture-to-texture copy -- byte-exact, no shader -- limited to the area both textures cover, so a resize race can't panic; `engine-py`'s `GpuState` asks for `COPY_DST` on the surface where `get_capabilities` offers it, and keeps a target per window, resized with the surface, which a scale-factor change reaches as a size change in physical pixels; the frame renders into the target and copies it into the acquired image; a surface without `COPY_DST` renders straight into the swapchain image as before, with an info log; a debug log names the route, and on this machine, AMD with Vulkan, both of `two_windows.py`'s windows take the persistent target; `ARCHITECTURE.md` §6 updated)
+- Step 2: pixel tests that the blitted output matches the direct render exactly, and no regression in `frame_budget.rs` — ✅ (new `tests/persistent_target.rs`, 3 tests: a shadowed rounded card under a translucent box, rendered into a target and copied into a stand-in swapchain image, matches a direct render with 0 differing bytes; a second copy with no render in between gives the identical frame, the target keeping its contents; `ensure_size` recreates only on a size change, and raises 0 to 1; `frame_budget.rs` now renders into a `PersistentTarget` and copies it, the live frame: medians 0.73, 0.73, and 1.05 ms over three runs against 0.63 ms rendering direct -- within the 0.31–1.10 ms noise band M101 measured on this machine, the copy being GPU-side work the CPU timer barely sees; cargo 330 passed, pytest 430 passed, 1 skipped, 21 examples, clippy, fmt, mypy, docs strict)
 
 ---
 
