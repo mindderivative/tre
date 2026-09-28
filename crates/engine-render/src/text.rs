@@ -25,7 +25,7 @@ use parley::{
 };
 use peniko::kurbo::{Affine, Point, Rect, Shape};
 use peniko::{Blob, Color};
-use vello_hybrid::{Resources, Scene};
+use vello_gpu::{Resources, Scene};
 
 use crate::fonts;
 
@@ -711,7 +711,7 @@ impl TextRenderer {
                     let shear = -f64::from(degrees).to_radians().tan();
                     builder = builder.glyph_transform(Affine::skew(shear, 0.0));
                 }
-                builder.fill_glyphs(glyphs);
+                report_glyph_errors(builder.fill_glyphs(glyphs));
             }
         }
         if clipped {
@@ -1003,10 +1003,12 @@ impl TextRenderer {
                     let color = Color::from_rgba8(r, gr, b, a);
                     if !batch.is_empty() && color != batch_color {
                         scene.set_paint(batch_color);
-                        scene
-                            .glyph_run(resources, font)
-                            .font_size(font_size)
-                            .fill_glyphs(std::mem::take(&mut batch).into_iter());
+                        report_glyph_errors(
+                            scene
+                                .glyph_run(resources, font)
+                                .font_size(font_size)
+                                .fill_glyphs(std::mem::take(&mut batch).into_iter()),
+                        );
                     }
                     batch_color = color;
                     batch.push(glifo::Glyph {
@@ -1017,10 +1019,12 @@ impl TextRenderer {
                 }
                 if !batch.is_empty() {
                     scene.set_paint(batch_color);
-                    scene
-                        .glyph_run(resources, font)
-                        .font_size(font_size)
-                        .fill_glyphs(batch.into_iter());
+                    report_glyph_errors(
+                        scene
+                            .glyph_run(resources, font)
+                            .font_size(font_size)
+                            .fill_glyphs(batch.into_iter()),
+                    );
                 }
             }
         }
@@ -1269,7 +1273,7 @@ impl TextRenderer {
                                 let shear = -(20f64.to_radians().tan());
                                 builder = builder.glyph_transform(Affine::skew(shear, 0.0));
                             }
-                            builder.fill_glyphs(glyphs);
+                            report_glyph_errors(builder.fill_glyphs(glyphs));
                         }
                     }
                     if underline {
@@ -1638,6 +1642,17 @@ pub struct TextPlacement {
     pub color: Color,
 }
 
+/// `vello_gpu` draws every glyph it can and reports the ones it couldn't.
+/// Warned once per process: a glyph that fails fails every frame.
+fn report_glyph_errors<E: std::fmt::Debug>(result: Result<(), E>) {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if let Err(err) = result
+        && !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        tracing::warn!("some glyphs couldn't be drawn (warned once): {err:?}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1649,7 +1664,7 @@ mod tests {
     use crate::FrameRenderer;
     use engine_core::{NodeKind, PaintProperties, Tree};
     use taffy::prelude::{Size, Style, length};
-    use vello_hybrid::RenderTargetConfig;
+    use vello_gpu::RenderTargetConfig;
 
     async fn frame_renderer_for_test() -> FrameRenderer {
         let instance = wgpu::Instance::default();
@@ -1657,6 +1672,7 @@ mod tests {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
                 compatible_surface: None,
             })
             .await

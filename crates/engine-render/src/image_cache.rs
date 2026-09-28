@@ -1,17 +1,9 @@
 //! M22 Phase 1 (§5): `NodeKind::Image`'s own real GPU-backed paint
 //! mechanism.
 //!
-//! **Real finding, confirmed by a failing test, not assumed:**
-//! `vello_hybrid` 0.2.0's ordinary `Scene::set_paint`+`fill_path` path
-//! panics on any CPU-side pixel data (`ImageSource::Pixmap`) --
-//! "pixmap image sources are not supported by Vello Hybrid" -- its own
-//! wgpu renderer only ever accepts `ImageSource::OpaqueId` (a real,
-//! pre-registered image), and the `ImageCache` that would register one
-//! is `pub(crate)` inside `vello_hybrid` itself, unreachable from here.
-//!
-//! `Scene::draw_texture_rects` + `TextureBindings` (both real, public
-//! API, confirmed via direct source read) is the one currently-
-//! supported path for CPU-decoded image data: an ordinary, externally-
+//! The renderer takes no CPU-side pixel data in a scene: `vello_hybrid`
+//! 0.2.0 panicked on `ImageSource::Pixmap`, and its image cache was
+//! private. An image is instead an ordinary, externally
 //! owned `wgpu::Texture`, uploaded once per real `Image` node and
 //! cached here -- keyed by a stable per-`NodeId` `u64`
 //! (`engine_core::node_id_as_u64`, the identical id scheme
@@ -51,11 +43,11 @@
 use std::collections::{HashMap, HashSet};
 
 use engine_core::{NodeId, Tree, node_id_as_u64};
-use vello_hybrid::{TextureBindings, TextureId};
+use vello_gpu::{TextureBindings, TextureId};
 
 /// Owns every real `Image` node's GPU texture plus the live
 /// `TextureBindings` map `FrameRenderer::render` hands to
-/// `vello_hybrid`.
+/// `vello_gpu`, which draws each as an `ImageSource::ExternalTexture`.
 #[derive(Default)]
 pub struct ImageTextureCache {
     textures: HashMap<NodeId, wgpu::Texture>,
@@ -208,6 +200,7 @@ mod tests {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
                 compatible_surface: None,
             })
             .await

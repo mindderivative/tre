@@ -69,8 +69,8 @@ pub enum NodeKind {
     /// inert data, engine-render re-derives it" split `TextState`
     /// itself already uses.
     TextField(TextFieldState),
-    /// M22 Phase 1 (§5): a real, file-backed image, painted through
-    /// `vello_hybrid`'s own real `PaintType::Image` mechanism -- see
+    /// M22 Phase 1 (§5): decoded pixels, painted as an external GPU
+    /// texture (`engine-render`'s `image_cache`) -- see
     /// `ImageState`'s own doc comment for the real crate-boundary
     /// reasoning (decoding lives in `engine-py`, this holds only the
     /// already-decoded result).

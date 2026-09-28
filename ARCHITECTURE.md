@@ -2,7 +2,7 @@
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust — the building blocks of a desktop UI.**
 
-Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made `tre` a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.0` line (partial redraw through a `vello_hybrid` fork) is tracked in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
+Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made `tre` a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.0` line (partial redraw, on upstream `vello_gpu`) is tracked in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
 
 ---
 
@@ -12,7 +12,7 @@ Status: living design reference, rewritten at M102 (0.3.5) to describe the engin
 - `tre` is an **engine, not a framework**. It provides building blocks — nodes, layout, paint, animation, input and events, text, accessibility, layers, threading, and docking — and nothing built *from* them. Widgets, design systems, theming, declarative views, data binding, and file loading belong to a framework on top; Tesserae is the first.
 - The PyO3 boundary (`engine-py`) is the one stability contract.
 - **Out of scope:** mobile, web, and bindings for any language but Python.
-- **Not built on Masonry.** It uses the same libraries Masonry does (`vello_hybrid`, `taffy`, `parley`, `accesskit`) under a purpose-built retained tree with one central animation system — see [ADR-001](#adr-001-hand-rolled-vs-masonry).
+- **Not built on Masonry.** It uses the same libraries Masonry does (Vello's renderers, `taffy`, `parley`, `accesskit`) under a purpose-built retained tree with one central animation system — see [ADR-001](#adr-001-hand-rolled-vs-masonry).
 
 ### Locked Decisions
 
@@ -48,7 +48,8 @@ Resolved architectural questions, in one place. Add a row when a question is set
 | Multiple windows | One `Tree` per OS window (§11.1) | No change to the node model; cross-window node moves are an accepted gap |
 | Docking | Fixed five zones; `tre` docks, drags, and reports; the framework draws handles and highlights (§11.4) | The mechanism is hard to get right; the look is design |
 | Virtualization | `virtual_list` kind that builds its own visible rows from `materialize(index)` (§11.7) | 100k real nodes would blow the frame budget |
-| Versioning | Stay on 0.3.x until the `vello_hybrid` fork; 0.4.0 is reserved for it | The user's policy |
+| Versioning | 0.3.x ended at `0.3.5`, with fixes as `0.3.5.x`; `0.4.0` is partial redraw, on upstream `vello_gpu` (issue #4) | The user's policy |
+| Renderer source | `vello_gpu` from a pinned upstream Git commit, with `vello_common` and `glifo` from the same commit (0.4.0 M1) | Upstream renamed `vello_hybrid` to `vello_gpu` and added the no-clear and rect-clear render partial redraw needs; it isn't published yet, and a pin makes every bump deliberate |
 
 ---
 
@@ -59,7 +60,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 3. **The PyO3 boundary is the only stability contract.** `engine-core`, `engine-render`, and `engine-platform` change freely; `engine-py`'s Python surface is what's versioned and documented.
 4. **No dependency leaks across the boundary.** Vello, kurbo, peniko, taffy, and accesskit types never appear in Python signatures. Python sees ints, floats, strings, tuples, and `tre`'s own classes.
 5. **Mechanism in the engine, meaning and look in the framework.** `tre` detects what it can know on its own — where the pointer is, what has focus, whether focus came from the keyboard — and reports it. What a node means (a checked checkbox) and how anything looks (a hover tint, a focus ring, a ripple) are set by the framework through ordinary properties and animations.
-6. **De-risk unknowns before building on them.** A new rendering capability gets a pixel test against the pinned `vello_hybrid` before anything depends on it.
+6. **De-risk unknowns before building on them.** A new rendering capability gets a pixel test against the pinned `vello_gpu` before anything depends on it.
 
 ---
 
@@ -69,7 +70,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 |---|---|---|
 | Windowing, input, IME | `winit` | Event loop (owns the main thread), windows, keyboard and pointer input |
 | GPU | `wgpu` | Device and surface management |
-| 2D rendering | `vello_hybrid` (`wgpu` features only) | CPU preprocess, GPU raster of paths, images, and blurred shadows |
+| 2D rendering | `vello_gpu` at a pinned upstream commit (`wgpu` and `text` features); `vello_hybrid` before 0.4.0 | CPU preprocess, GPU raster of paths, images, and blurred shadows |
 | Geometry, color | `kurbo`, `peniko` | `BezPath`, `Affine`, `Color` — Vello's vocabulary |
 | Text | `parley` (with `glifo` for glyph drawing) | Shaping, line breaking, BiDi, font fallback |
 | Layout | `taffy` | Flexbox; text leaf sizes come from Parley |
@@ -80,7 +81,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 | Packaging | `maturin` | Builds the wheel |
 | Errors, logging | `thiserror`, `tracing` | Typed errors at the boundary; structured logs controlled by `RUST_LOG` |
 
-`vello_hybrid`, `parley`, `kurbo`, and `peniko` are one co-evolving Linebender family: pin and bump them as a set.
+`vello_gpu`, `vello_common`, `glifo`, `parley`, `kurbo`, `peniko`, and `wgpu` move together: the workspace `Cargo.toml` pins the first three to one upstream commit and `wgpu` to the major version it uses. Bump them as a set, and re-run the pixel tests.
 
 ---
 
@@ -105,7 +106,7 @@ graph TD
     end
     subgraph Render["engine-render — no winit"]
         H[Scene building: paint walk, paths, shadows, text]
-        I[vello_hybrid + wgpu]
+        I[vello_gpu + wgpu]
     end
     subgraph Platform["engine-platform — windowing"]
         K[winit event loop + input translation]
@@ -190,7 +191,7 @@ flowchart TD
     TICK --> LAYOUT[taffy layout; virtual lists build their visible rows]
     LAYOUT --> PAINT[Paint walk: build the vello Scene]
     PAINT --> A11Y[AccessKit TreeUpdate from the same tree]
-    PAINT --> RENDER[vello_hybrid render + present]
+    PAINT --> RENDER[vello_gpu render + present]
 ```
 
 - **Layout** runs through Taffy's own cache: paint-only changes never dirty it. Parley re-shapes a text only when its content, font, size, or width changes (a per-node shaping cache keyed on those inputs).
@@ -372,8 +373,8 @@ Historical. The original fifteen-step de-risking order (a static rect through `v
 
 | Risk | Detail | Mitigation |
 |---|---|---|
-| Vello churn | `vello_hybrid` is pre-1.0 and its architecture has been rewritten between releases | Pin exact versions; confine Vello calls to `engine-render`; pixel tests for every capability |
-| Partial redraw | `vello_hybrid` offers no scissored or no-clear render, so every frame repaints fully | Idle loop sleeps (§6); the fork that adds it is issue #4, the `0.4.0` line (`BUILD_TRACKER.md`, M1–M6) |
+| Vello churn | `vello_gpu` is pre-1.0 and unreleased; upstream renamed it from `vello_hybrid` and reworks it often | Pin one upstream commit; confine Vello calls to `engine-render`; pixel tests for every capability |
+| Partial redraw | Every frame still repaints fully | Idle loop sleeps (§6); `vello_gpu` has the no-clear and rect-clear render it needs, which the `0.4.0` line adopts (`BUILD_TRACKER.md`, M3–M5) |
 | `accesskit` churn | Breaking changes between minor versions | Pin exactly; verify against the pinned source |
 | Wheel packaging | A repaired wheel vendors system libraries | Test the built wheel end to end (§13) |
 | Terminal portability | `portable-pty`'s Windows backend isn't exercised | The terminal kind is POSIX-verified; Windows is untested |
@@ -389,7 +390,7 @@ Until 0.3.5 this section specified the `engine-spec` crate: YAML views, a styles
 
 ## ADR-001: Hand-rolled vs. Masonry
 
-**Decision:** hand-roll the tree and animation substrate on `vello_hybrid` + `taffy` + `parley` + `accesskit`; don't depend on Masonry.
+**Decision:** hand-roll the tree and animation substrate on Vello's GPU renderer (`vello_gpu`, formerly `vello_hybrid`) + `taffy` + `parley` + `accesskit`; don't depend on Masonry.
 
 **Why:** Masonry's value is centralizing focus, pointer, lifecycle, and accessibility plumbing across independently written Rust widget types. `tre` exposes no Rust widget types at all — its widgets are built in Python from a handful of primitive kinds — and what it needs most, one centrally ticked animation system driven from Python, doesn't fit Masonry's per-widget trait model. `tre` did end up building the plumbing Masonry centralizes (focus, pointer dispatch, GC-safe callbacks, the AccessKit builder), but each piece is shaped by that animation model and by the Python boundary; building it on Masonry would have meant fighting its model rather than avoiding the work.
 

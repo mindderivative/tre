@@ -29,7 +29,7 @@ use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, b
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
 use crate::dispatch::{
@@ -42,6 +42,12 @@ use crate::terminal::TerminalSession;
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
 use crate::window::{PyWindow, SharedOsWindow, SharedSize};
+
+/// A window extent as the renderer takes it (`u16`), clamped -- no real
+/// window reaches 65,535 pixels, but a bad size must not wrap around.
+fn render_extent(pixels: u32) -> u16 {
+    u16::try_from(pixels).unwrap_or(u16::MAX)
+}
 
 #[pyclass]
 pub struct App(ThreadBound<AppState>);
@@ -182,6 +188,9 @@ impl GpuState {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
+            // The adapter's real limits, as before `wgpu` 30 added
+            // bucketing (a fingerprinting defence for web content).
+            apply_limit_buckets: false,
         }))
         .unwrap_or_else(|err| {
             // No GPU reachable is an expected, non-exceptional
@@ -210,8 +219,8 @@ impl GpuState {
             &device,
             &RenderTargetConfig {
                 format: config.format,
-                width,
-                height,
+                width: render_extent(width),
+                height: render_extent(height),
             },
         );
 
@@ -231,12 +240,12 @@ impl GpuState {
     /// recipe (mutate the stored config's own `width`/`height`, then
     /// `surface.configure` again), not something this crate invents.
     /// **Real, confirmed finding before writing this:** `FrameRenderer`/
-    /// `vello_hybrid::Renderer` need no matching reconstruction at all
-    /// -- direct read of the vendored `vello_hybrid = "0.2.0"` source
-    /// confirms its own `Renderer::render` already calls a private
-    /// `maybe_update_config_buffer` every frame, which recreates its
-    /// own internal depth texture whenever the `RenderSize` passed to
-    /// `render` genuinely differs from the previous call -- real,
+    /// `vello_gpu::Renderer` need no matching reconstruction at all
+    /// -- `vello_gpu`'s `Renderer::render` calls a private
+    /// `maybe_update_config_buffer` every frame (checked in the pinned
+    /// source, 0.4.0 M2), updating its size-dependent state whenever the
+    /// `RenderSize` passed to `render` differs from the previous call;
+    /// its depth buffer is the caller's, and `tre` passes none -- real,
     /// existing resize-safety this phase only needed to rely on, not
     /// build. A 0-sized dimension (a real, possible transient value on
     /// some platforms while a window is being minimized) is skipped
@@ -690,16 +699,16 @@ impl App {
                     build_tree_scene(
                         &tree_ref,
                         runtime.root,
-                        runtime.width.get() as u16,
-                        runtime.height.get() as u16,
+                        render_extent(runtime.width.get()),
+                        render_extent(runtime.height.get()),
                         runtime.gpu.frame_renderer.resources_mut(),
                         &mut runtime.gpu.text_renderer,
                         &mut runtime.gpu.geometry_cache,
                     )
                 };
                 let render_size = RenderSize {
-                    width: runtime.width.get(),
-                    height: runtime.height.get(),
+                    width: render_extent(runtime.width.get()),
+                    height: render_extent(runtime.height.get()),
                 };
                 let mut encoder = runtime
                     .gpu
@@ -714,7 +723,7 @@ impl App {
                     &view,
                 );
                 runtime.gpu.queue.submit([encoder.finish()]);
-                output.present();
+                runtime.gpu.queue.present(output);
                 any_active
             },
             // §14 step 7: every window this framework opens reports a

@@ -8,7 +8,7 @@ use engine_core::{NodeId, NodeKind, PaintProperties, ScrollViewState, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 
 const WIDTH: u16 = 100;
 const HEIGHT: u16 = 100;
@@ -21,6 +21,7 @@ async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
             compatible_surface: None,
         })
         .await
@@ -54,8 +55,8 @@ async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
         &device,
         &RenderTargetConfig {
             format: texture.format(),
-            width: u32::from(WIDTH),
-            height: u32::from(HEIGHT),
+            width: WIDTH,
+            height: HEIGHT,
         },
     );
     let mut text_renderer = TextRenderer::new();
@@ -70,8 +71,8 @@ async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
         &mut geometry_cache,
     );
     let render_size = RenderSize {
-        width: u32::from(WIDTH),
-        height: u32::from(HEIGHT),
+        width: WIDTH,
+        height: HEIGHT,
     };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -115,7 +116,7 @@ async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("device poll failed");
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("the readback buffer maps");
     let mut out = vec![0u8; data.len()];
     out.copy_from_slice(&data);
     (out, bytes_per_row)

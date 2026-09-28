@@ -20,7 +20,7 @@ use engine_core::{NodeKind, PaintProperties, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 
 const FILL: Color = Color::from_rgba8(0x11, 0x11, 0x11, 0xFF);
 const BORDER: Color = Color::from_rgba8(0xFF, 0x00, 0x00, 0xFF);
@@ -56,6 +56,7 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
             compatible_surface: None,
         })
         .await
@@ -89,8 +90,8 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         &device,
         &RenderTargetConfig {
             format: texture.format(),
-            width: u32::from(SIZE),
-            height: u32::from(SIZE),
+            width: SIZE,
+            height: SIZE,
         },
     );
     let mut text_renderer = TextRenderer::new();
@@ -105,8 +106,8 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         &mut geometry_cache,
     );
     let render_size = RenderSize {
-        width: u32::from(SIZE),
-        height: u32::from(SIZE),
+        width: SIZE,
+        height: SIZE,
     };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -150,7 +151,7 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("device poll failed");
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("the readback buffer maps");
     let mut out = vec![0u8; data.len()];
     out.copy_from_slice(&data);
     (out, bytes_per_row)

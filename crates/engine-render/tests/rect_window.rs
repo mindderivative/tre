@@ -22,7 +22,7 @@ use engine_platform::{WindowConfig, run_windowed};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexDirection, Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 use winit::window::Window;
 
 /// MD3 seed-adjacent purple (#6750A4) -- the same starting color step
@@ -86,6 +86,7 @@ impl GpuState {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
             compatible_surface: Some(&surface),
         }))
         .unwrap_or_else(|err| {
@@ -111,8 +112,8 @@ impl GpuState {
             &device,
             &RenderTargetConfig {
                 format: config.format,
-                width: u32::from(width),
-                height: u32::from(height),
+                width,
+                height,
             },
         );
 
@@ -340,8 +341,8 @@ impl GpuState {
             &mut self.geometry_cache,
         );
         let render_size = RenderSize {
-            width: u32::from(self.width),
-            height: u32::from(self.height),
+            width: self.width,
+            height: self.height,
         };
 
         let mut encoder = self
@@ -356,7 +357,7 @@ impl GpuState {
             &view,
         );
         self.queue.submit([encoder.finish()]);
-        output.present();
+        self.queue.present(output);
     }
 }
 

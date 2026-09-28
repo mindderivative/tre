@@ -1,28 +1,23 @@
-# PLAN — Branch `0.4.0`: Milestone 1, Scope and Fork Setup
+# PLAN — Branch `0.4.0`: Milestone 2, Migrate to `vello_gpu`
 
-*(The `0.4.0` line's first plan. Its tracker, `BUILD_TRACKER.md`, restarts at
-M1; the 0.3 line is archived in `BUILD_TRACKER_ARCHIVE_0.3.md`.)*
+*(Replaces the M1 plan — M1 is complete. Every step is in `BUILD_TRACKER.md`.)*
 
 ## Goal
 
-Real GPU-level partial redraw through a `vello_hybrid` fork (issue #4): a
-patched renderer that can skip the full clear and clear a scissored rect, a
-persistent offscreen target, and dirty-region tracking (M2–M5), then the
-release (M6).
+Move `tre` from `vello_hybrid` 0.2.0 to upstream `vello_gpu` at the commit M1
+pinned (`linebender/vello` `b408cd00`), with no behavior change. Partial
+redraw itself is M3–M5; this milestone only changes what `tre` builds on.
 
 ## Steps
 
-**Phase 1 — Decisions** (nothing is built before the user confirms these)
-1. Re-verify issue #4's patch points against current `vello_hybrid`; fork
-   0.2.0 (still the latest release) or upstream `main`.
-2. The user's decisions: fork mechanics (a `mindderivative/vello` fork via
-   `[patch.crates-io]` at a pinned revision, or vendored), dirty-region
-   granularity (one rect or several), and partial redraw on by default or
-   opt-in for `0.4.0`.
-
-**Phase 2 — Fork setup**
-1. The fork created and pinned, building unchanged, every test passing.
+1. The manifests: one `[workspace.dependencies]` table pins `vello_gpu`,
+   `vello_common`, and `glifo` to the commit and `wgpu` to 30; then `tre`'s
+   own code updated for `wgpu` 30 and `vello_gpu`'s API, with `render()`
+   called as `TargetInit::Clear(ClearSettings::Viewport)` -- today's full clear.
+2. Verification: every Rust test and pixel test, pytest, every example, and
+   `frame_budget.rs` unchanged; CI builds the wheel with the Git dependency on
+   all three platforms.
 
 ## Status
 
-**Complete (2026-09-28).** Pinned `linebender/vello` `b408cd00`; M2, the migration to `vello_gpu` (`wgpu` 29 → 30), next.
+**Step 1 done (2026-09-28).** Step 2, CI on all three platforms, next.

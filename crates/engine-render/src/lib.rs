@@ -32,7 +32,7 @@ use engine_core::{
 };
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
-use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
+use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
@@ -570,33 +570,16 @@ fn paint_node(
                 }
             }
         }
-        // M22 Phase 1 (§5): **real finding, confirmed by a failing
-        // test, not assumed:** `vello_hybrid`'s ordinary `set_paint`+
-        // `fill_path` path panics on CPU-side pixel data
-        // (`ImageSource::Pixmap`) -- "pixmap image sources are not
-        // supported by Vello Hybrid" -- only a pre-registered,
-        // externally-owned GPU texture (`ImageSource::OpaqueId`) is
-        // ever accepted by its own wgpu renderer. `Scene::
-        // draw_texture_rects` is the one real, currently-supported
-        // path (`image_cache`'s own module doc comment has the full
-        // investigation): `id`'s own deterministic `TextureId`
-        // (`image_cache::texture_id_for`) must already be bound in
-        // the `TextureBindings` `FrameRenderer::render` hands to
-        // `vello_hybrid` -- `FrameRenderer::sync_image_textures`,
-        // called once per frame before `render`, is what guarantees
-        // that. `source_region` is the image's own full real pixel
-        // extent; `transform` scales that local rect up to the node's
-        // own `(w, h)` box -- Phase 1's own stated "stretched to fill"
-        // scope, composed on top of `scene.set_transform(composed)`
-        // (already active above). Real content-fit modes (cover/
-        // contain) are Phase 2's, §16.1.
-        // M25 Phase 2 (§5, §6): a real, previously-missing compounding
-        // -- `Scene::draw_texture_rects` has no opacity parameter of
-        // its own at all (confirmed via direct source read), unlike
-        // every `set_paint`-based fill in this match. `push_layer`'s
-        // own real `opacity` parameter (an opacity-only layer, no
-        // clip) wraps the draw instead -- skipped entirely at
-        // `opacity <= 0.0`, so an invisible thing is never drawn.
+        // M22 Phase 1 (§5): an image is an externally owned GPU texture
+        // (`image_cache` has why -- the renderer doesn't take CPU pixel
+        // data), bound under `id`'s `TextureId` in the `TextureBindings`
+        // `FrameRenderer::render` passes on; `sync_image_textures`, run
+        // before `render` each frame, guarantees the binding. 0.4.0 M2:
+        // `vello_gpu` draws it as an `ImageSource::ExternalTexture` paint
+        // over a filled rect -- `source_region` is the part of the image
+        // shown (all of it, or `cover`'s crop), and `transform` maps its
+        // texels onto the node box. The paint has no opacity of its own,
+        // so an opacity layer wraps it, skipped when fully transparent.
         NodeKind::Image(state) => {
             let img_width = state.image.width;
             let img_height = state.image.height;
@@ -604,15 +587,30 @@ fn paint_node(
             if img_width > 0 && img_height > 0 && node_opacity > 0.0 {
                 let (source_region, transform) =
                     image_sample_rect(w, h, img_width, img_height, state.content_fit);
-                scene.push_layer(None, None, Some(node_opacity as f32), None, None);
-                scene.draw_texture_rects(
-                    image_cache::texture_id_for(id),
-                    peniko::ImageQuality::Medium,
-                    [vello_hybrid::SampleRect {
-                        source_region,
-                        transform,
-                    }],
+                // The texture is an image paint: `transform` maps the
+                // source region's texels to the node box, as the paint
+                // transform, and the fill covers the region's image there.
+                let region = peniko::kurbo::Rect::new(
+                    0.0,
+                    0.0,
+                    f64::from(source_region.x1 - source_region.x0),
+                    f64::from(source_region.y1 - source_region.y0),
                 );
+                scene.push_layer(None, None, Some(node_opacity as f32), None, None);
+                scene.set_paint(vello_common::paint::Image {
+                    image: vello_common::paint::ImageSource::external_texture(
+                        image_cache::texture_id_for(id),
+                        source_region,
+                        true,
+                    ),
+                    sampler: peniko::ImageSampler {
+                        quality: peniko::ImageQuality::Medium,
+                        ..Default::default()
+                    },
+                });
+                scene.set_paint_transform(transform);
+                scene.fill_rect(&transform.transform_rect_bbox(region));
+                scene.reset_paint_transform();
                 scene.pop_layer();
             }
         }
@@ -854,7 +852,7 @@ fn fill_scrollbar_thumb(
 /// states for the reverse case.
 const SCROLLBAR_THUMB_RADIUS: f64 = 2.0;
 
-/// Thin wrapper around `vello_hybrid::Renderer` -- it needs a mutable
+/// Thin wrapper around `vello_gpu::Renderer` -- it needs a mutable
 /// `Resources` alongside it for every render call, which is easy to get
 /// out of sync by hand; bundling them here means callers only ever see
 /// one object.
@@ -862,7 +860,7 @@ pub struct FrameRenderer {
     renderer: Renderer,
     resources: Resources,
     // M22 Phase 1 (§5): every real `Image` node's own GPU texture,
-    // plus the live `TextureBindings` `render` hands to `vello_hybrid`
+    // plus the live `TextureBindings` `render` hands to `vello_gpu`
     // -- empty (byte-for-byte this struct's pre-M22 behavior) unless a
     // caller's own tree has real `Image` nodes and calls
     // `sync_image_textures`.
@@ -900,9 +898,13 @@ impl FrameRenderer {
                 encoder,
                 render_size,
                 target,
+                None,
                 self.images.bindings(),
+                // A full clear to transparent, as `vello_hybrid` 0.2.0 always
+                // did; partial redraw passes `SrcOver` or rect clears here.
+                vello_gpu::TargetInit::Clear(vello_gpu::ClearSettings::default()),
             )
-            .expect("vello_hybrid render failed");
+            .expect("vello_gpu render failed");
     }
 
     /// M22 Phase 1 (§5): ensures every real `Image` node in `tree` has
@@ -955,6 +957,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::default(),
                     force_fallback_adapter: false,
+                    apply_limit_buckets: false,
                     compatible_surface: None,
                 })
                 .await
@@ -989,14 +992,11 @@ mod tests {
                 &device,
                 &RenderTargetConfig {
                     format: texture.format(),
-                    width: u32::from(width),
-                    height: u32::from(height),
+                    width,
+                    height,
                 },
             );
-            let render_size = RenderSize {
-                width: u32::from(width),
-                height: u32::from(height),
-            };
+            let render_size = RenderSize { width, height };
 
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -1040,7 +1040,7 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("device poll failed");
 
-            let data = slice.get_mapped_range();
+            let data = slice.get_mapped_range().expect("the readback buffer maps");
             let pixel_at = |x: u32, y: u32| -> [u8; 4] {
                 let row_start = (y * bytes_per_row) as usize;
                 let px_start = row_start + (x * 4) as usize;

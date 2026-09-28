@@ -21,6 +21,21 @@ homepage = "https://github.com/mindderivative/tre"
 # `rust-version` gives something to actually check against, then add the
 # enforcing `msrv` CI job in the same commit -- not before.
 
+# The renderer, pinned to one upstream commit (0.4.0 M1). `vello_gpu` is
+# `vello_hybrid` renamed upstream, with the no-clear and rect-clear render
+# partial redraw needs; it isn't published yet. `vello_common` and `glifo`
+# keep their published version numbers upstream but carry unreleased code,
+# so they come from the same commit -- mixing them with crates.io copies
+# would give two incompatible sets of types. `wgpu` must be the major
+# version that commit uses (30): a `wgpu::Device` made here is passed into
+# `vello_gpu`. Bump all four together, deliberately, re-running the pixel
+# tests.
+[workspace.dependencies]
+vello_gpu = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e936c9cc456d18d41467bb6d0e12f", default-features = false, features = ["wgpu", "wgpu_default", "text"] }
+vello_common = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e936c9cc456d18d41467bb6d0e12f", default-features = false, features = ["std"] }
+glifo = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e936c9cc456d18d41467bb6d0e12f" }
+wgpu = "30.0.1"
+
 # Debug builds grew `target/debug` to 462 GB (full debug info in every test
 # and example binary, plus the incremental cache). Line tables keep file and
 # line numbers in backtraces and panics without the full variable-level

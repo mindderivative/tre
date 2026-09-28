@@ -20,7 +20,7 @@ use engine_core::{NodeKind, PaintProperties, TextAlign, TextState, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexDirection, Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 
 const WIDTH: u16 = 400;
 const HEIGHT: u16 = 200;
@@ -148,6 +148,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
                 compatible_surface: None,
             })
             .await
@@ -181,8 +182,8 @@ fn type_roles_and_rtl_string_render_real_ink() {
             &device,
             &RenderTargetConfig {
                 format: texture.format(),
-                width: u32::from(WIDTH),
-                height: u32::from(HEIGHT),
+                width: WIDTH,
+                height: HEIGHT,
             },
         );
         let mut text_renderer = TextRenderer::new();
@@ -197,8 +198,8 @@ fn type_roles_and_rtl_string_render_real_ink() {
             &mut geometry_cache,
         );
         let render_size = RenderSize {
-            width: u32::from(WIDTH),
-            height: u32::from(HEIGHT),
+            width: WIDTH,
+            height: HEIGHT,
         };
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -241,7 +242,10 @@ fn type_roles_and_rtl_string_render_real_ink() {
         device
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("device poll failed");
-        let data = slice.get_mapped_range().to_vec();
+        let data = slice
+            .get_mapped_range()
+            .expect("the readback buffer maps")
+            .to_vec();
         let readback = Readback {
             data,
             bytes_per_row,

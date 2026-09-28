@@ -42,7 +42,7 @@ use engine_core::{MotionCurve, NodeKind, PaintProperties, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexWrap, Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 
 const GRID_COLS: u32 = 20;
 const GRID_ROWS: u32 = 15;
@@ -109,6 +109,7 @@ fn frame_pipeline_fits_the_16_6ms_budget() {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
                 compatible_surface: None,
             })
             .await
@@ -141,13 +142,13 @@ fn frame_pipeline_fits_the_16_6ms_budget() {
             &device,
             &RenderTargetConfig {
                 format: texture.format(),
-                width: u32::from(WIDTH),
-                height: u32::from(HEIGHT),
+                width: WIDTH,
+                height: HEIGHT,
             },
         );
         let render_size = RenderSize {
-            width: u32::from(WIDTH),
-            height: u32::from(HEIGHT),
+            width: WIDTH,
+            height: HEIGHT,
         };
 
         let start = Instant::now();

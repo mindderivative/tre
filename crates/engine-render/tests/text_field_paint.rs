@@ -19,7 +19,7 @@ use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, b
 use peniko::Color;
 use peniko::kurbo::Point;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 
 const BACKGROUND: Color = Color::from_rgba8(0x11, 0x11, 0x11, 0xFF);
 const FIELD_COLOR: Color = Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF);
@@ -30,6 +30,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
             compatible_surface: None,
         })
         .await
@@ -63,8 +64,8 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         &device,
         &RenderTargetConfig {
             format: texture.format(),
-            width: u32::from(width),
-            height: u32::from(height),
+            width,
+            height,
         },
     );
     let mut text_renderer = TextRenderer::new();
@@ -78,10 +79,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         &mut text_renderer,
         &mut geometry_cache,
     );
-    let render_size = RenderSize {
-        width: u32::from(width),
-        height: u32::from(height),
-    };
+    let render_size = RenderSize { width, height };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
@@ -124,7 +122,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("device poll failed");
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("the readback buffer maps");
     let mut out = vec![0u8; data.len()];
     out.copy_from_slice(&data);
     (out, bytes_per_row)

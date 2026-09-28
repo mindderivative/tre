@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use engine_core::{Animated, MotionCurve};
 use engine_render::{FrameRenderer, INITIAL_COLOR, build_rect_scene};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 
 #[test]
 fn animated_color_and_opacity_render_the_interpolated_value_mid_flight() {
@@ -48,6 +48,7 @@ fn animated_color_and_opacity_render_the_interpolated_value_mid_flight() {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
                 compatible_surface: None,
             })
             .await
@@ -82,14 +83,11 @@ fn animated_color_and_opacity_render_the_interpolated_value_mid_flight() {
             &device,
             &RenderTargetConfig {
                 format: texture.format(),
-                width: u32::from(width),
-                height: u32::from(height),
+                width,
+                height,
             },
         );
-        let render_size = RenderSize {
-            width: u32::from(width),
-            height: u32::from(height),
-        };
+        let render_size = RenderSize { width, height };
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
@@ -132,7 +130,7 @@ fn animated_color_and_opacity_render_the_interpolated_value_mid_flight() {
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("device poll failed");
 
-        let data = slice.get_mapped_range();
+        let data = slice.get_mapped_range().expect("the readback buffer maps");
         let row_start = ((u32::from(height) / 2) * bytes_per_row) as usize;
         let px_start = row_start + (u32::from(width) / 2 * 4) as usize;
         let center = [

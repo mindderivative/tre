@@ -3571,7 +3571,7 @@ pub fn from_access_id(id: accesskit::NodeId) -> NodeId {
 /// M22 Phase 1 (§5): a stable `u64` for a `NodeId` -- `to_access_id`'s
 /// own real `KeyData::as_ffi()` encoding, reused here for a different
 /// foreign-handle consumer (`engine-render`'s own GPU texture cache
-/// keys a real, persistent `vello_hybrid::TextureId` per `Image` node
+/// keys a real, persistent `vello_gpu::TextureId` per `Image` node
 /// by this exact value, rather than inventing a second id scheme).
 pub fn node_id_as_u64(id: NodeId) -> u64 {
     id.data().as_ffi()

@@ -5,7 +5,7 @@
 `tre` gives Python the building blocks of a desktop UI — nodes, flexbox
 layout, paint, animation, input and events, text, accessibility, layers,
 and threading — and renders them on the GPU with
-[`vello_hybrid`](https://github.com/linebender/vello), laid out by
+[`vello_gpu`](https://github.com/linebender/vello), laid out by
 [`taffy`](https://github.com/DioxusLabs/taffy), shaped by
 [`parley`](https://github.com/linebender/parley), and exposed to screen
 readers through [`AccessKit`](https://github.com/AccessKit/accesskit).

@@ -21,7 +21,7 @@ use engine_core::{NodeKind, OverlayMeta, PaintProperties, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
 
 const GREEN: Color = Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF); // the background panel
 const BLUE: Color = Color::from_rgba8(0x00, 0x00, 0xFF, 0xFF); // the anchor ("trigger" button)
@@ -50,6 +50,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
             compatible_surface: None,
         })
         .await
@@ -83,8 +84,8 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         &device,
         &RenderTargetConfig {
             format: texture.format(),
-            width: u32::from(width),
-            height: u32::from(height),
+            width,
+            height,
         },
     );
     let mut text_renderer = TextRenderer::new();
@@ -98,10 +99,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         &mut text_renderer,
         &mut geometry_cache,
     );
-    let render_size = RenderSize {
-        width: u32::from(width),
-        height: u32::from(height),
-    };
+    let render_size = RenderSize { width, height };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
@@ -144,7 +142,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         .poll(wgpu::PollType::wait_indefinitely())
         .expect("device poll failed");
 
-    let data = slice.get_mapped_range();
+    let data = slice.get_mapped_range().expect("the readback buffer maps");
     let mut out = vec![0u8; data.len()];
     out.copy_from_slice(&data);
     out
