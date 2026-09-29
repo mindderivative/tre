@@ -18,6 +18,7 @@ should happen, then opens a window for a few seconds. Run one with
 | `animation.py` | Linear and bezier easing, retargeting mid-flight, and chained `on_complete` |
 | `pan_zoom.py` | The transform parts animating independently |
 | `shadows.py` | Layered shadows easing between elevation levels |
+| `show_damage.py` | What partial redraw repaints each frame, tinted; `--watch` keeps the window open for checking on a real desktop |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |
