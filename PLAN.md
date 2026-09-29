@@ -1,16 +1,32 @@
-# PLAN — Branch `0.4.1`: Milestone 9, Housekeeping and Release `0.4.1`
+# PLAN — Branch `0.4.2`: Milestones 11–13
 
-*(Replaces the M8 plan — M8 is complete. Every step is in
+*(Replaces the M9 plan — `v0.4.1` is released. Every step is in
 `BUILD_TRACKER.md`.)*
 
-## Steps
+User (2026-09-29): "yes, scope them, we will stay on 0.4.x, they both can
+be on 0.4.2".
 
-1. Housekeeping: retire the local `0.3.5.3` branch and its `tre-0.3.5.2`
-   worktree (its sdist fix shipped in `0.4.0`); prune merged local release
-   branches; `rect_window.rs` onto the shared test helpers where it can.
-2. The user's manual check of partial redraw on real hardware -- X11,
-   Wayland, macOS, Windows: `partial_redraw_active`, repaint on uncover,
-   resize, and minimize; `show_damage` makes it visible.
-3. PR to `main`, CI green, merge, tag `v0.4.1`, release, PyPI (the user
-   approves the `pypi` deployment).
-4. Tesserae moves to `0.4.1`.
+## M11 — CSS Grid (issue #23)
+
+Taffy 0.14 already implements grid; expose it in `node_layout.rs`.
+1. `display`; `grid_template_columns`/`rows` (string or list: px numbers,
+   `fr`, `%`, `auto`, `min_content`, `max_content`, `minmax()`,
+   `repeat()`); `grid_column`/`grid_row` (line, `span n`, `a / b`, `auto`).
+2. `grid_auto_rows`/`columns`, `grid_auto_flow`, `row_gap`/`column_gap`,
+   `justify_items`, `justify_self`, `align_content`; `get()` round-trips.
+3. Tests, layout guide, `examples/grid.py`, stub.
+
+## M12 — Scroll views (issue #24)
+
+Decided: keys scroll the nearest scroll view around the focused node when it
+doesn't use the key; `scroll` fires on any change, found by comparison;
+keyboard/`scroll_into_view` scrolls jump.
+1. `Key::PageUp`/`PageDown`.
+2. Keyboard scrolling: arrows 40 px, Page Up/Down a viewport, Home/End.
+3. `node.scroll_into_view()` + the a11y action + revealing focus.
+4. The `scroll` event (`old_value`/`new_value`).
+5. Docs note on scroll-view layout; tests; examples.
+
+## M13 — Release `0.4.2`
+
+Each step: the full chain, docs, tracker, a local commit.

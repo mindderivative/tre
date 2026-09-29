@@ -24,10 +24,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
 | M9 — Housekeeping and Release `0.4.1` | `██████████` 100% | ✅ Complete (2026-09-29) — `v0.4.1` released on GitHub and PyPI, closing issue #21; Tesserae moved onto it, its side buttons driving back/forward |
 | M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
+| M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M13 — Release `0.4.2` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
 **Just closed:** `v0.4.1` (2026-09-29; PR #22, merge `97d0b4a`), closing issue [#21](https://github.com/mindderivative/tre/issues/21): `window.set(show_damage=True)`, the mouse's back and forward buttons, and partial redraw's costs measured. On GitHub and PyPI as `tesserae-engine` 0.4.1; Tesserae moved onto it (2503 passed), its side buttons driving `back()`/`forward()`.
 
-**Up next:** nothing scheduled; open issues from Tesserae: [#23](https://github.com/mindderivative/tre/issues/23) (CSS Grid) and [#24](https://github.com/mindderivative/tre/issues/24) (a scroll view's keyboard scrolling, `scroll_into_view`, revealing focus, and a scroll event).
+**Up next:** `0.4.2` (user, 2026-09-29: "yes, scope them, we will stay on 0.4.x, they both can be on 0.4.2") -- M11, CSS Grid (#23), then M12, scroll views (#24).
 
 **Known gaps:**
 - None open on this line.
@@ -158,6 +161,49 @@ User: "Start phase 3".
 
 ### Phase 1 — The Side Buttons ✅
 - Step 1: `PointerButton::Back`/`Forward`, translated from winit's `MouseButton::Back`/`Forward` (only `Other(n)` still goes unreported); `Event.button` names them `"back"` and `"forward"`, `simulate` accepts them, and like the middle button they focus nothing and make no `click` — ✅ (2026-09-29: `engine-core` dispatch treats them as it treats `Middle`, `pointer_down`/`pointer_up` bubbling to the root as the issue relies on; a Rust test that a side-button press/release activates nothing, the `engine-platform` translation test flipped, a pytest that both reach a root listener as `pointer_down`/`pointer_up` with no `click`, and the unknown-button error listing all five; stub and events docs; cargo 373, pytest 452 + 1 skipped; checked by the user with a real mouse's side buttons: "works wonderfully")
+
+---
+
+## Milestone 11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23))
+
+**Status: ⬜ Proposed.** Taffy 0.14 already implements CSS Grid (its default `grid` feature); tre's layout properties, all parsed in `engine-py`'s `node_layout.rs`, are flexbox only. Values follow tre's conventions: plain numbers are pixels.
+
+### Phase 1 — Grid ⬜
+- Step 1: `display` (`"flex"`, `"grid"`); `grid_template_columns`/`grid_template_rows` as a string (`"200 1fr auto"`, `"repeat(3, 1fr)"`, `"minmax(120, 1fr)"`, percentages, `auto`, `min_content`/`max_content`) or a list; `grid_column`/`grid_row` on a child (a line, `"span 2"`, `"1 / 3"`, `"auto"`) — ⬜
+- Step 2: `grid_auto_rows`/`grid_auto_columns`, `grid_auto_flow` (`row`/`column`, with `dense`), `row_gap`/`column_gap` (`gap` still sets both), `justify_items`, `justify_self`, `align_content`; `get()` reads each back as set, and the unknown-property error lists them — ⬜
+- Step 3: headless layout tests, a grid section in the layout guide, an `examples/grid.py`, and the stub — ⬜
+
+---
+
+## Milestone 12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24))
+
+**Status: ⬜ Proposed.** User's decisions (2026-09-29): keys scroll the nearest scroll view around the focused node when that node doesn't use the key itself; `scroll` fires on any change of offset, found by comparison; keyboard and `scroll_into_view` scrolls jump rather than ease.
+
+### Phase 1 — Scrolling Beyond the Wheel ⬜
+- Step 1: `Key::PageUp`/`PageDown` -- platform translation, `simulate` names, `key_down` — ⬜
+- Step 2: keyboard scrolling -- arrows by 40 px, Page Up/Down by the viewport, Home/End to the ends -- of the nearest scroll view around the focused node, when the focused node doesn't use the key (a text field keeps its arrows, Home, and End), or of a focused scroll view itself — ⬜
+- Step 3: `node.scroll_into_view()` and the accessibility action of the same name: every enclosing scroll view scrolls just enough to show the node; a focus change (Tab, `node.focus()`) reveals the newly focused node the same way — ⬜
+- Step 4: a `scroll` event on the scroll view, `old_value`/`new_value`, whenever its offset changes from any cause -- wheel, keys, `scroll_into_view`, focus, `set`, or an animation (each frame) -- found by comparing offsets after each dispatched input and each tick — ⬜
+- Step 5: a docs note that one content box with `flex_shrink=0` is what scrolls; tests and example updates — ⬜
+
+---
+
+## Milestone 13 — Release `0.4.2`
+
+**Status: ⬜ Proposed.**
+
+### Phase 1 — Release ⬜
+- Step 1: PR to `main`, CI green, merge, tag `v0.4.2`, release, PyPI — ⬜
+- Step 2: Tesserae moves to `0.4.2` — ⬜
+
+---
+
+## Branch: `0.4.2` — Scaffold
+
+**Status: ✅ Scaffolded (2026-09-29).**
+
+- Branch `0.4.2` created off `main` at `30c7f27` (`v0.4.1` plus its release records) — ✅
+- `Cargo.toml` and `pyproject.toml` bumped to `0.4.2`; `Cargo.lock` updated via `cargo check` — ✅
 
 ---
 
