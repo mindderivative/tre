@@ -158,6 +158,9 @@ fn terminal_hit_cell(
 }
 
 struct GpuState {
+    /// 0.4.0 M6: kept to recreate a lost `surface` for `window`.
+    instance: wgpu::Instance,
+    window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     /// M32 Phase 2 (§4, §5): kept around (not just consumed inside
     /// `new`) specifically so `resize` below can reconfigure the
@@ -181,7 +184,7 @@ impl GpuState {
     fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
-            .create_surface(window)
+            .create_surface(window.clone())
             .map_err(|err| format!("couldn't create a GPU surface for the window: {err}"))?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
@@ -229,6 +232,8 @@ impl GpuState {
         let renderer = WindowRenderer::new(&device, config.format, width, height, copyable);
 
         Ok(Self {
+            instance,
+            window,
             surface,
             surface_config: config,
             device,
@@ -309,6 +314,25 @@ impl GpuState {
     /// entirely and needed no fork -- and at this machine's own real
     /// measured cost (well under 1ms), a plain per-frame coalesce
     /// already removes the redundant-reconfigure cost without it.
+    /// 0.4.0 M6: a new surface for the window after the old one was lost
+    /// (wgpu's `CurrentSurfaceTexture::Lost`), configured as the old one
+    /// was, its kept frame's contents redrawn next frame. Whether that
+    /// worked.
+    fn recreate_surface(&mut self) -> bool {
+        match self.instance.create_surface(self.window.clone()) {
+            Ok(surface) => {
+                surface.configure(&self.device, &self.surface_config);
+                self.surface = surface;
+                self.renderer.reset();
+                true
+            }
+            Err(err) => {
+                tracing::warn!(%err, "the window's surface was lost and couldn't be recreated");
+                false
+            }
+        }
+    }
+
     fn needs_resize(&self, width: u32, height: u32) -> bool {
         let (width, height) = self.fit(width, height);
         self.surface_config.width != width || self.surface_config.height != height
@@ -578,7 +602,7 @@ impl App {
                 );
                 true
             },
-            move |window_id, _frame| -> bool {
+            move |window_id, _frame, os_requested| -> bool {
                 // M87: run anything a background thread queued via
                 // `LoopHandle.call_soon` first, so a queued change is
                 // what this very frame ticks and paints. No borrow of
@@ -661,7 +685,11 @@ impl App {
                 // when nothing was registered.
                 let fonts_changed = runtime.gpu.renderer.text().sync_registered_fonts();
                 let dirty = runtime.tree.borrow_mut().take_dirty();
-                if !dirty && !resized && !fonts_changed {
+                let changed = dirty || resized || fonts_changed;
+                // 0.4.0 M6: an OS redraw (an expose) with nothing changed
+                // still gets the kept frame presented again -- the surface
+                // image may have lost it -- where there is a kept frame.
+                if !changed && !(os_requested && runtime.gpu.renderer.has_persistent_target()) {
                     return any_active;
                 }
 
@@ -713,7 +741,15 @@ impl App {
                         &gpu.queue,
                     )
                 };
-                tracing::trace!(?damage, "frame damage");
+                tracing::trace!(?damage, os_requested, "frame damage");
+                // 0.4.0 M6: nothing to show that isn't already shown, only
+                // this loop asked, and nothing is animating -- no image to
+                // acquire or present. While something animates, the present
+                // is kept: its wait for the display is what paces the loop,
+                // which would otherwise spin through unchanged frames.
+                if damage == engine_render::Damage::None && !os_requested && !any_active {
+                    return any_active;
+                }
 
                 let gpu = &mut runtime.gpu;
                 let (output, reconfigure) = match gpu.surface.get_current_texture() {
@@ -727,14 +763,17 @@ impl App {
                         gpu.renderer.reset();
                         runtime.tree.borrow_mut().mark_dirty();
                         // 0.4.0 review: an outdated surface recovers once
-                        // reconfigured (wgpu 30's docs), so do that and retry
-                        // at once; a timeout or an occluded window waits for
-                        // the next frame. (A lost surface needs recreating,
-                        // which tre doesn't do yet.)
-                        let retry = matches!(failed, wgpu::CurrentSurfaceTexture::Outdated);
-                        if retry {
-                            gpu.surface.configure(&gpu.device, &gpu.surface_config);
-                        }
+                        // reconfigured, a lost one once recreated (wgpu 30's
+                        // docs) -- then retry at once; a timeout or an
+                        // occluded window waits for the next frame.
+                        let retry = match failed {
+                            wgpu::CurrentSurfaceTexture::Outdated => {
+                                gpu.surface.configure(&gpu.device, &gpu.surface_config);
+                                true
+                            }
+                            wgpu::CurrentSurfaceTexture::Lost => gpu.recreate_surface(),
+                            _ => false,
+                        };
                         return any_active || retry;
                     }
                 };

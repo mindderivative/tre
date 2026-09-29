@@ -33,7 +33,7 @@ fn main() {
 
     let result = run_windowed_multi(
         |_window_id, _token, _window| true,
-        move |_window_id, _frame| {
+        move |_window_id, _frame, _os_requested| {
             frame_count_for_frame.fetch_add(1, Ordering::SeqCst);
             true
         },

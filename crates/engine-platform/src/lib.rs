@@ -354,8 +354,10 @@ impl EventLoopWaker {
 /// per-window GPU/render state. It returns whether that worked: `false`
 /// (0.4.0: no GPU adapter, say) closes the window and ends the loop at
 /// once, for the caller to report. `on_frame` then fires once per redraw
-/// with just the `WindowId` and 0-based frame index (the caller already
-/// has everything else from `on_window_created`); `build_access_update`
+/// with just the `WindowId`, the 0-based frame index (the caller already
+/// has everything else from `on_window_created`), and (0.4.0 M6) whether
+/// the OS asked for this redraw -- an expose -- rather than this loop
+/// (animation, input, a wake), where the two didn't coincide; `build_access_update`
 /// fires per window the same way, keeping each window's own exposed
 /// accessibility tree in sync (§10). Exits once every window has closed
 /// or reached its own `max_frames`.
@@ -430,7 +432,7 @@ pub fn run_windowed_multi<C, F, A, S, N, X, L>(
 ) -> Result<(), winit::error::EventLoopError>
 where
     C: FnMut(WindowId, u64, Arc<Window>) -> bool,
-    F: FnMut(WindowId, u32) -> bool,
+    F: FnMut(WindowId, u32, bool) -> bool,
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
     X: FnMut(WindowId, accesskit::ActionRequest),
@@ -485,7 +487,7 @@ where
             *window_for_created.borrow_mut() = Some(created);
             true
         },
-        move |_id, frame| {
+        move |_id, frame, _os_requested| {
             let window = window
                 .borrow()
                 .clone()
@@ -515,6 +517,10 @@ where
 
 struct PerWindow {
     window: Arc<Window>,
+    /// 0.4.0 M6: whether the pending redraw is one this loop asked for
+    /// (animation, input, a wake) rather than the OS (an expose) -- read
+    /// and cleared at `RedrawRequested`, and handed to `on_frame`.
+    app_requested: bool,
     access_adapter: accesskit_winit::Adapter,
     frame: u32,
     max_frames: Option<u32>,
@@ -537,6 +543,14 @@ struct PerWindow {
     animating: bool,
 }
 
+impl PerWindow {
+    /// Asks for a redraw, noting that this loop asked for it.
+    fn request_redraw(&mut self) {
+        self.app_requested = true;
+        self.window.request_redraw();
+    }
+}
+
 struct MultiWindowApp<C, F, A, N, X, L> {
     windows: HashMap<WindowId, PerWindow>,
     proxy: EventLoopProxy<PlatformEvent>,
@@ -551,7 +565,7 @@ struct MultiWindowApp<C, F, A, N, X, L> {
 impl<C, F, A, N, X, L> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X, L>
 where
     C: FnMut(WindowId, u64, Arc<Window>) -> bool,
-    F: FnMut(WindowId, u32) -> bool,
+    F: FnMut(WindowId, u32, bool) -> bool,
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
     X: FnMut(WindowId, accesskit::ActionRequest),
@@ -610,6 +624,8 @@ where
                     id,
                     PerWindow {
                         window,
+                        // The first frame is this loop's own request.
+                        app_requested: true,
                         access_adapter: adapter,
                         frame: 0,
                         max_frames: request.config.max_frames,
@@ -647,8 +663,8 @@ where
                     // paint the result of an assistive-technology action
                     // until some *other*, unrelated event happened to
                     // wake it.
-                    if let Some(win) = self.windows.get(&event.window_id) {
-                        win.window.request_redraw();
+                    if let Some(win) = self.windows.get_mut(&event.window_id) {
+                        win.request_redraw();
                     }
                 }
                 // No real per-window behavior change needed here --
@@ -670,8 +686,8 @@ where
             // real "whole-loop signal" shape `any_active` itself
             // already has.
             PlatformEvent::Wake => {
-                for win in self.windows.values() {
-                    win.window.request_redraw();
+                for win in self.windows.values_mut() {
+                    win.request_redraw();
                 }
             }
         }
@@ -709,7 +725,8 @@ where
                 }
             }
             WindowEvent::RedrawRequested => {
-                let real_still_animating = on_frame(window_id, win.frame);
+                let os_requested = !std::mem::take(&mut win.app_requested);
+                let real_still_animating = on_frame(window_id, win.frame, os_requested);
                 // M29 Phase 2: real finding, caught by actually running
                 // this against every example/test in the workspace, not
                 // assumed -- a bounded run (`max_frames: Some(_)`) must
@@ -747,7 +764,7 @@ where
                 // wake it via an explicit `request_redraw()` call
                 // elsewhere in this file.
                 if still_animating {
-                    win.window.request_redraw();
+                    win.request_redraw();
                 }
                 // `ControlFlow` is a single, event-loop-wide setting, not
                 // per-window -- with more than one window open, this
@@ -778,7 +795,7 @@ where
                 // event actually changed anything worth a repaint --
                 // `Tree`'s own dirty flag, Phase 1, already makes an
                 // extra request here free if it turns out nothing did).
-                win.window.request_redraw();
+                win.request_redraw();
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 win.modifiers = modifiers.state();
@@ -790,13 +807,13 @@ where
             // M94: nothing is hovered once the pointer leaves the window.
             WindowEvent::CursorLeft { .. } => {
                 on_input(window_id, InputEvent::PointerLeft);
-                win.window.request_redraw();
+                win.request_redraw();
             }
             // M94: delivered to Python as the window's `scale_factor`
             // event.
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 on_input(window_id, InputEvent::ScaleFactorChanged { scale_factor });
-                win.window.request_redraw();
+                win.request_redraw();
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if let Some(button) = translate_pointer_button(button) {
@@ -813,7 +830,7 @@ where
                     };
                     on_input(window_id, event);
                 }
-                win.window.request_redraw();
+                win.request_redraw();
             }
             WindowEvent::KeyboardInput {
                 event: key_event, ..
@@ -871,7 +888,7 @@ where
                     // input" meaning).
                     on_input(window_id, InputEvent::TextInput(text.to_string()));
                 }
-                win.window.request_redraw();
+                win.request_redraw();
             }
             // M4 Phase 8 (§11.7/§11.8 groundwork): `winit`'s own
             // `MouseWheel` carries no position either, the same real
@@ -885,7 +902,7 @@ where
                         position: win.last_cursor_position,
                     },
                 );
-                win.window.request_redraw();
+                win.request_redraw();
             }
             // M7 Phase 3 (§7.1): real live OS light/dark switching --
             // verified directly against the pinned `winit = "0.30.13"`
@@ -902,7 +919,7 @@ where
                         dark: translate_theme(theme),
                     },
                 );
-                win.window.request_redraw();
+                win.request_redraw();
             }
             // M32 Phase 2 (§4, §5): the real gap this phase closes --
             // "nothing resizes any node's box when its window resizes."
@@ -923,7 +940,7 @@ where
                         height: size.height as f32,
                     },
                 );
-                win.window.request_redraw();
+                win.request_redraw();
             }
             // M17 Phase 2 (§8): real IME composition, reachable only
             // because `resumed`'s own window creation now calls
@@ -945,7 +962,7 @@ where
                     }
                     Ime::Enabled | Ime::Disabled => {}
                 }
-                win.window.request_redraw();
+                win.request_redraw();
             }
             _ => {}
         }

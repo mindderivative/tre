@@ -54,4 +54,8 @@ its direct vello_gpu dependency.
 counter would be instrumentation); walk beside a 200x60 terminal + 2000
 commands: 0.32-0.77 ms -> 0.07-0.10 ms.
 
-Next: Step 6, lost surface and present skipping.
+**Step 6 (2026-09-28).** Lost surfaces recreated; platform passes
+os_requested to on_frame; no present for loop-requested, undamaged,
+non-animating frames; OS redraws re-present the kept frame.
+
+Next: Step 7, shared window fields and partial_redraw_active.

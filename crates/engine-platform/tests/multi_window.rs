@@ -27,7 +27,7 @@ fn main() {
             created_for_created.borrow_mut().push((token, window_id));
             true
         },
-        move |window_id, frame| {
+        move |window_id, frame, _os_requested| {
             frame_counts_for_frame
                 .borrow_mut()
                 .insert(window_id, frame + 1);
