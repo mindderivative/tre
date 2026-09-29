@@ -52,6 +52,8 @@ pub(crate) fn button_name(button: PointerButton) -> &'static str {
         PointerButton::Primary => "primary",
         PointerButton::Secondary => "secondary",
         PointerButton::Middle => "middle",
+        PointerButton::Back => "back",
+        PointerButton::Forward => "forward",
     }
 }
 

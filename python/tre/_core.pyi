@@ -43,7 +43,9 @@ class Event:
     """
 
     button: str | None
-    """Pointer events: `"primary"`, `"secondary"`, or `"middle"`."""
+    """Pointer events: `"primary"`, `"secondary"`, `"middle"`, or (0.4.1)
+    the mouse's side buttons, `"back"` and `"forward"`. Only the primary
+    button's press and release make a `click`."""
     old_value: Any | None
     """`"change"` only: a text input's text immediately before the edit."""
     new_value: Any | None

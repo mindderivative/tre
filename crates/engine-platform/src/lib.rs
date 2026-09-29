@@ -93,21 +93,19 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
 
-/// The three buttons `engine_core::PointerButton` actually distinguishes.
-/// **Real API fact, verified directly against `winit = "0.30.13"`'s own
-/// `event.rs` before writing this:** `winit::event::MouseButton` has six
-/// variants (`Left`/`Right`/`Middle`/`Back`/`Forward`/`Other(u16)`), not
-/// three -- an earlier doc comment on `engine_core::PointerButton`
-/// claimed a 1:1 three-variant match without checking, which was wrong.
-/// `Back`/`Forward`/`Other` (a browser-navigation convention with no
-/// real desktop meaning here yet) translate to `None` -- no `InputEvent`
-/// at all, a stated narrowing, not a silently-dropped case.
+/// `winit`'s mouse button as `engine_core::PointerButton`: left, right, and
+/// middle as primary, secondary, and middle, and (0.4.1, issue #21) the
+/// back and forward side buttons as themselves. `Other(n)` -- no common
+/// meaning -- translates to `None`, no `InputEvent` at all.
 fn translate_pointer_button(button: MouseButton) -> Option<PointerButton> {
     match button {
         MouseButton::Left => Some(PointerButton::Primary),
         MouseButton::Right => Some(PointerButton::Secondary),
         MouseButton::Middle => Some(PointerButton::Middle),
-        MouseButton::Back | MouseButton::Forward | MouseButton::Other(_) => None,
+        // 0.4.1 (issue #21): the side buttons, for back/forward navigation.
+        MouseButton::Back => Some(PointerButton::Back),
+        MouseButton::Forward => Some(PointerButton::Forward),
+        MouseButton::Other(_) => None,
     }
 }
 
@@ -1017,8 +1015,14 @@ mod tests {
 
     #[test]
     fn translate_pointer_button_ignores_buttons_with_no_md3_desktop_meaning_yet() {
-        assert_eq!(translate_pointer_button(MouseButton::Back), None);
-        assert_eq!(translate_pointer_button(MouseButton::Forward), None);
+        assert_eq!(
+            translate_pointer_button(MouseButton::Back),
+            Some(PointerButton::Back)
+        );
+        assert_eq!(
+            translate_pointer_button(MouseButton::Forward),
+            Some(PointerButton::Forward)
+        );
         assert_eq!(translate_pointer_button(MouseButton::Other(7)), None);
     }
 

@@ -269,7 +269,7 @@ and events still bubble from it.
 | `current` | bubbling events: the node whose handler is running |
 | `x`, `y` | pointer and wheel events, local to `current` |
 | `window_x`, `window_y` | pointer and wheel events |
-| `button` | pointer events (`"primary"`, `"secondary"`, `"middle"`) |
+| `button` | pointer events (`"primary"`, `"secondary"`, `"middle"`, `"back"`, `"forward"`) |
 | `delta_x`, `delta_y` | `wheel`, `scroll` — pixels (20 per wheel line), positive scrolling right and down |
 | `key`, `repeat` | `key_down`, `key_up`: snake_case names for named keys (`"enter"`, `"arrow_left"`, `"f5"`, …), the produced character for character keys (`"a"`, `"A"` with Shift); `repeat` for auto-repeat |
 | `shift`, `ctrl`, `alt`, `meta` | pointer and key events |

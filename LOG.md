@@ -24,4 +24,8 @@ keeps its surface-bound adapter.
 
 **Manual check (2026-09-29).** Wayland (KDE): all good, active = True.
 X11 (XWayland): all good, active = True. macOS, Windows: can't be
-checked by hand (user); CI only. Next: release.
+checked by hand (user); CI only.
+
+**M10, issue #21 (2026-09-29).** User: "before that check your issues".
+Back/forward mouse buttons: PointerButton::Back/Forward, "back"/"forward",
+no click. cargo 373, pytest 452 + 1 skipped. Next: the release.

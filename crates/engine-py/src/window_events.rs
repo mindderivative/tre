@@ -170,8 +170,10 @@ fn pointer_button(name: Option<String>) -> PyResult<PointerButton> {
         None | Some("primary") => Ok(PointerButton::Primary),
         Some("secondary") => Ok(PointerButton::Secondary),
         Some("middle") => Ok(PointerButton::Middle),
+        Some("back") => Ok(PointerButton::Back),
+        Some("forward") => Ok(PointerButton::Forward),
         Some(other) => Err(PyValueError::new_err(format!(
-            "unknown button {other:?} -- valid buttons: primary, secondary, middle"
+            "unknown button {other:?} -- valid buttons: primary, secondary, middle, back, forward"
         ))),
     }
 }

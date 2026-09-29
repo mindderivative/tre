@@ -3058,6 +3058,32 @@ fn dispatch_activates_only_a_same_node_primary_press_and_release_pair() {
         "a same-node middle-button press/release pair must still produce no real outcome"
     );
 
+    // 0.4.1 (issue #21): the side buttons, like the middle one, have no
+    // outcome of their own -- their listeners hear the press and release.
+    for button in [PointerButton::Back, PointerButton::Forward] {
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(25.0, 25.0),
+                button,
+            },
+            now,
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(25.0, 25.0),
+                button,
+            },
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a {button:?} press/release pair activates nothing"
+        );
+    }
+
     // Enter/Space on the currently-focused node also activates it.
     tree.set_focus_to(b);
     let outcome = tree.dispatch(

@@ -151,6 +151,27 @@ def test_pointer_up_precedes_click() -> None:
     assert order == ["pointer_down", "pointer_up", "click"]
 
 
+def test_the_mouse_side_buttons_reach_the_root_without_a_click() -> None:
+    # 0.4.1 (issue #21): back and forward, for app navigation -- heard on
+    # the window's root wherever the pointer is, and never a click.
+    w = window()
+    outer, inner = nested(w)
+    seen: list[tuple[str, str | None]] = []
+    for name in ("pointer_down", "pointer_up", "click"):
+        w.root.on(name, lambda e: seen.append((e.type, e.button)))
+    for button in ("back", "forward"):
+        w.simulate("pointer_down", node=inner, button=button)
+        w.simulate("pointer_up", node=inner, button=button)
+    assert seen == [
+        ("pointer_down", "back"),
+        ("pointer_up", "back"),
+        ("pointer_down", "forward"),
+        ("pointer_up", "forward"),
+    ]
+    with pytest.raises(ValueError, match="primary, secondary, middle, back, forward"):
+        w.simulate("pointer_down", node=inner, button="side")
+
+
 # --- pointer_enter / pointer_leave -----------------------------------------------
 
 

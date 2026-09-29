@@ -23,8 +23,9 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M7 — Partial Redraw's Fixed Costs | `██████████` 100% | ✅ Complete (2026-09-28) — measured, not cut: the whole-window overhead is the 0.1 ms damage walk (the rest of `v0.4.0`'s reported gap was noise), and the 0.25 ms copy can't be narrowed safely without swapchain buffer age |
 | M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
 | M9 — Housekeeping and Release `0.4.1` | `█████░░░░░` 50% | 🚧 In Progress — housekeeping done; checked by hand on Wayland and X11 (macOS and Windows by CI only); the release next |
+| M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
 
-**Just closed:** M8 (2026-09-28) -- `window.set(show_damage=True)`: each presented frame shows what it redrew, damage rects tinted magenta or a full redraw outlined in orange, drawn over the image the window shows and never into the frame `tre` keeps.
+**Just closed:** M10 (2026-09-29) -- issue [#21](https://github.com/mindderivative/tre/issues/21): the mouse's back and forward buttons reach Python as `Event.button` `"back"`/`"forward"` on `pointer_down`/`pointer_up`, heard on the root, with no `click` -- for Tesserae's `app.back()`/`app.forward()`.
 
 **Up next:** M9 Phase 2 Step 2 -- the `0.4.1` release: PR to `main`, CI, merge, tag, PyPI.
 
@@ -148,6 +149,15 @@ User: "Start phase 3".
 - Step 1: the user's manual check of partial redraw on real hardware -- X11, Wayland, macOS, Windows: `partial_redraw_active`, and repaint on uncover, resize, and minimize — ✅ (2026-09-29, with `examples/show_damage.py --watch`: KDE Wayland on this machine ✅ -- `partial_redraw_active = True`, only the pulsing card tinted, the orange edge on resize, and correct after uncover and after minimize/restore (user: "all four looked good on Wayland"); X11 through XWayland on the same machine (`env -u WAYLAND_DISPLAY`) ✅ -- `partial_redraw_active = True` in both of its runs, the four checks good (user: "X11 looked good too"); macOS and Windows not checked by hand -- the user has neither ("I can not test on windows and macos") -- so there only CI's headless build and tests cover them, and the release note says so)
 - Step 2: PR to `main`, CI green, merge, tag `v0.4.1`, release, PyPI — ⬜
 - Step 3: Tesserae moves to `0.4.1` — ⬜
+
+---
+
+## Milestone 10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21))
+
+**Status: ✅ Complete (2026-09-29).** User, before the `0.4.1` release: "before that check your issues" -- the one open issue, #21 from Tesserae's routing work (its M66, `app.back()`/`app.forward()`), folded into `0.4.1` ahead of M9's release phase.
+
+### Phase 1 — The Side Buttons ✅
+- Step 1: `PointerButton::Back`/`Forward`, translated from winit's `MouseButton::Back`/`Forward` (only `Other(n)` still goes unreported); `Event.button` names them `"back"` and `"forward"`, `simulate` accepts them, and like the middle button they focus nothing and make no `click` — ✅ (2026-09-29: `engine-core` dispatch treats them as it treats `Middle`, `pointer_down`/`pointer_up` bubbling to the root as the issue relies on; a Rust test that a side-button press/release activates nothing, the `engine-platform` translation test flipped, a pytest that both reach a root listener as `pointer_down`/`pointer_up` with no `click`, and the unknown-button error listing all five; stub and events docs; cargo 373, pytest 452 + 1 skipped)
 
 ---
 
