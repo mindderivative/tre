@@ -76,4 +76,5 @@ focus, text_editing, dispatch, access, tests); 77 methods moved.
 PR #17 merged (dec815c); v0.4.0 tagged; release + PyPI (22 wheels +
 sdist); issue #4 closed; Tesserae told.
 
-Next: Tesserae's report.
+Tesserae moved: 2360 passed, 0 skipped, five examples clean, no issues.
+**M6 complete; the 0.4.0 line is done.**
