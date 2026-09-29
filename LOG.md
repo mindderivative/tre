@@ -11,4 +11,5 @@ cross-platform check before tagging.
 workload. Whole-window overhead = damage walk 0.10-0.12 ms (the rest of
 v0.4.0's reported gap was noise). Copy of the kept frame = 0.25 ms.
 
-Next: decide Steps 2-3 with the user (both look not worth it / not safe).
+**M7 complete (2026-09-28).** User: "Do your recommendation" -- Steps 2-3
+decided against (0.05 ms gain / no buffer age). Next: M8, show_damage.

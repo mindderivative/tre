@@ -1,24 +1,22 @@
-# PLAN — Branch `0.4.1`: Milestone 7, Partial Redraw's Fixed Costs
+# PLAN — Branch `0.4.1`: Milestone 8, Show What's Redrawn
 
-*(Replaces the M6 plan — `v0.4.0` is released. Every step is in
-`BUILD_TRACKER.md`.)*
+*(Replaces the M7 plan — M7 is complete: measured, nothing worth cutting.
+Every step is in `BUILD_TRACKER.md`.)*
 
 ## Goal
 
-`v0.4.0`'s one worse number: with partial redraw on, a change covering
-most of the window costs 0.2-1.8 ms more a frame than with it off -- the
-damage tracker fingerprints every node before settling on a full redraw.
-Remove that, and see whether a small partial frame's copy to the surface
-is worth cutting too.
+`window.set(show_damage=True)` makes each presented frame show what it
+redrew: the damage rects tinted, a whole-window redraw outlined. For seeing
+partial redraw work and finding wasted redraws.
 
-## Steps
+## Design
 
-1. Measure where a frame's time goes -- damage walk, scene, render, copy --
-   for the small and whole-window workloads of `partial_redraw_bench`.
-2. Stop the damage walk once the frame is known to be a full redraw; the
-   next frame compares afresh (one extra full frame when a whole-window
-   change ends, instead of a wasted walk on every frame of it).
-3. Measure the copy to the surface in a small partial frame, and cut it if
-   it's a real share.
-
-Each step: the full chain, docs, tracker, a local commit.
+- The tint is drawn into the surface image after the kept frame is copied
+  there -- never into the kept frame, so the next partial frame starts clean
+  and the pixels partial redraw keeps are unaffected.
+- `Rects`: each rect filled translucent magenta, outlined. `Full`: the
+  window's edge outlined. `None`: nothing presented (unchanged).
+- A per-window `Rc<Cell<bool>>` in `WindowHandles`, read each frame, like
+  `partial_redraw`; `get("show_damage")`.
+- Tests: a GPU test that the surface shows the tint inside the rect and the
+  next frame (overlay off) matches a full render; pytest for set/get.

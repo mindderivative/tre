@@ -20,13 +20,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M4 — Dirty-Region Tracking | `██████████` 100% | ✅ Complete (2026-09-28) — `DamageTracker` reports what changed each frame as at most 4 rects, or a full redraw |
 | M5 — Partial Redraw End to End, Measured | `██████████` 100% | ✅ Complete (2026-09-28) — every window redraws only what changed, byte-identical to a full redraw; a small animation in a 1920x1080 window costs 3.7–4.9x less GPU+CPU time a frame than `v0.3.5.1`, a whole-window change the same |
 | M6 — Release `0.4.0` | `██████████` 100% | ✅ Complete (2026-09-28) — `v0.4.0` released on GitHub and PyPI as `tesserae-engine` 0.4.0, closing issue #4; Tesserae moved onto it with nothing broken |
-| M7 — Partial Redraw's Fixed Costs | `███░░░░░░░` 33% | 🚧 In Progress — measured: the whole-window overhead is the 0.1 ms damage walk, the rest was noise; the copy is 0.25 ms |
+| M7 — Partial Redraw's Fixed Costs | `██████████` 100% | ✅ Complete (2026-09-28) — measured, not cut: the whole-window overhead is the 0.1 ms damage walk (the rest of `v0.4.0`'s reported gap was noise), and the 0.25 ms copy can't be narrowed safely without swapchain buffer age |
 | M8 — Show What's Redrawn | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M9 — Housekeeping and Release `0.4.1` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** M6 (2026-09-28) -- `v0.4.0` released (PR #17, merge `dec815c`), closing issue [#4](https://github.com/mindderivative/tre/issues/4): partial redraw on upstream `vello_gpu`, on by default and byte-identical to a full redraw, a small animation in a large window costing 3.7-4.9x less a frame than `v0.3.5.1`. On GitHub with 24 assets and on PyPI as `tesserae-engine` 0.4.0, sdist included. Tesserae moved onto it: 2360 passed, nothing broken.
+**Just closed:** M7 (2026-09-28) -- partial redraw's fixed costs, measured: with partial redraw on, a whole-window change pays only the 0.1 ms damage walk (4-5%; the rest of `v0.4.0`'s reported gap was GPU clocks and run order), and a small partial frame's copy to the surface is 0.25 ms, which can't be narrowed safely without swapchain buffer age. Neither cut is worth making.
 
-**Up next:** `0.4.1` (user, 2026-09-28: "yes" to scoping it as the overhead fix, a redrawn-areas overlay, and housekeeping, with a manual cross-platform check before tagging) -- M7, partial redraw's fixed costs.
+**Up next:** M8 -- `window.set(show_damage=True)`, tinting each frame's redrawn areas.
 
 **Known gaps:**
 - None open on this line.
@@ -119,12 +119,12 @@ User: "Start phase 3".
 
 ## Milestone 7 — Partial Redraw's Fixed Costs
 
-**Status: 🚧 In Progress.** Step 1 done (2026-09-28). `v0.4.0`'s one worse number: a change covering most of the window costs 0.2-1.8 ms more a frame with partial redraw on, the tracker fingerprinting every node before settling on a full redraw.
+**Status: ✅ Complete (2026-09-28).** User: "Do your recommendation" -- close M7 on its measurement. `v0.4.0`'s one worse number: a change covering most of the window costs 0.2-1.8 ms more a frame with partial redraw on, the tracker fingerprinting every node before settling on a full redraw.
 
-### Phase 1 — Measure and Cut 🚧
+### Phase 1 — Measure and Cut ✅
 - Step 1: measure where a frame's time goes -- damage walk, scene, render, copy to the surface -- for the small and whole-window workloads — ✅ (2026-09-28: `partial_redraw_bench` now splits each frame into `prepare` (the damage walk), `draw` (scene and encoding) and the GPU wait, and adds an idle workload; three runs, 1920x1080, 576 cards: whole-window with partial redraw on vs off, `prepare` 0.10-0.12 ms vs 0.005 ms, with `draw` and GPU the same -- so the overhead is the walk, about 0.1 ms or 4-5% of the frame, and `v0.4.0`'s reported 0.2-1.8 ms gap was mostly this GPU's clocks and run order; idle frames with partial redraw on cost 0.33-0.38 ms, 0.25 ms of it the GPU copying the kept frame to the surface, which is also most of a small partial frame's 0.31 ms GPU time)
-- Step 2: stop the damage walk once a frame is known to be a full redraw, and restart the comparison next frame — ⬜
-- Step 3: the copy to the surface: measure its share of a small partial frame, and cut it if it's worth it — ⬜
+- Step 2: stop the damage walk once a frame is known to be a full redraw, and restart the comparison next frame — ✅ (2026-09-28, decided against, with the user: the walk is 0.10-0.12 ms of a 2.3 ms whole-window frame, and stopping early would save about half of it, since during a continuing whole-window change every other frame must still compare in full to have a baseline)
+- Step 3: the copy to the surface: measure its share of a small partial frame, and cut it if it's worth it — ✅ (2026-09-28, measured at 0.25 ms at 1080p and kept: narrowing it to the damage needs to know how many frames old each swapchain image is -- they rotate, 2-3 of them -- and wgpu 30 doesn't expose buffer age, so a guess would show stale pixels; frames with nothing changed and nothing animating already skip it, M6 Phase 2 Step 6)
 
 ---
 
