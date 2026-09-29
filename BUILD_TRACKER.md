@@ -22,7 +22,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M6 — Release `0.4.0` | `██████████` 100% | ✅ Complete (2026-09-28) — `v0.4.0` released on GitHub and PyPI as `tesserae-engine` 0.4.0, closing issue #4; Tesserae moved onto it with nothing broken |
 | M7 — Partial Redraw's Fixed Costs | `██████████` 100% | ✅ Complete (2026-09-28) — measured, not cut: the whole-window overhead is the 0.1 ms damage walk (the rest of `v0.4.0`'s reported gap was noise), and the 0.25 ms copy can't be narrowed safely without swapchain buffer age |
 | M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
-| M9 — Housekeeping and Release `0.4.1` | `██░░░░░░░░` 25% | 🚧 In Progress — housekeeping done; the user's manual cross-platform check next, then the release |
+| M9 — Housekeeping and Release `0.4.1` | `█████░░░░░` 50% | 🚧 In Progress — housekeeping done; checked by hand on Wayland and X11 (macOS and Windows by CI only); the release next |
 
 **Just closed:** M8 (2026-09-28) -- `window.set(show_damage=True)`: each presented frame shows what it redrew, damage rects tinted magenta or a full redraw outlined in orange, drawn over the image the window shows and never into the frame `tre` keeps.
 
