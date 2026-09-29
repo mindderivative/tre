@@ -64,4 +64,7 @@ get("partial_redraw_active").
 **Step 8 (2026-09-28).** 21 test files on support::device / read_texture
 (-1,142 +103 lines); rect_window keeps its own (real surface).
 
-Next: Step 9, image atlas.
+**Step 9 (2026-09-28).** Images stay on tre's own textures: atlas has no
+public in-place write, unwraps allocation (panics), 4096 pages.
+
+Next: Step 10, split tree.rs.

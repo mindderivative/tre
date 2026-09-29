@@ -5,8 +5,15 @@
 //! 0.2.0 panicked on `ImageSource::Pixmap`, and so does the pinned
 //! `vello_gpu` (`paint.rs`, `unimplemented!`). `vello_gpu` does offer an
 //! image atlas (`Renderer::upload_image`, drawn by `ImageSource::OpaqueId`)
-//! that 0.2.0's private cache didn't; moving images onto it is an open
-//! decision (0.4.0 review), so for now an image is instead an ordinary, externally
+//! that 0.2.0's private cache didn't. 0.4.0 M6 looked at moving images onto
+//! it and kept tre's own textures, for three reasons in the pinned source:
+//! writing into an existing allocation (`write_to_atlas`) is `pub(crate)`,
+//! so a video's every frame would be a `destroy_image` plus a fresh
+//! `upload_image`, where a texture of its own is written in place;
+//! `upload_image` unwraps its allocation, so an image larger than an atlas
+//! page panics rather than failing; and the default page is 4096x4096,
+//! smaller than the 8192 `MAX_IMAGE_DIMENSION` tre accepts. An image is
+//! instead an ordinary, externally
 //! owned `wgpu::Texture`, uploaded once per real `Image` node and
 //! cached here -- keyed by a stable per-`NodeId` `u64`
 //! (`engine_core::node_id_as_u64`, the identical id scheme
