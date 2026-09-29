@@ -742,6 +742,7 @@ impl Node {
         if redraw {
             crate::node_callbacks::redraw(&self.tree, &self.handlers, self.id, py)?;
         }
+        self.fire_scroll_changes(py);
         Ok(())
     }
 
@@ -971,6 +972,7 @@ impl Node {
         if let Some((old, new)) = transition {
             fire_focus_transition(&self.handlers, &self.tree, &self.completions, old, new, py);
         }
+        self.fire_scroll_changes(py);
     }
 
     /// 0.4.2 M12 (issue #24): scrolls every scroll view around this node
@@ -978,10 +980,23 @@ impl Node {
     fn scroll_into_view(&self, py: Python<'_>) {
         self.layout_box(py);
         self.tree.borrow_mut().scroll_into_view(self.id);
+        self.fire_scroll_changes(py);
     }
 }
 
 impl Node {
+    /// 0.4.2 M12: `scroll` events for any scroll view this call moved.
+    fn fire_scroll_changes(&self, py: Python<'_>) {
+        crate::listeners::fire_scroll_changes(
+            &crate::event::NodeContext {
+                tree: &self.tree,
+                handlers: &self.handlers,
+                completions: &self.completions,
+            },
+            py,
+        );
+    }
+
     /// M96: this node's computed box in window space -- `(x, y, width,
     /// height)` -- running any pending layout of its tree first, so it
     /// always matches the current tree. A detached subtree is laid out on

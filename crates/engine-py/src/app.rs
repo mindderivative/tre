@@ -559,6 +559,16 @@ impl App {
 
                 let now = crate::clock::now(&runtime.handles.tree);
                 let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                // 0.4.2 M12: an animated or `set` scroll offset reports
+                // its change here, once a frame.
+                crate::listeners::fire_scroll_changes(
+                    &crate::event::NodeContext {
+                        tree: &runtime.handles.tree,
+                        handlers: &runtime.handles.handlers,
+                        completions: &runtime.handles.completions,
+                    },
+                    py,
+                );
                 // M9 Phase 2 (§5): the real drain -- invokes each
                 // just-completed animation's registered `on_complete`
                 // callback exactly once, the same "look up and call a

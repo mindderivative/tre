@@ -104,10 +104,12 @@ pub(crate) enum EventType {
     Change,
     A11yAction,
     Dismiss,
+    /// 0.4.2 M12 (issue #24): a scroll view's offset changed.
+    Scroll,
 }
 
 impl EventType {
-    const ALL: [EventType; 16] = [
+    const ALL: [EventType; 17] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -124,6 +126,7 @@ impl EventType {
         Self::Change,
         Self::A11yAction,
         Self::Dismiss,
+        Self::Scroll,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -144,6 +147,7 @@ impl EventType {
             Self::Change => "change",
             Self::A11yAction => "a11y_action",
             Self::Dismiss => "dismiss",
+            Self::Scroll => "scroll",
         }
     }
 
@@ -153,7 +157,7 @@ impl EventType {
     fn bubbles(self) -> bool {
         !matches!(
             self,
-            Self::PointerEnter | Self::PointerLeave | Self::Change | Self::Dismiss
+            Self::PointerEnter | Self::PointerLeave | Self::Change | Self::Dismiss | Self::Scroll
         )
     }
 
@@ -458,6 +462,20 @@ pub(crate) fn deliver_a11y_action(
     // that also scrolls it doesn't scroll twice.
     if action == "scroll_into_view" {
         ctx.tree.borrow_mut().scroll_into_view(node);
+    }
+}
+
+/// 0.4.2 M12 (issue #24): a `scroll` event, with `old_value`/`new_value`,
+/// for every scroll view whose offset changed since the last call
+/// (`Tree::take_scroll_changes`) -- called after input, each tick, and
+/// each Python call that can move one.
+pub(crate) fn fire_scroll_changes(ctx: &NodeContext<'_>, py: Python<'_>) {
+    let changes = ctx.tree.borrow_mut().take_scroll_changes();
+    for (view, old, new) in changes {
+        deliver(ctx, py, EventType::Scroll, view, None, |e| {
+            e.old_value = pyo3::IntoPyObjectExt::into_py_any(old, py).ok();
+            e.new_value = pyo3::IntoPyObjectExt::into_py_any(new, py).ok();
+        });
     }
 }
 

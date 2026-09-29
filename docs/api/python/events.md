@@ -27,6 +27,7 @@ listing the valid ones.
 | `input` | Committed text arrives for the focused text field | yes |
 | `focus`, `unfocus` | A node gains or loses keyboard focus | yes |
 | `change` | A text field's text was changed by the user | no |
+| `scroll` | A scroll view's offset changed, by any cause: wheel, keys, `scroll_into_view`, focus, or `set` (0.4.2) | no |
 | `dismiss` | An outside press or Escape asked a [layer](layers.md) to close | no |
 | `a11y_action` | An assistive technology requested `increment`, `decrement`, `expand`, `collapse`, `scroll_into_view`, or `set_value` (its activate and focus requests arrive as `click` and `focus`) | yes |
 
@@ -141,7 +142,7 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `key`, `repeat` | `key_down`, `key_up` |
 | `shift`, `ctrl`, `alt`, `meta` | pointer, wheel, key, and click events |
 | `text` | `input` |
-| `old_value`, `new_value` | `change` |
+| `old_value`, `new_value` | `change` — the text; `scroll` — the offset |
 | `action`, `value` | `a11y_action` |
 | `related_target` | `focus`, `unfocus` — the node on the other side of the move |
 | `focus_visible` | `focus` — whether focus arrived by keyboard |

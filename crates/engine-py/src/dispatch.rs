@@ -413,6 +413,7 @@ pub(crate) fn process_input(
     );
     shortcuts(ctx, io, root, event, py);
     keyboard_scroll(ctx, event);
+    listeners::fire_scroll_changes(ctx, py);
     outcome
 }
 

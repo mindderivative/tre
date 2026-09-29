@@ -47,9 +47,11 @@ class Event:
     the mouse's side buttons, `"back"` and `"forward"`. Only the primary
     button's press and release make a `click`."""
     old_value: Any | None
-    """`"change"` only: a text input's text immediately before the edit."""
+    """`"change"`: a text input's text immediately before the edit.
+    `"scroll"` (0.4.2): the scroll view's offset before the change."""
     new_value: Any | None
-    """`"change"` only: the text immediately after the edit."""
+    """`"change"`: the text immediately after the edit. `"scroll"`: the
+    offset after it."""
 
     # M94: the M93 target-API fields. Every field but `type` is `None`
     # unless the event has something to say about it.
@@ -196,8 +198,8 @@ class Node:
         listener for it. Events: `pointer_enter`, `pointer_leave`,
         `pointer_down`, `pointer_move`, `pointer_up`, `click`,
         `secondary_click`, `wheel`, `key_down`, `key_up`, `input`,
-        `focus`, `unfocus`, `change`, `a11y_action`. All but
-        `pointer_enter`/`pointer_leave`/`change` bubble to ancestors
+        `focus`, `unfocus`, `change`, `a11y_action`, `scroll`. All but
+        `pointer_enter`/`pointer_leave`/`change`/`scroll` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
         `ValueError` for an unknown event.

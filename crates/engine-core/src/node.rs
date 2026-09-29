@@ -396,6 +396,10 @@ pub struct ScrollViewState {
     pub scrollbar_fill: Option<Color>,
     /// M95: the scrollbar thumb's thickness -- painted and hit-tested.
     pub scrollbar_width: f64,
+    /// 0.4.2 M12 (issue #24): the offset last reported as a `scroll`
+    /// event. `Tree::take_scroll_changes` compares `scroll` with it, so a
+    /// change is noticed whatever made it.
+    pub reported: f64,
 }
 
 impl ScrollViewState {
@@ -406,6 +410,7 @@ impl ScrollViewState {
             thumb_drag_anchor: None,
             scrollbar_fill: None,
             scrollbar_width: SCROLLBAR_THICKNESS,
+            reported: 0.0,
         }
     }
 

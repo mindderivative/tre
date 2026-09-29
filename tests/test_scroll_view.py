@@ -228,3 +228,56 @@ def test_nested_scroll_views_reveal_together():
     deep.scroll_into_view()
     assert offset(inner) == 220.0, "the inner view shows it"
     assert offset(outer) == 400.0, "the outer view shows the inner one's view of it"
+
+
+# --- 0.4.2 M12 (issue #24): the scroll event --------------------------------------
+
+
+def listen(view):
+    seen = []
+    view.on("scroll", lambda e: seen.append((e.old_value, e.new_value)))
+    return seen
+
+
+def test_scroll_fires_for_every_cause_with_old_and_new_offsets():
+    window = Window(width=800, height=600)
+    view, content, item = scroller(window)
+    seen = listen(view)
+
+    item.focus()  # already in view: no scroll
+    window.simulate("wheel", node=view, delta_y=50.0)
+    window.simulate("key_down", key="arrow_down")
+    item_at(window, content, 700).scroll_into_view()
+    view.set(scroll_offset=0.0)
+    assert seen[0][0] == 0.0 and seen[0][1] > 0.0, "wheel"
+    assert [new for _, new in seen[1:]] == [seen[0][1] + 40.0, 620.0, 0.0]
+    assert all(old == prev_new for (old, _), (_, prev_new) in zip(seen[1:], seen)), (
+        "each old value is the last one reported"
+    )
+
+
+def test_an_animated_scroll_fires_as_it_moves():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window)
+    seen = listen(view)
+    window.advance(0)
+    view.animate("scroll_offset", 300.0, 100)
+    window.advance(50)
+    window.advance(50)
+    assert len(seen) == 2
+    assert 0.0 < seen[0][1] < 300.0 and seen[1] == (seen[0][1], 300.0)
+
+
+def test_scroll_is_quiet_when_nothing_moves_and_does_not_bubble():
+    window = Window(width=800, height=600)
+    view, _, item = scroller(window)
+    seen = listen(view)
+    root_heard = []
+    window.root.on("scroll", lambda e: root_heard.append(e))
+    item.focus()
+    window.simulate("key_down", key="arrow_up")  # already at the top
+    window.advance(16)
+    assert seen == []
+    window.simulate("key_down", key="page_down")
+    assert seen == [(0.0, 100.0)]
+    assert root_heard == [], "scroll stays on the scroll view"

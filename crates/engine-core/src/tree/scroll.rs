@@ -612,4 +612,24 @@ impl Tree {
         }
         moved
     }
+
+    /// 0.4.2 M12 (issue #24): every scroll view whose offset has changed
+    /// since this was last asked -- `(view, old, new)` -- by comparison, so
+    /// no cause is missed: the wheel, keys, `scroll_into_view`, focus,
+    /// `set`, a thumb drag, or an animation.
+    pub fn take_scroll_changes(&mut self) -> Vec<(NodeId, f64, f64)> {
+        let mut changes = Vec::new();
+        if self.scroll_view_count == 0 {
+            return changes;
+        }
+        for (id, node) in &mut self.nodes {
+            if let NodeKind::ScrollView(state) = &mut node.kind
+                && state.scroll.current != state.reported
+            {
+                changes.push((id, state.reported, state.scroll.current));
+                state.reported = state.scroll.current;
+            }
+        }
+        changes
+    }
 }
