@@ -25,12 +25,12 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M9 — Housekeeping and Release `0.4.1` | `██████████` 100% | ✅ Complete (2026-09-29) — `v0.4.1` released on GitHub and PyPI, closing issue #21; Tesserae moved onto it, its side buttons driving back/forward |
 | M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
 | M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `██████████` 100% | ✅ Complete (2026-09-29) — `display="grid"`, track lists, placements, auto tracks and flow, row/column gaps, and item alignment, read back as set |
-| M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `██░░░░░░░░` 20% | 🚧 In Progress — Page Up/Down keys in |
 | M13 — Release `0.4.2` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
 **Just closed:** M11 (2026-09-29) -- issue [#23](https://github.com/mindderivative/tre/issues/23): CSS Grid through node properties -- `display="grid"`, `grid_template_columns`/`rows` as track lists (`"200 1fr auto"`, `repeat()`, `minmax()`), `grid_column`/`grid_row` placements, auto tracks and flow, row and column gaps, and item alignment, each read back as set.
 
-**Up next:** M12 -- scroll views: Page Up/Down keys, keyboard scrolling, `scroll_into_view` and focus reveal, and a `scroll` event (issue #24).
+**Up next:** M12 Step 2 -- keyboard scrolling of the nearest scroll view around the focused node.
 
 **Known gaps:**
 - None open on this line.
@@ -177,10 +177,10 @@ User: "Start phase 3".
 
 ## Milestone 12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24))
 
-**Status: ⬜ Proposed.** User's decisions (2026-09-29): keys scroll the nearest scroll view around the focused node when that node doesn't use the key itself; `scroll` fires on any change of offset, found by comparison; keyboard and `scroll_into_view` scrolls jump rather than ease.
+**Status: 🚧 In Progress.** User: "yes, start M12". Step 1 done (2026-09-29). User's decisions (2026-09-29): keys scroll the nearest scroll view around the focused node when that node doesn't use the key itself; `scroll` fires on any change of offset, found by comparison; keyboard and `scroll_into_view` scrolls jump rather than ease.
 
-### Phase 1 — Scrolling Beyond the Wheel ⬜
-- Step 1: `Key::PageUp`/`PageDown` -- platform translation, `simulate` names, `key_down` — ⬜
+### Phase 1 — Scrolling Beyond the Wheel 🚧
+- Step 1: `Key::PageUp`/`PageDown` -- platform translation, `simulate` names, `key_down` — ✅ (2026-09-29: the two `Key` variants, translated from winit's `NamedKey::PageUp`/`PageDown` (a test added); `simulate` takes `page_up`/`page_down`; `key_down` already named them, from `engine-platform`'s `key_name`; a terminal sends xterm's `\x1b[5~`/`\x1b[6~`; a text field doesn't take them, so they're left for the scroll view around it; until Step 2 they have no default action)
 - Step 2: keyboard scrolling -- arrows by 40 px, Page Up/Down by the viewport, Home/End to the ends -- of the nearest scroll view around the focused node, when the focused node doesn't use the key (a text field keeps its arrows, Home, and End), or of a focused scroll view itself — ⬜
 - Step 3: `node.scroll_into_view()` and the accessibility action of the same name: every enclosing scroll view scrolls just enough to show the node; a focus change (Tab, `node.focus()`) reveals the newly focused node the same way — ⬜
 - Step 4: a `scroll` event on the scroll view, `old_value`/`new_value`, whenever its offset changes from any cause -- wheel, keys, `scroll_into_view`, focus, `set`, or an animation (each frame) -- found by comparing offsets after each dispatched input and each tick — ⬜

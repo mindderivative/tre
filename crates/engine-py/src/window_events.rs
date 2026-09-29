@@ -161,6 +161,8 @@ fn engine_key(name: &str) -> Option<Key> {
         "arrow_down" => Key::ArrowDown,
         "home" => Key::Home,
         "end" => Key::End,
+        "page_up" => Key::PageUp,
+        "page_down" => Key::PageDown,
         _ => return None,
     })
 }

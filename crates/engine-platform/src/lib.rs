@@ -134,6 +134,8 @@ fn translate_key(logical_key: &WinitKey) -> Option<Key> {
         WinitKey::Named(NamedKey::ArrowDown) => Some(Key::ArrowDown),
         WinitKey::Named(NamedKey::Home) => Some(Key::Home),
         WinitKey::Named(NamedKey::End) => Some(Key::End),
+        WinitKey::Named(NamedKey::PageUp) => Some(Key::PageUp),
+        WinitKey::Named(NamedKey::PageDown) => Some(Key::PageDown),
         _ => None,
     }
 }
@@ -1079,6 +1081,14 @@ mod tests {
         assert_eq!(
             translate_key(&WinitKey::Named(NamedKey::End)),
             Some(Key::End)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::PageUp)),
+            Some(Key::PageUp)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::PageDown)),
+            Some(Key::PageDown)
         );
     }
 
