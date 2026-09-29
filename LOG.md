@@ -67,4 +67,7 @@ get("partial_redraw_active").
 **Step 9 (2026-09-28).** Images stay on tre's own textures: atlas has no
 public in-place write, unwraps allocation (panics), 4096 pages.
 
-Next: Step 10, split tree.rs.
+**Step 10 (2026-09-28).** tree.rs -> tree/ (mod, layout, scroll, layers,
+focus, text_editing, dispatch, access, tests); 77 methods moved.
+
+**Phase 2 complete.** Next: Phase 3, the release (push, CI, PR #17, tag).

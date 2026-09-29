@@ -202,7 +202,7 @@ fn scrolling_moves_the_real_marker_into_view() {
 /// M38 Phase 6 (§5, §7, §11.7): the real pixel-level proof `engine-
 /// render::paint_scroll_view_thumb` actually paints -- a 100x100 view
 /// over 400px of real content: `ScrollViewState::thumb_geometry(100.0,
-/// 400.0)` (proven directly at the Rust level, `tree.rs`'s own `thumb_
+/// 400.0)` (proven directly at the Rust level, `tree/tests.rs`'s own `thumb_
 /// geometry_computes_the_real_track_thumb_and_along_values`) puts the
 /// real thumb at absolute x in [94, 98], y in [2, 34] -- this checks a
 /// point squarely inside that rect is genuinely non-transparent (not

@@ -220,7 +220,7 @@ fn scrolled_content_outside_the_lists_own_bounds_is_genuinely_clipped_not_just_m
 /// rs`'s own identical M38 Phase 6 test exactly: 20 items * 20px = 400px
 /// of real content in a 200x100 viewport puts the real thumb at
 /// absolute x in [194, 198], y in [2, 34] (proven directly at the Rust
-/// level, `tree.rs`'s own `virtual_list_thumb_geometry_computes_the_
+/// level, `tree/tests.rs`'s own `virtual_list_thumb_geometry_computes_the_
 /// real_track_thumb_and_along_values`) -- checks a point squarely
 /// inside that rect is genuinely non-transparent, the real, decisive
 /// claim this phase's own thumb-paint code exists to prove.

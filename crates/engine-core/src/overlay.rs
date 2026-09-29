@@ -5,7 +5,7 @@
 //! (positioning, paint order, hit-testing, the focus model,
 //! `build_access_update()`) reuses machinery that already exists,
 //! per §11.3's own text, which `Tree::open_overlay`/`close_overlay`
-//! (in `tree.rs`) exist to prove for real, not merely assert.
+//! (in `tree/tests.rs`) exist to prove for real, not merely assert.
 
 use crate::node::NodeId;
 

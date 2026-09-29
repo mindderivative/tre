@@ -133,7 +133,7 @@ impl Painter {
     /// author a real curve (see `build_path`'s own doc comment), so
     /// this hit-tests against the true curve, not a straight-line
     /// approximation of it. The underlying distance-to-path math
-    /// (`ParamCurveNearest`, `tree.rs`) already generalized to real
+    /// (`ParamCurveNearest`, `tree/focus.rs`) already generalized to real
     /// curves before this phase -- only the authoring surface changed.
     fn set_hit_test_path(&mut self, points: Vec<Vec<f64>>, tolerance: f64) -> PyResult<()> {
         let path = build_path(points)?;
