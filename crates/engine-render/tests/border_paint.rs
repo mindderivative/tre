@@ -174,7 +174,7 @@ fn a_real_border_paints_its_own_color_near_the_edge_and_the_fill_survives_at_the
         let (data, bytes_per_row) = render(BORDER_WIDTH).await;
 
         // Squarely inside the real stroke band (the stroke is centered
-        // on a rect inset by half the border width, per paint_node's
+        // on a rect inset by half the border width, per draw_own's
         // own real implementation) -- must be the real border color.
         let edge = pixel_at(data.as_slice(), bytes_per_row, 4, SIZE as u32 / 2);
         assert_eq!(

@@ -137,7 +137,7 @@ impl GeometryCache {
     /// The real stroked-border path (M30 Phase 1, §5, §7) -- `inset`
     /// (half the stroke width) shifts the path inward so the stroke
     /// paints entirely inside this node's own bounds, the identical
-    /// real geometry `paint_node`'s own border arm already builds.
+    /// real geometry `draw_own`'s own border arm already builds.
     pub fn rounded_rect_border(
         &mut self,
         id: NodeId,

@@ -1,7 +1,7 @@
 //! `NodeKind::Canvas` (§11.10, §11.11, M5 Phase 3): custom-drawn content
 //! plus an optional custom hit-test override. Both fields here are
 //! plain, inert Rust data -- no `Py<PyAny>` anywhere, deliberately, so
-//! `engine-render::paint_node`/`Tree::hit_test_at` never need to touch
+//! `engine-render's paint walk`/`Tree::hit_test_at` never need to touch
 //! Python on their hot paths: the actual Python `draw` callback is
 //! invoked by `engine-py` (when the canvas is created, its `draw` is
 //! set, or `canvas.redraw()` runs), at an app-triggered sync point
@@ -11,7 +11,7 @@
 use peniko::Color;
 use peniko::kurbo::BezPath;
 
-/// A `Canvas` node's real, current content -- everything `paint_node`
+/// A `Canvas` node's real, current content -- everything `draw_own`
 /// needs to draw it and everything `hit_test_at` needs to test it,
 /// resolved ahead of time by `Tree::set_canvas_content` rather than
 /// computed live during either walk.

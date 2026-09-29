@@ -4,9 +4,9 @@
 //! direct field writes inside `Tree`, animation ticks, layout, and
 //! tree-level state such as focus. Hooking every one of those paths would
 //! make any missed one a stale-pixel bug, and partial redraw is on by
-//! default. Instead `DamageTracker` walks the tree the way the paint walk
-//! does -- the same visibility, culling, composed transforms, and clips,
-//! through the helpers both walks share -- and records, per node, its
+//! default. Instead `DamageTracker` walks the tree with the paint walk's
+//! own traversal (`walk`: the same visibility, culling, composed
+//! transforms, and clips, written once) and records, per node, its
 //! *painted rect* in window pixels and a *fingerprint* of everything that
 //! decides its pixels. A node that's new, gone, or changed since the last
 //! frame contributes its old and new painted rects.
@@ -33,7 +33,7 @@ use engine_core::{
 use peniko::Color;
 use peniko::kurbo::{Affine, Rect, Shape};
 
-use crate::{TextRenderer, clips_children, composed_transform, transformed_bounds};
+use crate::{TextRenderer, transformed_bounds, walk};
 
 /// At most this many rects before the closest pairs merge.
 pub const MAX_RECTS: usize = 4;
@@ -71,8 +71,9 @@ pub struct DamageTracker {
     size: Option<(u16, u16)>,
 }
 
-/// One frame's walk: the records it builds and what the walk needs.
-struct Walk<'a> {
+/// One frame's walk (`walk::Visitor`): the records it builds and what it
+/// needs to build them.
+struct Recorder<'a> {
     tree: &'a Tree,
     text: &'a mut TextRenderer,
     records: HashMap<NodeId, Record>,
@@ -101,13 +102,13 @@ impl DamageTracker {
         text: &mut TextRenderer,
     ) -> Damage {
         let window = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
-        let mut walk = Walk {
+        let mut recorder = Recorder {
             tree,
             text,
             records: HashMap::with_capacity(self.records.len()),
         };
-        walk.visit(root, Affine::IDENTITY, window, 1.0, None, 0);
-        let current = walk.records;
+        walk::walk(tree, root, window, &mut recorder);
+        let current = recorder.records;
 
         let first = self.size != Some((width, height));
         let previous = std::mem::replace(&mut self.records, current);
@@ -140,66 +141,30 @@ impl DamageTracker {
     }
 }
 
-impl Walk<'_> {
-    /// Mirrors `paint_node`: skipped when hidden, culled, or fully
-    /// transparent, exactly as painting skips them.
-    fn visit(
-        &mut self,
-        id: NodeId,
-        parent_transform: Affine,
-        visible: Rect,
-        parent_opacity: f64,
-        parent: Option<NodeId>,
-        order: usize,
-    ) {
-        let tree = self.tree;
-        let Some(node) = tree.get(id) else { return };
-        if !node.visible {
-            return;
-        }
-        let layout = tree.layout(id);
-        let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
-        let position = (f64::from(layout.location.x), f64::from(layout.location.y));
-        let composed = composed_transform(parent_transform, position, node, w, h);
-        let bounds = transformed_bounds(composed, Rect::new(0.0, 0.0, w, h));
-        if !bounds.overlaps(visible) {
-            return;
-        }
-        let opacity = node.paint.opacity.current;
-        if opacity <= 0.0 {
-            return;
-        }
-        let effective = parent_opacity * opacity;
-
+impl<'t> walk::Visitor<'t> for Recorder<'_> {
+    /// Records every node the paint walk reaches -- the same `walk`, so
+    /// the two can't disagree about which nodes are drawn.
+    fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
         let painted = round_out(painted_rect(
-            self.text, id, node, composed, w, h, bounds, visible,
+            self.text, v.id, v.node, v.composed, v.w, v.h, v.bounds, v.visible,
         ));
-
         let mut hasher = std::hash::DefaultHasher::new();
-        parent.hash(&mut hasher);
-        order.hash(&mut hasher);
-        affine(&mut hasher, composed);
-        num(&mut hasher, effective);
-        rect(&mut hasher, visible);
-        num(&mut hasher, w);
-        num(&mut hasher, h);
-        node_fingerprint(&mut hasher, tree, id, node);
+        v.parent.hash(&mut hasher);
+        v.order.hash(&mut hasher);
+        affine(&mut hasher, v.composed);
+        num(&mut hasher, v.opacity);
+        rect(&mut hasher, v.visible);
+        num(&mut hasher, v.w);
+        num(&mut hasher, v.h);
+        node_fingerprint(&mut hasher, self.tree, v.id, v.node);
         self.records.insert(
-            id,
+            v.id,
             Record {
                 painted,
                 fingerprint: hasher.finish(),
             },
         );
-
-        let child_visible = if clips_children(node) {
-            visible.intersect(bounds)
-        } else {
-            visible
-        };
-        for (index, &child) in tree.children_in_paint_order(id).iter().enumerate() {
-            self.visit(child, composed, child_visible, effective, Some(id), index);
-        }
+        true
     }
 }
 

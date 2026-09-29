@@ -43,4 +43,7 @@ pytest 433 + 1 skipped. Report: https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk
 **Step 2 (2026-09-28).** GPU setup failures raise RuntimeError from
 App.run (platform created-callback returns bool); zero-size Window raises.
 
-Next: Step 3, one shared traversal.
+**Step 3 (2026-09-28).** walk.rs: one traversal, Painter and Recorder
+visitors; draw_own unchanged; all pixel tests unchanged.
+
+Next: Step 4, per-window renderer.

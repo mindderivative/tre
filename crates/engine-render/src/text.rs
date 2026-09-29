@@ -678,7 +678,7 @@ impl TextRenderer {
     /// during scene construction, not inside `FrameRenderer::render`, so
     /// the same `Resources` instance has to be reachable at both points.
     /// `node_id` is this text node's own real identity in the caller's
-    /// `Tree` (`paint_node`'s own `id`) -- `shaped_layout`'s cache key,
+    /// `Tree` (`draw_own`'s own `id`) -- `shaped_layout`'s cache key,
     /// so the shaping pipeline itself only actually runs again when
     /// something about `state`/`at.max_width` genuinely changed since
     /// this node's last paint.
@@ -1090,7 +1090,7 @@ impl TextRenderer {
 
         // Caret, painted last (on top of everything above) -- only when
         // this field is the `Tree`'s own real, live focused node
-        // (`paint_node`'s own real caller decides `show_caret`).
+        // (`draw_own`'s own real caller decides `show_caret`).
         // `caret_at` is the real, in-progress composition's own end
         // while a preedit is active, `state.cursor` otherwise.
         if show_caret {
@@ -1666,7 +1666,7 @@ fn from_display_offset_folded(
 /// losing any of these genuinely-distinct-per-call values.
 pub struct TextPlacement {
     /// Node-local top-left corner, under whatever transform the caller's
-    /// `Scene` currently has set (M5 Phase 1, §11.9) -- `paint_node`
+    /// `Scene` currently has set (M5 Phase 1, §11.9) -- `draw_own`
     /// always passes `(0.0, 0.0)` today (a text node paints at its own
     /// origin), kept as real fields rather than hardcoded so a future
     /// caller with genuine local padding/inset doesn't need a shape

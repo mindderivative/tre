@@ -609,7 +609,7 @@ impl Tree {
     /// the one real child's own current scroll-shifted position
     /// directly into `layout_style` every frame, so `Tree::hit_test_at`
     /// (which reads `self.layout(child)`, not a second paint-only
-    /// transform) agrees with `engine-render::paint_node` by
+    /// transform) agrees with `engine-render's paint walk` by
     /// construction -- this phase's own real investigation found that
     /// guarantee does *not* hold for `VirtualList` today (a real, pre-
     /// existing, separate bug this milestone surfaces but does not
@@ -687,7 +687,7 @@ impl Tree {
     /// undiscovered bug M36's own investigation found (documented in
     /// `BUILD_TRACKER_ARCHIVE_M1-M50.md`, M36): `VirtualList`'s real
     /// scroll offset used to be applied *only* as an extra
-    /// `engine-render::paint_node` translate, never reflected back
+    /// `engine-render's paint walk` translate, never reflected back
     /// into `layout_style` -- so a real point-based hit-test at a
     /// materialized item's own genuine post-scroll screen position
     /// resolved to the *wrong* item, silently never caught because the
@@ -699,7 +699,7 @@ impl Tree {
     /// bug-free shape: bakes each real
     /// materialized child's own current scroll-adjusted position
     /// directly into `layout_style.inset.top` every frame, which both
-    /// `engine-render::paint_node` and `Tree::hit_test_at` now read
+    /// `engine-render's paint walk` and `Tree::hit_test_at` now read
     /// correctly, by construction, with zero second, separate
     /// transform either has to independently agree with. A `VirtualList`
     /// with nothing materialized yet is a true no-op.
@@ -824,7 +824,7 @@ impl Tree {
     /// real, bare `SCROLLBAR_THICKNESS`-wide target is unusable with a
     /// mouse). `false` for a `ScrollView` with nothing to scroll (the
     /// identical real "no scrollbar painted at all" condition `engine-
-    /// render::paint_node`'s own thumb-paint arm uses) or no real
+    /// render`'s own thumb paint uses) or no real
     /// children yet.
     fn grabs_scroll_view_thumb(&self, view: NodeId, point: Point) -> bool {
         let Some((horizontal, viewport, content)) = self.scroll_view_extents(view) else {
@@ -997,7 +997,7 @@ impl Tree {
 
     /// `id`'s own real, on-screen position -- transform-aware since M6
     /// Phase 4 (§8): composes the identical `parent *
-    /// translate(layout.location) * own_transform` product `paint_node`/
+    /// translate(layout.location) * own_transform` product `draw_own`/
     /// `hit_test_at` already compose (M5 Phase 1/2), not just a pure
     /// accumulated translation. §14 step 13's own real need: `open_overlay`
     /// positions an overlay relative to its anchor's *absolute* bounds,
@@ -1010,7 +1010,7 @@ impl Tree {
     /// None of this method's real callers run once per node per frame
     /// (an overlay opens once per interaction, a drag reads this once
     /// per pointer move), so the extra composition cost here is not the
-    /// same concern it would be for `paint_node`/`hit_test_at`'s own
+    /// same concern it would be for `draw_own`/`hit_test_at`'s own
     /// per-frame walks.
     pub fn absolute_position(&self, id: NodeId) -> (f64, f64) {
         let p = self.composed_transform(id) * Point::ORIGIN;
@@ -1792,7 +1792,7 @@ impl Tree {
     }
 
     /// M5 Phase 3 (§11.10, §11.11): replaces a `NodeKind::Canvas`
-    /// node's entire real content -- both what `paint_node` draws and
+    /// node's entire real content -- both what `draw_own` draws and
     /// what `hit_test_at` tests against. The one, ordinary (non-
     /// callback) `Tree` mutation `engine-py` makes after invoking the
     /// app's Python `draw` callback and collecting its result -- see `canvas.rs`'s own module
@@ -1842,7 +1842,7 @@ impl Tree {
     /// **Transform-aware since M5 Phase 2** (§11.9's own composed
     /// transform, landed M5 Phase 1): delegates to `hit_test_at`, which
     /// composes the same `parent * translate(layout.location) *
-    /// own_transform` product `engine-render::paint_node` composes
+    /// own_transform` product `engine-render's paint walk` composes
     /// during paint -- if this formula and that one ever diverge,
     /// hit-testing and rendering will disagree about where a node is.
     /// (`absolute_position` composes the same product, via
@@ -1871,7 +1871,7 @@ impl Tree {
     }
 
     /// See `hit_test`'s own doc comment for the composition formula and
-    /// why it has to match `paint_node`'s exactly. `parent_transform` is
+    /// why it has to match `draw_own`'s exactly. `parent_transform` is
     /// the caller's already-composed transform for `id`'s *parent*.
     fn hit_test_at(
         &self,
@@ -1900,7 +1900,7 @@ impl Tree {
         // space via the inverse of its composed transform -- both the
         // rect default and any `CustomHitTest` below test against this
         // same local point, exactly the local-space coordinates
-        // `paint_node` draws into under the identical `composed`
+        // `draw_own` draws into under the identical `composed`
         // transform (M5 Phase 1).
         let local_point = composed.inverse() * point;
 
@@ -2953,7 +2953,7 @@ impl Tree {
                 // M38 Phase 6 (§5, §7, §11.7): a real scrollbar-thumb
                 // grab takes priority over the ordinary hit -- the
                 // thumb is a paint-only overlay drawn *over* the real
-                // scrolled content (`engine-render::paint_node`'s own
+                // scrolled content (`engine-render's paint walk`'s own
                 // `NodeKind::ScrollView` arm, mirroring pyCopper's own
                 // `paint_foreground` running after children), so a real
                 // point-based `hit_test` resolves to whatever content
@@ -3421,7 +3421,7 @@ impl Tree {
 
     /// M94: maps a window-space point into `id`'s own local space, through
     /// the same composed layout-and-transform chain `hit_test_at` and
-    /// `paint_node` use -- how a bubbling pointer event reports `x`/`y`
+    /// `draw_own` use -- how a bubbling pointer event reports `x`/`y`
     /// relative to each node its listeners run on. Needs a computed layout.
     pub fn window_to_local(&self, id: NodeId, point: Point) -> Point {
         self.composed_transform(id).inverse() * point
@@ -4115,7 +4115,7 @@ mod tests {
     /// `absolute_position` must report a node's *actual* transformed
     /// canvas position, not its plain untransformed layout position, for
     /// a node inside an ancestor with a real `transform` -- the same
-    /// claim `hit_test`/`paint_node` already correctly make (M5 Phase
+    /// claim `hit_test`/`draw_own` already correctly make (M5 Phase
     /// 1/2), now true here too.
     #[test]
     fn absolute_position_follows_an_ancestor_transform() {
@@ -8203,7 +8203,7 @@ mod tests {
     }
 
     /// M18 Phase 1 (§8, §11.9, §11.10): `hit_test_local`'s own real
-    /// claim -- it must report the SAME local point `paint_node`
+    /// claim -- it must report the SAME local point `draw_own`
     /// painted into, under a real ancestor transform, not just the same
     /// hit `NodeId` `hit_test` already proved (`hit_test_follows_an_
     /// ancestor_translate_transform`, above).
@@ -8246,7 +8246,7 @@ mod tests {
         // translate_transform` already proves moves `chip` to canvas
         // (100,100)-(150,150) -- a click at canvas (125, 125) must
         // report chip's own LOCAL point as (25, 25), the inverse-
-        // transformed coordinate `paint_node` itself painted at, not
+        // transformed coordinate `draw_own` itself painted at, not
         // the raw canvas point.
         tree.get_mut(camera).unwrap().paint.transform.current = Affine::translate((100.0, 100.0));
         assert_eq!(

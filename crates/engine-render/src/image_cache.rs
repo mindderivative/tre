@@ -74,7 +74,7 @@ impl ImageTextureCache {
     /// Ensures every real `Image` node in `tree` has a real, uploaded
     /// GPU texture bound under its own deterministic `TextureId` --
     /// call once per frame, before `FrameRenderer::render`, so every
-    /// `Scene::draw_texture_rects` call `paint_node` already recorded
+    /// `Scene::draw_texture_rects` call `draw_own` already recorded
     /// this frame resolves to a real bound texture at render time (the
     /// real contract `TextureBindings::insert`'s own doc comment
     /// states: "a texture with the given `TextureId` must be supplied
@@ -188,7 +188,7 @@ impl ImageTextureCache {
 }
 
 /// The deterministic `TextureId` a given `Image` node's real GPU
-/// texture is bound under -- `paint_node`'s own `NodeKind::Image` arm
+/// texture is bound under -- `draw_own`'s own `NodeKind::Image` arm
 /// computes the identical value when recording `Scene::
 /// draw_texture_rects`, so the two always agree without either side
 /// needing to look anything up in the other.

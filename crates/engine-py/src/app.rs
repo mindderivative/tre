@@ -108,7 +108,7 @@ struct WindowSetup {
 /// `PointerPressed`'s click-to-position and `PointerMoved`'s drag-
 /// extend, both of which need the exact same "is `hit` a `TextField`,
 /// and if so what real byte offset does `local_point` land on"
-/// answer. Mirrors `paint_node`'s own real `TextPlacement { x: 0.0,
+/// answer. Mirrors `draw_own`'s own real `TextPlacement { x: 0.0,
 /// y: 0.0, max_width: <the node's own real computed layout width> }`
 /// exactly -- a hit-test using different placement values than what
 /// was actually painted would resolve to the wrong character.

@@ -350,13 +350,13 @@ impl TerminalState {
 ///
 /// **Real, deliberate design choice, not accidental:** unlike
 /// `VirtualListState::scroll_offset` (applied only as an extra
-/// `engine-render::paint_node` translate, never reflected back into
+/// `engine-render's paint walk` translate, never reflected back into
 /// `layout_style` -- this phase's own investigation found that gives
 /// a real, previously undiscovered hit-test-after-scroll bug, a real
 /// point at a scrolled item's own genuine post-scroll screen position
 /// resolves to the wrong node), `scroll` here is turned into a real,
 /// baked-in absolute `layout_style.inset` by `Tree::sync_scroll_view_
-/// layouts` every frame, which both `engine-render::paint_node` and
+/// layouts` every frame, which both `engine-render's paint walk` and
 /// `Tree::hit_test_at` read correctly by construction, since neither needs a second, separate transform
 /// to agree with. Plain `Animated<f64>`, driven directly (never
 /// through `animate_field`/central ticking), the identical real
@@ -412,7 +412,7 @@ impl ScrollViewState {
     /// M38 Phase 6 (§5, §7, §11.7): real thumb geometry `(track, thumb,
     /// along)` -- ported directly from pyCopper's own real
     /// `ScrollViewElement.thumb_geometry` (`widgets/scroll.py`), shared
-    /// by painting (`engine-render::paint_node`) and hit-testing/
+    /// by painting (`engine-render's paint walk`) and hit-testing/
     /// dragging (`Tree::grabs_scroll_view_thumb`/`update_scroll_view_
     /// thumb_drag`) so the two can never drift -- the identical real
     /// "one function, every real caller" discipline `VirtualListState::
@@ -752,7 +752,7 @@ pub struct VirtualListState {
     pub materialized: std::collections::BTreeMap<usize, NodeId>,
     /// M8 Phase 2 (§11.7): the real vertical scroll position, in local
     /// pixels -- composed into materialized children's own effective
-    /// paint-time position (`paint_node`), not their `layout_style`
+    /// paint-time position (`draw_own`), not their `layout_style`
     /// (their real taffy layout never changes; only where they're
     /// *drawn* does). Plain `Animated<f64>`, driven directly (like a
     /// scrollbar being dragged, not eased toward a target) -- never
@@ -798,7 +798,7 @@ impl VirtualListState {
     /// M47 (§5, §7, §11.7): real thumb geometry `(track, thumb, along)`
     /// -- the identical real shape `ScrollViewState::thumb_geometry`
     /// (M38 Phase 6) already established, shared by painting
-    /// (`engine-render::paint_node`) and hit-testing/dragging
+    /// (`engine-render's paint walk`) and hit-testing/dragging
     /// (`Tree::grabs_virtual_list_thumb`/`update_virtual_list_thumb_
     /// drag`) so the two can never drift -- the same "one function,
     /// every real caller" discipline this codebase already applies
