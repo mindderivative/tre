@@ -11,10 +11,39 @@ install a pre-built wheel, or build one yourself from source.
   `3.15t` builds and PyPy 3.11 — see the supported set below)
 - Linux, macOS (arm64), or Windows
 
-## Option 1: install a released wheel
+## Option 1: install from PyPI
+
+```bash
+pip install tesserae-engine
+```
+
+`tre` is published on PyPI as **`tesserae-engine`** — the name `tre` there
+belongs to an unrelated project. The import name is still `tre`:
+
+```python
+import tre
+```
+
+A dependency on it is written the same way, for example
+`dependencies = ["tesserae-engine>=0.3.5.2"]` in a `pyproject.toml`.
+
+!!! warning "Upgrading from a `tre-...` wheel"
+    Releases up to `v0.3.5.1` installed a distribution named `tre`. pip
+    treats `tesserae-engine` as a different project, so it leaves the old
+    one in place, and both then own the `tre` package — a later
+    `pip uninstall tre` would delete files `tesserae-engine` needs. Remove
+    the old one first:
+
+    ```bash
+    pip uninstall tre
+    pip install tesserae-engine
+    ```
+
+## Option 2: install a wheel from a GitHub release
 
 Every [tagged release](https://github.com/mindderivative/tre/releases)
-publishes real, verified wheels — a source distribution, plus:
+publishes real, verified wheels, the same files PyPI carries — a source
+distribution, plus:
 
 - **Linux** — portable `manylinux_2_17`/`manylinux2014` wheels, built
   inside the real manylinux Docker container (not just locally
@@ -39,14 +68,17 @@ Download the wheel matching your platform and interpreter from the
 and install it directly:
 
 ```bash
-pip install ./tre-0.3.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+pip install ./tesserae_engine-0.3.5.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
-!!! note
-    `tre` is not yet published to PyPI, so `pip install tre` won't resolve
-    it — install the downloaded wheel file directly, as shown above.
+Releases up to `v0.3.5.1` name their files `tre-<version>-...`; they
+install the same `tre` package.
 
-## Option 2: build from source
+!!! note
+    `pip install tre` installs the unrelated `tre` project from PyPI, not
+    this one.
+
+## Option 3: build from source
 
 You'll need a Rust toolchain (see
 [`rust-toolchain.toml`](https://github.com/mindderivative/tre/blob/main/rust-toolchain.toml)

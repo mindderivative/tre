@@ -36,6 +36,7 @@ A zone holds any number of panels and shows one at a time.
 | `dock_panel(side, panel)` | Docks `panel` into `side`'s zone and shows it — moving it, if it's docked in another zone |
 | `set_active_panel(side, index)` | Shows the zone's `index`th panel |
 | `start_panel_drag(panel)` | Starts dragging `panel`, which must be docked |
+| `undock_panel(panel)` | Takes `panel` out of its zone and off the tree; it can be docked again |
 
 ## Moving a panel without a drag
 
@@ -47,6 +48,25 @@ drag:
 ```python
 window.dock_panel("right", panel)   # from wherever it's docked now
 ```
+
+## Closing a panel
+
+`undock_panel(panel)` takes a panel out of docking for good: out of its
+zone's list, whose later panels move down one index, and off the tree. If
+it was the one shown, the zone shows the next panel, or else the previous,
+as closing a tab does — or nothing, if it was the last. A drag of it in
+progress is cancelled.
+
+```python
+window.undock_panel(panel)          # a closed tab, or a panel a hot-reloaded
+                                    # layout no longer names
+window.dock_panel("left", panel)    # it can come back while you hold it
+```
+
+Use it rather than `panel.remove()`, which takes the panel off the tree but
+leaves it in its zone's list, where `set_active_panel` would show it again.
+A panel that is destroyed, or freed after `remove()`, leaves its zone on the
+next docking call.
 
 ## Dragging a panel
 

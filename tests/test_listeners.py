@@ -466,7 +466,7 @@ def test_window_title_is_settable_and_the_rest_read_only() -> None:
         w.set(width=10)  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="settable: title, partial_redraw"):
         w.set(colour="red")  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, partial_redraw, partial_redraw_active"):
+    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, dark, partial_redraw, partial_redraw_active"):
         w.get("depth")
 
 

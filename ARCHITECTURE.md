@@ -123,7 +123,7 @@ graph TD
     D --> O
 ```
 
-**Crate boundary rule.** `engine-core` knows nothing of Python, `winit`, or the GPU; it's tested in isolation. Its `Tree` lives in `tree/` (0.4.0 M6), one file per concern around the struct and its core operations in `mod.rs`: `layout`, `scroll`, `layers`, `focus` (hit-testing, hover, focus, pointer capture), `text_editing`, `dispatch`, `access`, and `tests`. It depends on the plain `accesskit` data crate, which is small and OS-agnostic like `taffy`, so the accessibility tree is built next to the node tree it describes. `engine-render` walks `engine-core`'s tree to build a scene and never opens a window itself. `engine-platform` owns the `winit` loop, opens the windows, runs the AccessKit adapter, and translates `winit` input into `engine-core`'s `InputEvent`. `engine-py` is the only crate that imports `pyo3`; it also names `winit`'s `Window` type, to build a GPU surface on each window `engine-platform` hands it and to set its title.
+**Crate boundary rule.** `engine-core` knows nothing of Python, `winit`, or the GPU; it's tested in isolation. Its `Tree` lives in `tree/` (0.4.0 M6), one file per concern around the struct and its core operations in `mod.rs`: `layout`, `scroll`, `layers`, `focus` (hit-testing, hover, focus, pointer capture), `text_editing`, `dispatch`, `access`, and `tests`. It depends on the plain `accesskit` data crate, which is small and OS-agnostic like `taffy`, so the accessibility tree is built next to the node tree it describes. `engine-render` walks `engine-core`'s tree to build a scene and never opens a window itself. `engine-platform` owns the `winit` loop, opens the windows, runs the AccessKit adapter, and translates `winit` input into `engine-core`'s `InputEvent`. It also reads the OS's light/dark appearance (`appearance`): through `winit` on macOS and Windows, and on Linux, where `winit` can't, from the XDG settings portal over D-Bus, whose changes it turns into the same `InputEvent::ThemeChanged` (M106). `engine-py` is the only crate that imports `pyo3`; it also names `winit`'s `Window` type, to build a GPU surface on each window `engine-platform` hands it and to set its title.
 
 **Runtime dispatch is inverted.** `engine_platform::run_windowed_multi` is generic over a set of closures — `on_window_created`, `on_frame`, `on_input`, `on_access_action`, `on_lifecycle`, and `build_access_update` — and calls them as the loop runs, never touching a `Tree` itself. `engine-py`'s `App.run()` supplies them; only it can reach Python. So the compile-time graph reads `engine-py → engine-platform` while input flows `engine-platform → engine-py's closures`.
 
@@ -288,7 +288,7 @@ Layers are ordinary nodes, so paint, hit testing, focus, and the accessibility t
 
 ### 11.4 Docking
 
-Five fixed zones — left, right, top, bottom, center — each a node the framework builds and registers (`add_dock_zone`). A zone holds panels and shows one (`dock_panel`, `set_active_panel`). `start_panel_drag(panel)` begins a drag in the ordinary input pipeline; the `dock_target` window event reports the zone under the pointer as it changes, and releasing the primary button moves the panel and reports `dock_drop`. The handle, the drop highlight, and tabs are the framework's (M99, D10). No arbitrary nested splits.
+Five fixed zones — left, right, top, bottom, center — each a node the framework builds and registers (`add_dock_zone`). A zone holds panels and shows one (`dock_panel`, `set_active_panel`); `undock_panel` takes one out (M105). `start_panel_drag(panel)` begins a drag in the ordinary input pipeline; the `dock_target` window event reports the zone under the pointer as it changes, and releasing the primary button moves the panel and reports `dock_drop`. The handle, the drop highlight, and tabs are the framework's (M99, D10). No arbitrary nested splits.
 
 ### 11.5 Splitters
 
@@ -328,7 +328,7 @@ tre/
 ├── crates/
 │   ├── engine-core/           # Tree, Animated<T>, layout, dispatch, focus, layers, docking model, AccessKit builder
 │   ├── engine-render/         # scene building, text shaping, paths, shadows, font registry; pixel tests in tests/
-│   ├── engine-platform/       # winit loop, input translation, accesskit_winit, EventLoopWaker
+│   ├── engine-platform/       # winit loop, input translation, accesskit_winit, EventLoopWaker, appearance
 │   └── engine-py/             # PyO3 classes, per-frame loop, listeners, terminal sessions
 ├── python/tre/                # __init__.py, _core.pyi (type stubs), _removed.py, py.typed
 ├── tests/                     # pytest suite (headless, through simulate and advance)
@@ -365,7 +365,7 @@ python examples/switch.py
 | `mkdocs build --strict` | The docs, with link and anchor checks |
 | `mypy --strict python/tre` | The type stubs |
 
-**Packaging.** `.github/workflows/wheels.yml` builds manylinux-repaired Linux wheels inside the manylinux container, plus macOS and Windows wheels, across supported Python versions, on a `v*` tag, and attaches them and an sdist to the GitHub Release. A repaired wheel vendors system libraries — TRE's own duplicate-`xkbcommon` segfault came from that — so the built artifact is tested end to end, not just `maturin develop`.
+**Packaging.** `.github/workflows/wheels.yml` builds manylinux-repaired Linux wheels inside the manylinux container, plus macOS and Windows wheels, across supported Python versions, on a `v*` tag, and attaches them and an sdist to the GitHub Release. The same wheels and sdist go to PyPI as `tesserae-engine` — `tre` there is another project — through trusted publishing, with no stored token (M107); the import name is still `tre`. A repaired wheel vendors system libraries — TRE's own duplicate-`xkbcommon` segfault came from that — so the built artifact is tested end to end, not just `maturin develop`.
 
 ---
 

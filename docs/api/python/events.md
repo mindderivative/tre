@@ -112,13 +112,20 @@ A window event has no node: `event.target` is `None`.
 ```python
 window.set(title="Editor — draft.md")
 window.get("scale_factor")  # 1.0 until App.run() opens the window
+window.get("dark")          # True, False, or None where the OS can't say
 ```
 
 `window.set(title=...)` changes the title, live if the window is open.
 `window.set(partial_redraw=False)` redraws the whole window every frame
 instead of only what changed ([Window](window.md)). `window.get(name)` reads
-`width`, `height`, `title`, `scale_factor`, or `partial_redraw`. `root`
-is the window's root node.
+`width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`, or
+`partial_redraw_active`. `root` is the window's root node.
+
+`dark` is the OS's appearance right now, so an app that follows it can start
+in the right one and then listen to `color_scheme`. Linux reads it from the
+desktop's settings portal, before `App.run()` too, and the portal's changes
+arrive as `color_scheme`; macOS and Windows answer once the window is open,
+and `None` before. `None` also means no portal answered (a headless session).
 
 ## Event
 

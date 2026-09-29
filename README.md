@@ -29,9 +29,23 @@ app.add_window(window)
 app.run()
 ```
 
+## Installing
+
+```bash
+pip install tesserae-engine
+```
+
+On PyPI it's **`tesserae-engine`** (the name `tre` there is another
+project's); you still `import tre`. Wheels cover CPython 3.9+ on Linux,
+macOS (arm64), and Windows. See
+[Installation](https://mindderivative.github.io/tre/installation/) for the
+details.
+
 ## Documentation
 
-The guide, API reference, and migration notes are in [`docs/`](docs/),
+The guide, API reference, and migration notes are at
+[mindderivative.github.io/tre](https://mindderivative.github.io/tre/), and
+their source is in [`docs/`](https://github.com/mindderivative/tre/tree/main/docs),
 built with MkDocs:
 
 ```bash
@@ -40,8 +54,8 @@ mkdocs serve   # http://127.0.0.1:8000
 ```
 
 Start with Getting Started, then the guide's page for each building block;
-[Building a Widget](docs/guide/building-a-widget.md) puts them together.
-Upgrading from 0.3.4? See [Migrating to 0.3.5](docs/migrating-0.3.5.md).
+[Building a Widget](https://mindderivative.github.io/tre/guide/building-a-widget/) puts them together.
+Upgrading from 0.3.4? See [Migrating to 0.3.5](https://mindderivative.github.io/tre/migrating-0.3.5/).
 
 ## Building from source
 
@@ -53,7 +67,7 @@ maturin develop --release -m crates/engine-py/Cargo.toml
 python examples/switch.py
 ```
 
-Each script in [`examples/`](examples/) is a small, runnable demonstration
+Each script in [`examples/`](https://github.com/mindderivative/tre/tree/main/examples) is a small, runnable demonstration
 of one building block.
 
 ## Development
@@ -71,9 +85,9 @@ Every rendering capability has a headless, GPU-backed pixel test under
 `crates/engine-render/tests/`, and the Python suite drives input and time
 headlessly through `window.simulate` and `window.advance`.
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) is the design reference, and
-[`BUILD_TRACKER.md`](BUILD_TRACKER.md) tracks the current `0.4.0` line; the
-milestone-by-milestone history through `v0.3.5.1` is in
-[`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md).
+[`ARCHITECTURE.md`](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md) is the design reference, and
+[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) tracks the current `0.4.0` line; the
+milestone-by-milestone history through `v0.3.5.2` is in
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md).
 `tre` is a from-scratch second iteration of an earlier Vulkan engine,
-archived under [`archive/`](archive/) with its lessons learned.
+archived under [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with its lessons learned.

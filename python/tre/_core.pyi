@@ -296,12 +296,18 @@ class Window:
     @overload
     def get(self, name: Literal["partial_redraw_active"]) -> bool | None: ...
     @overload
+    def get(self, name: Literal["dark"]) -> bool | None: ...
+    @overload
     def get(self, name: str) -> Any:
-        """M94: reads `width`, `height`, `title`, `scale_factor`
-        (`1.0` until `App.run()` opens the window), `partial_redraw`, or
-        (0.4.0) `partial_redraw_active`: whether the open window really
-        redraws only what changed -- the setting, and a surface that
-        allows it -- `None` until `App.run()` opens the window."""
+        """M94: reads `width`, `height`, `title`, `scale_factor` (`1.0`
+        until `App.run()` opens the window), (M106) `dark`: the OS's
+        current appearance, `True` for dark, `False` for light, or `None`
+        where the platform can't say -- Linux reads it from the XDG
+        settings portal, before `App.run()` too; macOS and Windows answer
+        once the window is open -- `partial_redraw`, or (0.4.0)
+        `partial_redraw_active`: whether the open window really redraws
+        only what changed -- the setting, and a surface that allows it --
+        `None` until `App.run()` opens the window."""
         ...
     def show_layer(
         self,
@@ -406,6 +412,15 @@ class Window:
         moves, the `dock_target` window event reports the zone under it;
         the primary button's release moves the panel there and reports
         `dock_drop`. Raises `ValueError` if `panel` isn't docked.
+        """
+        ...
+    def undock_panel(self, panel: Node) -> None:
+        """M105: takes `panel` out of docking -- out of its zone's panels,
+        whose later indexes shift down, and off the tree. If it was
+        shown, the zone shows the next panel, else the previous, else
+        nothing. A drag of it in progress is cancelled. It stays alive
+        while a handle to it exists, so `dock_panel` can dock it again,
+        as after `remove()`. Raises `ValueError` if `panel` isn't docked.
         """
         ...
 
