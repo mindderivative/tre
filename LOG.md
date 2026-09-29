@@ -20,4 +20,7 @@ clean. cargo 373, pytest 451 + 1 skipped.
 
 **M9 Phase 1 (2026-09-28).** Worktree tre-0.3.5.2 + branch 0.3.5.3 removed
 (content on main); merged local release branches pruned; rect_window.rs
-keeps its surface-bound adapter. Next: the user's manual platform check.
+keeps its surface-bound adapter.
+
+**Manual check (2026-09-29).** Wayland (KDE): all good, active = True.
+X11, macOS, Windows to go.
