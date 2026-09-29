@@ -116,8 +116,10 @@ window.get("dark")          # True, False, or None where the OS can't say
 ```
 
 `window.set(title=...)` changes the title, live if the window is open.
-`window.get(name)` reads `width`, `height`, `title`, `scale_factor`, or
-`dark`. `root` is the window's root node.
+`window.set(partial_redraw=False)` redraws the whole window every frame
+instead of only what changed ([Window](window.md)). `window.get(name)` reads
+`width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`, or
+`partial_redraw_active`. `root` is the window's root node.
 
 `dark` is the OS's appearance right now, so an app that follows it can start
 in the right one and then listen to `color_scheme`. Linux reads it from the

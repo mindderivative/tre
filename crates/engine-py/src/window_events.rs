@@ -215,8 +215,8 @@ impl PyWindow {
     /// The window's size, as layout's available space.
     fn available(&self) -> Size<AvailableSpace> {
         Size {
-            width: AvailableSpace::Definite(self.width.get() as f32),
-            height: AvailableSpace::Definite(self.height.get() as f32),
+            width: AvailableSpace::Definite(self.handles.width.get() as f32),
+            height: AvailableSpace::Definite(self.handles.height.get() as f32),
         }
     }
 }
@@ -227,10 +227,10 @@ impl PyWindow {
     #[getter]
     fn root(&self) -> Node {
         Node::from(NodeState {
-            id: self.root,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            completions: self.completions.clone(),
+            id: self.handles.root,
+            tree: self.handles.tree.clone(),
+            handlers: self.handles.handlers.clone(),
+            completions: self.handles.completions.clone(),
         })
     }
 
@@ -360,7 +360,7 @@ impl PyWindow {
         };
         let interactive = matches!(node_kind, NodeKind::TextField(_) | NodeKind::Terminal(_));
         let id = {
-            let mut tree = self.tree.borrow_mut();
+            let mut tree = self.handles.tree.borrow_mut();
             let id = tree.insert(node_kind, Style::default(), paint);
             if interactive {
                 tree.set_access(
@@ -375,12 +375,12 @@ impl PyWindow {
         };
         let node = Node::from(NodeState {
             id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            completions: self.completions.clone(),
+            tree: self.handles.tree.clone(),
+            handlers: self.handles.handlers.clone(),
+            completions: self.handles.completions.clone(),
         });
         if let Some(session) = session {
-            self.terminals.borrow_mut().insert(id, session);
+            self.handles.terminals.borrow_mut().insert(id, session);
         }
         node.apply(changes);
         if draws {
@@ -396,7 +396,8 @@ impl PyWindow {
     fn on(&self, event: &str, handler: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
         let event = WindowEventType::parse(event)?;
         let wants = wants_event(py, &handler)?;
-        self.window_listeners
+        self.handles
+            .window_listeners
             .borrow_mut()
             .insert(event, (handler, wants));
         Ok(())
@@ -405,15 +406,16 @@ impl PyWindow {
     /// Removes the window's listener for `event`, if any.
     fn off(&self, event: &str) -> PyResult<()> {
         let event = WindowEventType::parse(event)?;
-        self.window_listeners.borrow_mut().remove(&event);
+        self.handles.window_listeners.borrow_mut().remove(&event);
         Ok(())
     }
 
-    /// Sets window properties. Today only `title`; `width`, `height`, and
-    /// `scale_factor` are read-only.
+    /// Sets window properties: `title` and (0.4.0 M5) `partial_redraw`;
+    /// `width`, `height`, and `scale_factor` are read-only.
     #[pyo3(signature = (**props))]
     fn set(&mut self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let mut title = None;
+        let mut partial_redraw = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -423,45 +425,75 @@ impl PyWindow {
                             PyValueError::new_err("window property `title` must be a str")
                         })?);
                     }
+                    "partial_redraw" => {
+                        partial_redraw = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `partial_redraw` must be a bool")
+                        })?);
+                    }
                     "width" | "height" | "scale_factor" => {
                         return Err(PyValueError::new_err(format!(
-                            "window property `{name}` is read-only -- settable: title"
+                            "window property `{name}` is read-only -- settable: title, \
+                             partial_redraw"
                         )));
                     }
                     _ => {
                         return Err(PyValueError::new_err(format!(
-                            "unknown window property {name:?} -- settable: title"
+                            "unknown window property {name:?} -- settable: title, partial_redraw"
                         )));
                     }
                 }
             }
         }
         if let Some(title) = title {
-            if let Some(window) = self.os_window.borrow().as_ref() {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
                 window.set_title(&title);
             }
             self.title = title;
+        }
+        if let Some(on) = partial_redraw {
+            self.handles.partial_redraw.set(on);
         }
         Ok(())
     }
 
     /// Reads a window property: `width`, `height`, `title`,
-    /// `scale_factor` (`1.0` until `App.run()` opens the window), or
+    /// `scale_factor` (`1.0` until `App.run()` opens the window),
     /// `dark` -- M106 (issue #18): the OS's current appearance, `True`
     /// for dark, or `None` where the platform can't say (on macOS and
-    /// Windows, until `App.run()` opens the window).
+    /// Windows, until `App.run()` opens the window) -- `partial_redraw`,
+    /// or (0.4.0) `partial_redraw_active`.
     fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
         Ok(match name {
-            "width" => f64::from(self.width.get())
+            "width" => f64::from(self.handles.width.get())
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
-            "height" => f64::from(self.height.get())
+            "height" => f64::from(self.handles.height.get())
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
             "title" => self.title.clone().into_pyobject(py)?.into_any().unbind(),
+            "partial_redraw" => self
+                .handles
+                .partial_redraw
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            // 0.4.0 M6: whether the open window really redraws only what
+            // changed -- the setting, and a surface that allows it; `None`
+            // until `App.run()` opens the window.
+            "partial_redraw_active" => self
+                .handles
+                .surface_partial
+                .get()
+                .map(|allowed| allowed && self.handles.partial_redraw.get())
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
             "scale_factor" => self
+                .handles
                 .os_window
                 .borrow()
                 .as_ref()
@@ -470,7 +502,7 @@ impl PyWindow {
                 .into_any()
                 .unbind(),
             "dark" => {
-                let window = self.os_window.borrow().clone();
+                let window = self.handles.os_window.borrow().clone();
                 engine_platform::appearance::current_dark(window.as_deref())
                     .into_pyobject(py)?
                     .into_any()
@@ -478,7 +510,8 @@ impl PyWindow {
             }
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "unknown window property {name:?} -- valid: width, height, title, scale_factor, dark"
+                    "unknown window property {name:?} -- valid: width, height, title, \
+                     scale_factor, dark, partial_redraw, partial_redraw_active"
                 )));
             }
         })
@@ -548,10 +581,14 @@ impl PyWindow {
             )));
         }
         node_handles::reclaim();
-        let (tree, root, handlers) = (self.tree.clone(), self.root, self.handlers.clone());
+        let (tree, root, handlers) = (
+            self.handles.tree.clone(),
+            self.handles.root,
+            self.handles.handlers.clone(),
+        );
         let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
         let (_, completed) = tree.borrow_mut().tick_all(now);
-        run_completions(&self.completions, completed, py);
+        run_completions(&self.handles.completions, completed, py);
         node_callbacks::layout(&tree, root, self.available(), &handlers, py);
         Ok(())
     }
@@ -569,7 +606,11 @@ impl PyWindow {
         fields: Option<&Bound<'_, PyDict>>,
         py: Python<'_>,
     ) -> PyResult<()> {
-        let (tree, root, handlers) = (self.tree.clone(), self.root, self.handlers.clone());
+        let (tree, root, handlers) = (
+            self.handles.tree.clone(),
+            self.handles.root,
+            self.handles.handlers.clone(),
+        );
         let node_id = match &node {
             Some(node) if !Rc::ptr_eq(&node.tree, &tree) => {
                 return Err(EngineError::ForeignNode.into());
@@ -581,12 +622,12 @@ impl PyWindow {
         let ctx = NodeContext {
             tree: &tree,
             handlers: &handlers,
-            completions: &self.completions,
+            completions: &self.handles.completions,
         };
         let io = WindowIo {
-            dock: &self.dock,
-            listeners: &self.window_listeners,
-            terminals: &self.terminals,
+            dock: &self.handles.dock,
+            listeners: &self.handles.window_listeners,
+            terminals: &self.handles.terminals,
         };
         let mut f = Fields::new(event, fields)?;
         let need_node = |f: &Fields<'_>| -> PyResult<NodeId> {
@@ -707,7 +748,14 @@ impl PyWindow {
                     None
                 };
                 if let Some((old, new)) = transition {
-                    fire_focus_transition(&handlers, &tree, &self.completions, old, new, py);
+                    fire_focus_transition(
+                        &handlers,
+                        &tree,
+                        &self.handles.completions,
+                        old,
+                        new,
+                        py,
+                    );
                 }
             }
             "a11y_action" => {
@@ -735,8 +783,13 @@ impl PyWindow {
                 let height = f.f64("height")?;
                 let height = f.required("height", height)?;
                 f.done()?;
-                self.width.set(width as u32);
-                self.height.set(height as u32);
+                if !(width.is_finite() && height.is_finite() && width >= 0.0 && height >= 0.0) {
+                    return Err(PyValueError::new_err(
+                        "`resize` needs a finite, non-negative width and height",
+                    ));
+                }
+                self.handles.width.set(width as u32);
+                self.handles.height.set(height as u32);
                 tree.borrow_mut().dispatch(
                     root,
                     InputEvent::Resized {
@@ -746,7 +799,7 @@ impl PyWindow {
                     crate::clock::now(&tree),
                 );
                 listeners::deliver_window(
-                    &self.window_listeners,
+                    &self.handles.window_listeners,
                     py,
                     WindowEventType::Resize,
                     |e| {
@@ -761,7 +814,7 @@ impl PyWindow {
                 f.done()?;
                 // What `App.run()` does for a real OS light/dark switch.
                 listeners::deliver_window(
-                    &self.window_listeners,
+                    &self.handles.window_listeners,
                     py,
                     WindowEventType::ColorScheme,
                     |e| e.dark = Some(dark),
@@ -772,7 +825,7 @@ impl PyWindow {
                 let scale_factor = f.required("scale_factor", scale_factor)?;
                 f.done()?;
                 listeners::deliver_window(
-                    &self.window_listeners,
+                    &self.handles.window_listeners,
                     py,
                     WindowEventType::ScaleFactor,
                     |e| e.scale_factor = Some(scale_factor),
@@ -785,7 +838,7 @@ impl PyWindow {
                 } else {
                     WindowEventType::CloseRequested
                 };
-                listeners::deliver_window(&self.window_listeners, py, event_type, |_| {});
+                listeners::deliver_window(&self.handles.window_listeners, py, event_type, |_| {});
             }
             _ => {
                 return Err(PyValueError::new_err(format!(

@@ -12,7 +12,7 @@
 //! every iteration (not a fast no-op), and times the actual steady-state
 //! per-frame sequence: tick -> compute_layout -> build_tree_scene ->
 //! encode -> submit. Device/adapter/texture setup and one warm-up
-//! iteration (first-use GPU pipeline compilation inside `vello_hybrid`
+//! iteration (first-use GPU pipeline compilation inside `vello_gpu`
 //! is a real but one-time cost, not a per-frame one) happen before the
 //! timed loop starts.
 //!
@@ -39,10 +39,14 @@
 use std::time::{Duration, Instant};
 
 use engine_core::{MotionCurve, NodeKind, PaintProperties, Tree};
-use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
+use engine_render::{
+    FrameRenderer, GeometryCache, PersistentTarget, TextRenderer, build_tree_scene,
+};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexWrap, Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
+
+mod support;
 
 const GRID_COLS: u32 = 20;
 const GRID_ROWS: u32 = 15;
@@ -104,23 +108,7 @@ fn build_grid_tree(start: Instant) -> (Tree, engine_core::NodeId) {
             cargo test -p engine-render --test frame_budget --release -- --ignored --nocapture"]
 fn frame_pipeline_fits_the_16_6ms_budget() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::default();
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                force_fallback_adapter: false,
-                compatible_surface: None,
-            })
-            .await
-            .expect("no wgpu adapter available in this environment");
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("engine-render frame-budget test device"),
-                required_features: wgpu::Features::empty(),
-                ..Default::default()
-            })
-            .await
-            .expect("failed to create wgpu device");
+        let (device, queue) = support::device("engine-render frame-budget test device").await;
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("frame-budget test target"),
@@ -133,21 +121,28 @@ fn frame_pipeline_fits_the_16_6ms_budget() {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            // 0.4.0 M3: stands in for the swapchain image the persistent
+            // target is copied into each frame, as a window's is.
+            usage: wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let target = PersistentTarget::new(
+            &device,
+            texture.format(),
+            u32::from(WIDTH),
+            u32::from(HEIGHT),
+        );
         let mut frame_renderer = FrameRenderer::new(
             &device,
             &RenderTargetConfig {
                 format: texture.format(),
-                width: u32::from(WIDTH),
-                height: u32::from(HEIGHT),
+                width: WIDTH,
+                height: HEIGHT,
             },
         );
         let render_size = RenderSize {
-            width: u32::from(WIDTH),
-            height: u32::from(HEIGHT),
+            width: WIDTH,
+            height: HEIGHT,
         };
 
         let start = Instant::now();
@@ -174,11 +169,19 @@ fn frame_pipeline_fits_the_16_6ms_budget() {
             );
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
+            frame_renderer.render(
+                &scene,
+                &device,
+                &queue,
+                &mut encoder,
+                &render_size,
+                target.view(),
+            );
+            target.copy_to(&mut encoder, &texture);
             queue.submit([encoder.finish()]);
         };
 
-        // Warm-up: first real use of vello_hybrid's renderer compiles
+        // Warm-up: first real use of vello_gpu's renderer compiles
         // GPU pipelines lazily -- a real, one-time cost that would
         // otherwise dominate iteration 0's timing and make the budget
         // check measure pipeline compilation, not steady-state frame

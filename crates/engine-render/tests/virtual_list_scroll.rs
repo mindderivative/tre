@@ -2,7 +2,7 @@
 //! `VirtualListState.scroll_offset` genuinely shifts materialized
 //! children's own painted position, and genuinely clips content that
 //! scrolls outside the list's own bounds -- not just that the field
-//! exists and is wired into `paint_node`'s own composed transform in
+//! exists and is wired into the paint walk's own composed transform in
 //! theory. Same headless render-to-texture-then-readback discipline
 //! (and the same real `set_virtual_list_window` materialize setup) as
 //! `virtual_list.rs`.
@@ -11,7 +11,9 @@ use engine_core::{ItemExtent, NodeKind, PaintProperties, Tree, VirtualListState}
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
+
+mod support;
 
 const WIDTH: u16 = 200;
 const HEIGHT: u16 = 100;
@@ -34,23 +36,7 @@ fn materialize(_idx: usize) -> (NodeKind, Style, PaintProperties) {
 }
 
 async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16) -> (Vec<u8>, u32) {
-    let instance = wgpu::Instance::default();
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        })
-        .await
-        .expect("no wgpu adapter available in this environment");
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("engine-render virtual-list-scroll test device"),
-            required_features: wgpu::Features::empty(),
-            ..Default::default()
-        })
-        .await
-        .expect("failed to create wgpu device");
+    let (device, queue) = support::device("engine-render virtual-list-scroll test device").await;
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("virtual-list-scroll test target"),
@@ -72,8 +58,8 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         &device,
         &RenderTargetConfig {
             format: texture.format(),
-            width: u32::from(width),
-            height: u32::from(height),
+            width,
+            height,
         },
     );
     let mut text_renderer = TextRenderer::new();
@@ -87,53 +73,14 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         &mut text_renderer,
         &mut geometry_cache,
     );
-    let render_size = RenderSize {
-        width: u32::from(width),
-        height: u32::from(height),
-    };
+    let render_size = RenderSize { width, height };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
 
-    let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback"),
-        size: u64::from(bytes_per_row) * u64::from(height),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: None,
-            },
-        },
-        wgpu::Extent3d {
-            width: u32::from(width),
-            height: u32::from(height),
-            depth_or_array_layers: 1,
-        },
-    );
     queue.submit([encoder.finish()]);
-
-    let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |result| {
-        result.expect("failed to map readback buffer");
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("device poll failed");
-
-    let data = slice.get_mapped_range();
+    let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
+    let data = support::read_texture(&device, &queue, &texture);
     let mut out = vec![0u8; data.len()];
     out.copy_from_slice(&data);
     (out, bytes_per_row)
@@ -198,7 +145,7 @@ fn a_real_scroll_offset_shifts_materialized_children_up_by_that_many_pixels() {
         // per-frame loop always calls `compute_layout` before painting
         // regardless, so this is invisible in real usage). Fixes the
         // real hit-test-after-scroll bug this same paint-time-only
-        // translate used to cause (`BUILD_TRACKER.md`'s own M36
+        // translate used to cause (`BUILD_TRACKER_ARCHIVE_M1-M50.md`, M36
         // trailer has the full real investigation).
         let available = Size {
             width: AvailableSpace::Definite(f32::from(WIDTH)),
@@ -273,7 +220,7 @@ fn scrolled_content_outside_the_lists_own_bounds_is_genuinely_clipped_not_just_m
 /// rs`'s own identical M38 Phase 6 test exactly: 20 items * 20px = 400px
 /// of real content in a 200x100 viewport puts the real thumb at
 /// absolute x in [194, 198], y in [2, 34] (proven directly at the Rust
-/// level, `tree.rs`'s own `virtual_list_thumb_geometry_computes_the_
+/// level, `tree/tests.rs`'s own `virtual_list_thumb_geometry_computes_the_
 /// real_track_thumb_and_along_values`) -- checks a point squarely
 /// inside that rect is genuinely non-transparent, the real, decisive
 /// claim this phase's own thumb-paint code exists to prove.

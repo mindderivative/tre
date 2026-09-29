@@ -41,16 +41,20 @@ on:
 # under the default read-only token, which was fine when every job's
 # own last step was `actions/upload-artifact` (CI-internal, ephemeral),
 # never anything that reaches the Release itself.
+# 0.4.0 review: only `publish` gets it -- the build jobs run third-party
+# actions and every dependency's build script, and need only to read.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build manylinux wheels (all real interpreters in the container)
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           manylinux: auto
           args: --release --out dist --find-interpreter
@@ -85,11 +89,13 @@ jobs:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Build wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           args: --release --out dist
       - uses: actions/upload-artifact@v4
@@ -105,11 +111,13 @@ jobs:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Build wheel
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           args: --release --out dist
       - uses: actions/upload-artifact@v4
@@ -124,8 +132,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build sdist
-        uses: PyO3/maturin-action@v1
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           command: sdist
           args: --out dist
@@ -155,6 +165,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -194,6 +206,8 @@ jobs:
   publish:
     needs: [linux, macos, windows, sdist, standalone-so]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -203,7 +217,7 @@ jobs:
           mkdir -p release
           find dist -type f \( -name '*.whl' -o -name '*.tar.gz' -o -name '*.so' \) -exec cp {} release/ \;
           ls -la release
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: release/*
           generate_release_notes: true
@@ -236,4 +250,4 @@ jobs:
           name: sdist
           path: dist
       - run: ls -la dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1

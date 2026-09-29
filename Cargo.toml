@@ -8,18 +8,34 @@ members = [
 ]
 
 [workspace.package]
-version = "0.3.5"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 authors = ["Phil Hodgins <philip.a.hodgins@gmail.com>"]
 repository = "https://github.com/mindderivative/tre"
 homepage = "https://github.com/mindderivative/tre"
-# No `rust-version` yet, deliberately -- see PLAN.md M3 Phase 1. Claiming
-# an MSRV floor before any real dependency exists to derive it from is
-# exactly the mistake LESSONS_LEARNED.md §5 documents (TRE v1's `1.75`
-# that was quietly false). Set this once a real dependency's own
-# `rust-version` gives something to actually check against, then add the
-# enforcing `msrv` CI job in the same commit -- not before.
+# The MSRV, derived rather than claimed (LESSONS_LEARNED.md §5: TRE v1's
+# `1.75` was quietly false). 0.4.0: the highest `rust-version` any locked
+# dependency declares is `ordered-float` 5.5.0's 1.90 (`vello_gpu` and
+# friends at the pinned commit declare 1.89), and `cargo +1.90 check
+# --workspace --all-targets` passes. CI's `msrv` job enforces it; raise
+# both together when a dependency bump raises the floor.
+rust-version = "1.90"
+
+# The renderer, pinned to one upstream commit (0.4.0 M1). `vello_gpu` is
+# `vello_hybrid` renamed upstream, with the no-clear and rect-clear render
+# partial redraw needs; it isn't published yet. `vello_common` and `glifo`
+# keep their published version numbers upstream but carry unreleased code,
+# so they come from the same commit -- mixing them with crates.io copies
+# would give two incompatible sets of types. `wgpu` must be the major
+# version that commit uses (30): a `wgpu::Device` made here is passed into
+# `vello_gpu`. Bump all four together, deliberately, re-running the pixel
+# tests.
+[workspace.dependencies]
+vello_gpu = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e936c9cc456d18d41467bb6d0e12f", default-features = false, features = ["wgpu", "wgpu_default", "text"] }
+vello_common = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e936c9cc456d18d41467bb6d0e12f", default-features = false, features = ["std"] }
+glifo = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e936c9cc456d18d41467bb6d0e12f" }
+wgpu = "30.0.1"
 
 # Debug builds grew `target/debug` to 462 GB (full debug info in every test
 # and example binary, plus the incremental cache). Line tables keep file and

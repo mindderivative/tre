@@ -2,6 +2,7 @@
 name = "engine-render"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -10,14 +11,12 @@ description = "Vello Scene building and GPU rendering. Depends on engine-core (t
 
 [dependencies]
 engine-core = { path = "../engine-core" }
-# vello_hybrid's own low-level glyph type (Scene::glyph_run's `fill_glyphs`
-# takes an iterator of these). Already resolved at exactly this version
-# transitively via vello_hybrid's own "text" feature -- naming it directly
-# adds nothing new to the dependency graph, just lets text.rs construct
-# `glifo::Glyph { id, x, y }` values from parley's shaped output.
-glifo = "0.3.0"
+# `vello_gpu`'s glyph type (`Scene::glyph_run(..).fill_glyphs` takes
+# these), from the workspace's pinned commit; text.rs builds
+# `glifo::Glyph { id, x, y }` from parley's shaped output.
+glifo = { workspace = true }
 # Must track peniko's own kurbo requirement exactly (currently "0.13.1",
-# checked directly in peniko 0.6.1's Cargo.toml) -- vello_hybrid's
+# checked directly in peniko 0.6.1's Cargo.toml) -- vello_gpu's
 # Scene::fill_path(&BezPath) takes peniko::kurbo's BezPath, not an
 # independently-resolved one. They happen to match right now; nothing
 # stops a future `cargo update` from drifting them apart silently, since
@@ -31,33 +30,20 @@ kurbo = "0.13.1"
 # for real with wgpu in step 1) hasn't bitten here, at least not yet;
 # re-check the same way before ever bumping parley independently.
 parley = "0.11.1"
+# Reports a glyph `vello_gpu` couldn't draw (the rest of the run still
+# draws); the same `tracing` version `engine-py` installs a subscriber for.
+tracing = "0.1.44"
+# 0.4.0 M6: the damage fingerprints' hasher -- a fast, fixed-seed,
+# non-cryptographic hash (nothing adversarial chooses what's compared),
+# already locked here through the workspace's own dependencies.
+foldhash = "0.2.0"
 peniko = "0.6.1"
-# M22 Phase 1 (§5): the real `ImageSource::from_peniko_image_data`
-# conversion (`peniko::ImageData` -> a paintable `vello_common::paint::
-# Image`) that `vello_hybrid` itself never re-exports (confirmed via
-# grep across its own `lib.rs`) -- a real, necessary direct dependency,
-# not an added architectural layer. Pinned to exactly what
-# `vello_hybrid` 0.2.0 itself requires (its own Cargo.toml: `vello_common
-# = "0.2.0"`), same "zero new resolution, only a direct edge" pattern
-# `kurbo`/`parley` above already established -- confirmed via `grep -c
-# 'name = "vello_common"' Cargo.lock` staying at 1 after this was added.
-# `default-features = false, features = ["std"]` matches `vello_hybrid`'s
-# own exact feature set (its Cargo.toml) -- its default `"png"` feature
-# (an internal PNG decoder) is deliberately left off, since decoding
-# happens through this workspace's own `image` crate instead (in
-# `engine-py`), not vello_common's.
-vello_common = { version = "0.2.0", default-features = false, features = ["std"] }
-# Pinned to exactly what vello_hybrid 0.2.0 itself requires (its own
-# Cargo.toml: `wgpu = "29.0.3"`), not the latest wgpu (30.0.1) -- adding
-# wgpu independently resolved two incompatible major versions into the
-# same dependency graph, which would have failed to compile the moment a
-# wgpu::Device created here was passed into a vello_hybrid function
-# expecting its own wgpu 29.x type. This is the concrete, no-longer-
-# hypothetical form of the Linebender-family version-coupling risk
-# ARCHITECTURE.md §3 already flagged -- found by trying to actually build
-# this, not by review.
-vello_hybrid = { version = "0.2.0", features = ["wgpu", "wgpu_default"] }
-wgpu = "29.0.3"
+# `ImageSource::from_peniko_image_data` and the geometry types
+# `vello_gpu` doesn't re-export; `vello_gpu`, `vello_common`, and `wgpu`
+# all come from the workspace table, which pins them together.
+vello_common = { workspace = true }
+vello_gpu = { workspace = true }
+wgpu = { workspace = true }
 
 [dev-dependencies]
 accesskit = "0.25.0"

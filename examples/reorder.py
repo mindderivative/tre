@@ -8,7 +8,7 @@ needs so that sorting a list never resets the row being edited.
 The script sorts the list three ways, checking identity, focus, and a
 mid-flight animation survive each move, then opens the window.
 Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
-without a display or GPU.
+without a display.
 """
 
 from tre import App, Window

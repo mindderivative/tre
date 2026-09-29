@@ -11,7 +11,7 @@ inside it. It shows the input and accessibility building blocks together:
 
 The script checks each behavior with `window.simulate`, then opens the
 window. Headless-CI-safe: `App.run()` renders `max_frames=60` and returns
-quietly without a display or GPU. See docs/guide/accessibility.md.
+quietly without a display. See docs/guide/accessibility.md.
 """
 
 from tre import App, Event, Window

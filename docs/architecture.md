@@ -29,7 +29,7 @@ its Python surface is the one stability contract. See
    callbacks run after it.
 4. **Layout** runs through `taffy`'s cache — paint-only changes never
    dirty it — and virtual lists build their visible rows.
-5. **Paint** walks the tree into a `vello_hybrid` scene, culling what's off
+5. **Paint** walks the tree into a `vello_gpu` scene, culling what's off
    screen, and renders it on the GPU. The **AccessKit** tree is built from
    the same node tree.
 

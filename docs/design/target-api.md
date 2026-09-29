@@ -16,7 +16,7 @@ Declarative views, the MD3 component catalog, and MD3 theming move to
 the framework (Tesserae). Every name is chosen so a framework author can
 tell at a glance what it is.
 
-Decisions D1–D11 (approved) are in `BUILD_TRACKER.md`'s Program section.
+Decisions D1–D11 (approved) are in `BUILD_TRACKER_ARCHIVE_0.3.md`'s Program section.
 This page adds design choices **R1–R12**, approved with it.
 
 Three principles run through every section:
@@ -287,7 +287,7 @@ and events still bubble from it.
 | --- | --- |
 | **Construction** | `Window(width, height, title)` **(exists)** |
 | **Nodes** | `root`; `create(kind, **props)` (R9) |
-| **Properties** | `set(title=...)`; read-only `get("width")`, `get("height")`, `get("scale_factor")` |
+| **Properties** | `set(title=..., partial_redraw=...)`; read-only `get("width")`, `get("height")`, `get("scale_factor")` |
 | **Events** | `resize` (`width`, `height`); `color_scheme` (`dark`), since `tre` no longer themes anything itself (D7); `scale_factor` (`scale_factor`); `close_requested` (cancellable with `event.cancel()`); `closed`; `dock_target`, `dock_drop` |
 | **Layers** (M96) | [below](#layers) |
 | **Time** (R7, M96) | `advance(ms)`: headless, moves animations and layout forward by exactly `ms`, so animated widgets are testable on CI, where `App.run()` renders no frames |

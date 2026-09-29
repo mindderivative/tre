@@ -20,7 +20,9 @@ use engine_core::{NodeKind, PaintProperties, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
+
+mod support;
 
 const FILL: Color = Color::from_rgba8(0x11, 0x11, 0x11, 0xFF);
 const BORDER: Color = Color::from_rgba8(0xFF, 0x00, 0x00, 0xFF);
@@ -51,23 +53,7 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         },
     );
 
-    let instance = wgpu::Instance::default();
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        })
-        .await
-        .expect("no wgpu adapter available in this environment");
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("engine-render border-paint test device"),
-            required_features: wgpu::Features::empty(),
-            ..Default::default()
-        })
-        .await
-        .expect("failed to create wgpu device");
+    let (device, queue) = support::device("engine-render border-paint test device").await;
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("border-paint test target"),
@@ -89,8 +75,8 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         &device,
         &RenderTargetConfig {
             format: texture.format(),
-            width: u32::from(SIZE),
-            height: u32::from(SIZE),
+            width: SIZE,
+            height: SIZE,
         },
     );
     let mut text_renderer = TextRenderer::new();
@@ -105,52 +91,16 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         &mut geometry_cache,
     );
     let render_size = RenderSize {
-        width: u32::from(SIZE),
-        height: u32::from(SIZE),
+        width: SIZE,
+        height: SIZE,
     };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
 
-    let bytes_per_row = (u32::from(SIZE) * 4).next_multiple_of(256);
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback"),
-        size: u64::from(bytes_per_row) * u64::from(SIZE),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: None,
-            },
-        },
-        wgpu::Extent3d {
-            width: u32::from(SIZE),
-            height: u32::from(SIZE),
-            depth_or_array_layers: 1,
-        },
-    );
     queue.submit([encoder.finish()]);
-
-    let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |result| {
-        result.expect("failed to map readback buffer");
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("device poll failed");
-
-    let data = slice.get_mapped_range();
+    let bytes_per_row = (u32::from(SIZE) * 4).next_multiple_of(256);
+    let data = support::read_texture(&device, &queue, &texture);
     let mut out = vec![0u8; data.len()];
     out.copy_from_slice(&data);
     (out, bytes_per_row)
@@ -173,7 +123,7 @@ fn a_real_border_paints_its_own_color_near_the_edge_and_the_fill_survives_at_the
         let (data, bytes_per_row) = render(BORDER_WIDTH).await;
 
         // Squarely inside the real stroke band (the stroke is centered
-        // on a rect inset by half the border width, per paint_node's
+        // on a rect inset by half the border width, per draw_own's
         // own real implementation) -- must be the real border color.
         let edge = pixel_at(data.as_slice(), bytes_per_row, 4, SIZE as u32 / 2);
         assert_eq!(

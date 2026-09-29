@@ -1,0 +1,499 @@
+//! Scrolling: scroll views and virtual lists, their windows of rows, and their scrollbar-thumb drags.
+
+use super::*;
+
+impl Tree {
+    /// M36 Phase 1 (§5, §7, §11.7): moves `id`'s own real `ScrollView`
+    /// scroll position by `delta` real pixels along its own configured
+    /// axis, clamped to `[0.0, max_scroll]` -- the identical real
+    /// clamp-on-write shape `scroll_virtual_list_by` already
+    /// establishes, except `max_scroll` here comes from the one real
+    /// child's own measured content size (`sync_scroll_view_layouts`'s
+    /// own doc comment), not an item-count formula. A positive `delta`
+    /// increases the offset (content moves toward its own end), the
+    /// identical real convention `scroll_virtual_list_by` already
+    /// states. Panics if `id` isn't a real `NodeKind::ScrollView` in
+    /// this `Tree`, the same "internal bug, not a runtime condition"
+    /// contract every other direct scroll method here already uses.
+    pub fn scroll_scroll_view_by(&mut self, id: NodeId, delta: f64) {
+        self.dirty = true;
+        let node = self
+            .nodes
+            .get(id)
+            .expect("scroll_scroll_view_by: NodeId not found in this Tree");
+        let NodeKind::ScrollView(state) = &node.kind else {
+            panic!("scroll_scroll_view_by: {id:?} is not a NodeKind::ScrollView");
+        };
+        let horizontal = state.horizontal;
+        let Some(&child) = node.children.first() else {
+            return;
+        };
+
+        let viewport = f64::from(if horizontal {
+            self.layout(id).size.width
+        } else {
+            self.layout(id).size.height
+        });
+        let content = f64::from(if horizontal {
+            self.layout(child).size.width
+        } else {
+            self.layout(child).size.height
+        });
+        let max_scroll = (content - viewport).max(0.0);
+
+        let NodeKind::ScrollView(state) = &mut self.nodes[id].kind else {
+            unreachable!("checked above")
+        };
+        state.scroll.current = (state.scroll.current + delta).clamp(0.0, max_scroll);
+    }
+
+    /// M38 Phase 6 (§5, §7, §11.7): a real `ScrollView`'s own live
+    /// `(viewport_extent, content_extent)` along its own configured
+    /// scroll axis -- the identical real measurement `scroll_scroll_
+    /// view_by`/`sync_scroll_view_layouts` each already compute
+    /// inline, factored out once a third real caller (the thumb
+    /// hit-test/drag methods below) needed the identical values.
+    /// `None` if `id` isn't a real `NodeKind::ScrollView` in this
+    /// `Tree`, or has no children yet.
+    pub(super) fn scroll_view_extents(&self, id: NodeId) -> Option<(bool, f64, f64)> {
+        let node = self.nodes.get(id)?;
+        let NodeKind::ScrollView(state) = &node.kind else {
+            return None;
+        };
+        let horizontal = state.horizontal;
+        let &child = node.children.first()?;
+        let viewport = f64::from(if horizontal {
+            self.layout(id).size.width
+        } else {
+            self.layout(id).size.height
+        });
+        let content = f64::from(if horizontal {
+            self.layout(child).size.width
+        } else {
+            self.layout(child).size.height
+        });
+        Some((horizontal, viewport, content))
+    }
+
+    /// M38 Phase 6 (§5, §7, §11.7): whether a real press at `point`
+    /// (absolute canvas coordinates, the same space `PointerPressed`'s
+    /// own `position` already arrives in) grabs `view`'s own real
+    /// scrollbar thumb -- ported directly from pyCopper's own real
+    /// `ScrollViewElement.grabs_thumb` (`widgets/scroll.py`), including
+    /// its own real `SCROLLBAR_GRAB_SLOP` tolerance on every side (a
+    /// real, bare `SCROLLBAR_THICKNESS`-wide target is unusable with a
+    /// mouse). `false` for a `ScrollView` with nothing to scroll (the
+    /// identical real "no scrollbar painted at all" condition `engine-
+    /// render`'s own thumb paint uses) or no real
+    /// children yet.
+    pub(super) fn grabs_scroll_view_thumb(&self, view: NodeId, point: Point) -> bool {
+        let Some((horizontal, viewport, content)) = self.scroll_view_extents(view) else {
+            return false;
+        };
+        if content <= viewport {
+            return false;
+        }
+        let NodeKind::ScrollView(state) = &self.nodes[view].kind else {
+            return false;
+        };
+        let (track, thumb, along) = state.thumb_geometry(viewport, content);
+        if track <= 0.0 {
+            return false;
+        }
+        let (ox, oy) = self.absolute_position(view);
+        let size = self.layout(view).size;
+        let slop = SCROLLBAR_GRAB_SLOP;
+        let thickness = state.scrollbar_width;
+        if horizontal {
+            let tx = ox + along;
+            let ty = oy + f64::from(size.height) - thickness - SCROLLBAR_MARGIN;
+            (tx - slop..=tx + thumb + slop).contains(&point.x)
+                && (ty - slop..=ty + thickness + slop).contains(&point.y)
+        } else {
+            let tx = ox + f64::from(size.width) - thickness - SCROLLBAR_MARGIN;
+            let ty = oy + along;
+            (tx - slop..=tx + thickness + slop).contains(&point.x)
+                && (ty - slop..=ty + thumb + slop).contains(&point.y)
+        }
+    }
+
+    /// M38 Phase 6 (§5, §7, §11.7): live-follows-the-cursor thumb drag,
+    /// `update_drag`'s own real `ScrollView` arm -- ported directly
+    /// from pyCopper's own real `ScrollViewElement.on_pointer_move`
+    /// (`widgets/scroll.py`): thumb travel (`track - thumb`) maps to
+    /// scroll travel (`max_scroll`) 1:1 by ratio, so the content keeps
+    /// pace with the pointer instead of running ahead of or behind it.
+    /// A relative-delta computation from `state.thumb_drag_anchor` (set
+    /// by `PointerPressed`'s own dispatch arm below), not an absolute
+    /// pointer-to-scroll mapping -- preserves wherever along the
+    /// thumb's own length the real press actually grabbed it, the
+    /// identical real UX pyCopper's own design already chose. A true
+    /// no-op if the drag anchor is missing (defensive: `update_drag`'s
+    /// own caller already guarantees `self.dragging == Some(view)`
+    /// only after a real successful grab set it) or the real track has
+    /// no room to travel.
+    pub(super) fn update_scroll_view_thumb_drag(
+        &mut self,
+        view: NodeId,
+        point: Point,
+        _now: Instant,
+    ) {
+        let Some((horizontal, viewport, content)) = self.scroll_view_extents(view) else {
+            return;
+        };
+        let max_scroll = (content - viewport).max(0.0);
+        let NodeKind::ScrollView(state) = &self.nodes[view].kind else {
+            return;
+        };
+        let Some((anchor_coord, anchor_scroll)) = state.thumb_drag_anchor else {
+            return;
+        };
+        let (track, thumb, _along) = state.thumb_geometry(viewport, content);
+        let travel = track - thumb;
+        if travel <= 0.0 {
+            return;
+        }
+        let coord = if horizontal { point.x } else { point.y };
+        let moved = coord - anchor_coord;
+        let target = (anchor_scroll + moved * (max_scroll / travel)).clamp(0.0, max_scroll);
+        let NodeKind::ScrollView(state) = &mut self.nodes[view].kind else {
+            unreachable!("checked above")
+        };
+        // A real, direct write, not `animate_to` -- the identical
+        // "driven directly, never eased" precedent `ScrollViewState.
+        // scroll`'s own doc comment already establishes for every
+        // other real scroll mutation (`scroll_scroll_view_by`).
+        state.scroll.current = target;
+    }
+
+    /// M47 (§5, §7, §11.7): a real `VirtualList`'s own live viewport
+    /// extent along its (always vertical) scroll axis -- mirrors
+    /// `scroll_view_extents`'s own viewport half, but `VirtualList` has
+    /// no single measured child to read a "content extent" from (it's
+    /// windowed materialization, `Fixed` or `Variable`), so content
+    /// extent comes from `VirtualListState::total_extent()` directly at
+    /// each real call site instead of being returned from here. `None`
+    /// if `id` isn't a real `NodeKind::VirtualList` in this `Tree`.
+    pub(super) fn virtual_list_viewport_extent(&self, id: NodeId) -> Option<f64> {
+        let node = self.nodes.get(id)?;
+        if !matches!(node.kind, NodeKind::VirtualList(_)) {
+            return None;
+        }
+        Some(f64::from(self.layout(id).size.height))
+    }
+
+    /// M47 (§5, §7, §11.7): whether a real press at `point` grabs
+    /// `list`'s own real scrollbar thumb -- the identical real grab-
+    /// tolerance technique `grabs_scroll_view_thumb` (M38 Phase 6)
+    /// already established, narrowed to `VirtualList`'s own vertical-
+    /// only axis. `false` when there's nothing to scroll (`total_
+    /// extent() <= viewport`, the same real condition `engine-render`'s
+    /// own thumb-paint arm uses) or the list has no real viewport yet.
+    pub(super) fn grabs_virtual_list_thumb(&self, list: NodeId, point: Point) -> bool {
+        let Some(viewport) = self.virtual_list_viewport_extent(list) else {
+            return false;
+        };
+        let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
+            return false;
+        };
+        if state.total_extent() <= viewport {
+            return false;
+        }
+        let (track, thumb, along) = state.thumb_geometry(viewport);
+        if track <= 0.0 {
+            return false;
+        }
+        let (ox, oy) = self.absolute_position(list);
+        let size = self.layout(list).size;
+        let slop = SCROLLBAR_GRAB_SLOP;
+        let tx = ox + f64::from(size.width) - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN;
+        let ty = oy + along;
+        (tx - slop..=tx + SCROLLBAR_THICKNESS + slop).contains(&point.x)
+            && (ty - slop..=ty + thumb + slop).contains(&point.y)
+    }
+
+    /// M47 (§5, §7, §11.7): live-follows-the-cursor thumb drag for a
+    /// `VirtualList` -- the identical real ratio-mapped technique
+    /// `update_scroll_view_thumb_drag` (M38 Phase 6) already
+    /// established, narrowed to the vertical-only axis, writing through
+    /// the same clamp `Tree::scroll_virtual_list_by` already uses so
+    /// wheel-scroll and thumb-drag can never disagree about the real
+    /// clamp bounds. A true no-op if the drag anchor is missing or the
+    /// real track has no room to travel.
+    pub(super) fn update_virtual_list_thumb_drag(&mut self, list: NodeId, point: Point) {
+        let Some(viewport) = self.virtual_list_viewport_extent(list) else {
+            return;
+        };
+        let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
+            return;
+        };
+        let max_scroll = (state.total_extent() - viewport).max(0.0);
+        let Some((anchor_y, anchor_scroll)) = state.thumb_drag_anchor else {
+            return;
+        };
+        let (track, thumb, _along) = state.thumb_geometry(viewport);
+        let travel = track - thumb;
+        if travel <= 0.0 {
+            return;
+        }
+        let moved = point.y - anchor_y;
+        let target = (anchor_scroll + moved * (max_scroll / travel)).clamp(0.0, max_scroll);
+        let NodeKind::VirtualList(state) = &mut self.nodes[list].kind else {
+            unreachable!("checked above")
+        };
+        // A real, direct write, not `animate_to` -- the identical
+        // "driven directly, never eased" precedent `VirtualListState.
+        // scroll_offset`'s own doc comment already establishes.
+        state.scroll_offset.current = target;
+    }
+
+    /// Moves the drag in progress along with the pointer: a scrollbar
+    /// thumb's, the only drags the engine still owns (M99 removed the
+    /// splitter, slider, carousel, and time-picker-dial drags with their
+    /// kinds). `PointerPressed` only sets `self.dragging` after a real
+    /// thumb grab (`grabs_scroll_view_thumb`/`grabs_virtual_list_thumb`).
+    pub(super) fn update_drag(&mut self, point: Point, now: Instant) {
+        let Some(dragging) = self.dragging else {
+            return;
+        };
+        match &self.nodes[dragging].kind {
+            NodeKind::ScrollView(_) => self.update_scroll_view_thumb_drag(dragging, point, now),
+            NodeKind::VirtualList(_) => self.update_virtual_list_thumb_drag(dragging, point),
+            _ => {}
+        }
+    }
+
+    /// §14 step 15 (§11.7): materializes/recycles a `NodeKind::
+    /// VirtualList`'s real children to match exactly `visible` (the
+    /// caller's own already-overscanned logical-index range) -- the
+    /// concrete mechanism behind §11.7's own claim that a 100,000-row
+    /// list never needs 100,000 real `Node`s.
+    ///
+    /// An index newly entering `visible` is built by calling
+    /// `materialize(index)` for its `(NodeKind, Style, PaintProperties)`,
+    /// then inserted and absolutely positioned by this method itself --
+    /// `top: state.offset_of(idx)` (M12 Phase 1: `idx * item_extent` for
+    /// `Fixed`, a real resolved cumulative offset for `Variable`),
+    /// vertical-list only (the common list/data-grid case; a horizontal
+    /// virtual list would need the same treatment along the other axis,
+    /// not built since nothing here needs it yet). `Position::Absolute` here resolves against `list`
+    /// itself, `list` being the item's own direct parent -- verified
+    /// directly in `taffy`'s own `compute/flexbox.rs` at step 15 Stage A
+    /// (no separate "positioned ancestor" walk needed, matching
+    /// `open_overlay`'s own precedent). An index leaving `visible` is
+    /// dropped via `Tree::remove` -- its real generational `NodeId`
+    /// invalidation (`SlotMap`'s own behavior, §5) is what makes a stray
+    /// reference to a scrolled-away item fail safely rather than
+    /// silently reading whatever a reused slot now holds; nothing extra
+    /// is needed for "recycling" beyond this ordinary remove+insert, per
+    /// §11.7's own text.
+    ///
+    /// Panics if `list` isn't a `NodeKind::VirtualList` -- an internal
+    /// bookkeeping bug, not a runtime condition.
+    pub fn set_virtual_list_window(
+        &mut self,
+        list: NodeId,
+        visible: std::ops::Range<usize>,
+        mut materialize: impl FnMut(usize) -> (NodeKind, Style, PaintProperties),
+    ) {
+        self.dirty = true;
+        match &self
+            .nodes
+            .get(list)
+            .expect("set_virtual_list_window: NodeId not found in this Tree")
+            .kind
+        {
+            NodeKind::VirtualList(_) => {}
+            _ => panic!("set_virtual_list_window: {list:?} is not a NodeKind::VirtualList"),
+        };
+
+        let currently_materialized: Vec<(usize, NodeId)> = match &self.nodes[list].kind {
+            NodeKind::VirtualList(state) => {
+                state.materialized.iter().map(|(&i, &id)| (i, id)).collect()
+            }
+            _ => unreachable!("checked at the top of this function"),
+        };
+
+        for (idx, id) in &currently_materialized {
+            if !visible.contains(idx) {
+                self.remove(*id);
+            }
+        }
+        if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+            state.materialized.retain(|idx, _| visible.contains(idx));
+        }
+
+        let already_materialized: std::collections::BTreeSet<usize> = match &self.nodes[list].kind {
+            NodeKind::VirtualList(state) => state.materialized.keys().copied().collect(),
+            _ => unreachable!("checked at the top of this function"),
+        };
+
+        for idx in visible {
+            if already_materialized.contains(&idx) {
+                continue;
+            }
+            let (kind, mut style, paint) = materialize(idx);
+            let top = match &self.nodes[list].kind {
+                NodeKind::VirtualList(state) => state.offset_of(idx),
+                _ => unreachable!("checked at the top of this function"),
+            };
+            style.position = Position::Absolute;
+            style.inset = TaffyRect {
+                left: length(0.0),
+                top: length(top as f32),
+                right: auto(),
+                bottom: auto(),
+            };
+            let id = self.insert(kind, style, paint);
+            self.add_child(list, id);
+            if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+                state.materialized.insert(idx, id);
+            }
+        }
+    }
+
+    /// M8 Phase 3 (§11.7): moves `id`'s own real `scroll_offset` by
+    /// `delta_y` real pixels, clamped to `[0.0, max_offset]` --
+    /// `max_offset` is `id`'s own real content extent (`VirtualList
+    /// State::total_extent`, M12 Phase 1: `item_extent * item_count`
+    /// for `Fixed`, the real resolved sum for `Variable`) minus its own
+    /// real, computed viewport height (`Tree::layout`), floored at
+    /// `0.0` (a list whose content is shorter than its own viewport
+    /// can't scroll at all, correctly).
+    /// A positive `delta_y` increases the offset (content moves up,
+    /// later items come into view) -- this crate's own chosen, stated
+    /// convention (`PLAN.md`), not one `winit`'s own docs pin down.
+    /// Exposed as its own real method `dispatch` reuses internally --
+    /// panics if `id` isn't a real `NodeKind::VirtualList` in this
+    /// `Tree` (an internal bug, not a runtime condition).
+    pub fn scroll_virtual_list_by(&mut self, id: NodeId, delta_y: f64) {
+        self.dirty = true;
+        let node = self
+            .nodes
+            .get(id)
+            .expect("scroll_virtual_list_by: NodeId not found in this Tree");
+        let NodeKind::VirtualList(state) = &node.kind else {
+            panic!("scroll_virtual_list_by: {id:?} is not a NodeKind::VirtualList");
+        };
+        let content_extent = state.total_extent();
+        let viewport_height = f64::from(self.layout(id).size.height);
+        let max_offset = (content_extent - viewport_height).max(0.0);
+
+        let NodeKind::VirtualList(state) = &mut self.nodes[id].kind else {
+            unreachable!("checked above")
+        };
+        state.scroll_offset.current =
+            (state.scroll_offset.current + delta_y).clamp(0.0, max_offset);
+    }
+
+    /// M96: the rows of `list` its viewport shows -- every row whose extent
+    /// meets `[scroll, scroll + height)` -- by binary search over the
+    /// rows' offsets, so a long list costs `log n`. Needs a computed
+    /// layout.
+    pub fn virtual_list_visible(&self, list: NodeId) -> std::ops::Range<usize> {
+        let Some(NodeKind::VirtualList(state)) = self.nodes.get(list).map(|n| &n.kind) else {
+            return 0..0;
+        };
+        let top = state.scroll_offset.current;
+        let bottom = top + f64::from(self.layout(list).size.height);
+        // The first row whose `edge_of` passes `past`, for a list whose
+        // offsets only grow.
+        let first = |edge_of: &dyn Fn(usize) -> f64, past: &dyn Fn(f64) -> bool| {
+            let (mut lo, mut hi) = (0, state.item_count);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if past(edge_of(mid)) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            lo
+        };
+        // Visible rows end after `top` and start before `bottom`.
+        let start = first(&|idx| state.offset_of(idx + 1), &|end| end > top);
+        let end = first(&|idx| state.offset_of(idx), &|begin| begin >= bottom);
+        start..end.max(start)
+    }
+
+    /// M96: detaches every materialized row of `list` outside `keep`, and
+    /// returns them -- still alive, for the caller to free or keep.
+    pub fn virtual_list_release_outside(
+        &mut self,
+        list: NodeId,
+        keep: std::ops::Range<usize>,
+    ) -> Vec<NodeId> {
+        let released: Vec<NodeId> = match self.nodes.get(list).map(|n| &n.kind) {
+            Some(NodeKind::VirtualList(state)) => state
+                .materialized
+                .iter()
+                .filter(|(idx, _)| !keep.contains(idx))
+                .map(|(_, &id)| id)
+                .collect(),
+            _ => return Vec::new(),
+        };
+        if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+            state.materialized.retain(|idx, _| keep.contains(idx));
+        }
+        for &row in &released {
+            if self.nodes.get(row).and_then(|n| n.parent) == Some(list) {
+                self.detach(list, row);
+            }
+        }
+        released
+    }
+
+    /// M96: attaches `row` -- a node the caller built -- as row `index` of
+    /// `list`, the list's full width and the row's own extent tall; layout
+    /// places it at its offset (`sync_virtual_list_layouts`). Returns
+    /// `false`, changing nothing, if `row` is `list` or an ancestor.
+    pub fn virtual_list_adopt(&mut self, list: NodeId, index: usize, row: NodeId) -> bool {
+        let extent = match self.nodes.get(list).map(|n| &n.kind) {
+            Some(NodeKind::VirtualList(state)) => {
+                state.offset_of(index + 1) - state.offset_of(index)
+            }
+            _ => return false,
+        };
+        if !self.try_add_child(list, row) {
+            return false;
+        }
+        let mut style = self.nodes[row].layout_style.clone();
+        style.size = Size {
+            width: taffy::prelude::percent(1.0),
+            height: length(extent as f32),
+        };
+        self.set_layout_style(row, style);
+        if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+            state.materialized.insert(index, row);
+        }
+        true
+    }
+
+    /// M12 Phase 1 (§11.7): the real way a caller supplies resolved
+    /// cumulative offsets for a `Variable`-extent list -- `engine-core`
+    /// itself never computes a cumulative sum from raw per-item heights
+    /// (no size-hint callback lives here, §4); it only stores what it's
+    /// given, mirroring `materialized`'s own "resolve once, cache"
+    /// shape. `offsets`'s own key `item_count` (one past the last real
+    /// item) is where the real total content extent belongs -- see
+    /// `VirtualListState::offset_of`/`total_extent`'s own doc comments.
+    /// Panics if `list` isn't a real `NodeKind::VirtualList` in this
+    /// `Tree`, the same "internal bug, not a runtime condition"
+    /// contract `scroll_virtual_list_by` already uses.
+    pub fn set_virtual_list_resolved_offsets(
+        &mut self,
+        list: NodeId,
+        offsets: impl IntoIterator<Item = (usize, f64)>,
+    ) {
+        self.dirty = true;
+        let NodeKind::VirtualList(state) = &mut self
+            .nodes
+            .get_mut(list)
+            .expect("set_virtual_list_resolved_offsets: NodeId not found in this Tree")
+            .kind
+        else {
+            panic!("set_virtual_list_resolved_offsets: {list:?} is not a NodeKind::VirtualList");
+        };
+        state.resolved_offsets.extend(offsets);
+    }
+}

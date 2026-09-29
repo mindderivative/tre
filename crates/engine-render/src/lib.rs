@@ -1,6 +1,7 @@
 //! Vello Scene building and GPU rendering.
 //!
-//! §14 build-order step 1: one static rounded rect through `vello_hybrid`.
+//! §14 build-order step 1: one static rounded rect through the renderer
+//! (`vello_hybrid` then; 0.4.0 M2: upstream `vello_gpu` at a pinned commit).
 //! No layout, no text, no Python -- proving the render pipeline itself
 //! exists before anything is built on top of it (Design Principle 5).
 //!
@@ -12,7 +13,7 @@
 //!
 //! §14 build-order step 4 adds `NodeKind::Text` handling to that same
 //! walk, via the `text` module's `TextRenderer` (`parley` shaping fed
-//! into `vello_hybrid`'s low-level glyph API).
+//! into the renderer's low-level glyph API).
 //!
 //! Depends on `engine-core` for `Tree`/`NodeId`/`NodeKind`/
 //! `PaintProperties` and, for windowing, on nothing at all -- this crate
@@ -21,25 +22,33 @@
 //! over a `wgpu::Device`/`Queue`/`TextureView` the caller already has,
 //! matching §4's crate-boundary rule.
 
+mod damage;
 mod fonts;
 mod geometry_cache;
 mod image_cache;
+mod persistent_target;
 mod text;
+mod walk;
+mod window_renderer;
 
 use engine_core::{
     ContentFit, DrawCommand, NodeId, NodeKind, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS,
     ScrollViewState, Tree, VirtualListState,
 };
 use peniko::Color;
-use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
-use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
+use peniko::kurbo::{Affine, BezPath, Circle, Rect, RoundedRect, Shape, Stroke};
+use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
+pub use damage::{Damage, DamageTracker, MAX_RECTS};
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
+pub use image_cache::MAX_IMAGE_DIMENSION;
+pub use persistent_target::PersistentTarget;
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
+pub use window_renderer::WindowRenderer;
 
 /// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
-/// starting color, not vello_hybrid's own default, so a wrong pixel in a
+/// starting color, not the renderer's own default, so a wrong pixel in a
 /// readback test can't be confused with "the renderer drew nothing and
 /// left its own default."
 pub const INITIAL_COLOR: Color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
@@ -81,8 +90,9 @@ pub fn build_rect_scene(width: u16, height: u16, color: Color, opacity: f64) -> 
     scene
 }
 
-/// §14 build-order step 8: standalone spike proving `vello_hybrid`
-/// 0.2.0's `Scene::fill_blurred_rounded_rect` actually produces a real
+/// §14 build-order step 8: standalone spike proving the renderer's
+/// `Scene::fill_blurred_rounded_rect` (then `vello_hybrid` 0.2.0; 0.4.0:
+/// `vello_gpu`, and `tests/shadow_spike.rs` still checks it) produces a real
 /// Gaussian-blurred shadow, not just that the call compiles -- the
 /// exact risk named in §7.2/§15 ("early-stage per Vello's own release
 /// notes, no API stability guarantee yet, uneven parity across the
@@ -138,24 +148,77 @@ pub fn build_tree_scene(
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
 ) -> Scene {
-    let mut scene = Scene::new(width, height);
-    scene.set_transform(Affine::IDENTITY);
-    // M8 Phase 1 (§11.8): the real, canvas-space "currently visible"
-    // rect -- the whole viewport at the top of the walk. Threaded
-    // through `paint_node`'s own recursion so a later `NodeKind` (a
-    // real scrollable `VirtualList`, M8 Phase 2) can narrow it on the
-    // way into its own clipped children, not just check it once here.
-    let visible = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
-    paint_node(
+    build_scene(tree, root, width, height, None, resources, text, geometry)
+}
+
+/// 0.4.0 M5: `build_tree_scene` for a partial redraw -- only what paints
+/// inside `rects` (window pixels, non-overlapping, from `Damage::Rects`):
+/// the scene is clipped to them, and a node is drawn only where what it
+/// paints -- shadows and overflow included -- reaches one of them. Rendered with `TargetInit::Clear(ClearSettings::Rects)` over
+/// the kept last frame, it matches a full redraw inside the rects.
+#[allow(clippy::too_many_arguments)]
+pub fn build_tree_scene_in(
+    tree: &Tree,
+    root: NodeId,
+    width: u16,
+    height: u16,
+    rects: &[Rect],
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
+) -> Scene {
+    build_scene(
         tree,
         root,
-        Affine::IDENTITY,
-        visible,
-        &mut scene,
+        width,
+        height,
+        Some(rects),
         resources,
         text,
         geometry,
-    );
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_scene(
+    tree: &Tree,
+    root: NodeId,
+    width: u16,
+    height: u16,
+    rects: Option<&[Rect]>,
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
+) -> Scene {
+    let mut scene = Scene::new(width, height);
+    scene.set_transform(Affine::IDENTITY);
+    // M8 Phase 1 (§11.8): the real, canvas-space "currently visible"
+    // rect -- the whole viewport at the top of the walk -- which `walk`
+    // narrows under a clipping node on the way into its children. A partial redraw keeps the same
+    // `visible`, so it culls exactly as a full redraw does, and tests each
+    // node against the damage `rects` besides.
+    let visible = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    if let Some(rects) = rects {
+        let mut clip = BezPath::new();
+        for rect in rects {
+            // Rounded outward to whole pixels, as `render_into` clears.
+            clip.extend(rect.expand().path_elements(0.1));
+        }
+        scene.push_clip_layer(&clip);
+    }
+    let mut painter = Painter {
+        tree,
+        rects,
+        scene: &mut scene,
+        resources,
+        text,
+        geometry,
+        open: Vec::new(),
+    };
+    walk::walk(tree, root, visible, &mut painter);
+    if rects.is_some() {
+        scene.pop_layer();
+    }
     scene
 }
 
@@ -232,78 +295,185 @@ fn image_sample_rect(
         }
     }
 }
+/// The transform a node paints under: its parent's, then its layout
+/// position, then its own transform parts. 0.4.0 M4: shared by the paint
+/// walk and `DamageTracker`, so the two can't disagree.
+pub(crate) fn composed_transform(
+    parent: Affine,
+    position: (f64, f64),
+    node: &engine_core::Node,
+    w: f64,
+    h: f64,
+) -> Affine {
+    parent * Affine::translate(position) * node.paint.local_transform(w, h)
+}
 
+/// The window-space bounding box of `rect` (node-local) under
+/// `composed` -- all four corners, so it stays right under rotation.
+pub(crate) fn transformed_bounds(composed: Affine, rect: Rect) -> Rect {
+    composed.transform_rect_bbox(rect)
+}
+
+/// Whether `node` clips its children to its rounded box: scroll views
+/// and virtual lists always, anything with `clip_children` set.
+pub(crate) fn clips_children(node: &engine_core::Node) -> bool {
+    matches!(
+        node.kind,
+        NodeKind::VirtualList(_) | NodeKind::ScrollView(_)
+    ) || node.paint.clip_children
+}
+
+/// The paint walk (`walk::Visitor`): each node's own paint, its group
+/// opacity layer, and its children's clip layer, which `leave` closes.
+struct Painter<'a> {
+    tree: &'a Tree,
+    /// A partial redraw's damage rects; `None` paints everything.
+    rects: Option<&'a [Rect]>,
+    scene: &'a mut Scene,
+    resources: &'a mut Resources,
+    text: &'a mut TextRenderer,
+    geometry: &'a mut GeometryCache,
+    /// Per node entered and not yet left: whether it opened an opacity
+    /// layer, whether it opened a clip layer, and whether it drew itself.
+    open: Vec<(bool, bool, bool)>,
+}
+
+impl<'t> walk::Visitor<'t> for Painter<'_> {
+    fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
+        let node = v.node;
+        // 0.4.0 M5: in a partial redraw a node draws only if what it paints
+        // (`damage::painted_rect`, the extent the damage walk records --
+        // shadows and overflow included, not just its box) reaches a damage
+        // rect. A node that clips its children confines its whole subtree to
+        // that extent, so missing skips the subtree; any other node's children
+        // may overflow it, and still decide for themselves.
+        let draw_self = match self.rects {
+            None => true,
+            Some(rects) => {
+                let painted = damage::painted_rect(
+                    self.text, v.id, node, v.composed, v.w, v.h, v.bounds, v.visible,
+                );
+                let hit = rects.iter().any(|r| painted.overlaps(*r));
+                if !hit && clips_children(node) {
+                    return false;
+                }
+                hit
+            }
+        };
+
+        // M95: group opacity -- the node and its whole subtree composite as
+        // one layer at `opacity`, so a fading container fades its children
+        // too. The node's own paints are then fully opaque (`own_alpha` in
+        // `draw_own`), their colors' own alpha applying through
+        // `with_opacity`.
+        let opacity = node.paint.opacity.current;
+        let layered = opacity < 1.0;
+        if layered {
+            self.scene
+                .push_layer(None, None, Some(opacity as f32), None, None);
+        }
+        if draw_self {
+            draw_own(
+                self.tree,
+                v.id,
+                node,
+                v.w,
+                v.h,
+                v.composed,
+                self.scene,
+                self.resources,
+                self.text,
+                self.geometry,
+            );
+        }
+
+        // M8 Phase 2 (§11.7): a node that clips its children paints them
+        // inside a clip layer of its rounded box (the walk narrows their
+        // visible rect to match).
+        // M32 Phase 3 (§5, §7, §11.7/§11.8): any `NodeKind` takes this
+        // branch when `PaintProperties.clip_children` is genuinely set.
+        // No scroll-offset translation for the general case, the
+        // identical real v1 limit `clip_children`'s own doc comment
+        // states: clipping only, not a new scroll mechanism.
+        //
+        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` always takes this
+        // branch (its own real anatomy always clips, not an opt-in) --
+        // and needs no scroll-offset translation here either: `Tree::sync_scroll_
+        // view_layouts` already bakes its one real child's own current
+        // scroll-shifted position into `layout_style` every frame, the
+        // identical bug-avoiding "paint and hit-test read the same real
+        // position, by construction" design this phase's own
+        // investigation found `VirtualList` did *not* actually have.
+        //
+        // M37 (§5, §7, §11.7): `VirtualList` now joins this same
+        // branch too, closing that real gap directly -- `Tree::sync_
+        // virtual_list_layouts` bakes every real materialized item's
+        // own current scroll-adjusted position into `layout_style`
+        // every frame, the identical fix, so the separate paint-time-
+        // only `Affine::translate` this branch used to need for
+        // `VirtualList` alone is gone: `composed` alone is now already
+        // correct for it too, exactly like `ScrollView`.
+        let clipped = clips_children(node);
+        if clipped {
+            let clip_radius = node.paint.corner_radius.current;
+            let clip = self.geometry.rounded_rect_fill(v.id, v.w, v.h, clip_radius);
+            self.scene.push_layer(Some(clip), None, None, None, None);
+        }
+        self.open.push((layered, clipped, draw_self));
+        true
+    }
+
+    fn leave(&mut self, v: &walk::Visit<'t>) {
+        let (layered, clipped, drew) = self.open.pop().expect("every node left was entered");
+        if clipped {
+            self.scene.pop_layer();
+            // M38 Phase 6 (§5, §7, §11.7): a real `ScrollView`'s own real
+            // scrollbar thumb -- painted here, *after* every real child
+            // (mirrors pyCopper's own real `paint_foreground`, which runs
+            // after children for exactly this reason: the thumb sits over
+            // the scrolled content, not under it). `scene`'s own ambient
+            // transform is whatever the last painted child left it at, not
+            // necessarily `composed` any more -- reset it explicitly first,
+            // the same real discipline every other paint call in this
+            // function already follows.
+            if let NodeKind::ScrollView(state) = &v.node.kind
+                && drew
+            {
+                paint_scroll_view_thumb(self.tree, v.id, state, v.w, v.h, v.composed, self.scene);
+            }
+            // M47 (§5, §7, §11.7): the identical real "paint after every
+            // child" scrollbar thumb, for `VirtualList` -- closes the one
+            // real gap M38 Phase 6 left open (named in M37's own trailer
+            // note): `VirtualList` has always scrolled correctly via wheel
+            // input, it just never had a visual thumb.
+            if let NodeKind::VirtualList(state) = &v.node.kind
+                && drew
+            {
+                paint_virtual_list_thumb(state, v.w, v.h, v.composed, self.scene);
+            }
+        }
+        if layered {
+            self.scene.pop_layer();
+        }
+    }
+}
+
+/// A node's own paint -- shadows, then what its kind draws -- in its own
+/// coordinates under `composed`.
 #[allow(clippy::too_many_arguments)]
-fn paint_node(
+fn draw_own(
     tree: &Tree,
     id: NodeId,
-    parent_transform: Affine,
-    visible: Rect,
+    node: &engine_core::Node,
+    w: f64,
+    h: f64,
+    composed: Affine,
     scene: &mut Scene,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
 ) {
-    let node = tree
-        .get(id)
-        .expect("build_tree_scene: NodeId not found in this Tree");
-    // M96: a hidden node paints nothing, subtree included.
-    if !node.visible {
-        return;
-    }
-    let layout = tree.layout(id);
-    let w = f64::from(layout.size.width);
-    let h = f64::from(layout.size.height);
-    let composed = parent_transform
-        * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
-        * node.paint.local_transform(w, h);
-
-    // M8 Phase 1 (§11.8): a whole-subtree skip, not a per-pixel clip --
-    // this node's own real, composed, absolute bounding box (all four
-    // local corners transformed, not just two opposite ones, so this
-    // stays correct even under a future rotation-capable `Affine`, not
-    // just today's shear/rotation-free subspace) checked against the
-    // "currently visible" rect threaded down from `build_tree_scene`.
-    // No Vello scene-encoding happens at all for a node -- or anything
-    // in its subtree -- that doesn't overlap it; `tree` is an immutable
-    // reference throughout this whole walk, so there's no side effect
-    // to lose by skipping.
-    let corners = [
-        composed * Point::new(0.0, 0.0),
-        composed * Point::new(w, 0.0),
-        composed * Point::new(0.0, h),
-        composed * Point::new(w, h),
-    ];
-    let min_x = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-    let max_x = corners
-        .iter()
-        .map(|p| p.x)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let min_y = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-    let max_y = corners
-        .iter()
-        .map(|p| p.y)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let bounds = Rect::new(min_x, min_y, max_x, max_y);
-    if !bounds.overlaps(visible) {
-        return;
-    }
-
-    // M95: group opacity -- the node and its whole subtree composite as
-    // one layer at `opacity`, so a fading container fades its children
-    // too. The node's own paints below are then fully opaque
-    // (`own_alpha`), their colors' own alpha applying through
-    // `with_opacity`. A fully transparent node skips its subtree.
-    let opacity = node.paint.opacity.current;
-    if opacity <= 0.0 {
-        return;
-    }
-    let layered = opacity < 1.0;
-    if layered {
-        scene.push_layer(None, None, Some(opacity as f32), None, None);
-    }
     let own_alpha = 1.0;
-
     scene.set_transform(composed);
 
     // M95: the `shadows` list, CSS `box-shadow`'s model -- each is the
@@ -570,49 +740,51 @@ fn paint_node(
                 }
             }
         }
-        // M22 Phase 1 (§5): **real finding, confirmed by a failing
-        // test, not assumed:** `vello_hybrid`'s ordinary `set_paint`+
-        // `fill_path` path panics on CPU-side pixel data
-        // (`ImageSource::Pixmap`) -- "pixmap image sources are not
-        // supported by Vello Hybrid" -- only a pre-registered,
-        // externally-owned GPU texture (`ImageSource::OpaqueId`) is
-        // ever accepted by its own wgpu renderer. `Scene::
-        // draw_texture_rects` is the one real, currently-supported
-        // path (`image_cache`'s own module doc comment has the full
-        // investigation): `id`'s own deterministic `TextureId`
-        // (`image_cache::texture_id_for`) must already be bound in
-        // the `TextureBindings` `FrameRenderer::render` hands to
-        // `vello_hybrid` -- `FrameRenderer::sync_image_textures`,
-        // called once per frame before `render`, is what guarantees
-        // that. `source_region` is the image's own full real pixel
-        // extent; `transform` scales that local rect up to the node's
-        // own `(w, h)` box -- Phase 1's own stated "stretched to fill"
-        // scope, composed on top of `scene.set_transform(composed)`
-        // (already active above). Real content-fit modes (cover/
-        // contain) are Phase 2's, §16.1.
-        // M25 Phase 2 (§5, §6): a real, previously-missing compounding
-        // -- `Scene::draw_texture_rects` has no opacity parameter of
-        // its own at all (confirmed via direct source read), unlike
-        // every `set_paint`-based fill in this match. `push_layer`'s
-        // own real `opacity` parameter (an opacity-only layer, no
-        // clip) wraps the draw instead -- skipped entirely at
-        // `opacity <= 0.0`, so an invisible thing is never drawn.
+        // M22 Phase 1 (§5): an image is an externally owned GPU texture
+        // (`image_cache` has why -- the renderer doesn't take CPU pixel
+        // data), bound under `id`'s `TextureId` in the `TextureBindings`
+        // `FrameRenderer::render`/`render_into` pass on;
+        // `sync_image_textures`, run before rendering each frame,
+        // guarantees the binding. 0.4.0 M2:
+        // `vello_gpu` draws it as an `ImageSource::ExternalTexture` paint
+        // over a filled rect -- `source_region` is the part of the image
+        // shown (all of it, or `cover`'s crop), and `transform` maps its
+        // texels onto the node box. The paint has no opacity of its own,
+        // so an opacity layer wraps it, skipped when fully transparent.
         NodeKind::Image(state) => {
             let img_width = state.image.width;
             let img_height = state.image.height;
             let node_opacity = own_alpha;
-            if img_width > 0 && img_height > 0 && node_opacity > 0.0 {
+            // An image too large to upload has no texture to draw.
+            let fits = img_width <= image_cache::MAX_IMAGE_DIMENSION
+                && img_height <= image_cache::MAX_IMAGE_DIMENSION;
+            if img_width > 0 && img_height > 0 && fits && node_opacity > 0.0 {
                 let (source_region, transform) =
                     image_sample_rect(w, h, img_width, img_height, state.content_fit);
-                scene.push_layer(None, None, Some(node_opacity as f32), None, None);
-                scene.draw_texture_rects(
-                    image_cache::texture_id_for(id),
-                    peniko::ImageQuality::Medium,
-                    [vello_hybrid::SampleRect {
-                        source_region,
-                        transform,
-                    }],
+                // The texture is an image paint: `transform` maps the
+                // source region's texels to the node box, as the paint
+                // transform, and the fill covers the region's image there.
+                let region = peniko::kurbo::Rect::new(
+                    0.0,
+                    0.0,
+                    f64::from(source_region.x1 - source_region.x0),
+                    f64::from(source_region.y1 - source_region.y0),
                 );
+                scene.push_layer(None, None, Some(node_opacity as f32), None, None);
+                scene.set_paint(vello_common::paint::Image {
+                    image: vello_common::paint::ImageSource::external_texture(
+                        image_cache::texture_id_for(id),
+                        source_region,
+                        true,
+                    ),
+                    sampler: peniko::ImageSampler {
+                        quality: peniko::ImageQuality::Medium,
+                        ..Default::default()
+                    },
+                });
+                scene.set_paint_transform(transform);
+                scene.fill_rect(&transform.transform_rect_bbox(region));
+                scene.reset_paint_transform();
                 scene.pop_layer();
             }
         }
@@ -639,84 +811,6 @@ fn paint_node(
                 scene.stroke_path(&stroke);
             }
         }
-    }
-
-    // M8 Phase 2 (§11.7): a `VirtualList`'s own materialized children
-    // scroll and clip for real -- every other `NodeKind` recurses
-    // exactly as before this phase (no other kind introduces a real
-    // visual clip today, confirmed via direct read before this change,
-    // so narrowing `visible` for any of them would wrongly cull
-    // legitimately-overflowing content nothing here actually hides).
-    if matches!(
-        node.kind,
-        NodeKind::VirtualList(_) | NodeKind::ScrollView(_)
-    ) || node.paint.clip_children
-    {
-        // M32 Phase 3 (§5, §7, §11.7/§11.8): any `NodeKind` takes this
-        // branch when `PaintProperties.clip_children` is genuinely set.
-        // No scroll-offset translation for the general case, the
-        // identical real v1 limit `clip_children`'s own doc comment
-        // states: clipping only, not a new scroll mechanism.
-        //
-        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` always takes this
-        // branch (its own real anatomy always clips, not an opt-in) --
-        // and needs no scroll-offset translation here either: `Tree::sync_scroll_
-        // view_layouts` already bakes its one real child's own current
-        // scroll-shifted position into `layout_style` every frame, the
-        // identical bug-avoiding "paint and hit-test read the same real
-        // position, by construction" design this phase's own
-        // investigation found `VirtualList` did *not* actually have.
-        //
-        // M37 (§5, §7, §11.7): `VirtualList` now joins this same
-        // branch too, closing that real gap directly -- `Tree::sync_
-        // virtual_list_layouts` bakes every real materialized item's
-        // own current scroll-adjusted position into `layout_style`
-        // every frame, the identical fix, so the separate paint-time-
-        // only `Affine::translate` this branch used to need for
-        // `VirtualList` alone is gone: `composed` alone is now already
-        // correct for it too, exactly like `ScrollView`.
-        let clip_radius = node.paint.corner_radius.current;
-        let clip = geometry.rounded_rect_fill(id, w, h, clip_radius);
-        scene.push_layer(Some(clip), None, None, None, None);
-
-        let narrowed = visible.intersect(bounds);
-        for &child in tree.children_in_paint_order(id).iter() {
-            paint_node(
-                tree, child, composed, narrowed, scene, resources, text, geometry,
-            );
-        }
-
-        scene.pop_layer();
-
-        // M38 Phase 6 (§5, §7, §11.7): a real `ScrollView`'s own real
-        // scrollbar thumb -- painted here, *after* every real child
-        // (mirrors pyCopper's own real `paint_foreground`, which runs
-        // after children for exactly this reason: the thumb sits over
-        // the scrolled content, not under it). `scene`'s own ambient
-        // transform is whatever the last painted child left it at, not
-        // necessarily `composed` any more -- reset it explicitly first,
-        // the same real discipline every other paint call in this
-        // function already follows.
-        if let NodeKind::ScrollView(state) = &node.kind {
-            paint_scroll_view_thumb(tree, id, state, w, h, composed, scene);
-        }
-        // M47 (§5, §7, §11.7): the identical real "paint after every
-        // child" scrollbar thumb, for `VirtualList` -- closes the one
-        // real gap M38 Phase 6 left open (named in M37's own trailer
-        // note): `VirtualList` has always scrolled correctly via wheel
-        // input, it just never had a visual thumb.
-        if let NodeKind::VirtualList(state) = &node.kind {
-            paint_virtual_list_thumb(state, w, h, composed, scene);
-        }
-    } else {
-        for &child in tree.children_in_paint_order(id).iter() {
-            paint_node(
-                tree, child, composed, visible, scene, resources, text, geometry,
-            );
-        }
-    }
-    if layered {
-        scene.pop_layer();
     }
 }
 
@@ -854,7 +948,7 @@ fn fill_scrollbar_thumb(
 /// states for the reverse case.
 const SCROLLBAR_THUMB_RADIUS: f64 = 2.0;
 
-/// Thin wrapper around `vello_hybrid::Renderer` -- it needs a mutable
+/// Thin wrapper around `vello_gpu::Renderer` -- it needs a mutable
 /// `Resources` alongside it for every render call, which is easy to get
 /// out of sync by hand; bundling them here means callers only ever see
 /// one object.
@@ -862,7 +956,7 @@ pub struct FrameRenderer {
     renderer: Renderer,
     resources: Resources,
     // M22 Phase 1 (§5): every real `Image` node's own GPU texture,
-    // plus the live `TextureBindings` `render` hands to `vello_hybrid`
+    // plus the live `TextureBindings` `render` hands to `vello_gpu`
     // -- empty (byte-for-byte this struct's pre-M22 behavior) unless a
     // caller's own tree has real `Image` nodes and calls
     // `sync_image_textures`.
@@ -891,6 +985,44 @@ impl FrameRenderer {
         render_size: &RenderSize,
         target: &wgpu::TextureView,
     ) {
+        self.render_into(scene, device, queue, encoder, render_size, target, None);
+    }
+
+    /// 0.4.0 M5: `render`, clearing only `rects` (window pixels) and
+    /// keeping the rest of `target` -- for a scene from
+    /// `build_tree_scene_in` with the same rects. `None` clears it all, as
+    /// `render` does.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_into(
+        &mut self,
+        scene: &Scene,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        render_size: &RenderSize,
+        target: &wgpu::TextureView,
+        rects: Option<&[Rect]>,
+    ) {
+        let clear_rects: Vec<vello_common::geometry::RectU16> = rects
+            .unwrap_or_default()
+            .iter()
+            .map(|r| {
+                // Whole pixels, rounded outward as the scene's clip is, so
+                // a fractional edge's partly covered pixel is cleared too.
+                let r = r.expand();
+                let at = |v: f64| v.clamp(0.0, f64::from(u16::MAX)) as u16;
+                vello_common::geometry::RectU16::new(at(r.x0), at(r.y0), at(r.x1), at(r.y1))
+            })
+            .collect();
+        let clear = match rects {
+            // Transparent, as the full clear is: the scene's own background
+            // paints over it.
+            Some(_) => vello_gpu::ClearSettings::Rects {
+                color: peniko::color::AlphaColor::TRANSPARENT,
+                rects: &clear_rects,
+            },
+            None => vello_gpu::ClearSettings::default(),
+        };
         self.renderer
             .render(
                 scene,
@@ -900,9 +1032,11 @@ impl FrameRenderer {
                 encoder,
                 render_size,
                 target,
+                None,
                 self.images.bindings(),
+                vello_gpu::TargetInit::Clear(clear),
             )
-            .expect("vello_hybrid render failed");
+            .expect("vello_gpu render failed");
     }
 
     /// M22 Phase 1 (§5): ensures every real `Image` node in `tree` has
@@ -939,7 +1073,7 @@ mod tests {
     /// assert the rect's fill color actually landed where it should --
     /// the center -- and the background is untouched at a corner outside
     /// the rounded rect. This is the same render-to-texture-then-readback
-    /// pattern vello_hybrid's own `render_to_file` example uses, adapted
+    /// pattern the renderer's own `render_to_file` example uses, adapted
     /// to assert instead of write a PNG. Runs without a display or a real
     /// window, so it's safe under `cargo test` on any CI runner --
     /// TRE v1's own lesson (LESSONS_LEARNED.md §3/§4) about needing a
@@ -955,6 +1089,7 @@ mod tests {
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: wgpu::PowerPreference::default(),
                     force_fallback_adapter: false,
+                    apply_limit_buckets: false,
                     compatible_surface: None,
                 })
                 .await
@@ -989,14 +1124,11 @@ mod tests {
                 &device,
                 &RenderTargetConfig {
                     format: texture.format(),
-                    width: u32::from(width),
-                    height: u32::from(height),
+                    width,
+                    height,
                 },
             );
-            let render_size = RenderSize {
-                width: u32::from(width),
-                height: u32::from(height),
-            };
+            let render_size = RenderSize { width, height };
 
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -1040,7 +1172,7 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("device poll failed");
 
-            let data = slice.get_mapped_range();
+            let data = slice.get_mapped_range().expect("the readback buffer maps");
             let pixel_at = |x: u32, y: u32| -> [u8; 4] {
                 let row_start = (y * bytes_per_row) as usize;
                 let px_start = row_start + (x * 4) as usize;

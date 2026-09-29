@@ -8,7 +8,7 @@ on the GPU. It has no widgets and no theme of its own: a framework built on
 it, such as Tesserae, turns the blocks into buttons, dialogs, and design
 systems. You write Python; the engine underneath uses:
 
-- [`vello_hybrid`](https://github.com/linebender/vello) for GPU rendering
+- [`vello_gpu`](https://github.com/linebender/vello) for GPU rendering
 - [`taffy`](https://github.com/DioxusLabs/taffy) for flexbox layout
 - [`parley`](https://github.com/linebender/parley) for text shaping
 - [`AccessKit`](https://github.com/AccessKit/accesskit) for accessibility

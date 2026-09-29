@@ -74,3 +74,10 @@ def test_a_new_frame_can_change_the_pixel_resolution():
     node = add(window, "image", width=160, height=90, rgba=bytes(4), pixel_width=1, pixel_height=1)
     node.set(rgba=_solid_frame(4, 2, 0xFF), pixel_width=4, pixel_height=2)
     node.set(rgba=_solid_frame(8, 6, 0x80), pixel_width=8, pixel_height=6)
+
+
+def test_a_frame_larger_than_a_gpu_texture_raises_a_clear_error():
+    window = Window(width=200, height=200)
+    node = add(window, "image", width=160, height=90, rgba=bytes(4), pixel_width=1, pixel_height=1)
+    with pytest.raises(ValueError, match="larger than the 8192x8192"):
+        node.set(rgba=bytes(9000 * 4), pixel_width=9000, pixel_height=1)

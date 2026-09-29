@@ -5,7 +5,7 @@
 `tre` gives Python the building blocks of a desktop UI — nodes, flexbox
 layout, paint, animation, input and events, text, accessibility, layers,
 and threading — and renders them on the GPU with
-[`vello_hybrid`](https://github.com/linebender/vello), laid out by
+[`vello_gpu`](https://github.com/linebender/vello), laid out by
 [`taffy`](https://github.com/DioxusLabs/taffy), shaped by
 [`parley`](https://github.com/linebender/parley), and exposed to screen
 readers through [`AccessKit`](https://github.com/AccessKit/accesskit).
@@ -86,6 +86,8 @@ Every rendering capability has a headless, GPU-backed pixel test under
 headlessly through `window.simulate` and `window.advance`.
 
 [`ARCHITECTURE.md`](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md) is the design reference, and
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) the milestone-by-milestone history.
+[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) tracks the current `0.4.0` line; the
+milestone-by-milestone history through `v0.3.5.2` is in
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md).
 `tre` is a from-scratch second iteration of an earlier Vulkan engine,
 archived under [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with its lessons learned.

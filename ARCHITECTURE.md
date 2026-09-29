@@ -2,7 +2,7 @@
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust — the building blocks of a desktop UI.**
 
-Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made `tre` a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the build is in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
+Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made `tre` a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.0` line (partial redraw, on upstream `vello_gpu`) is tracked in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
 
 ---
 
@@ -12,7 +12,7 @@ Status: living design reference, rewritten at M102 (0.3.5) to describe the engin
 - `tre` is an **engine, not a framework**. It provides building blocks — nodes, layout, paint, animation, input and events, text, accessibility, layers, threading, and docking — and nothing built *from* them. Widgets, design systems, theming, declarative views, data binding, and file loading belong to a framework on top; Tesserae is the first.
 - The PyO3 boundary (`engine-py`) is the one stability contract.
 - **Out of scope:** mobile, web, and bindings for any language but Python.
-- **Not built on Masonry.** It uses the same libraries Masonry does (`vello_hybrid`, `taffy`, `parley`, `accesskit`) under a purpose-built retained tree with one central animation system — see [ADR-001](#adr-001-hand-rolled-vs-masonry).
+- **Not built on Masonry.** It uses the same libraries Masonry does (Vello's renderers, `taffy`, `parley`, `accesskit`) under a purpose-built retained tree with one central animation system — see [ADR-001](#adr-001-hand-rolled-vs-masonry).
 
 ### Locked Decisions
 
@@ -48,7 +48,8 @@ Resolved architectural questions, in one place. Add a row when a question is set
 | Multiple windows | One `Tree` per OS window (§11.1) | No change to the node model; cross-window node moves are an accepted gap |
 | Docking | Fixed five zones; `tre` docks, drags, and reports; the framework draws handles and highlights (§11.4) | The mechanism is hard to get right; the look is design |
 | Virtualization | `virtual_list` kind that builds its own visible rows from `materialize(index)` (§11.7) | 100k real nodes would blow the frame budget |
-| Versioning | Stay on 0.3.x until the `vello_hybrid` fork; 0.4.0 is reserved for it | The user's policy |
+| Versioning | 0.3.x ended at `0.3.5`, with fixes as `0.3.5.x`; `0.4.0` is partial redraw, on upstream `vello_gpu` (issue #4) | The user's policy |
+| Renderer source | `vello_gpu` from a pinned upstream Git commit, with `vello_common` and `glifo` from the same commit (0.4.0 M1) | Upstream renamed `vello_hybrid` to `vello_gpu` and added the no-clear and rect-clear render partial redraw needs; it isn't published yet, and a pin makes every bump deliberate |
 
 ---
 
@@ -59,7 +60,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 3. **The PyO3 boundary is the only stability contract.** `engine-core`, `engine-render`, and `engine-platform` change freely; `engine-py`'s Python surface is what's versioned and documented.
 4. **No dependency leaks across the boundary.** Vello, kurbo, peniko, taffy, and accesskit types never appear in Python signatures. Python sees ints, floats, strings, tuples, and `tre`'s own classes.
 5. **Mechanism in the engine, meaning and look in the framework.** `tre` detects what it can know on its own — where the pointer is, what has focus, whether focus came from the keyboard — and reports it. What a node means (a checked checkbox) and how anything looks (a hover tint, a focus ring, a ripple) are set by the framework through ordinary properties and animations.
-6. **De-risk unknowns before building on them.** A new rendering capability gets a pixel test against the pinned `vello_hybrid` before anything depends on it.
+6. **De-risk unknowns before building on them.** A new rendering capability gets a pixel test against the pinned `vello_gpu` before anything depends on it.
 
 ---
 
@@ -69,7 +70,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 |---|---|---|
 | Windowing, input, IME | `winit` | Event loop (owns the main thread), windows, keyboard and pointer input |
 | GPU | `wgpu` | Device and surface management |
-| 2D rendering | `vello_hybrid` (`wgpu` features only) | CPU preprocess, GPU raster of paths, images, and blurred shadows |
+| 2D rendering | `vello_gpu` at a pinned upstream commit (`wgpu` and `text` features); `vello_hybrid` before 0.4.0 | CPU preprocess, GPU raster of paths, images, and blurred shadows |
 | Geometry, color | `kurbo`, `peniko` | `BezPath`, `Affine`, `Color` — Vello's vocabulary |
 | Text | `parley` (with `glifo` for glyph drawing) | Shaping, line breaking, BiDi, font fallback |
 | Layout | `taffy` | Flexbox; text leaf sizes come from Parley |
@@ -80,7 +81,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 | Packaging | `maturin` | Builds the wheel |
 | Errors, logging | `thiserror`, `tracing` | Typed errors at the boundary; structured logs controlled by `RUST_LOG` |
 
-`vello_hybrid`, `parley`, `kurbo`, and `peniko` are one co-evolving Linebender family: pin and bump them as a set.
+`vello_gpu`, `vello_common`, `glifo`, `parley`, `kurbo`, `peniko`, and `wgpu` move together: the workspace `Cargo.toml` pins the first three to one upstream commit and `wgpu` to the major version it uses. Bump them as a set, and re-run the pixel tests.
 
 ---
 
@@ -105,7 +106,7 @@ graph TD
     end
     subgraph Render["engine-render — no winit"]
         H[Scene building: paint walk, paths, shadows, text]
-        I[vello_hybrid + wgpu]
+        I[vello_gpu + wgpu]
     end
     subgraph Platform["engine-platform — windowing"]
         K[winit event loop + input translation]
@@ -122,7 +123,7 @@ graph TD
     D --> O
 ```
 
-**Crate boundary rule.** `engine-core` knows nothing of Python, `winit`, or the GPU; it's tested in isolation. It depends on the plain `accesskit` data crate, which is small and OS-agnostic like `taffy`, so the accessibility tree is built next to the node tree it describes. `engine-render` walks `engine-core`'s tree to build a scene and never opens a window itself. `engine-platform` owns the `winit` loop, opens the windows, runs the AccessKit adapter, and translates `winit` input into `engine-core`'s `InputEvent`. It also reads the OS's light/dark appearance (`appearance`): through `winit` on macOS and Windows, and on Linux, where `winit` can't, from the XDG settings portal over D-Bus, whose changes it turns into the same `InputEvent::ThemeChanged` (M106). `engine-py` is the only crate that imports `pyo3`; it also names `winit`'s `Window` type, to build a GPU surface on each window `engine-platform` hands it and to set its title.
+**Crate boundary rule.** `engine-core` knows nothing of Python, `winit`, or the GPU; it's tested in isolation. Its `Tree` lives in `tree/` (0.4.0 M6), one file per concern around the struct and its core operations in `mod.rs`: `layout`, `scroll`, `layers`, `focus` (hit-testing, hover, focus, pointer capture), `text_editing`, `dispatch`, `access`, and `tests`. It depends on the plain `accesskit` data crate, which is small and OS-agnostic like `taffy`, so the accessibility tree is built next to the node tree it describes. `engine-render` walks `engine-core`'s tree to build a scene and never opens a window itself. `engine-platform` owns the `winit` loop, opens the windows, runs the AccessKit adapter, and translates `winit` input into `engine-core`'s `InputEvent`. It also reads the OS's light/dark appearance (`appearance`): through `winit` on macOS and Windows, and on Linux, where `winit` can't, from the XDG settings portal over D-Bus, whose changes it turns into the same `InputEvent::ThemeChanged` (M106). `engine-py` is the only crate that imports `pyo3`; it also names `winit`'s `Window` type, to build a GPU surface on each window `engine-platform` hands it and to set its title.
 
 **Runtime dispatch is inverted.** `engine_platform::run_windowed_multi` is generic over a set of closures — `on_window_created`, `on_frame`, `on_input`, `on_access_action`, `on_lifecycle`, and `build_access_update` — and calls them as the loop runs, never touching a `Tree` itself. `engine-py`'s `App.run()` supplies them; only it can reach Python. So the compile-time graph reads `engine-py → engine-platform` while input flows `engine-platform → engine-py's closures`.
 
@@ -190,10 +191,16 @@ flowchart TD
     TICK --> LAYOUT[taffy layout; virtual lists build their visible rows]
     LAYOUT --> PAINT[Paint walk: build the vello Scene]
     PAINT --> A11Y[AccessKit TreeUpdate from the same tree]
-    PAINT --> RENDER[vello_hybrid render + present]
+    PAINT --> RENDER[vello_gpu render into the persistent target]
+    RENDER --> PRESENT[copy to the swapchain image + present]
 ```
 
 - **Layout** runs through Taffy's own cache: paint-only changes never dirty it. Parley re-shapes a text only when its content, font, size, or width changes (a per-node shaping cache keyed on those inputs).
+- **Persistent target** (0.4.0 M3). The scene renders into a per-window texture that keeps the previous frame, copied whole into each acquired swapchain image -- a swapchain image keeps nothing, and partial redraw needs the last frame. A surface that can't be copied into (no `COPY_DST` in its capabilities) renders straight into the swapchain image instead.
+- **A window's renderer** (0.4.0 M6). `engine_render::WindowRenderer` owns what a window keeps to draw itself -- the vello renderer, the text and geometry caches, the persistent target, the damage tracker -- and the one frame sequence using them, in two calls so the caller learns what changed before acquiring a surface image: `prepare` (upload images, evict caches, compute the damage; `Full` without a kept target or with partial redraw off) and `draw` (render nothing, the rects, or everything into the kept target, then copy it to the surface image). `reset` follows a frame prepared but not drawn, or a font registration; `resize` resets when the target is recreated. `engine-py`'s `GpuState` keeps only the device, queue, and surface around it, and the pixel tests and the benchmark drive the same type -- so they check the app's own sequence, the copy included.
+- **One walk** (0.4.0 M6). Painting and damage tracking share one traversal, `walk`: it skips hidden, culled, and fully transparent nodes, composes transforms, narrows the visible rect under clipping nodes, and visits children in paint order, calling a `Visitor`'s `enter` and `leave`. The painter (`Painter`: opacity and clip layers, `draw_own` for a node's own paint) and the tracker (`Recorder`) are its two visitors, and a node's painted extent (`damage::painted_rect`) is shared too -- so they can't disagree about what is drawn where.
+- **Damage** (0.4.0 M4). `DamageTracker` walks the tree with the paint walk's own traversal -- recording each node's painted rect and a fingerprint of everything deciding its pixels, and compares with the last frame: changed, new, and removed nodes give their old and new rects, merged into at most 4 (overlaps first, then the cheapest pairs; past 64, their bounding box, since pair merging is cubic -- M5 measured 577 changed rects at 117 ms a frame before the cap), or a full redraw past half the window or on a first frame, resize, or reset. It compares rather than hooking mutations, so a missed mutation path can't leave stale pixels; the fingerprints destructure every state struct without `..`, so a new field won't compile until someone decides whether it paints. Fingerprints use a fast fixed-seed hash (`foldhash`, 0.4.0 M6) rather than content counters, which would be instrumentation again.
+- **Partial redraw** (0.4.0 M5). Each frame, after layout and any resize, the window's tracker gives the damage. `None` renders nothing: the kept frame is copied to the swapchain image and presented. `Rects` builds the scene with `build_tree_scene_in` -- inside one clip layer of the rects, culled as a full redraw culls, and a node drawn only where its *painted extent* reaches a rect: `damage::painted_rect`, the same extent the tracker records, shadows and overflow included (0.4.0 review: culling by the layout box, or by the rects' union, left a shadow or an overflowing child unrepainted when something else changed under it); a node that clips its children skips its subtree on a miss, any other still visits its children -- and renders with `ClearSettings::Rects` (rects rounded out to whole pixels, as the clip is), so only those pixels are cleared and repainted. `Full` renders as before. The tracker resets when the target is recreated (a resize), when a font is registered (text can reshape with no node changing), and when a frame's surface texture can't be acquired (the tracker had already recorded that frame as drawn). A window without a persistent target, or with `window.set(partial_redraw=False)`, always renders in full. Sizes past the device (0.4.0 review): the surface, the target, and the render size are clamped to `max_texture_dimension_2d` (8192 on the default limits `tre` requests) -- an oversized window renders clamped instead of panicking in `configure` -- and an image larger than `MAX_IMAGE_DIMENSION` is rejected from Python (`rgba=`) and, arriving any other way, neither uploaded nor painted, with a warning. An `Outdated` surface is reconfigured and the frame retried, a `Lost` one recreated from the kept instance and window (0.4.0 M6) and retried, a `Suboptimal` one reconfigured after presenting, and any skipped frame marks the tree dirty so it's redrawn. Presenting (0.4.0 M6): `engine-platform` tells each frame whether the OS asked for it (an expose) or the loop did (animation, input, a wake). A frame the loop asked for, with no damage and nothing animating, acquires and presents nothing; while something animates the present stays, its wait for the display pacing the loop. An OS-requested frame with nothing changed re-presents the kept frame, which before 0.4.0 went unpresented. An image's next frame at the same size is written into its existing texture. Images stay on tre's own textures rather than `vello_gpu`'s image atlas (0.4.0 M6): the atlas has no public in-place write, panics on an image larger than its 4096x4096 page, and would reallocate a video's every frame (`image_cache.rs` has the detail). `tests/partial_redraw.rs` checks partial against full redraw pixel for pixel, after single changes and every frame of each property the examples animate. Measured (M5, `tests/partial_redraw_bench.rs`, 1920x1080, 576 cards, integrated Radeon 890M): one small card animating costs 0.56-1.00 ms a frame against `v0.3.5.1`'s 2.16-4.78 ms (3.7-4.9x less in every paired run); a whole-window change costs the same as before, within noise.
 - **Paint** re-encodes the scene each frame, as Vello's own consumers do; the cost lever is skipping expensive inputs (layout, shaping) and culling off-screen subtrees (§11.8), not patching scenes.
 - **Idle.** A tree's dirty flag records any change; when no window is dirty and nothing animates, the loop drops to `ControlFlow::Wait` and uses no CPU. `LoopHandle.call_soon` wakes it through an `EventLoopWaker`.
 - **Headless time.** `Window.advance(ms)` runs the same tick, completion drain, and layout on a pinned per-window clock, so tests need no frames.
@@ -364,7 +371,7 @@ python examples/switch.py
 
 ## 14. Build Order
 
-Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER.md`](BUILD_TRACKER.md).
+Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md) (the 0.3 line) and [`BUILD_TRACKER.md`](BUILD_TRACKER.md) (`0.4.0`).
 
 ---
 
@@ -372,8 +379,8 @@ Historical. The original fifteen-step de-risking order (a static rect through `v
 
 | Risk | Detail | Mitigation |
 |---|---|---|
-| Vello churn | `vello_hybrid` is pre-1.0 and its architecture has been rewritten between releases | Pin exact versions; confine Vello calls to `engine-render`; pixel tests for every capability |
-| Partial redraw | `vello_hybrid` offers no scissored or no-clear render, so every frame repaints fully | Idle loop sleeps (§6); the fork that adds it is issue #4, reserved for 0.4.0 |
+| Vello churn | `vello_gpu` is pre-1.0 and unreleased; upstream renamed it from `vello_hybrid` and reworks it often | Pin one upstream commit; confine Vello calls to `engine-render`; pixel tests for every capability |
+| Partial redraw | Every frame still repaints fully | Idle loop sleeps (§6); `vello_gpu` has the no-clear and rect-clear render it needs, which the `0.4.0` line adopts (`BUILD_TRACKER.md`, M3–M5) |
 | `accesskit` churn | Breaking changes between minor versions | Pin exactly; verify against the pinned source |
 | Wheel packaging | A repaired wheel vendors system libraries | Test the built wheel end to end (§13) |
 | Terminal portability | `portable-pty`'s Windows backend isn't exercised | The terminal kind is POSIX-verified; Windows is untested |
@@ -389,7 +396,7 @@ Until 0.3.5 this section specified the `engine-spec` crate: YAML views, a styles
 
 ## ADR-001: Hand-rolled vs. Masonry
 
-**Decision:** hand-roll the tree and animation substrate on `vello_hybrid` + `taffy` + `parley` + `accesskit`; don't depend on Masonry.
+**Decision:** hand-roll the tree and animation substrate on Vello's GPU renderer (`vello_gpu`, formerly `vello_hybrid`) + `taffy` + `parley` + `accesskit`; don't depend on Masonry.
 
 **Why:** Masonry's value is centralizing focus, pointer, lifecycle, and accessibility plumbing across independently written Rust widget types. `tre` exposes no Rust widget types at all — its widgets are built in Python from a handful of primitive kinds — and what it needs most, one centrally ticked animation system driven from Python, doesn't fit Masonry's per-widget trait model. `tre` did end up building the plumbing Masonry centralizes (focus, pointer dispatch, GC-safe callbacks, the AccessKit builder), but each piece is shaped by that animation model and by the Python boundary; building it on Masonry would have meant fighting its model rather than avoiding the work.
 

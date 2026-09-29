@@ -28,7 +28,8 @@ take what their own docs say.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, overload
 
 Color = tuple[int, int, int, int]
 """An `(r, g, b, a)` byte tuple, 0-255 per channel, straight alpha."""
@@ -245,7 +246,9 @@ class Window:
     more to an `App`, then call `App.run()`.
     """
 
-    def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None: ...
+    def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None:
+        """Raises `ValueError` for a zero width or height."""
+        ...
     def create(self, kind: str, **props: Any) -> Node:
         """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
         `"text_input"`, `"image"`, `"path"`, `"canvas"`, `"scroll_view"`,
@@ -277,16 +280,34 @@ class Window:
     def off(self, event: str) -> None:
         """M94: removes the window's listener for `event`, if any."""
         ...
-    def set(self, *, title: str = ...) -> None:
-        """M94: sets window properties -- today only `title`."""
+    def set(self, *, title: str = ..., partial_redraw: bool = ...) -> None:
+        """M94: sets window properties -- `title`, and (0.4.0 M5)
+        `partial_redraw`: `True` (the default) redraws only what changed
+        each frame, `False` redraws the whole window every frame. A window
+        whose surface can't be copied into always redraws in full, with a
+        warning logged, whatever this says."""
         ...
+    @overload
+    def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
+    @overload
+    def get(self, name: Literal["title"]) -> str: ...
+    @overload
+    def get(self, name: Literal["partial_redraw"]) -> bool: ...
+    @overload
+    def get(self, name: Literal["partial_redraw_active"]) -> bool | None: ...
+    @overload
+    def get(self, name: Literal["dark"]) -> bool | None: ...
+    @overload
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, `scale_factor` (`1.0`
-        until `App.run()` opens the window), or (M106) `dark`: the OS's
+        until `App.run()` opens the window), (M106) `dark`: the OS's
         current appearance, `True` for dark, `False` for light, or `None`
-        where the platform can't say. Linux reads it from the XDG
+        where the platform can't say -- Linux reads it from the XDG
         settings portal, before `App.run()` too; macOS and Windows answer
-        once the window is open."""
+        once the window is open -- `partial_redraw`, or (0.4.0)
+        `partial_redraw_active`: whether the open window really redraws
+        only what changed -- the setting, and a surface that allows it --
+        `None` until `App.run()` opens the window."""
         ...
     def show_layer(
         self,
@@ -423,7 +444,8 @@ class App:
         each). Design Principle 1's own "one blocking call" -- returns
         `None` (rather than raising) if no real display is reachable,
         the same headless-CI-safe convention every example in this
-        project relies on.
+        project relies on. Raises `RuntimeError` if a window's GPU can't
+        be set up (no adapter, no device, or an unsupported surface).
         """
         ...
 

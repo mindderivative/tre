@@ -11,7 +11,7 @@
 Everything is keyboard-reachable and labeled for assistive technology.
 The script drives each part with `window.simulate` and `window.advance`,
 then opens the window. Headless-CI-safe: `App.run()` renders
-`max_frames=120` and returns quietly without a display or GPU. Run it
+`max_frames=120` and returns quietly without a display. Run it
 from anywhere: `python examples/showcase.py`.
 """
 

@@ -1,17 +1,19 @@
 //! M22 Phase 1 (§5): `NodeKind::Image`'s own real GPU-backed paint
 //! mechanism.
 //!
-//! **Real finding, confirmed by a failing test, not assumed:**
-//! `vello_hybrid` 0.2.0's ordinary `Scene::set_paint`+`fill_path` path
-//! panics on any CPU-side pixel data (`ImageSource::Pixmap`) --
-//! "pixmap image sources are not supported by Vello Hybrid" -- its own
-//! wgpu renderer only ever accepts `ImageSource::OpaqueId` (a real,
-//! pre-registered image), and the `ImageCache` that would register one
-//! is `pub(crate)` inside `vello_hybrid` itself, unreachable from here.
-//!
-//! `Scene::draw_texture_rects` + `TextureBindings` (both real, public
-//! API, confirmed via direct source read) is the one currently-
-//! supported path for CPU-decoded image data: an ordinary, externally-
+//! The renderer takes no CPU-side pixel data in a scene: `vello_hybrid`
+//! 0.2.0 panicked on `ImageSource::Pixmap`, and so does the pinned
+//! `vello_gpu` (`paint.rs`, `unimplemented!`). `vello_gpu` does offer an
+//! image atlas (`Renderer::upload_image`, drawn by `ImageSource::OpaqueId`)
+//! that 0.2.0's private cache didn't. 0.4.0 M6 looked at moving images onto
+//! it and kept tre's own textures, for three reasons in the pinned source:
+//! writing into an existing allocation (`write_to_atlas`) is `pub(crate)`,
+//! so a video's every frame would be a `destroy_image` plus a fresh
+//! `upload_image`, where a texture of its own is written in place;
+//! `upload_image` unwraps its allocation, so an image larger than an atlas
+//! page panics rather than failing; and the default page is 4096x4096,
+//! smaller than the 8192 `MAX_IMAGE_DIMENSION` tre accepts. An image is
+//! instead an ordinary, externally
 //! owned `wgpu::Texture`, uploaded once per real `Image` node and
 //! cached here -- keyed by a stable per-`NodeId` `u64`
 //! (`engine_core::node_id_as_u64`, the identical id scheme
@@ -36,26 +38,24 @@
 //! frame (and every decoded `src`) is a genuinely new `Blob`, so a fresh id here always means fresh content, and
 //! an unchanged id always means the same frame still showing --
 //! `sync` re-uploads exactly when, and only when, that id changes.
-//! **Real, deliberate scope simplification, not silently missed:** a
-//! changed frame always recreates the whole GPU texture (rather than
-//! reusing the existing one via `write_texture` alone when the
-//! resolution is unchanged) -- correct for both same-size and resized
-//! frames uniformly, at the real cost of a full texture allocation on
-//! every pushed frame rather than only on a resolution change.
-//! `Video`'s own scope (a frame sink for whatever cadence the app
-//! feeds it, not a real-time decode pipeline this codebase has no
-//! codec dependency for) doesn't need the incremental fast path yet
-//! -- the same "don't build ahead of need" discipline this codebase
-//! applies throughout.
+//! 0.4.0 review: a frame at the texture's own size is written into it in
+//! place; a new size allocates a new texture. An image larger than
+//! `MAX_IMAGE_DIMENSION` either way isn't uploaded (or painted) at all,
+//! with a warning, rather than failing inside `wgpu` mid-frame.
 
 use std::collections::{HashMap, HashSet};
 
 use engine_core::{NodeId, Tree, node_id_as_u64};
-use vello_hybrid::{TextureBindings, TextureId};
+use vello_gpu::{TextureBindings, TextureId};
+
+/// The largest image side uploaded: `wgpu`'s default
+/// `max_texture_dimension_2d`, which every device `tre` creates requests.
+/// Larger images are neither uploaded nor painted.
+pub const MAX_IMAGE_DIMENSION: u32 = 8192;
 
 /// Owns every real `Image` node's GPU texture plus the live
 /// `TextureBindings` map `FrameRenderer::render` hands to
-/// `vello_hybrid`.
+/// `vello_gpu`, which draws each as an `ImageSource::ExternalTexture`.
 #[derive(Default)]
 pub struct ImageTextureCache {
     textures: HashMap<NodeId, wgpu::Texture>,
@@ -64,6 +64,9 @@ pub struct ImageTextureCache {
     /// node -- `sync`'s own real re-upload guard, see this module's
     /// own doc comment.
     uploaded: HashMap<NodeId, u64>,
+    /// Oversized images already warned about, by content id, so the
+    /// warning comes once per image rather than every frame.
+    too_large: HashSet<u64>,
 }
 
 impl ImageTextureCache {
@@ -78,7 +81,7 @@ impl ImageTextureCache {
     /// Ensures every real `Image` node in `tree` has a real, uploaded
     /// GPU texture bound under its own deterministic `TextureId` --
     /// call once per frame, before `FrameRenderer::render`, so every
-    /// `Scene::draw_texture_rects` call `paint_node` already recorded
+    /// `Scene::draw_texture_rects` call `draw_own` already recorded
     /// this frame resolves to a real bound texture at render time (the
     /// real contract `TextureBindings::insert`'s own doc comment
     /// states: "a texture with the given `TextureId` must be supplied
@@ -91,9 +94,20 @@ impl ImageTextureCache {
             if self.uploaded.get(&id) == Some(&blob_id) {
                 continue;
             }
+            if state.image.width > MAX_IMAGE_DIMENSION || state.image.height > MAX_IMAGE_DIMENSION {
+                if self.too_large.insert(blob_id) {
+                    tracing::warn!(
+                        width = state.image.width,
+                        height = state.image.height,
+                        max = MAX_IMAGE_DIMENSION,
+                        "an image is larger than the GPU's textures can be; not drawn"
+                    );
+                }
+                continue;
+            }
 
             // Reuses the exact real RGBA8/BGRA8 + premultiply-alpha
-            // conversion `vello_hybrid`'s own glyph-atlas path already
+            // conversion the renderer's own glyph-atlas path already
             // relies on (`ImageSource::from_peniko_image_data`), rather
             // than duplicating that logic here -- `TextureBindings`'s
             // own doc comment requires the texture be premultiplied,
@@ -106,23 +120,35 @@ impl ImageTextureCache {
             let width = u32::from(pixmap.width());
             let height = u32::from(pixmap.height());
 
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("engine-render Image node texture"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
+            // A frame at the texture's own size is written in place; only
+            // a new size (or a first frame) allocates.
+            let reuse = self
+                .textures
+                .get(&id)
+                .is_some_and(|t| t.width() == width && t.height() == height);
+            if !reuse {
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("engine-render Image node texture"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                self.bindings.insert(texture_id_for(id), view);
+                self.textures.insert(id, texture);
+            }
+            let texture = &self.textures[&id];
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
+                    texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -140,9 +166,6 @@ impl ImageTextureCache {
                 },
             );
 
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.bindings.insert(texture_id_for(id), view);
-            self.textures.insert(id, texture);
             self.uploaded.insert(id, blob_id);
         }
 
@@ -172,7 +195,7 @@ impl ImageTextureCache {
 }
 
 /// The deterministic `TextureId` a given `Image` node's real GPU
-/// texture is bound under -- `paint_node`'s own `NodeKind::Image` arm
+/// texture is bound under -- `draw_own`'s own `NodeKind::Image` arm
 /// computes the identical value when recording `Scene::
 /// draw_texture_rects`, so the two always agree without either side
 /// needing to look anything up in the other.
@@ -208,6 +231,7 @@ mod tests {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
                 compatible_surface: None,
             })
             .await

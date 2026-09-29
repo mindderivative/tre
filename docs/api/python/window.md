@@ -42,9 +42,19 @@ See [Layers](layers.md).
 [Events and Listeners](events.md#window-listeners).
 
 **`set(title=...)`** changes the title, live if the window is open.
+**`set(partial_redraw=False)`** makes the window redraw all of itself every
+frame. By default (`True`) each frame redraws only the parts of the window
+that changed, and a frame where nothing visible changed draws nothing.
+The pixels are the same either way; the switch is there for measuring and
+for ruling partial redraw out when chasing a rendering bug. A window whose
+surface the platform won't let `tre` copy into always redraws in full, and
+logs a warning saying so; `get("partial_redraw")` reports the setting, and
+`get("partial_redraw_active")` whether it's in effect (`None` until
+`App.run()` opens the window).
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
-until `App.run()` opens the window), or `dark` — the OS's current appearance,
-or `None` where it can't say ([Window properties](events.md#window-properties)).
+until `App.run()` opens the window), `dark` — the OS's current appearance,
+or `None` where it can't say ([Window properties](events.md#window-properties))
+— `partial_redraw`, or `partial_redraw_active`.
 
 **`resize(width, height)`** sets the window's size from code, and the
 root's layout box follows. It fires no `resize` event — that reports a

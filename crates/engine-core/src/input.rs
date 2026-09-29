@@ -1,6 +1,6 @@
 //! §4's own generic `InputEvent` enum -- M4 Phase 1 step 1's real
 //! dispatch core. `engine-platform` translates raw `winit` events into
-//! `InputEvent` and calls `Tree::dispatch` (in `tree.rs`); what a real
+//! `InputEvent` and calls `Tree::dispatch` (in `tree/dispatch.rs`); what a real
 //! `DispatchOutcome::Activated`/`Changed` *means* (§2 Design Principle
 //! 6: meaning-dependent, not mechanical) is the one remaining hook
 //! `Tree::dispatch` can't resolve on its own.
@@ -310,7 +310,7 @@ pub fn ctrl_shortcut(letter: char, shift: bool) -> Option<InputEvent> {
 
 /// M54 Phase 1 (§8, §16.2): the real, exact set of value shapes a
 /// `Changed` outcome's own pre-mutation value can take -- found by
-/// tracing every real `DispatchOutcome::Changed` producer in `tree.rs`
+/// tracing every real `DispatchOutcome::Changed` producer in `tree/`
 /// before writing this, not assumed: a `TextField` edit (`Backspace`/
 /// `Delete`/`Space`/`Enter`/`Tab`/a real typed character) owns a
 /// `String`. M99 removed the slider's `Number` and the time picker
@@ -365,7 +365,7 @@ pub enum DispatchOutcome {
     /// `TextField` keyboard edit. `old_value` is the value
     /// immediately *before* this outcome's own mutation, snapshotted at
     /// the one real place that already knows it's about to be
-    /// overwritten (see each producer site in `tree.rs`) -- the only
+    /// overwritten (see each producer site in `tree/`) -- the only
     /// point it's still genuinely recoverable at all. Delivering it as
     /// a `change` event is `engine-py::dispatch.rs`'s job, not
     /// `Tree`'s.

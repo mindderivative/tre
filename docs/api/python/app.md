@@ -44,8 +44,11 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 - Delivers real input — pointer, wheel, keyboard, text and input-method
   composition, window events, and screen-reader requests — through the
   same pipeline `window.simulate` uses, invoking the listeners it reaches.
-- If no GPU adapter is reachable, or no display is available, the process
-  exits cleanly (not treated as an error) rather than raising.
+- If no display is available, returns `None` without running, so headless
+  scripts and CI can call it unconditionally.
+- Raises `RuntimeError` if a window's GPU can't be set up -- no GPU
+  adapter, no device, or a surface the adapter can't drive. (Before 0.4.0
+  this exited the process with status 0.)
 - Installs a `tracing` log subscriber as early as possible — set
   `RUST_LOG` to control verbosity (e.g. `RUST_LOG=warn python app.py`).
 

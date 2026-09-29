@@ -464,10 +464,23 @@ def test_window_title_is_settable_and_the_rest_read_only() -> None:
     assert w.get("scale_factor") == 1.0
     with pytest.raises(ValueError, match="read-only"):
         w.set(width=10)  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="settable: title"):
+    with pytest.raises(ValueError, match="settable: title, partial_redraw"):
         w.set(colour="red")  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor"):
+    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, dark, partial_redraw, partial_redraw_active"):
         w.get("depth")
+
+
+def test_partial_redraw_is_on_by_default_and_can_be_switched_off() -> None:
+    w = window()
+    assert w.get("partial_redraw") is True
+    w.set(partial_redraw=False)
+    assert w.get("partial_redraw") is False
+    w.set(partial_redraw=True)
+    assert w.get("partial_redraw") is True
+    # Not known until App.run() opens the window and sees its surface.
+    assert w.get("partial_redraw_active") is None
+    with pytest.raises(ValueError, match="must be a bool"):
+        w.set(partial_redraw="no")  # type: ignore[arg-type]
 
 
 def test_window_on_rejects_node_events() -> None:
@@ -511,3 +524,18 @@ def test_simulate_rejects_a_node_from_another_window() -> None:
     stranger = add(other, "box", fill=BLACK, width=40, height=40)
     with pytest.raises(Exception, match="(?i)another|foreign|window"):
         w.simulate("click", node=stranger)
+
+
+def test_simulated_resize_rejects_a_negative_or_non_finite_size() -> None:
+    w = window()
+    with pytest.raises(ValueError, match="finite, non-negative"):
+        w.simulate("resize", width=-1.0, height=10.0)
+    with pytest.raises(ValueError, match="finite, non-negative"):
+        w.simulate("resize", width=float("inf"), height=10.0)
+
+
+def test_a_window_needs_a_positive_size() -> None:
+    with pytest.raises(ValueError, match="positive width and height"):
+        tre.Window(width=0, height=100)
+    with pytest.raises(ValueError, match="positive width and height"):
+        tre.Window(width=100, height=0)

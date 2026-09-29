@@ -10,7 +10,7 @@
 //! build) measured `build_tree_scene` at ~2.7-2.9ms/frame. A follow-up
 //! isolation benchmark found only ~20% of that (2.48ms -> 1.99ms) comes
 //! from `RoundedRect::to_path(0.1)`'s own tessellation -- the remaining
-//! ~80% is `vello_hybrid::Scene::fill_path`'s own internal strip-
+//! ~80% is `vello_gpu::Scene::fill_path`'s own internal strip-
 //! generation cost, paid on every call regardless of whether the path
 //! passed in is freshly tessellated or reused, and unavoidable without
 //! either a fork of the vendored crate or a `Scene` sub-fragment splice
@@ -137,7 +137,7 @@ impl GeometryCache {
     /// The real stroked-border path (M30 Phase 1, §5, §7) -- `inset`
     /// (half the stroke width) shifts the path inward so the stroke
     /// paints entirely inside this node's own bounds, the identical
-    /// real geometry `paint_node`'s own border arm already builds.
+    /// real geometry `draw_own`'s own border arm already builds.
     pub fn rounded_rect_border(
         &mut self,
         id: NodeId,

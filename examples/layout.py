@@ -6,7 +6,7 @@ with a badge placed absolutely over a toolbar button. Reading
 before any frame renders.
 
 Headless-CI-safe: it checks the layout, renders `max_frames=60`, and
-exits; `App.run()` returns quietly where no display or GPU is reachable.
+exits; `App.run()` returns quietly where no display is reachable.
 See docs/guide/nodes-and-layout.md.
 """
 

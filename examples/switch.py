@@ -10,7 +10,7 @@ shows only when focus arrived by keyboard.
 
 The script checks all of that headlessly with `window.simulate` and
 `window.advance`, then opens the window for 120 frames. Headless-CI-safe:
-`App.run()` returns quietly where no display or GPU is reachable.
+`App.run()` returns quietly where no display is reachable.
 """
 
 from tre import App, Event, Window

@@ -1,24 +1,36 @@
-# PLAN — Branch `0.3.5.2`: Milestones 105-107
+# PLAN — Branch `0.4.0`: Milestone 6 Phase 2, the Review's Decisions
 
-*(Replaces the M104 plan — M104 is complete and released as `v0.3.5.1`. Every step is in `BUILD_TRACKER.md`.)*
+*(Replaces the M5 plan — M5 is complete, and M6 Phase 1 is the pre-release
+review. Every step is in `BUILD_TRACKER.md`.)*
 
-Three issues Tesserae filed, one patch release:
+## Goal
 
-1. **M105, issue #16 — done.** `Window.undock_panel(panel)`; the take-out
-   path keeps the shown panel when an earlier one leaves; a freed panel
-   leaves its zone instead of panicking `add_child`.
-2. **M106, issue #18 — done.** `window.get("dark")`; on Linux, where
-   `winit` reports nothing, the XDG settings portal answers it and its
-   changes fire `color_scheme`.
-3. **M107, issue #19 — Phase 1 done.** Published to PyPI as
-   `tesserae-engine` (`tre` is taken there; the import name stays `tre`),
-   by a trusted-publishing `pypi` job in `wheels.yml`. Phase 2, the first
-   upload, needs the user: register the pending publisher on pypi.org
-   (owner `mindderivative`, repo `tre`, workflow `wheels.yml`, environment
-   `pypi`), then release -- the `v0.3.5.2` tag uploads.
+Act on every open item of the pre-release review
+([report](https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk3)), as the user
+decided (2026-09-28): "1. Unify them 2. Move into a per-window 3. raise an
+exception 4. Yes 5. Fix them all".
 
-## Status
+## Steps
 
-**Released (2026-09-28).** `v0.3.5.2` is out and on PyPI as `tesserae-engine` with
-its 22 wheels; Tesserae told. PyPI rejected the sdist (no `LICENSE` packed) --
-fixed on local branch `0.3.5.3`, to ship with the next release.
+1. MSRV and release pins: `rust-version` from the real dependency floor,
+   an `msrv` CI job; third-party release actions pinned to commit SHAs.
+2. No GPU adapter raises a Python exception from `App.run()` instead of
+   exiting the process; a zero-sized window is rejected at construction.
+3. One tree walk: the paint walk and the damage walk share one traversal
+   (visibility, culling, opacity, clip narrowing, child order).
+4. A per-window renderer in `engine-render` owning the frame renderer,
+   caches, persistent target and tracker, with one frame method -- used by
+   `app.rs`, the pixel tests, and the benchmark.
+5. Cheaper terminal and canvas fingerprints. (Done with a fast hash, not
+   a content counter: a counter would be instrumentation, which the
+   tracker avoids.)
+6. A lost surface is recreated; a frame with no damage skips the present
+   when the tree asked for it (not when the OS did).
+7. The window's shared fields in one struct instead of three copies;
+   `get("partial_redraw_active")` reports the fallback.
+8. The older GPU tests use `tests/support`'s shared setup and readback.
+9. Images drawn from `vello_gpu`'s image atlas, if it keeps in-place frame
+   updates; otherwise recorded why not.
+10. `engine-core`'s `tree.rs` split by concern.
+
+Each step: the full chain, docs, tracker, a local commit.

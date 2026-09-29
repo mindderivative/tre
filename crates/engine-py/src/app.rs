@@ -25,23 +25,24 @@ use std::sync::Arc;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
-use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, build_tree_scene};
+use engine_render::{TextPlacement, TextRenderer, WindowRenderer};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
-use crate::dispatch::{
-    HandlerMap, SharedCompletions, WindowIo, process_input, run_completions, run_dispatch_outcome,
-};
-use crate::dock::SharedDockState;
+use crate::dispatch::{WindowIo, process_input, run_completions, run_dispatch_outcome};
 use crate::event::NodeContext;
-use crate::listeners::{self, WindowEventType, WindowListenerMap};
-use crate::terminal::TerminalSession;
+use crate::listeners::{self, WindowEventType};
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
-use crate::window::{PyWindow, SharedOsWindow, SharedSize};
+use crate::window::{PyWindow, WindowHandles};
+
+/// A window extent as the renderer takes it (`u16`), clamped -- no real
+/// window reaches 65,535 pixels, but a bad size must not wrap around.
+fn render_extent(pixels: u32) -> u16 {
+    u16::try_from(pixels).unwrap_or(u16::MAX)
+}
 
 #[pyclass]
 pub struct App(ThreadBound<AppState>);
@@ -66,31 +67,10 @@ pub struct AppState {
 /// Python-object-bearing field extracted here rather than converted to
 /// plain data.
 struct WindowSetup {
-    tree: Rc<RefCell<Tree>>,
-    root: NodeId,
+    /// 0.4.0 M6: everything the window shares with this run, cloned
+    /// once (`WindowHandles`).
+    handles: WindowHandles,
     title: String,
-    /// M33 Phase 2 (§4, §5, §8): the real, shared `Rc<Cell<u32>>`
-    /// clone of `PyWindow`'s own field, not a plain `u32` copy -- see
-    /// `window::SharedSize`'s own doc comment for the full real
-    /// reasoning.
-    width: SharedSize,
-    height: SharedSize,
-    handlers: HandlerMap,
-    /// M4 Phase 9 (§11.4): real docking state, plain data (no
-    /// `Py<PyAny>`), extracted the same way `handlers` is.
-    dock: SharedDockState,
-    /// M9 Phase 2 (§5): the window's own `on_complete` registry,
-    /// extracted the same way -- the real `on_frame` closure needs to
-    /// mutate it (removing a callback the instant it's invoked).
-    completions: SharedCompletions,
-    /// M30 Phase 9 Step 4 (§5, §8, §10): every real, live `Terminal`
-    /// session this window has spawned, extracted the same way --
-    /// `WindowRuntime`'s own per-frame closure needs to mutate it
-    /// (draining real PTY output each tick).
-    terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
-    /// M94: see `PyWindow::window_listeners`/`os_window`.
-    window_listeners: WindowListenerMap,
-    os_window: SharedOsWindow,
 }
 
 /// M18 Phase 1/2 (§8, §10, §11.9, §11.10): the real per-glyph hit-test
@@ -98,7 +78,7 @@ struct WindowSetup {
 /// `PointerPressed`'s click-to-position and `PointerMoved`'s drag-
 /// extend, both of which need the exact same "is `hit` a `TextField`,
 /// and if so what real byte offset does `local_point` land on"
-/// answer. Mirrors `paint_node`'s own real `TextPlacement { x: 0.0,
+/// answer. Mirrors `draw_own`'s own real `TextPlacement { x: 0.0,
 /// y: 0.0, max_width: <the node's own real computed layout width> }`
 /// exactly -- a hit-test using different placement values than what
 /// was actually painted would resolve to the wrong character.
@@ -152,6 +132,9 @@ fn terminal_hit_cell(
 }
 
 struct GpuState {
+    /// 0.4.0 M6: kept to recreate a lost `surface` for `window`.
+    instance: wgpu::Instance,
+    window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     /// M32 Phase 2 (§4, §5): kept around (not just consumed inside
     /// `new`) specifically so `resize` below can reconfigure the
@@ -163,67 +146,74 @@ struct GpuState {
     surface_config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    frame_renderer: FrameRenderer,
-    text_renderer: TextRenderer,
-    /// M34 Phase 1 (§5, §8): the real, per-node tessellated-path cache
-    /// for a `Rect`'s own fill/border paths -- the identical
-    /// "long-lived, caller-owned, not rebuilt per call" shape `text_
-    /// renderer` already has (`GeometryCache`'s own doc comment).
-    geometry_cache: GeometryCache,
+    /// 0.4.0 M6: the window's renderer, caches, kept frame (M3), and
+    /// damage tracker (M4), with the frame sequence that uses them --
+    /// `engine_render::WindowRenderer`, which the pixel tests drive too.
+    renderer: WindowRenderer,
 }
 
 impl GpuState {
-    fn new(window: Arc<Window>, width: u32, height: u32) -> Self {
+    /// 0.4.0: an `Err` (no adapter, no device, or a surface this adapter
+    /// can't drive) ends the run, and `App.run()` raises it.
+    fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
-            .create_surface(window)
-            .expect("failed to create wgpu surface from the window");
+            .create_surface(window.clone())
+            .map_err(|err| format!("couldn't create a GPU surface for the window: {err}"))?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
+            // The adapter's real limits, as before `wgpu` 30 added
+            // bucketing (a fingerprinting defence for web content).
+            apply_limit_buckets: false,
         }))
-        .unwrap_or_else(|err| {
-            // No GPU reachable is an expected, non-exceptional
-            // condition on some CI runners -- exit 0, don't fail the
-            // process, per TRE v1's own established convention
-            // (finding #261), applied identically everywhere else in
-            // this workspace. `tracing::warn!` (M16 Phase 2): real,
-            // worth logging, but not an error -- a genuinely expected,
-            // gracefully-handled condition, not a bug.
-            tracing::warn!(%err, "no wgpu adapter available, exiting 0");
-            std::process::exit(0);
-        });
+        // 0.4.0 review (the user's decision): no GPU is an error the
+        // caller sees -- `App.run()` raises it -- rather than the old
+        // `exit(0)` inside the interpreter, which skipped `atexit` and
+        // `finally` and reported success.
+        .map_err(|err| format!("no GPU adapter available: {err}"))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("engine-py app device"),
             required_features: wgpu::Features::empty(),
             ..Default::default()
         }))
-        .expect("failed to create wgpu device");
+        .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
 
-        let config = surface
+        // 0.4.0 review: a window larger than the GPU's textures can be
+        // renders at the largest size it can, not a panic in `configure`.
+        let max = device.limits().max_texture_dimension_2d;
+        let (width, height) = (width.min(max), height.min(max));
+        let mut config = surface
             .get_default_config(&adapter, width, height)
-            .expect("surface is not supported by this adapter");
+            .ok_or("the window's surface isn't supported by this GPU adapter")?;
+        // 0.4.0 M3: render into a persistent target and copy it into the
+        // swapchain image, where the surface allows copies into it.
+        let copyable = surface
+            .get_capabilities(&adapter)
+            .usages
+            .contains(wgpu::TextureUsages::COPY_DST);
+        if copyable {
+            config.usage |= wgpu::TextureUsages::COPY_DST;
+            tracing::debug!("rendering through a persistent target, copied to the surface");
+        } else {
+            tracing::warn!(
+                "this window's surface can't be copied into: rendering straight to it, \
+                 every frame in full (no partial redraw)"
+            );
+        }
         surface.configure(&device, &config);
+        let renderer = WindowRenderer::new(&device, config.format, width, height, copyable);
 
-        let frame_renderer = FrameRenderer::new(
-            &device,
-            &RenderTargetConfig {
-                format: config.format,
-                width,
-                height,
-            },
-        );
-
-        Self {
+        Ok(Self {
+            instance,
+            window,
             surface,
             surface_config: config,
             device,
             queue,
-            frame_renderer,
-            text_renderer: TextRenderer::new(),
-            geometry_cache: GeometryCache::new(),
-        }
+            renderer,
+        })
     }
 
     /// M32 Phase 2 (§4, §5): reconfigures the real wgpu surface to a
@@ -231,12 +221,12 @@ impl GpuState {
     /// recipe (mutate the stored config's own `width`/`height`, then
     /// `surface.configure` again), not something this crate invents.
     /// **Real, confirmed finding before writing this:** `FrameRenderer`/
-    /// `vello_hybrid::Renderer` need no matching reconstruction at all
-    /// -- direct read of the vendored `vello_hybrid = "0.2.0"` source
-    /// confirms its own `Renderer::render` already calls a private
-    /// `maybe_update_config_buffer` every frame, which recreates its
-    /// own internal depth texture whenever the `RenderSize` passed to
-    /// `render` genuinely differs from the previous call -- real,
+    /// `vello_gpu::Renderer` need no matching reconstruction at all
+    /// -- `vello_gpu`'s `Renderer::render` calls a private
+    /// `maybe_update_config_buffer` every frame (checked in the pinned
+    /// source, 0.4.0 M2), updating its size-dependent state whenever the
+    /// `RenderSize` passed to `render` differs from the previous call;
+    /// its depth buffer is the caller's, and `tre` passes none -- real,
     /// existing resize-safety this phase only needed to rely on, not
     /// build. A 0-sized dimension (a real, possible transient value on
     /// some platforms while a window is being minimized) is skipped
@@ -249,12 +239,14 @@ impl GpuState {
     /// resize` below, not from every raw `InputEvent::Resized`. See
     /// `needs_resize`'s own doc comment for the real, measured reason.
     fn resize(&mut self, width: u32, height: u32) {
+        let (width, height) = self.fit(width, height);
         if width == 0 || height == 0 {
             return;
         }
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+        self.renderer.resize(&self.device, width, height);
     }
 
     /// M40 Phase 1 (§4, §6, §9): whether the surface's own currently-
@@ -275,7 +267,7 @@ impl GpuState {
     /// per real frame and reconfiguring only when it's actually `true`
     /// collapses an entire burst of `Resized` events into at most one
     /// real reconfigure per frame, always at the window's true current
-    /// size -- `runtime.width`/`height` (the live `SharedSize` cells)
+    /// size -- `runtime.handles.width`/`height` (the live `SharedSize` cells)
     /// never lag, only the expensive GPU-side reconfigure is coalesced.
     ///
     /// **Real, deliberate design choice, not the naive port of either
@@ -296,8 +288,37 @@ impl GpuState {
     /// entirely and needed no fork -- and at this machine's own real
     /// measured cost (well under 1ms), a plain per-frame coalesce
     /// already removes the redundant-reconfigure cost without it.
+    /// 0.4.0 M6: a new surface for the window after the old one was lost
+    /// (wgpu's `CurrentSurfaceTexture::Lost`), configured as the old one
+    /// was, its kept frame's contents redrawn next frame. Whether that
+    /// worked.
+    fn recreate_surface(&mut self) -> bool {
+        match self.instance.create_surface(self.window.clone()) {
+            Ok(surface) => {
+                surface.configure(&self.device, &self.surface_config);
+                self.surface = surface;
+                self.renderer.reset();
+                true
+            }
+            Err(err) => {
+                tracing::warn!(%err, "the window's surface was lost and couldn't be recreated");
+                false
+            }
+        }
+    }
+
     fn needs_resize(&self, width: u32, height: u32) -> bool {
+        let (width, height) = self.fit(width, height);
         self.surface_config.width != width || self.surface_config.height != height
+    }
+
+    /// 0.4.0 review: `width` x `height` within the largest texture the
+    /// device can make -- the surface, the persistent target, and the
+    /// render size all stay inside it, so an oversized window renders
+    /// clamped rather than panicking in `configure` or `create_texture`.
+    fn fit(&self, width: u32, height: u32) -> (u32, u32) {
+        let max = self.device.limits().max_texture_dimension_2d;
+        (width.min(max), height.min(max))
     }
 }
 
@@ -348,22 +369,9 @@ fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
 }
 
 struct WindowRuntime {
-    tree: Rc<RefCell<Tree>>,
-    root: NodeId,
-    /// M33 Phase 2 (§4, §5, §8): the real, shared `Rc<Cell<u32>>` --
-    /// `.get()` at every real per-frame read site below (a plain,
-    /// cheap `Cell::get()`, negligible next to the real GPU/text work
-    /// each frame already does) instead of a plain, separate `u32`
-    /// copy, so `InputEvent::Resized`'s own `.set()` call is
-    /// immediately visible to `PyWindow`'s own fields too, and vice
-    /// versa (`window::SharedSize`'s own doc comment has the full real
-    /// reasoning).
-    width: SharedSize,
-    height: SharedSize,
+    /// 0.4.0 M6: the window's shared handles (`WindowHandles`).
+    handles: WindowHandles,
     gpu: GpuState,
-    handlers: HandlerMap,
-    dock: SharedDockState,
-    completions: SharedCompletions,
     /// M18 Phase 2 (§8, §10): which `TextField` (if any) a real
     /// press-and-drag is currently extending a selection in -- plain,
     /// not `RefCell`-wrapped, since only `on_input`'s own closure ever
@@ -385,13 +393,6 @@ struct WindowRuntime {
     /// M94: the pointer shape last applied to this window, so it's set on
     /// the OS window only when it changes.
     cursor: Cursor,
-    /// M30 Phase 9 Step 4 (§5, §8, §10): the same real, shared session
-    /// table `PyWindow.terminals` owns -- see `WindowSetup.terminals`'s
-    /// own doc comment.
-    terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
-    /// M94: see `PyWindow::window_listeners`/`os_window`.
-    window_listeners: WindowListenerMap,
-    os_window: SharedOsWindow,
 }
 
 #[pymethods]
@@ -445,8 +446,7 @@ impl App {
         // pinned before.
         for window in &self.windows {
             let window = window.borrow(py);
-            crate::clock::unpin(&window.tree);
-            crate::clock::unpin(&window.tree);
+            crate::clock::unpin(&window.handles.tree);
         }
 
         // Extracted once, up front, while `py` is already held --
@@ -458,17 +458,8 @@ impl App {
             .map(|window| {
                 let window = window.borrow(py);
                 WindowSetup {
-                    tree: window.tree.clone(),
-                    root: window.root,
+                    handles: window.handles.clone(),
                     title: window.title.clone(),
-                    width: window.width.clone(),
-                    height: window.height.clone(),
-                    handlers: window.handlers.clone(),
-                    dock: window.dock.clone(),
-                    completions: window.completions.clone(),
-                    terminals: window.terminals.clone(),
-                    window_listeners: window.window_listeners.clone(),
-                    os_window: window.os_window.clone(),
                 }
             })
             .collect();
@@ -516,32 +507,42 @@ impl App {
         let calls_for_frame = self.calls.clone();
         let calls_for_setup = self.calls.clone();
 
+        // 0.4.0: why a window's GPU setup failed, raised once the loop
+        // has stopped.
+        let startup_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let startup_error_for_created = startup_error.clone();
         let result = run_windowed_multi(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
-                *setup.os_window.borrow_mut() = Some(window.clone());
-                let gpu = GpuState::new(window, setup.width.get(), setup.height.get());
+                *setup.handles.os_window.borrow_mut() = Some(window.clone());
+                let gpu = match GpuState::new(
+                    window,
+                    setup.handles.width.get(),
+                    setup.handles.height.get(),
+                ) {
+                    Ok(gpu) => gpu,
+                    Err(err) => {
+                        *startup_error_for_created.borrow_mut() = Some(err);
+                        return false;
+                    }
+                };
+                setup
+                    .handles
+                    .surface_partial
+                    .set(Some(gpu.renderer.has_persistent_target()));
                 runtimes_for_created.borrow_mut().insert(
                     window_id,
                     WindowRuntime {
-                        tree: setup.tree.clone(),
-                        root: setup.root,
-                        width: setup.width.clone(),
-                        height: setup.height.clone(),
+                        handles: setup.handles.clone(),
                         gpu,
-                        handlers: setup.handlers.clone(),
-                        dock: setup.dock.clone(),
-                        completions: setup.completions.clone(),
                         text_drag: None,
                         terminal_drag: None,
                         cursor: Cursor::Default,
-                        terminals: setup.terminals.clone(),
-                        window_listeners: setup.window_listeners.clone(),
-                        os_window: setup.os_window.clone(),
                     },
                 );
+                true
             },
-            move |window_id, _frame| -> bool {
+            move |window_id, _frame, os_requested| -> bool {
                 // M87: run anything a background thread queued via
                 // `LoopHandle.call_soon` first, so a queued change is
                 // what this very frame ticks and paints. No borrow of
@@ -556,14 +557,14 @@ impl App {
                     return false;
                 };
 
-                let now = crate::clock::now(&runtime.tree);
-                let (any_active, completed) = runtime.tree.borrow_mut().tick_all(now);
+                let now = crate::clock::now(&runtime.handles.tree);
+                let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
                 // M9 Phase 2 (§5): the real drain -- invokes each
                 // just-completed animation's registered `on_complete`
                 // callback exactly once, the same "look up and call a
                 // registered callback" shape `run_dispatch_outcome`
                 // already uses for click/hover handlers.
-                run_completions(&runtime.completions, completed, py);
+                run_completions(&runtime.handles.completions, completed, py);
 
                 // M30 Phase 9 Step 4 (§5, §8, §10): drains every real,
                 // live `Terminal` session's own pending PTY output into
@@ -585,8 +586,8 @@ impl App {
                 // window, the identical real win M29 Phase 2 already
                 // gave every other case.
                 {
-                    let mut terminals = runtime.terminals.borrow_mut();
-                    let mut tree = runtime.tree.borrow_mut();
+                    let mut terminals = runtime.handles.terminals.borrow_mut();
+                    let mut tree = runtime.handles.tree.borrow_mut();
                     for (&node_id, session) in terminals.iter_mut() {
                         session.drain_into(&mut tree, node_id);
                     }
@@ -616,27 +617,31 @@ impl App {
                 // nothing else changed.
                 let resized = runtime
                     .gpu
-                    .needs_resize(runtime.width.get(), runtime.height.get());
+                    .needs_resize(runtime.handles.width.get(), runtime.handles.height.get());
                 // M86: a `tre.register_font` call touches no `Tree`
                 // state either -- same reasoning as `resized` above. A
                 // family that fell back before may resolve to a real
                 // face now, so this frame must repaint. One atomic load
                 // when nothing was registered.
-                let fonts_changed = runtime.gpu.text_renderer.sync_registered_fonts();
-                let dirty = runtime.tree.borrow_mut().take_dirty();
-                if !dirty && !resized && !fonts_changed {
+                let fonts_changed = runtime.gpu.renderer.text().sync_registered_fonts();
+                let dirty = runtime.handles.tree.borrow_mut().take_dirty();
+                let changed = dirty || resized || fonts_changed;
+                // 0.4.0 M6: an OS redraw (an expose) with nothing changed
+                // still gets the kept frame presented again -- the surface
+                // image may have lost it -- where there is a kept frame.
+                if !changed && !(os_requested && runtime.gpu.renderer.has_persistent_target()) {
                     return any_active;
                 }
 
                 // M96: also builds virtual lists' newly visible rows.
                 crate::node_callbacks::layout(
-                    &runtime.tree,
-                    runtime.root,
+                    &runtime.handles.tree,
+                    runtime.handles.root,
                     Size {
-                        width: AvailableSpace::Definite(runtime.width.get() as f32),
-                        height: AvailableSpace::Definite(runtime.height.get() as f32),
+                        width: AvailableSpace::Definite(runtime.handles.width.get() as f32),
+                        height: AvailableSpace::Definite(runtime.handles.height.get() as f32),
                     },
-                    &runtime.handlers,
+                    &runtime.handles.handlers,
                     py,
                 );
 
@@ -651,70 +656,101 @@ impl App {
                 if resized {
                     runtime
                         .gpu
-                        .resize(runtime.width.get(), runtime.height.get());
+                        .resize(runtime.handles.width.get(), runtime.handles.height.get());
                 }
 
-                let (wgpu::CurrentSurfaceTexture::Success(output)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(output)) =
-                    runtime.gpu.surface.get_current_texture()
-                else {
+                // 0.4.0 M5: what changed since the last frame
+                // (`WindowRenderer::prepare`). A newly registered font can
+                // reshape text no node's state records, so it redraws
+                // everything.
+                let (width, height) = runtime
+                    .gpu
+                    .fit(runtime.handles.width.get(), runtime.handles.height.get());
+                let (width, height) = (render_extent(width), render_extent(height));
+                if fonts_changed {
+                    runtime.gpu.renderer.reset();
+                }
+                let damage = {
+                    let tree_ref = runtime.handles.tree.borrow();
+                    let gpu = &mut runtime.gpu;
+                    gpu.renderer.prepare(
+                        &tree_ref,
+                        runtime.handles.root,
+                        width,
+                        height,
+                        runtime.handles.partial_redraw.get(),
+                        &gpu.device,
+                        &gpu.queue,
+                    )
+                };
+                tracing::trace!(?damage, os_requested, "frame damage");
+                // 0.4.0 M6: nothing to show that isn't already shown, only
+                // this loop asked, and nothing is animating -- no image to
+                // acquire or present. While something animates, the present
+                // is kept: its wait for the display is what paces the loop,
+                // which would otherwise spin through unchanged frames.
+                if damage == engine_render::Damage::None && !os_requested && !any_active {
                     return any_active;
+                }
+
+                let gpu = &mut runtime.gpu;
+                let (output, reconfigure) = match gpu.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(output) => (output, false),
+                    // Usable, but wgpu recommends reconfiguring after it.
+                    wgpu::CurrentSurfaceTexture::Suboptimal(output) => (output, true),
+                    failed => {
+                        // The tracker already recorded this frame's tree as
+                        // drawn, and its dirty flag is spent; it wasn't
+                        // drawn, so the next frame redraws it all.
+                        gpu.renderer.reset();
+                        runtime.handles.tree.borrow_mut().mark_dirty();
+                        // 0.4.0 review: an outdated surface recovers once
+                        // reconfigured, a lost one once recreated (wgpu 30's
+                        // docs) -- then retry at once; a timeout or an
+                        // occluded window waits for the next frame.
+                        let retry = match failed {
+                            wgpu::CurrentSurfaceTexture::Outdated => {
+                                gpu.surface.configure(&gpu.device, &gpu.surface_config);
+                                true
+                            }
+                            wgpu::CurrentSurfaceTexture::Lost => gpu.recreate_surface(),
+                            _ => false,
+                        };
+                        return any_active || retry;
+                    }
                 };
                 let view = output
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
 
-                let scene = {
-                    let tree_ref = runtime.tree.borrow();
-                    // M22 Phase 1 (§5): every real `Image` node needs a
-                    // real, uploaded GPU texture bound before `render`
-                    // -- see `ImageTextureCache::sync`'s own doc
-                    // comment. A window with no `Image` nodes pays only
-                    // the cost of an empty `Tree::image_nodes` walk.
-                    runtime.gpu.frame_renderer.sync_image_textures(
-                        &tree_ref,
-                        &runtime.gpu.device,
-                        &runtime.gpu.queue,
-                    );
-                    // Review follow-through (M28 Phase 1, §5/§6): the
-                    // exact same per-frame GC `sync_image_textures`
-                    // already does for GPU textures, now also applied
-                    // to `TextRenderer`'s own per-node shaped-`Layout`
-                    // cache -- a text node removed from the tree must
-                    // not keep its stale shaping around forever.
-                    runtime.gpu.text_renderer.evict_stale_layouts(&tree_ref);
-                    // M34 Phase 1 (§5, §8): the identical real per-
-                    // frame GC `text_renderer`'s own cache already
-                    // gets, now applied to `geometry_cache` too.
-                    runtime.gpu.geometry_cache.evict_stale(&tree_ref);
-                    build_tree_scene(
-                        &tree_ref,
-                        runtime.root,
-                        runtime.width.get() as u16,
-                        runtime.height.get() as u16,
-                        runtime.gpu.frame_renderer.resources_mut(),
-                        &mut runtime.gpu.text_renderer,
-                        &mut runtime.gpu.geometry_cache,
-                    )
-                };
-                let render_size = RenderSize {
-                    width: runtime.width.get(),
-                    height: runtime.height.get(),
-                };
                 let mut encoder = runtime
                     .gpu
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-                runtime.gpu.frame_renderer.render(
-                    &scene,
-                    &runtime.gpu.device,
-                    &runtime.gpu.queue,
-                    &mut encoder,
-                    &render_size,
-                    &view,
-                );
+                {
+                    let tree_ref = runtime.handles.tree.borrow();
+                    let gpu = &mut runtime.gpu;
+                    gpu.renderer.draw(
+                        &tree_ref,
+                        runtime.handles.root,
+                        width,
+                        height,
+                        &damage,
+                        &gpu.device,
+                        &gpu.queue,
+                        &mut encoder,
+                        &output.texture,
+                        &view,
+                    );
+                }
                 runtime.gpu.queue.submit([encoder.finish()]);
-                output.present();
+                runtime.gpu.queue.present(output);
+                if reconfigure {
+                    runtime
+                        .gpu
+                        .surface
+                        .configure(&runtime.gpu.device, &runtime.gpu.surface_config);
+                }
                 any_active
             },
             // §14 step 7: every window this framework opens reports a
@@ -726,7 +762,11 @@ impl App {
                 let runtime = runtimes
                     .get(&window_id)
                     .expect("build_access_update requested for a window with no runtime state");
-                runtime.tree.borrow().build_access_update(runtime.root)
+                runtime
+                    .handles
+                    .tree
+                    .borrow()
+                    .build_access_update(runtime.handles.root)
             },
             // M4 Phase 1 step 3: the real "meaning-dependent" half
             // `Tree::dispatch` leaves for its own caller (§2 Design
@@ -764,16 +804,16 @@ impl App {
                 // terminal pointer handling.
                 process_input(
                     &NodeContext {
-                        tree: &runtime.tree,
-                        handlers: &runtime.handlers,
-                        completions: &runtime.completions,
+                        tree: &runtime.handles.tree,
+                        handlers: &runtime.handles.handlers,
+                        completions: &runtime.handles.completions,
                     },
                     &WindowIo {
-                        dock: &runtime.dock,
-                        listeners: &runtime.window_listeners,
-                        terminals: &runtime.terminals,
+                        dock: &runtime.handles.dock,
+                        listeners: &runtime.handles.window_listeners,
+                        terminals: &runtime.handles.terminals,
                     },
-                    runtime.root,
+                    runtime.handles.root,
                     &event,
                     py,
                 );
@@ -783,9 +823,13 @@ impl App {
                 | InputEvent::PointerPressed { position, .. }
                 | InputEvent::PointerReleased { position, .. } = &event
                 {
-                    let wanted = cursor_at(&runtime.tree.borrow(), runtime.root, *position);
+                    let wanted = cursor_at(
+                        &runtime.handles.tree.borrow(),
+                        runtime.handles.root,
+                        *position,
+                    );
                     if wanted != runtime.cursor {
-                        if let Some(window) = runtime.os_window.borrow().as_ref() {
+                        if let Some(window) = runtime.handles.os_window.borrow().as_ref() {
                             window.set_cursor(cursor_icon(wanted));
                         }
                         runtime.cursor = wanted;
@@ -802,16 +846,23 @@ impl App {
                         // from `hit_test` to `hit_test_local` -- the
                         // extra local-space point is exactly what a
                         // real click-to-position hit-test needs below.
-                        if let Some((hit, local_point)) =
-                            runtime.tree.borrow().hit_test_local(runtime.root, position)
+                        if let Some((hit, local_point)) = runtime
+                            .handles
+                            .tree
+                            .borrow()
+                            .hit_test_local(runtime.handles.root, position)
                         {
                             if let Some(offset) = text_field_hit_offset(
-                                &runtime.tree,
-                                &mut runtime.gpu.text_renderer,
+                                &runtime.handles.tree,
+                                runtime.gpu.renderer.text(),
                                 hit,
                                 local_point,
                             ) {
-                                runtime.tree.borrow_mut().set_text_field_cursor(hit, offset);
+                                runtime
+                                    .handles
+                                    .tree
+                                    .borrow_mut()
+                                    .set_text_field_cursor(hit, offset);
                                 // M18 Phase 2 (§8, §10): a real press
                                 // on a TextField always ARMS drag
                                 // tracking -- whether it turns into a
@@ -824,8 +875,8 @@ impl App {
                                 // cursor` already left it.
                                 runtime.text_drag = Some(hit);
                             } else if let Some((row, col)) = terminal_hit_cell(
-                                &runtime.tree,
-                                &mut runtime.gpu.text_renderer,
+                                &runtime.handles.tree,
+                                runtime.gpu.renderer.text(),
                                 hit,
                                 local_point,
                             ) {
@@ -836,6 +887,7 @@ impl App {
                                 // press handling just above already
                                 // has.
                                 runtime
+                                    .handles
                                     .tree
                                     .borrow_mut()
                                     .set_terminal_selection_start(hit, row, col);
@@ -864,17 +916,21 @@ impl App {
                         // desktop editors do. A further, real,
                         // un-scoped refinement beyond this phase.
                         if let Some(field) = runtime.text_drag
-                            && let Some((hit, local_point)) =
-                                runtime.tree.borrow().hit_test_local(runtime.root, position)
+                            && let Some((hit, local_point)) = runtime
+                                .handles
+                                .tree
+                                .borrow()
+                                .hit_test_local(runtime.handles.root, position)
                             && hit == field
                             && let Some(offset) = text_field_hit_offset(
-                                &runtime.tree,
-                                &mut runtime.gpu.text_renderer,
+                                &runtime.handles.tree,
+                                runtime.gpu.renderer.text(),
                                 hit,
                                 local_point,
                             )
                         {
                             runtime
+                                .handles
                                 .tree
                                 .borrow_mut()
                                 .extend_text_field_selection(hit, offset);
@@ -883,17 +939,21 @@ impl App {
                         // real `Terminal` sibling -- the identical real
                         // "still over the same node, extend" shape.
                         if let Some(terminal) = runtime.terminal_drag
-                            && let Some((hit, local_point)) =
-                                runtime.tree.borrow().hit_test_local(runtime.root, position)
+                            && let Some((hit, local_point)) = runtime
+                                .handles
+                                .tree
+                                .borrow()
+                                .hit_test_local(runtime.handles.root, position)
                             && hit == terminal
                             && let Some((row, col)) = terminal_hit_cell(
-                                &runtime.tree,
-                                &mut runtime.gpu.text_renderer,
+                                &runtime.handles.tree,
+                                runtime.gpu.renderer.text(),
                                 hit,
                                 local_point,
                             )
                         {
                             runtime
+                                .handles
                                 .tree
                                 .borrow_mut()
                                 .extend_terminal_selection(hit, row, col);
@@ -922,7 +982,7 @@ impl App {
                     // itself (M99), so it only tells the framework.
                     InputEvent::ThemeChanged { dark } => {
                         listeners::deliver_window(
-                            &runtime.window_listeners,
+                            &runtime.handles.window_listeners,
                             py,
                             WindowEventType::ColorScheme,
                             |e| e.dark = Some(dark),
@@ -931,18 +991,18 @@ impl App {
                     // M32 Phase 2 (§4, §5): the real, winit-driven
                     // window resize -- `Tree::dispatch` (called just
                     // above, unconditionally, for every real
-                    // `InputEvent`) already resized `runtime.root`'s
+                    // `InputEvent`) already resized `runtime.handles.root`'s
                     // own `layout_style.size` directly (`engine-core`
                     // fully owns that, no need to defer it here); this
                     // arm handles the one thing only `engine-py` can
-                    // (`runtime.width`/`height`, which every per-frame
+                    // (`runtime.handles.width`/`height`, which every per-frame
                     // `compute_layout`/`build_tree_scene`/`RenderSize`
                     // call already reads fresh -- see `RedrawRequested`
                     // above).
                     //
                     // M33 Phase 2 (§4, §5, §8) closed the real, stated
                     // v1 limit this comment used to name here:
-                    // `runtime.width`/`height` are now the identical
+                    // `runtime.handles.width`/`height` are now the identical
                     // real, shared `Rc<Cell<u32>>` `PyWindow`'s own
                     // fields are (`window::SharedSize`), so this `.set()`
                     // call is immediately visible there too -- a
@@ -956,7 +1016,7 @@ impl App {
                     // frames, and reconfiguring the wgpu surface (a
                     // genuine swapchain rebuild) on every single one is
                     // the real, measured root cause of the "trailing
-                    // behind the cursor" symptom `BUILD_TRACKER.md`'s own
+                    // behind the cursor" symptom the 0.3 line's
                     // M40 investigation root-caused. The real, exact
                     // *value* still updates here, live, with zero lag
                     // (unchanged) -- only the expensive GPU reconfigure
@@ -969,10 +1029,10 @@ impl App {
                     // either sibling project's own size-bucketing
                     // approach).
                     InputEvent::Resized { width, height } => {
-                        runtime.width.set(width as u32);
-                        runtime.height.set(height as u32);
+                        runtime.handles.width.set(width as u32);
+                        runtime.handles.height.set(height as u32);
                         listeners::deliver_window(
-                            &runtime.window_listeners,
+                            &runtime.handles.window_listeners,
                             py,
                             WindowEventType::Resize,
                             |e| {
@@ -983,7 +1043,7 @@ impl App {
                     }
                     InputEvent::ScaleFactorChanged { scale_factor } => {
                         listeners::deliver_window(
-                            &runtime.window_listeners,
+                            &runtime.handles.window_listeners,
                             py,
                             WindowEventType::ScaleFactor,
                             |e| e.scale_factor = Some(scale_factor),
@@ -1002,7 +1062,10 @@ impl App {
                 let Some(runtime) = runtimes.get(&window_id) else {
                     return;
                 };
-                let (tree_rc, handlers) = (runtime.tree.clone(), runtime.handlers.clone());
+                let (tree_rc, handlers) = (
+                    runtime.handles.tree.clone(),
+                    runtime.handles.handlers.clone(),
+                );
                 let node = from_access_id(request.target_node);
                 let mut tree = tree_rc.borrow_mut();
                 match request.action {
@@ -1018,7 +1081,7 @@ impl App {
                         run_dispatch_outcome(
                             &handlers,
                             &tree_rc,
-                            &runtime.completions,
+                            &runtime.handles.completions,
                             &outcome,
                             None,
                             py,
@@ -1045,7 +1108,7 @@ impl App {
                             crate::dispatch::fire_focus_transition(
                                 &handlers,
                                 &tree_rc,
-                                &runtime.completions,
+                                &runtime.handles.completions,
                                 old,
                                 new,
                                 py,
@@ -1064,7 +1127,7 @@ impl App {
                             crate::dispatch::fire_focus_transition(
                                 &handlers,
                                 &tree_rc,
-                                &runtime.completions,
+                                &runtime.handles.completions,
                                 old,
                                 new,
                                 py,
@@ -1093,7 +1156,7 @@ impl App {
                             &NodeContext {
                                 tree: &tree_rc,
                                 handlers: &handlers,
-                                completions: &runtime.completions,
+                                completions: &runtime.handles.completions,
                             },
                             node,
                             name,
@@ -1113,19 +1176,19 @@ impl App {
                 };
                 match lifecycle {
                     WindowLifecycle::CloseRequested => !listeners::deliver_window(
-                        &runtime.window_listeners,
+                        &runtime.handles.window_listeners,
                         py,
                         WindowEventType::CloseRequested,
                         |_| {},
                     ),
                     WindowLifecycle::Closed => {
                         listeners::deliver_window(
-                            &runtime.window_listeners,
+                            &runtime.handles.window_listeners,
                             py,
                             WindowEventType::Closed,
                             |_| {},
                         );
-                        *runtime.os_window.borrow_mut() = None;
+                        *runtime.handles.os_window.borrow_mut() = None;
                         true
                     }
                 }
@@ -1138,8 +1201,8 @@ impl App {
                     opener.open_window(WindowRequest {
                         config: WindowConfig {
                             title: setup.title.clone(),
-                            width: setup.width.get(),
-                            height: setup.height.get(),
+                            width: setup.handles.width.get(),
+                            height: setup.handles.height.get(),
                             max_frames,
                         },
                         token: index as u64,
@@ -1152,7 +1215,7 @@ impl App {
                     // waker -- the one real place able to reach it at
                     // all, closing the real, stated v1 cost M30 Phase 9
                     // Step 4 left open.
-                    for session in setup.terminals.borrow().values() {
+                    for session in setup.handles.terminals.borrow().values() {
                         session.set_waker(waker.clone());
                     }
                 }
@@ -1165,21 +1228,24 @@ impl App {
         self.calls.set_waker(None);
         // M94: no window is open any more.
         for setup in setups_for_cleanup.iter() {
-            *setup.os_window.borrow_mut() = None;
+            *setup.handles.os_window.borrow_mut() = None;
+            setup.handles.surface_partial.set(None);
         }
 
+        if let Some(err) = startup_error.borrow_mut().take() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(err));
+        }
         match result {
             Ok(()) => Ok(()),
             Err(err) => {
                 // A `run_windowed_multi` failure only ever means "no
-                // display reachable" -- `GpuState::new`'s own no-adapter
-                // case exits the process directly (above), so this is
-                // the one remaining failure mode. Same TRE v1 finding
+                // display reachable" -- a GPU that can't be set up is
+                // raised just above instead. Same TRE v1 finding
                 // #261 convention as every other entry point in this
                 // workspace. `tracing::warn!` (M16 Phase 2): the same
                 // "expected, gracefully-handled, not an error" reasoning
                 // as the no-adapter case above.
-                tracing::warn!(%err, "no display available, exiting cleanly");
+                tracing::warn!(%err, "no display available, returning without running");
                 Ok(())
             }
         }

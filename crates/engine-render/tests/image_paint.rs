@@ -14,28 +14,14 @@ use engine_core::{ContentFit, ImageState, NodeKind, PaintProperties, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
-use vello_hybrid::{RenderSize, RenderTargetConfig};
+use vello_gpu::{RenderSize, RenderTargetConfig};
+
+mod support;
 
 const BACKGROUND: Color = Color::from_rgba8(0x11, 0x11, 0x11, 0xFF);
 
 async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16) -> (Vec<u8>, u32) {
-    let instance = wgpu::Instance::default();
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: None,
-        })
-        .await
-        .expect("no wgpu adapter available in this environment");
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("engine-render image-paint test device"),
-            required_features: wgpu::Features::empty(),
-            ..Default::default()
-        })
-        .await
-        .expect("failed to create wgpu device");
+    let (device, queue) = support::device("engine-render image-paint test device").await;
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("image-paint test target"),
@@ -57,8 +43,8 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         &device,
         &RenderTargetConfig {
             format: texture.format(),
-            width: u32::from(width),
-            height: u32::from(height),
+            width,
+            height,
         },
     );
     let mut text_renderer = TextRenderer::new();
@@ -77,53 +63,14 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
     // own doc comment, `FrameRenderer::sync_image_textures`'s real
     // public entry point for it.
     frame_renderer.sync_image_textures(tree, &device, &queue);
-    let render_size = RenderSize {
-        width: u32::from(width),
-        height: u32::from(height),
-    };
+    let render_size = RenderSize { width, height };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
 
-    let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback"),
-        size: u64::from(bytes_per_row) * u64::from(height),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: None,
-            },
-        },
-        wgpu::Extent3d {
-            width: u32::from(width),
-            height: u32::from(height),
-            depth_or_array_layers: 1,
-        },
-    );
     queue.submit([encoder.finish()]);
-
-    let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |result| {
-        result.expect("failed to map readback buffer");
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("device poll failed");
-
-    let data = slice.get_mapped_range();
+    let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
+    let data = support::read_texture(&device, &queue, &texture);
     let mut out = vec![0u8; data.len()];
     out.copy_from_slice(&data);
     (out, bytes_per_row)

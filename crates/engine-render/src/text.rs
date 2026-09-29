@@ -1,8 +1,8 @@
-//! `parley`-based text shaping, feeding `vello_hybrid`'s low-level glyph
+//! `parley`-based text shaping, feeding `vello_gpu`'s low-level glyph
 //! API (§14 step 4, the typography spike).
 //!
 //! `parley` shapes text (line-breaking, BiDi, font-fallback) into a
-//! `Layout` of positioned glyph runs; `vello_hybrid` only knows how to
+//! `Layout` of positioned glyph runs; `vello_gpu` only knows how to
 //! draw an already-positioned run of glyph ids (`Scene::glyph_run`,
 //! backed by `glifo::Glyph { id, x, y }`) -- this module is the glue
 //! between the two, which is exactly what §14 step 4 exists to spike:
@@ -25,7 +25,7 @@ use parley::{
 };
 use peniko::kurbo::{Affine, Point, Rect, Shape};
 use peniko::{Blob, Color};
-use vello_hybrid::{Resources, Scene};
+use vello_gpu::{Resources, Scene};
 
 use crate::fonts;
 
@@ -633,6 +633,42 @@ impl TextRenderer {
             .layout
     }
 
+    /// 0.4.0 M4: the size of what `draw` paints for a text node with
+    /// these inputs, from its box's origin -- the shown lines' width and
+    /// height, or the box width where `draw` clips an overflowing line.
+    /// Asks `shaped_layout` exactly as `draw` does (`color` included, as
+    /// `draw`'s `TextPlacement` passes it), so it reuses the same cached
+    /// layout rather than shaping again.
+    pub(crate) fn text_extent(
+        &mut self,
+        state: &TextState,
+        max_width: f32,
+        color: Color,
+        node_id: NodeId,
+    ) -> (f32, f32) {
+        let layout = self.shaped_layout(
+            node_id,
+            &state.content,
+            &state.font_family,
+            state.font_weight,
+            state.font_size,
+            max_width,
+            state.align,
+            state.line_height,
+            &[],
+            color,
+            &state.options,
+        );
+        let clips_width =
+            !state.options.ellipsis && !state.options.wrap && layout.width() > max_width;
+        let width = if clips_width {
+            max_width
+        } else {
+            layout.width().max(max_width)
+        };
+        (width, visible_height(layout, &state.options))
+    }
+
     /// Shapes `state.content` at `state.font_family`/`state.font_size`,
     /// breaks it to fit `at.max_width`, and draws every resulting glyph
     /// run into `scene` at `(at.x, at.y)` -- the text node's
@@ -642,7 +678,7 @@ impl TextRenderer {
     /// during scene construction, not inside `FrameRenderer::render`, so
     /// the same `Resources` instance has to be reachable at both points.
     /// `node_id` is this text node's own real identity in the caller's
-    /// `Tree` (`paint_node`'s own `id`) -- `shaped_layout`'s cache key,
+    /// `Tree` (`draw_own`'s own `id`) -- `shaped_layout`'s cache key,
     /// so the shaping pipeline itself only actually runs again when
     /// something about `state`/`at.max_width` genuinely changed since
     /// this node's last paint.
@@ -711,7 +747,7 @@ impl TextRenderer {
                     let shear = -f64::from(degrees).to_radians().tan();
                     builder = builder.glyph_transform(Affine::skew(shear, 0.0));
                 }
-                builder.fill_glyphs(glyphs);
+                report_glyph_errors(builder.fill_glyphs(glyphs));
             }
         }
         if clipped {
@@ -1003,10 +1039,12 @@ impl TextRenderer {
                     let color = Color::from_rgba8(r, gr, b, a);
                     if !batch.is_empty() && color != batch_color {
                         scene.set_paint(batch_color);
-                        scene
-                            .glyph_run(resources, font)
-                            .font_size(font_size)
-                            .fill_glyphs(std::mem::take(&mut batch).into_iter());
+                        report_glyph_errors(
+                            scene
+                                .glyph_run(resources, font)
+                                .font_size(font_size)
+                                .fill_glyphs(std::mem::take(&mut batch).into_iter()),
+                        );
                     }
                     batch_color = color;
                     batch.push(glifo::Glyph {
@@ -1017,10 +1055,12 @@ impl TextRenderer {
                 }
                 if !batch.is_empty() {
                     scene.set_paint(batch_color);
-                    scene
-                        .glyph_run(resources, font)
-                        .font_size(font_size)
-                        .fill_glyphs(batch.into_iter());
+                    report_glyph_errors(
+                        scene
+                            .glyph_run(resources, font)
+                            .font_size(font_size)
+                            .fill_glyphs(batch.into_iter()),
+                    );
                 }
             }
         }
@@ -1050,7 +1090,7 @@ impl TextRenderer {
 
         // Caret, painted last (on top of everything above) -- only when
         // this field is the `Tree`'s own real, live focused node
-        // (`paint_node`'s own real caller decides `show_caret`).
+        // (`draw_own`'s own real caller decides `show_caret`).
         // `caret_at` is the real, in-progress composition's own end
         // while a preedit is active, `state.cursor` otherwise.
         if show_caret {
@@ -1269,7 +1309,7 @@ impl TextRenderer {
                                 let shear = -(20f64.to_radians().tan());
                                 builder = builder.glyph_transform(Affine::skew(shear, 0.0));
                             }
-                            builder.fill_glyphs(glyphs);
+                            report_glyph_errors(builder.fill_glyphs(glyphs));
                         }
                     }
                     if underline {
@@ -1626,7 +1666,7 @@ fn from_display_offset_folded(
 /// losing any of these genuinely-distinct-per-call values.
 pub struct TextPlacement {
     /// Node-local top-left corner, under whatever transform the caller's
-    /// `Scene` currently has set (M5 Phase 1, §11.9) -- `paint_node`
+    /// `Scene` currently has set (M5 Phase 1, §11.9) -- `draw_own`
     /// always passes `(0.0, 0.0)` today (a text node paints at its own
     /// origin), kept as real fields rather than hardcoded so a future
     /// caller with genuine local padding/inset doesn't need a shape
@@ -1636,6 +1676,17 @@ pub struct TextPlacement {
     /// The node's taffy-computed box width -- what `parley` wraps to.
     pub max_width: f32,
     pub color: Color,
+}
+
+/// `vello_gpu` draws every glyph it can and reports the ones it couldn't.
+/// Warned once per process: a glyph that fails fails every frame.
+fn report_glyph_errors<E: std::fmt::Debug>(result: Result<(), E>) {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if let Err(err) = result
+        && !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        tracing::warn!("some glyphs couldn't be drawn (warned once): {err:?}");
+    }
 }
 
 #[cfg(test)]
@@ -1649,7 +1700,7 @@ mod tests {
     use crate::FrameRenderer;
     use engine_core::{NodeKind, PaintProperties, Tree};
     use taffy::prelude::{Size, Style, length};
-    use vello_hybrid::RenderTargetConfig;
+    use vello_gpu::RenderTargetConfig;
 
     async fn frame_renderer_for_test() -> FrameRenderer {
         let instance = wgpu::Instance::default();
@@ -1657,6 +1708,7 @@ mod tests {
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::default(),
                 force_fallback_adapter: false,
+                apply_limit_buckets: false,
                 compatible_surface: None,
             })
             .await
@@ -2025,7 +2077,7 @@ mod tests {
     }
 
     /// M31 Phase 1 (§5, §8): the real finding that closes this phase's
-    /// own "real, open technical question" (`BUILD_TRACKER.md`'s own
+    /// own "real, open technical question" (the 0.3 line's M31
     /// Phase 1 scoping note) without any new per-line-position API at
     /// all -- `draw` (plain `Text`) and `draw_field` (`TextField`) both
     /// build their `Layout` through this exact same `shaped_layout`
