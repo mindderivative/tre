@@ -1,10 +1,12 @@
-# Build Tracker — `tre` 0.4.0
+# Build Tracker — `tre` 0.4
 
 Updated after every milestone/phase/stage/step completion, kept in sync with `ARCHITECTURE.md`. Status legend: ✅ done · 🚧 in progress · ⬜ not started.
 
-**Artifact:** generate with `python3 tools/generate_tracker_artifact.py --project "tre 0.4.0" --out tools/build-tracker-0.4.0.generated.html` (after committing the tracker, so the stamp names the commit) and publish to [the 0.4.0 tracker page](https://claude.ai/artifact/PTt1sBpABbM2XxTrL7xdFb). The [0.3 line's page](https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty) stays the record of `main`'s tracker and its `0.3.5.x` fixes.
+**Artifact:** generate with `python3 tools/generate_tracker_artifact.py --project "tre 0.4" --out tools/build-tracker-0.4.0.generated.html` (after committing the tracker, so the stamp names the commit) and publish to [the 0.4.0 tracker page](https://claude.ai/artifact/PTt1sBpABbM2XxTrL7xdFb). The [0.3 line's page](https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty) stays the record of `main`'s tracker and its `0.3.5.x` fixes.
 
 **This tracker is the `0.4.0` line** -- the `vello_hybrid` fork for real GPU-level partial redraw ([issue #4](https://github.com/mindderivative/tre/issues/4)) -- and its milestones restart at 1. Earlier history is archived: `v0.1.0`–`v0.3.5.1` (M1–M104) in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md), and M1–M49 of that line in [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Fixes to the released `0.3.5` stay on the 0.3.x line as `0.3.5.x` patch releases, tracked on `main`'s `BUILD_TRACKER.md` (continuing its numbering after M104), as `0.3.5.1` was.
+
+**0.4.x patches** (0.4.1 onward) continue here, their milestones numbered on from M6; `v0.4.0` itself is M1–M6.
 
 ---
 
@@ -18,10 +20,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M4 — Dirty-Region Tracking | `██████████` 100% | ✅ Complete (2026-09-28) — `DamageTracker` reports what changed each frame as at most 4 rects, or a full redraw |
 | M5 — Partial Redraw End to End, Measured | `██████████` 100% | ✅ Complete (2026-09-28) — every window redraws only what changed, byte-identical to a full redraw; a small animation in a 1920x1080 window costs 3.7–4.9x less GPU+CPU time a frame than `v0.3.5.1`, a whole-window change the same |
 | M6 — Release `0.4.0` | `██████████` 100% | ✅ Complete (2026-09-28) — `v0.4.0` released on GitHub and PyPI as `tesserae-engine` 0.4.0, closing issue #4; Tesserae moved onto it with nothing broken |
+| M7 — Partial Redraw's Fixed Costs | `██████████` 100% | ✅ Complete (2026-09-28) — measured, not cut: the whole-window overhead is the 0.1 ms damage walk (the rest of `v0.4.0`'s reported gap was noise), and the 0.25 ms copy can't be narrowed safely without swapchain buffer age |
+| M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
+| M9 — Housekeeping and Release `0.4.1` | `█████░░░░░` 50% | 🚧 In Progress — housekeeping done; checked by hand on Wayland and X11 (macOS and Windows by CI only); the release next |
+| M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
 
-**Just closed:** M6 (2026-09-28) -- `v0.4.0` released (PR #17, merge `dec815c`), closing issue [#4](https://github.com/mindderivative/tre/issues/4): partial redraw on upstream `vello_gpu`, on by default and byte-identical to a full redraw, a small animation in a large window costing 3.7-4.9x less a frame than `v0.3.5.1`. On GitHub with 24 assets and on PyPI as `tesserae-engine` 0.4.0, sdist included. Tesserae moved onto it: 2360 passed, nothing broken.
+**Just closed:** M10 (2026-09-29) -- issue [#21](https://github.com/mindderivative/tre/issues/21): the mouse's back and forward buttons reach Python as `Event.button` `"back"`/`"forward"` on `pointer_down`/`pointer_up`, heard on the root, with no `click` -- for Tesserae's `app.back()`/`app.forward()`.
 
-**Up next:** nothing scheduled on the `tre` side; the 0.4.0 line is complete.
+**Up next:** M9 Phase 2 Step 2 -- the `0.4.1` release: PR to `main`, CI, merge, tag, PyPI.
 
 **Known gaps:**
 - None open on this line.
@@ -109,6 +115,58 @@ User, 2026-09-28: "1. Unify them 2. Move into a per-window 3. raise an exception
 User: "Start phase 3".
 - Step 1: PR to `main`, CI green on all three platforms, merge, re-verify, release note, annotated tag, as with `v0.3.5` — ✅ (2026-09-28: pushed; PR #17 conflicted with `main`, which had gained `v0.3.5.2` -- M105 `undock_panel`, M106 `get("dark")`, M107 PyPI as `tesserae-engine` -- so `main` was merged into `0.4.0` (`4001e66`): this tracker, LOG, and PLAN kept, `main`'s new tracker records applied to `BUILD_TRACKER_ARCHIVE_0.3.md`, `pyproject.toml` taking the name `tesserae-engine` with version 0.4.0 and the local `0.3.5.3` branch's `license-files` sdist fix, the new code on `WindowHandles`, `window.get` listing `dark` too, and the `pypi` job's publish action pinned; cargo 372, pytest 450 + 1 skipped, MSRV clean; CI green on Linux, macOS, Windows, and the new `msrv` job's first run; PR out of draft and merged (`dec815c`), its tree identical to the verified `4001e66`; annotated tag `v0.4.0` pushed; the wheels run passed every job, the GitHub release carries 24 assets and the release note, and PyPI has `tesserae-engine` 0.4.0 -- 22 wheels and, unlike 0.3.5.2, the sdist; a fresh venv installs it from PyPI and runs; issue #4 closed)
 - Step 2: Tesserae moves to `0.4.0` — ✅ (2026-09-28: told -- the install, partial redraw and its switch, the four behaviour changes that could touch its code or tests, and Rust 1.90 for source builds; reported by its session: `tesserae-engine==0.4.0` from PyPI, its floor now `>=0.4.0` and its CI's font checkout at `v0.4.0` (local commit `f9f1147`), 2360 passed, 0 skipped, all five examples clean -- the +2 over 0.3.5.2 its own docs tests; each behaviour change checked -- `App.run()`'s `RuntimeError` reaches its callers and is documented, no zero-size windows, no oversized images, no test on the old error text; no `tre` issues found)
+
+---
+
+## Milestone 7 — Partial Redraw's Fixed Costs
+
+**Status: ✅ Complete (2026-09-28).** User: "Do your recommendation" -- close M7 on its measurement. `v0.4.0`'s one worse number: a change covering most of the window costs 0.2-1.8 ms more a frame with partial redraw on, the tracker fingerprinting every node before settling on a full redraw.
+
+### Phase 1 — Measure and Cut ✅
+- Step 1: measure where a frame's time goes -- damage walk, scene, render, copy to the surface -- for the small and whole-window workloads — ✅ (2026-09-28: `partial_redraw_bench` now splits each frame into `prepare` (the damage walk), `draw` (scene and encoding) and the GPU wait, and adds an idle workload; three runs, 1920x1080, 576 cards: whole-window with partial redraw on vs off, `prepare` 0.10-0.12 ms vs 0.005 ms, with `draw` and GPU the same -- so the overhead is the walk, about 0.1 ms or 4-5% of the frame, and `v0.4.0`'s reported 0.2-1.8 ms gap was mostly this GPU's clocks and run order; idle frames with partial redraw on cost 0.33-0.38 ms, 0.25 ms of it the GPU copying the kept frame to the surface, which is also most of a small partial frame's 0.31 ms GPU time)
+- Step 2: stop the damage walk once a frame is known to be a full redraw, and restart the comparison next frame — ✅ (2026-09-28, decided against, with the user: the walk is 0.10-0.12 ms of a 2.3 ms whole-window frame, and stopping early would save about half of it, since during a continuing whole-window change every other frame must still compare in full to have a baseline)
+- Step 3: the copy to the surface: measure its share of a small partial frame, and cut it if it's worth it — ✅ (2026-09-28, measured at 0.25 ms at 1080p and kept: narrowing it to the damage needs to know how many frames old each swapchain image is -- they rotate, 2-3 of them -- and wgpu 30 doesn't expose buffer age, so a guess would show stale pixels; frames with nothing changed and nothing animating already skip it, M6 Phase 2 Step 6)
+
+---
+
+## Milestone 8 — Show What's Redrawn
+
+**Status: ✅ Complete (2026-09-28).** User: "Do your recommendation" (M7 closed, on to M8).
+
+### Phase 1 — The Overlay ✅
+- Step 1: `window.set(show_damage=True)` tints each frame's redrawn areas, so partial redraw can be seen working and wasted redraws found — ✅ (2026-09-28: `WindowRenderer::draw_damage_overlay` draws each damage rect filled translucent magenta and outlined, or a full redraw's window edge in orange, over the surface image with the new `FrameRenderer::render_over` (`TargetInit::SrcOver`), in its own submit after the frame's -- two renders in one encoder would share the renderer's buffers, written as each is encoded -- and never into the kept frame; a `show_damage` switch in `WindowHandles`, `set`/`get`, stub, docs; a GPU test finds the damage tinted, the rest untouched, and the next frame without the overlay byte-identical to a full render, and a pytest covers the switch; the test's stand-in swapchain image gained `RENDER_ATTACHMENT`, as a real one has; cargo 373, pytest 451 + 1 skipped)
+
+---
+
+## Milestone 9 — Housekeeping and Release `0.4.1`
+
+**Status: 🚧 In Progress.** Phase 1 done (2026-09-28).
+
+### Phase 1 — Housekeeping ✅
+- Step 1: retire the local `0.3.5.3` branch and its `tre-0.3.5.2` worktree (its sdist fix shipped in `0.4.0`), prune merged local release branches, and move `rect_window.rs` onto the shared test helpers where it can — ✅ (2026-09-28: the clean `tre-0.3.5.2` worktree removed and branch `0.3.5.3` deleted -- never pushed, but both its commits' changes are on `main`, the `license-files` fix since `0.4.0` and its tracker line in the 0.3 archive; local branches `0.3.1`-`0.3.5.2` and `0.4.0`, all merged and on `origin`, and a merged M56-era `worktree-agent-...` branch deleted -- local branches are now `main` and `0.4.1`; `rect_window.rs` keeps its own setup, since it picks its adapter for a real window's surface, which the shared helper deliberately doesn't take; a new `examples/show_damage.py` for the manual check -- one pulsing card with the overlay on, printing `partial_redraw_active`, `--watch` to keep the window open -- listed in `docs/examples.md`)
+
+### Phase 2 — Release 🚧
+- Step 1: the user's manual check of partial redraw on real hardware -- X11, Wayland, macOS, Windows: `partial_redraw_active`, and repaint on uncover, resize, and minimize — ✅ (2026-09-29, with `examples/show_damage.py --watch`: KDE Wayland on this machine ✅ -- `partial_redraw_active = True`, only the pulsing card tinted, the orange edge on resize, and correct after uncover and after minimize/restore (user: "all four looked good on Wayland"); X11 through XWayland on the same machine (`env -u WAYLAND_DISPLAY`) ✅ -- `partial_redraw_active = True` in both of its runs, the four checks good (user: "X11 looked good too"); macOS and Windows not checked by hand -- the user has neither ("I can not test on windows and macos") -- so there only CI's headless build and tests cover them, and the release note says so)
+- Step 2: PR to `main`, CI green, merge, tag `v0.4.1`, release, PyPI — ⬜
+- Step 3: Tesserae moves to `0.4.1` — ⬜
+
+---
+
+## Milestone 10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21))
+
+**Status: ✅ Complete (2026-09-29).** User, before the `0.4.1` release: "before that check your issues" -- the one open issue, #21 from Tesserae's routing work (its M66, `app.back()`/`app.forward()`), folded into `0.4.1` ahead of M9's release phase.
+
+### Phase 1 — The Side Buttons ✅
+- Step 1: `PointerButton::Back`/`Forward`, translated from winit's `MouseButton::Back`/`Forward` (only `Other(n)` still goes unreported); `Event.button` names them `"back"` and `"forward"`, `simulate` accepts them, and like the middle button they focus nothing and make no `click` — ✅ (2026-09-29: `engine-core` dispatch treats them as it treats `Middle`, `pointer_down`/`pointer_up` bubbling to the root as the issue relies on; a Rust test that a side-button press/release activates nothing, the `engine-platform` translation test flipped, a pytest that both reach a root listener as `pointer_down`/`pointer_up` with no `click`, and the unknown-button error listing all five; stub and events docs; cargo 373, pytest 452 + 1 skipped; checked by the user with a real mouse's side buttons: "works wonderfully")
+
+---
+
+## Branch: `0.4.1` — Scaffold
+
+**Status: ✅ Scaffolded (2026-09-28).**
+
+- Branch `0.4.1` created off `main` at `53bb1bb` (`v0.4.0` plus its release records) — ✅
+- `Cargo.toml` and `pyproject.toml` bumped to `0.4.1`; `Cargo.lock` updated via `cargo check` — ✅
 
 ---
 

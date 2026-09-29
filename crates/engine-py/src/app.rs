@@ -744,6 +744,19 @@ impl App {
                     );
                 }
                 runtime.gpu.queue.submit([encoder.finish()]);
+                // 0.4.1 M8: what this frame redrew, over the image but never
+                // the kept frame; its own submit, after the frame's.
+                if runtime.handles.show_damage.get() {
+                    let gpu = &mut runtime.gpu;
+                    gpu.renderer.draw_damage_overlay(
+                        &damage,
+                        width,
+                        height,
+                        &gpu.device,
+                        &gpu.queue,
+                        &view,
+                    );
+                }
                 runtime.gpu.queue.present(output);
                 if reconfigure {
                     runtime

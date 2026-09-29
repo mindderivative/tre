@@ -197,8 +197,9 @@ impl Tree {
                     // M4 Phase 7 (§11.3): a same-node press/release pair
                     // means something different per button -- Primary
                     // activates, Secondary is its own real outcome (a
-                    // context menu, say), Middle has no real meaning
-                    // yet.
+                    // context menu, say), and Middle and (0.4.1) the side
+                    // buttons have no outcome -- listeners still hear their
+                    // pointer_down/pointer_up, so no `click`.
                     Some((pressed_button, pressed_node))
                         if pressed_button == button && Some(pressed_node) == hit =>
                     {
@@ -207,7 +208,9 @@ impl Tree {
                             PointerButton::Secondary => {
                                 DispatchOutcome::SecondaryActivated(pressed_node)
                             }
-                            PointerButton::Middle => DispatchOutcome::None,
+                            PointerButton::Middle
+                            | PointerButton::Back
+                            | PointerButton::Forward => DispatchOutcome::None,
                         }
                     }
                     _ => DispatchOutcome::None,

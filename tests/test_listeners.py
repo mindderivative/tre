@@ -151,6 +151,27 @@ def test_pointer_up_precedes_click() -> None:
     assert order == ["pointer_down", "pointer_up", "click"]
 
 
+def test_the_mouse_side_buttons_reach_the_root_without_a_click() -> None:
+    # 0.4.1 (issue #21): back and forward, for app navigation -- heard on
+    # the window's root wherever the pointer is, and never a click.
+    w = window()
+    outer, inner = nested(w)
+    seen: list[tuple[str, str | None]] = []
+    for name in ("pointer_down", "pointer_up", "click"):
+        w.root.on(name, lambda e: seen.append((e.type, e.button)))
+    for button in ("back", "forward"):
+        w.simulate("pointer_down", node=inner, button=button)
+        w.simulate("pointer_up", node=inner, button=button)
+    assert seen == [
+        ("pointer_down", "back"),
+        ("pointer_up", "back"),
+        ("pointer_down", "forward"),
+        ("pointer_up", "forward"),
+    ]
+    with pytest.raises(ValueError, match="primary, secondary, middle, back, forward"):
+        w.simulate("pointer_down", node=inner, button="side")
+
+
 # --- pointer_enter / pointer_leave -----------------------------------------------
 
 
@@ -464,9 +485,9 @@ def test_window_title_is_settable_and_the_rest_read_only() -> None:
     assert w.get("scale_factor") == 1.0
     with pytest.raises(ValueError, match="read-only"):
         w.set(width=10)  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="settable: title, partial_redraw"):
+    with pytest.raises(ValueError, match="settable: title, partial_redraw, show_damage"):
         w.set(colour="red")  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, dark, partial_redraw, partial_redraw_active"):
+    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, dark, partial_redraw, partial_redraw_active, show_damage"):
         w.get("depth")
 
 
@@ -539,3 +560,14 @@ def test_a_window_needs_a_positive_size() -> None:
         tre.Window(width=0, height=100)
     with pytest.raises(ValueError, match="positive width and height"):
         tre.Window(width=100, height=0)
+
+
+def test_show_damage_is_off_by_default_and_can_be_switched_on() -> None:
+    w = window()
+    assert w.get("show_damage") is False
+    w.set(show_damage=True)
+    assert w.get("show_damage") is True
+    w.set(show_damage=False)
+    assert w.get("show_damage") is False
+    with pytest.raises(ValueError, match="must be a bool"):
+        w.set(show_damage="yes")  # type: ignore[arg-type]

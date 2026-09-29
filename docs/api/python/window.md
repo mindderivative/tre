@@ -51,10 +51,16 @@ surface the platform won't let `tre` copy into always redraws in full, and
 logs a warning saying so; `get("partial_redraw")` reports the setting, and
 `get("partial_redraw_active")` whether it's in effect (`None` until
 `App.run()` opens the window).
+**`set(show_damage=True)`** makes each presented frame show what it
+redrew: its damage rects tinted magenta, or, for a full redraw, the window's
+edge outlined in orange. It's for seeing partial redraw work and for finding
+redraws an app didn't mean to cause. The tint goes on the image the window
+shows, never on the frame `tre` keeps, so it never changes what later frames
+draw. Off by default.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), `dark` — the OS's current appearance,
 or `None` where it can't say ([Window properties](events.md#window-properties))
-— `partial_redraw`, or `partial_redraw_active`.
+— `partial_redraw`, `partial_redraw_active`, or `show_damage`.
 
 **`resize(width, height)`** sets the window's size from code, and the
 root's layout box follows. It fires no `resize` event — that reports a

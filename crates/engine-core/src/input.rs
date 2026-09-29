@@ -27,21 +27,20 @@
 
 use peniko::kurbo::Point;
 
-/// The three buttons this minimal model actually distinguishes.
-/// **Correction (verified directly against `winit = "0.30.13"`'s own
-/// source before this was wired up in `engine-platform`, M4 step 2):**
-/// `winit::event::MouseButton` has six real variants (`Left`/`Right`/
-/// `Middle`/`Back`/`Forward`/`Other(u16)`), not three -- an earlier
-/// version of this doc comment claimed a 1:1 match, which was wrong,
-/// not verified against the real enum. `Back`/`Forward`/`Other` have no
-/// real desktop meaning here yet (they're a browser-navigation
-/// convention) and translate to no `InputEvent` at all -- narrowed,
-/// stated, not silently dropped.
+/// The pointer buttons this model distinguishes: primary, secondary,
+/// middle, and (0.4.1, issue #21) the mouse's back and forward side
+/// buttons, which apps use to navigate. `winit::event::MouseButton` also
+/// has `Other(u16)`, which has no common meaning and translates to no
+/// `InputEvent` at all -- a stated narrowing, not a silently dropped case.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerButton {
     Primary,
     Secondary,
     Middle,
+    /// The mouse's back side button (X1).
+    Back,
+    /// The mouse's forward side button (X2).
+    Forward,
 }
 
 /// §10's own minimal keyboard model's exact vocabulary -- see this

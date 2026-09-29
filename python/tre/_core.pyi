@@ -43,7 +43,9 @@ class Event:
     """
 
     button: str | None
-    """Pointer events: `"primary"`, `"secondary"`, or `"middle"`."""
+    """Pointer events: `"primary"`, `"secondary"`, `"middle"`, or (0.4.1)
+    the mouse's side buttons, `"back"` and `"forward"`. Only the primary
+    button's press and release make a `click`."""
     old_value: Any | None
     """`"change"` only: a text input's text immediately before the edit."""
     new_value: Any | None
@@ -280,12 +282,17 @@ class Window:
     def off(self, event: str) -> None:
         """M94: removes the window's listener for `event`, if any."""
         ...
-    def set(self, *, title: str = ..., partial_redraw: bool = ...) -> None:
+    def set(
+        self, *, title: str = ..., partial_redraw: bool = ..., show_damage: bool = ...
+    ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
         each frame, `False` redraws the whole window every frame. A window
         whose surface can't be copied into always redraws in full, with a
-        warning logged, whatever this says."""
+        warning logged, whatever this says. (0.4.1) `show_damage`: `True`
+        tints what each presented frame redrew -- its damage rects in
+        magenta, a full redraw outlined in orange -- over the image, never
+        the kept frame; off by default."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -297,6 +304,8 @@ class Window:
     def get(self, name: Literal["partial_redraw_active"]) -> bool | None: ...
     @overload
     def get(self, name: Literal["dark"]) -> bool | None: ...
+    @overload
+    def get(self, name: Literal["show_damage"]) -> bool: ...
     @overload
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, `scale_factor` (`1.0`

@@ -118,8 +118,8 @@ window.get("dark")          # True, False, or None where the OS can't say
 `window.set(title=...)` changes the title, live if the window is open.
 `window.set(partial_redraw=False)` redraws the whole window every frame
 instead of only what changed ([Window](window.md)). `window.get(name)` reads
-`width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`, or
-`partial_redraw_active`. `root` is the window's root node.
+`width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`,
+`partial_redraw_active`, or `show_damage`. `root` is the window's root node.
 
 `dark` is the OS's appearance right now, so an app that follows it can start
 in the right one and then listen to `color_scheme`. Linux reads it from the
@@ -136,7 +136,7 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `current` | node listener events — the node whose listener is running |
 | `x`, `y` | pointer and wheel events — local to `current` |
 | `window_x`, `window_y` | pointer and wheel events — in the window |
-| `button` | pointer events and pointer clicks — `"primary"`, `"secondary"`, `"middle"` |
+| `button` | pointer events and pointer clicks — `"primary"`, `"secondary"`, `"middle"`, or the mouse's side buttons `"back"` and `"forward"` (0.4.1; they make no `click`) |
 | `delta_x`, `delta_y` | `wheel` — pixels, positive scrolling right and down |
 | `key`, `repeat` | `key_down`, `key_up` |
 | `shift`, `ctrl`, `alt`, `meta` | pointer, wheel, key, and click events |
