@@ -22,12 +22,12 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M6 — Release `0.4.0` | `██████████` 100% | ✅ Complete (2026-09-28) — `v0.4.0` released on GitHub and PyPI as `tesserae-engine` 0.4.0, closing issue #4; Tesserae moved onto it with nothing broken |
 | M7 — Partial Redraw's Fixed Costs | `██████████` 100% | ✅ Complete (2026-09-28) — measured, not cut: the whole-window overhead is the 0.1 ms damage walk (the rest of `v0.4.0`'s reported gap was noise), and the 0.25 ms copy can't be narrowed safely without swapchain buffer age |
 | M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
-| M9 — Housekeeping and Release `0.4.1` | `████████░░` 75% | 🚧 In Progress — `v0.4.1` released (2026-09-29) on GitHub and PyPI, closing issue #21; Tesserae told, its move pending |
+| M9 — Housekeeping and Release `0.4.1` | `██████████` 100% | ✅ Complete (2026-09-29) — `v0.4.1` released on GitHub and PyPI, closing issue #21; Tesserae moved onto it, its side buttons driving back/forward |
 | M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
 
-**Just closed:** `v0.4.1` released (2026-09-29; PR #22, merge `97d0b4a`), closing issue [#21](https://github.com/mindderivative/tre/issues/21): `window.set(show_damage=True)`, the mouse's back and forward buttons, and partial redraw's costs measured. On GitHub with 24 assets and on PyPI as `tesserae-engine` 0.4.1, sdist included.
+**Just closed:** `v0.4.1` (2026-09-29; PR #22, merge `97d0b4a`), closing issue [#21](https://github.com/mindderivative/tre/issues/21): `window.set(show_damage=True)`, the mouse's back and forward buttons, and partial redraw's costs measured. On GitHub and PyPI as `tesserae-engine` 0.4.1; Tesserae moved onto it (2503 passed), its side buttons driving `back()`/`forward()`.
 
-**Up next:** Tesserae's report on moving to 0.4.1 (M9 Phase 2 Step 3); nothing else scheduled on the `tre` side.
+**Up next:** nothing scheduled; open issues from Tesserae: [#23](https://github.com/mindderivative/tre/issues/23) (CSS Grid) and [#24](https://github.com/mindderivative/tre/issues/24) (a scroll view's keyboard scrolling, `scroll_into_view`, revealing focus, and a scroll event).
 
 **Known gaps:**
 - None open on this line.
@@ -140,15 +140,15 @@ User: "Start phase 3".
 
 ## Milestone 9 — Housekeeping and Release `0.4.1`
 
-**Status: 🚧 In Progress.** Phase 1 done; `v0.4.1` released (2026-09-29); Tesserae's move pending.
+**Status: ✅ Complete (2026-09-29).** `v0.4.1` released, and Tesserae on it.
 
 ### Phase 1 — Housekeeping ✅
 - Step 1: retire the local `0.3.5.3` branch and its `tre-0.3.5.2` worktree (its sdist fix shipped in `0.4.0`), prune merged local release branches, and move `rect_window.rs` onto the shared test helpers where it can — ✅ (2026-09-28: the clean `tre-0.3.5.2` worktree removed and branch `0.3.5.3` deleted -- never pushed, but both its commits' changes are on `main`, the `license-files` fix since `0.4.0` and its tracker line in the 0.3 archive; local branches `0.3.1`-`0.3.5.2` and `0.4.0`, all merged and on `origin`, and a merged M56-era `worktree-agent-...` branch deleted -- local branches are now `main` and `0.4.1`; `rect_window.rs` keeps its own setup, since it picks its adapter for a real window's surface, which the shared helper deliberately doesn't take; a new `examples/show_damage.py` for the manual check -- one pulsing card with the overlay on, printing `partial_redraw_active`, `--watch` to keep the window open -- listed in `docs/examples.md`)
 
-### Phase 2 — Release 🚧
+### Phase 2 — Release ✅
 - Step 1: the user's manual check of partial redraw on real hardware -- X11, Wayland, macOS, Windows: `partial_redraw_active`, and repaint on uncover, resize, and minimize — ✅ (2026-09-29, with `examples/show_damage.py --watch`: KDE Wayland on this machine ✅ -- `partial_redraw_active = True`, only the pulsing card tinted, the orange edge on resize, and correct after uncover and after minimize/restore (user: "all four looked good on Wayland"); X11 through XWayland on the same machine (`env -u WAYLAND_DISPLAY`) ✅ -- `partial_redraw_active = True` in both of its runs, the four checks good (user: "X11 looked good too"); macOS and Windows not checked by hand -- the user has neither ("I can not test on windows and macos") -- so there only CI's headless build and tests cover them, and the release note says so)
 - Step 2: PR to `main`, CI green, merge, tag `v0.4.1`, release, PyPI — ✅ (2026-09-29, user: "works wonderfully start the release": `main` hadn't moved, so no merge into `0.4.1`; PR #22, CI green on Linux, macOS, Windows, and `msrv`; merged as `97d0b4a`, its tree identical to the tested `771fb2d`; annotated tag `v0.4.1`; the wheels run passed every job and the user approved the `pypi` deployment; the GitHub release carries 24 assets and the release note -- which says macOS and Windows are covered by CI only -- and PyPI has `tesserae-engine` 0.4.1, 22 wheels and the sdist; a fresh venv installs it from PyPI once the index caught up, `show_damage` and a simulated back button working; issue #21 closed by the merge)
-- Step 3: Tesserae moves to `0.4.1` — 🚧 (2026-09-29: told; waiting on its report)
+- Step 3: Tesserae moves to `0.4.1` — ✅ (2026-09-29: reported by its session: `tesserae-engine==0.4.1` from PyPI, its floor `>=0.4.1` and its CI's checkout at `v0.4.1` (committed locally there); 2502 passed on 0.4.1 before its side-button work, as on 0.4.0, and 2503 after, 0 skipped, five examples clean; its `App` hears `pointer_down` on the root and maps `"back"`/`"forward"` to `back()`/`forward()` -- both reach the root over a node and over empty space, with no click and no focus change; no `tre` bugs found)
 
 ---
 

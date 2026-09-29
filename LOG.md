@@ -32,4 +32,5 @@ no click. cargo 373, pytest 452 + 1 skipped.
 
 **Released (2026-09-29).** PR #22 merged (97d0b4a), v0.4.1 tagged, 24
 assets, PyPI 22 wheels + sdist, #21 closed, Tesserae told.
-Next: Tesserae's report.
+Tesserae moved: 2503 passed, side buttons drive back/forward, no issues.
+**M9 complete; 0.4.1 is done.** Open: #23 (Grid), #24 (scroll_view keys).
