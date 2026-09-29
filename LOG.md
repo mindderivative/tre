@@ -23,4 +23,4 @@ clean. cargo 373, pytest 451 + 1 skipped.
 keeps its surface-bound adapter.
 
 **Manual check (2026-09-29).** Wayland (KDE): all good, active = True.
-X11, macOS, Windows to go.
+X11 (XWayland): all good, active = True. macOS, Windows to go.
