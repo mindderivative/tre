@@ -61,4 +61,7 @@ non-animating frames; OS redraws re-present the kept frame.
 **Step 7 (2026-09-28).** WindowHandles (11 shared handles, one struct);
 get("partial_redraw_active").
 
-Next: Step 8, older GPU tests on tests/support.
+**Step 8 (2026-09-28).** 21 test files on support::device / read_texture
+(-1,142 +103 lines); rect_window keeps its own (real surface).
+
+Next: Step 9, image atlas.

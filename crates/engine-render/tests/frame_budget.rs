@@ -46,6 +46,8 @@ use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexWrap, Size, Style, length};
 use vello_gpu::{RenderSize, RenderTargetConfig};
 
+mod support;
+
 const GRID_COLS: u32 = 20;
 const GRID_ROWS: u32 = 15;
 const CELL: f32 = 20.0;
@@ -106,24 +108,7 @@ fn build_grid_tree(start: Instant) -> (Tree, engine_core::NodeId) {
             cargo test -p engine-render --test frame_budget --release -- --ignored --nocapture"]
 fn frame_pipeline_fits_the_16_6ms_budget() {
     pollster::block_on(async {
-        let instance = wgpu::Instance::default();
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                force_fallback_adapter: false,
-                apply_limit_buckets: false,
-                compatible_surface: None,
-            })
-            .await
-            .expect("no wgpu adapter available in this environment");
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("engine-render frame-budget test device"),
-                required_features: wgpu::Features::empty(),
-                ..Default::default()
-            })
-            .await
-            .expect("failed to create wgpu device");
+        let (device, queue) = support::device("engine-render frame-budget test device").await;
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("frame-budget test target"),

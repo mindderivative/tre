@@ -29,6 +29,8 @@ use peniko::kurbo::Affine;
 use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
 use vello_gpu::{RenderSize, RenderTargetConfig};
 
+mod support;
+
 const BACKGROUND: Color = Color::from_rgba8(0x11, 0x11, 0x11, 0xFF);
 const CHIP: Color = Color::from_rgba8(0xFF, 0xA5, 0x00, 0xFF); // the transformed descendant
 
@@ -50,24 +52,7 @@ fn absolute(left: f32, top: f32, width: f32, height: f32) -> Style {
 }
 
 async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16) -> (Vec<u8>, u32) {
-    let instance = wgpu::Instance::default();
-    let adapter = instance
-        .request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-            compatible_surface: None,
-        })
-        .await
-        .expect("no wgpu adapter available in this environment");
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: Some("engine-render transform-composition test device"),
-            required_features: wgpu::Features::empty(),
-            ..Default::default()
-        })
-        .await
-        .expect("failed to create wgpu device");
+    let (device, queue) = support::device("engine-render transform-composition test device").await;
 
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("transform-composition test target"),
@@ -109,45 +94,9 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
 
-    let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback"),
-        size: u64::from(bytes_per_row) * u64::from(height),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: None,
-            },
-        },
-        wgpu::Extent3d {
-            width: u32::from(width),
-            height: u32::from(height),
-            depth_or_array_layers: 1,
-        },
-    );
     queue.submit([encoder.finish()]);
-
-    let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |result| {
-        result.expect("failed to map readback buffer");
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("device poll failed");
-
-    let data = slice.get_mapped_range().expect("the readback buffer maps");
+    let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
+    let data = support::read_texture(&device, &queue, &texture);
     let mut out = vec![0u8; data.len()];
     out.copy_from_slice(&data);
     (out, bytes_per_row)

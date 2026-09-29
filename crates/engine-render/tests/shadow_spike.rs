@@ -20,6 +20,8 @@ use engine_render::{FrameRenderer, build_shadow_scene};
 use peniko::Color;
 use vello_gpu::{RenderSize, RenderTargetConfig};
 
+mod support;
+
 #[test]
 fn blurred_rounded_rect_shows_a_real_gaussian_falloff_at_its_edge() {
     pollster::block_on(async {
@@ -37,24 +39,7 @@ fn blurred_rounded_rect_shows_a_real_gaussian_falloff_at_its_edge() {
 
         let scene = build_shadow_scene(width, height, color, corner_radius, std_dev);
 
-        let instance = wgpu::Instance::default();
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                force_fallback_adapter: false,
-                apply_limit_buckets: false,
-                compatible_surface: None,
-            })
-            .await
-            .expect("no wgpu adapter available in this environment");
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("engine-render shadow-spike test device"),
-                required_features: wgpu::Features::empty(),
-                ..Default::default()
-            })
-            .await
-            .expect("failed to create wgpu device");
+        let (device, queue) = support::device("engine-render shadow-spike test device").await;
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("shadow-spike test target"),
@@ -85,45 +70,9 @@ fn blurred_rounded_rect_shows_a_real_gaussian_falloff_at_its_edge() {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
 
-        let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
-        let readback = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: u64::from(bytes_per_row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: None,
-                },
-            },
-            wgpu::Extent3d {
-                width: u32::from(width),
-                height: u32::from(height),
-                depth_or_array_layers: 1,
-            },
-        );
         queue.submit([encoder.finish()]);
-
-        let slice = readback.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |result| {
-            result.expect("failed to map readback buffer");
-        });
-        device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("device poll failed");
-
-        let data = slice.get_mapped_range().expect("the readback buffer maps");
+        let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
+        let data = support::read_texture(&device, &queue, &texture);
         let alpha_at = |x: u32, y: u32| -> u8 {
             let row_start = (y * bytes_per_row) as usize;
             data[row_start + (x * 4) as usize + 3]
