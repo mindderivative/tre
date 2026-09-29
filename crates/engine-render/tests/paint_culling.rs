@@ -1,4 +1,4 @@
-//! M8 Phase 1 (§11.8): the standalone proof that `paint_node` genuinely
+//! M8 Phase 1 (§11.8): the standalone proof that the paint walk (`walk`) genuinely
 //! skips Vello scene-encoding for an entire off-screen subtree, not
 //! just that off-screen content happens not to show up in the final
 //! rendered pixels (which would be true even *without* real culling --
@@ -192,7 +192,7 @@ fn an_off_screen_parent_skips_its_whole_subtree_even_when_a_child_transforms_bac
 
         // The child's own `transform` would, on its own, translate it
         // right back onto visible canvas (roughly the viewport's own
-        // center) -- if `paint_node` ever reached this node at all.
+        // center) -- if the paint walk ever reached this node at all.
         let child = tree.insert(
             NodeKind::Rect,
             Style {

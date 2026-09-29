@@ -10,7 +10,7 @@
 //!    nothing else -- no caret anywhere, a real "nothing extra
 //!    painted" claim, not merely "didn't crash."
 //! 2. The *same* field, once it's the `Tree`'s own real focused node,
-//!    paints a real, visible caret -- proving `paint_node`'s own
+//!    paints a real, visible caret -- proving `draw_own`'s own
 //!    `show_caret: tree.focused() == Some(id)` gate is genuinely live,
 //!    not a hardcoded always-on/always-off.
 

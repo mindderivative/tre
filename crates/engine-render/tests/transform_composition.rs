@@ -173,7 +173,7 @@ fn a_containers_animated_transform_propagates_to_an_untouched_child() {
         let mut tree = Tree::new();
         // `NodeKind::Container` deliberately paints nothing itself (it
         // exists purely to give `taffy` something to lay children out
-        // against, `paint_node`'s own match arm) -- the background has
+        // against, `draw_own`'s own match arm) -- the background has
         // to be a real `Rect`, not a `Container`, for this test's own
         // "did the chip move away from its old spot" pixel check to
         // mean anything.
