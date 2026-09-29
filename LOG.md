@@ -46,4 +46,8 @@ App.run (platform created-callback returns bool); zero-size Window raises.
 **Step 3 (2026-09-28).** walk.rs: one traversal, Painter and Recorder
 visitors; draw_own unchanged; all pixel tests unchanged.
 
-Next: Step 4, per-window renderer.
+**Step 4 (2026-09-28).** WindowRenderer (prepare/draw/reset/resize) owns
+the render state; app, pixel tests and bench drive it; engine-py drops
+its direct vello_gpu dependency.
+
+Next: Step 5, content generations.

@@ -1,7 +1,8 @@
 //! 0.4.0 M5 Step 3: what partial redraw saves, measured. A 1920x1080
 //! window of 576 rounded cards, timed frame by frame through the whole
-//! pipeline -- tick, layout, damage, scene, render, copy to the stand-in
-//! swapchain image, submit -- and then waiting for the GPU to finish, since
+//! pipeline -- tick, layout, and the app's own `WindowRenderer` frame
+//! (damage, scene, render, copy to the stand-in swapchain image), submit --
+//! and then waiting for the GPU to finish, since
 //! partial redraw saves GPU work above all. Two workloads:
 //!
 //! - **small**: one 48x48 card animates its fill over the static grid, the
@@ -20,15 +21,11 @@
 use std::time::{Duration, Instant};
 
 use engine_core::{MotionCurve, NodeId, NodeKind, PaintProperties, Tree};
-use engine_render::{
-    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, TextRenderer,
-    build_tree_scene, build_tree_scene_in,
-};
+use engine_render::{Damage, WindowRenderer};
 use peniko::Color;
 use taffy::prelude::{
     AvailableSpace, FlexWrap, Position, Rect as TaffyRect, Size, Style, auto, length,
 };
-use vello_gpu::{RenderSize, RenderTargetConfig};
 
 mod support;
 
@@ -136,22 +133,10 @@ fn run(device: &wgpu::Device, queue: &wgpu::Queue, all_animate: bool, partial: b
         usage: wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
-    let target = PersistentTarget::new(device, format, u32::from(WIDTH), u32::from(HEIGHT));
-    let mut renderer = FrameRenderer::new(
-        device,
-        &RenderTargetConfig {
-            format,
-            width: WIDTH,
-            height: HEIGHT,
-        },
-    );
-    let mut text = TextRenderer::new();
-    let mut geometry = GeometryCache::new();
-    let mut tracker = DamageTracker::new();
-    let render_size = RenderSize {
-        width: WIDTH,
-        height: HEIGHT,
-    };
+    let view = image.create_view(&wgpu::TextureViewDescriptor::default());
+    // The app's own frame sequence (0.4.0 M6).
+    let mut renderer =
+        WindowRenderer::new(device, format, u32::from(WIDTH), u32::from(HEIGHT), true);
     let space = Size {
         width: AvailableSpace::Definite(f32::from(WIDTH)),
         height: AvailableSpace::Definite(f32::from(HEIGHT)),
@@ -164,48 +149,21 @@ fn run(device: &wgpu::Device, queue: &wgpu::Queue, all_animate: bool, partial: b
         let begin = Instant::now();
         tree.tick_all(Instant::now());
         tree.compute_layout(root, space);
-        let damage = tracker.damage(&tree, root, WIDTH, HEIGHT, &mut text);
-        let damage = if partial { damage } else { Damage::Full };
+        let damage = renderer.prepare(&tree, root, WIDTH, HEIGHT, partial, device, queue);
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        let rects = match &damage {
-            Damage::Rects(rects) => Some(rects.as_slice()),
-            _ => None,
-        };
-        let scene = match &damage {
-            Damage::None => None,
-            Damage::Full => Some(build_tree_scene(
-                &tree,
-                root,
-                WIDTH,
-                HEIGHT,
-                renderer.resources_mut(),
-                &mut text,
-                &mut geometry,
-            )),
-            Damage::Rects(rects) => Some(build_tree_scene_in(
-                &tree,
-                root,
-                WIDTH,
-                HEIGHT,
-                rects,
-                renderer.resources_mut(),
-                &mut text,
-                &mut geometry,
-            )),
-        };
-        if let Some(scene) = &scene {
-            renderer.render_into(
-                scene,
-                device,
-                queue,
-                &mut encoder,
-                &render_size,
-                target.view(),
-                rects,
-            );
-        }
-        target.copy_to(&mut encoder, &image);
+        renderer.draw(
+            &tree,
+            root,
+            WIDTH,
+            HEIGHT,
+            &damage,
+            device,
+            queue,
+            &mut encoder,
+            &image,
+            &view,
+        );
         queue.submit([encoder.finish()]);
         device
             .poll(wgpu::PollType::wait_indefinitely())

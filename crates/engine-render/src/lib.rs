@@ -29,6 +29,7 @@ mod image_cache;
 mod persistent_target;
 mod text;
 mod walk;
+mod window_renderer;
 
 use engine_core::{
     ContentFit, DrawCommand, NodeId, NodeKind, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS,
@@ -44,6 +45,7 @@ pub use geometry_cache::GeometryCache;
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
+pub use window_renderer::WindowRenderer;
 
 /// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
 /// starting color, not the renderer's own default, so a wrong pixel in a

@@ -1,8 +1,10 @@
 //! 0.4.0 M5: a partial redraw -- only the damage rects cleared and
 //! repainted, over the kept last frame -- gives exactly the pixels a full
-//! redraw of the changed tree does. Each test renders a scene in full into
-//! a `PersistentTarget`, changes one thing, redraws only the damage into
-//! the same target, and compares it byte for byte with a fresh full render.
+//! redraw of the changed tree does. Each test renders a scene in full
+//! through a `WindowRenderer` -- the app's own frame sequence, persistent
+//! target and copy to the swapchain image included -- changes one thing,
+//! redraws only the damage, and compares the image byte for byte with a
+//! fresh full render.
 //! The animation tests (Step 2) do the same every frame of a real
 //! animation in flight, for each property the examples animate.
 
@@ -12,13 +14,9 @@ use engine_core::{
     ImageState, MotionCurve, NodeId, NodeKind, PaintProperties, PathData, PathState,
     ScrollViewState, Shadow, Shadows, TextState, Tree,
 };
-use engine_render::{
-    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, TextRenderer,
-    build_tree_scene, build_tree_scene_in,
-};
+use engine_render::{Damage, WindowRenderer};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
-use vello_gpu::{RenderSize, RenderTargetConfig};
 
 const W: u16 = 240;
 const H: u16 = 160;
@@ -38,91 +36,67 @@ impl Gpu {
     }
 }
 
-/// A window's rendering state: a target that keeps its frame, a renderer,
-/// and a damage tracker -- what `engine-py` keeps per window.
+/// A window as `engine-py` drives one: a `WindowRenderer` (0.4.0 M6, the
+/// app's own frame sequence) and an image standing in for the swapchain
+/// image each frame is copied into.
 struct Window {
-    target: PersistentTarget,
-    renderer: FrameRenderer,
-    text: TextRenderer,
-    geometry: GeometryCache,
-    tracker: DamageTracker,
+    renderer: WindowRenderer,
+    surface: wgpu::Texture,
+    surface_view: wgpu::TextureView,
 }
 
 impl Window {
     fn new(gpu: &Gpu) -> Self {
+        let surface = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("stand-in swapchain image"),
+            size: wgpu::Extent3d {
+                width: u32::from(W),
+                height: u32::from(H),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let surface_view = surface.create_view(&wgpu::TextureViewDescriptor::default());
         Self {
-            target: PersistentTarget::new(&gpu.device, FORMAT, u32::from(W), u32::from(H)),
-            renderer: FrameRenderer::new(
-                &gpu.device,
-                &RenderTargetConfig {
-                    format: FORMAT,
-                    width: W,
-                    height: H,
-                },
-            ),
-            text: TextRenderer::new(),
-            geometry: GeometryCache::new(),
-            tracker: DamageTracker::new(),
+            renderer: WindowRenderer::new(&gpu.device, FORMAT, u32::from(W), u32::from(H), true),
+            surface,
+            surface_view,
         }
     }
 
-    /// One frame: full, partial, or nothing, as the damage says. Returns it.
+    /// One frame, as the app runs it: full, partial, or nothing, as the
+    /// damage says. Returns the damage.
     fn frame(&mut self, gpu: &Gpu, tree: &Tree, root: NodeId, partial: bool) -> Damage {
-        // As the app does each frame: every image's texture uploaded
-        // before the scene that draws it.
-        self.renderer
-            .sync_image_textures(tree, &gpu.device, &gpu.queue);
-        let damage = self.tracker.damage(tree, root, W, H, &mut self.text);
-        let damage = if partial { damage } else { Damage::Full };
-        let rects = match &damage {
-            Damage::None => return damage,
-            Damage::Full => None,
-            Damage::Rects(rects) => Some(rects.as_slice()),
-        };
-        let scene = match rects {
-            Some(rects) => build_tree_scene_in(
-                tree,
-                root,
-                W,
-                H,
-                rects,
-                self.renderer.resources_mut(),
-                &mut self.text,
-                &mut self.geometry,
-            ),
-            None => build_tree_scene(
-                tree,
-                root,
-                W,
-                H,
-                self.renderer.resources_mut(),
-                &mut self.text,
-                &mut self.geometry,
-            ),
-        };
+        let damage = self
+            .renderer
+            .prepare(tree, root, W, H, partial, &gpu.device, &gpu.queue);
         let mut encoder = gpu
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        self.renderer.render_into(
-            &scene,
+        self.renderer.draw(
+            tree,
+            root,
+            W,
+            H,
+            &damage,
             &gpu.device,
             &gpu.queue,
             &mut encoder,
-            &RenderSize {
-                width: W,
-                height: H,
-            },
-            self.target.view(),
-            rects,
+            &self.surface,
+            &self.surface_view,
         );
         gpu.queue.submit([encoder.finish()]);
         damage
     }
 
-    /// The target's pixels, read back through a copy -- as the window's
-    /// swapchain image receives them.
+    /// The stand-in swapchain image's pixels -- what the window shows.
     fn pixels(&self, gpu: &Gpu) -> Vec<u8> {
-        support::copy_out(&gpu.device, &gpu.queue, &self.target)
+        support::read_texture(&gpu.device, &gpu.queue, &self.surface)
     }
 }
 
