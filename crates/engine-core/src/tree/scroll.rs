@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// 0.4.2 M12: how far an arrow key scrolls a scroll view, in pixels.
+pub const KEY_SCROLL_LINE: f64 = 40.0;
+
 impl Tree {
     /// M36 Phase 1 (§5, §7, §11.7): moves `id`'s own real `ScrollView`
     /// scroll position by `delta` real pixels along its own configured
@@ -495,5 +498,53 @@ impl Tree {
             panic!("set_virtual_list_resolved_offsets: {list:?} is not a NodeKind::VirtualList");
         };
         state.resolved_offsets.extend(offsets);
+    }
+
+    /// 0.4.2 M12 (issue #24): the scroll view `key` scrolls from `from` --
+    /// `from` itself or its nearest ancestor that's a scroll view along the
+    /// key's axis: Up/Down and Page Up/Down for a vertical one, Left/Right
+    /// for a horizontal one, Home/End for either. So arrows in a carousel
+    /// inside a page still move the page up and down.
+    pub fn scroll_view_for_key(&self, from: NodeId, key: Key) -> Option<NodeId> {
+        let wants_horizontal = match key {
+            Key::ArrowUp | Key::ArrowDown | Key::PageUp | Key::PageDown => Some(false),
+            Key::ArrowLeft | Key::ArrowRight => Some(true),
+            Key::Home | Key::End => None,
+            _ => return None,
+        };
+        self.ancestors(from).find(|&id| match &self.nodes[id].kind {
+            NodeKind::ScrollView(state) => wants_horizontal.is_none_or(|h| h == state.horizontal),
+            _ => false,
+        })
+    }
+
+    /// 0.4.2 M12: scrolls `view` as `key` says -- an arrow by
+    /// `KEY_SCROLL_LINE`, Page Up/Down by the viewport, Home/End to the
+    /// ends -- at once, not eased. Whether the offset changed.
+    pub fn scroll_by_key(&mut self, view: NodeId, key: Key) -> bool {
+        let Some((_, viewport, content)) = self.scroll_view_extents(view) else {
+            return false;
+        };
+        let max_scroll = (content - viewport).max(0.0);
+        let NodeKind::ScrollView(state) = &mut self.nodes[view].kind else {
+            return false;
+        };
+        let now = state.scroll.current;
+        let to = match key {
+            Key::ArrowUp | Key::ArrowLeft => now - KEY_SCROLL_LINE,
+            Key::ArrowDown | Key::ArrowRight => now + KEY_SCROLL_LINE,
+            Key::PageUp => now - viewport,
+            Key::PageDown => now + viewport,
+            Key::Home => 0.0,
+            Key::End => max_scroll,
+            _ => return false,
+        }
+        .clamp(0.0, max_scroll);
+        if to == now {
+            return false;
+        }
+        state.scroll.current = to;
+        self.dirty = true;
+        true
     }
 }

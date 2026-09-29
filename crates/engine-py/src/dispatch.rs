@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{
-    CompletionHandle, DispatchOutcome, InputEvent, NodeId, NodeKind, PointerButton, Tree,
+    CompletionHandle, DispatchOutcome, InputEvent, Key, NodeId, NodeKind, PointerButton, Tree,
 };
 use pyo3::prelude::*;
 
@@ -412,7 +412,41 @@ pub(crate) fn process_input(
         py,
     );
     shortcuts(ctx, io, root, event, py);
+    keyboard_scroll(ctx, event);
     outcome
+}
+
+/// 0.4.2 M12 (issue #24): the arrows, Page Up/Down, and Home/End scroll the
+/// nearest scroll view around the focused node (`Tree::scroll_view_for_key`)
+/// -- unless a node on the way, the scroll view included, uses the key
+/// itself: a text input, which keeps its arrows, Home, and End (not Page
+/// Up/Down), or any node with its own `key_down` listener, such as a slider
+/// built from boxes. (A focused terminal already took every key.)
+fn keyboard_scroll(ctx: &NodeContext<'_>, event: &InputEvent) {
+    let InputEvent::KeyPressed { key, .. } = *event else {
+        return;
+    };
+    let mut tree = ctx.tree.borrow_mut();
+    let Some(focused) = tree.focused() else {
+        return;
+    };
+    let Some(view) = tree.scroll_view_for_key(focused, key) else {
+        return;
+    };
+    let handlers = ctx.handlers.borrow();
+    let pages = matches!(key, Key::PageUp | Key::PageDown);
+    for id in tree.ancestors(focused) {
+        let listens = handlers.contains_key(&(id, HandlerKey::Listener(EventType::KeyDown)));
+        let text_input = matches!(tree.get(id).map(|n| &n.kind), Some(NodeKind::TextField(_)));
+        if listens || (text_input && !pages) {
+            return;
+        }
+        if id == view {
+            break;
+        }
+    }
+    drop(handlers);
+    tree.scroll_by_key(view, key);
 }
 
 /// The focused node, when it's a terminal.
