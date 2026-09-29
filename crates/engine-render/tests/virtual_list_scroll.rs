@@ -2,7 +2,7 @@
 //! `VirtualListState.scroll_offset` genuinely shifts materialized
 //! children's own painted position, and genuinely clips content that
 //! scrolls outside the list's own bounds -- not just that the field
-//! exists and is wired into `draw_own`'s own composed transform in
+//! exists and is wired into the paint walk's own composed transform in
 //! theory. Same headless render-to-texture-then-readback discipline
 //! (and the same real `set_virtual_list_window` materialize setup) as
 //! `virtual_list.rs`.
