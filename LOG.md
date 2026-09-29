@@ -28,4 +28,8 @@ checked by hand (user); CI only.
 
 **M10, issue #21 (2026-09-29).** User: "before that check your issues".
 Back/forward mouse buttons: PointerButton::Back/Forward, "back"/"forward",
-no click. cargo 373, pytest 452 + 1 skipped. Next: the release.
+no click. cargo 373, pytest 452 + 1 skipped.
+
+**Released (2026-09-29).** PR #22 merged (97d0b4a), v0.4.1 tagged, 24
+assets, PyPI 22 wheels + sdist, #21 closed, Tesserae told.
+Next: Tesserae's report.
