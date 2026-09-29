@@ -181,7 +181,15 @@ class Node:
         other kind."""
         ...
     def focus(self) -> None:
-        """M94: moves keyboard focus to this node, firing `unfocus`/`focus`."""
+        """M94: moves keyboard focus to this node, firing `unfocus`/`focus`.
+        (0.4.2) Scroll views around it scroll to show it, as they do for any
+        focus change."""
+        ...
+    def scroll_into_view(self) -> None:
+        """0.4.2: scrolls every scroll view around this node just enough to
+        show it, innermost first, at once. The `scroll_into_view`
+        accessibility action does the same, after any `a11y_action`
+        listener."""
         ...
     def on(self, event: str, handler: Callable[..., object]) -> None:
         """M94: registers `handler` for `event`, replacing any earlier

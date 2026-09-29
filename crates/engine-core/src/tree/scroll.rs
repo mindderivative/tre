@@ -547,4 +547,69 @@ impl Tree {
         self.dirty = true;
         true
     }
+
+    /// 0.4.2 M12 (issue #24): scrolls every scroll view around `id` just
+    /// enough to show it -- innermost first, each by the least that brings
+    /// the node's box inside its viewport along its axis (to the box's start
+    /// when the box is longer than the viewport), at once. Positions come
+    /// from the last layout, which callers keep current (`simulate` and
+    /// every frame lay out first). Whether anything scrolled.
+    pub fn scroll_into_view(&mut self, id: NodeId) -> bool {
+        if !self.nodes.contains_key(id) {
+            return false;
+        }
+        let (x, y) = self.absolute_position(id);
+        let size = self.layout(id).size;
+        let (mut x0, mut y0) = (x, y);
+        let (mut x1, mut y1) = (x + f64::from(size.width), y + f64::from(size.height));
+        let views: Vec<NodeId> = self
+            .ancestors(id)
+            .skip(1)
+            .filter(|&a| matches!(self.nodes[a].kind, NodeKind::ScrollView(_)))
+            .collect();
+        let mut moved = false;
+        for view in views {
+            let Some((horizontal, viewport, content)) = self.scroll_view_extents(view) else {
+                continue;
+            };
+            let (vx, vy) = self.absolute_position(view);
+            let (start, end, v_start) = if horizontal {
+                (x0, x1, vx)
+            } else {
+                (y0, y1, vy)
+            };
+            let v_end = v_start + viewport;
+            let delta = if start < v_start || end - start > viewport {
+                start - v_start
+            } else if end > v_end {
+                end - v_end
+            } else {
+                continue;
+            };
+            let max_scroll = (content - viewport).max(0.0);
+            let NodeKind::ScrollView(state) = &mut self.nodes[view].kind else {
+                continue;
+            };
+            let before = state.scroll.current;
+            let after = (before + delta).clamp(0.0, max_scroll);
+            state.scroll.current = after;
+            // The node moves with the content, which the next view out
+            // sees.
+            let shift = after - before;
+            if shift != 0.0 {
+                moved = true;
+                if horizontal {
+                    x0 -= shift;
+                    x1 -= shift;
+                } else {
+                    y0 -= shift;
+                    y1 -= shift;
+                }
+            }
+        }
+        if moved {
+            self.dirty = true;
+        }
+        moved
+    }
 }

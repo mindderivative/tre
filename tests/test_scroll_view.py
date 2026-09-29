@@ -159,3 +159,72 @@ def test_keys_scroll_nothing_without_focus():
     view, _, _ = scroller(window)
     window.simulate("key_down", key="page_down")
     assert offset(view) == 0.0
+
+
+# --- 0.4.2 M12 (issue #24): scroll_into_view and revealing focus -------------------
+
+
+def item_at(window, content, y, height=20, focusable=True):
+    """A box placed at `y` in `content` (absolute, so rows don't shrink)."""
+    node = window.create(
+        "box", position="absolute", x=0, y=y, width=50, height=height, focusable=focusable
+    )
+    content.add_child(node)
+    return node
+
+
+def test_scroll_into_view_scrolls_just_enough():
+    window = Window(width=800, height=600)
+    view, content, _ = scroller(window)
+    below = item_at(window, content, 500)
+    below.scroll_into_view()
+    assert offset(view) == 420.0, "its bottom (520) at the viewport's bottom"
+    below.scroll_into_view()
+    assert offset(view) == 420.0, "already in view: nothing moves"
+    above = item_at(window, content, 300)
+    above.scroll_into_view()
+    assert offset(view) == 300.0, "its top at the viewport's top"
+
+
+def test_the_accessibility_action_scrolls_into_view():
+    window = Window(width=800, height=600)
+    view, content, _ = scroller(window)
+    below = item_at(window, content, 700)
+    heard = []
+    below.on("a11y_action", lambda e: heard.append(e.action))
+    window.simulate("a11y_action", node=below, action="scroll_into_view")
+    assert heard == ["scroll_into_view"]
+    assert offset(view) == 620.0
+
+
+def test_focus_reveals_the_focused_node():
+    window = Window(width=800, height=600)
+    view, content, first = scroller(window)
+    far = item_at(window, content, 800)
+    far.focus()
+    assert offset(view) == 720.0
+    first.focus()
+    assert offset(view) == 0.0
+
+
+def test_tab_reveals_the_next_node():
+    window = Window(width=800, height=600)
+    view, content, first = scroller(window)
+    item_at(window, content, 600)
+    first.focus()
+    window.simulate("key_down", key="tab")
+    assert offset(view) == 520.0
+
+
+def test_nested_scroll_views_reveal_together():
+    window = Window(width=800, height=600)
+    outer, outer_content, _ = scroller(window)
+    inner = window.create("scroll_view", width=200, height=100)
+    inner.set(position="absolute", x=0, y=400)
+    inner_content = window.create("box", width=200, height=1000, flex_shrink=0)
+    inner.add_child(inner_content)
+    outer_content.add_child(inner)
+    deep = item_at(window, inner_content, 300)
+    deep.scroll_into_view()
+    assert offset(inner) == 220.0, "the inner view shows it"
+    assert offset(outer) == 400.0, "the outer view shows the inner one's view of it"

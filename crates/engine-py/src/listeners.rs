@@ -453,6 +453,12 @@ pub(crate) fn deliver_a11y_action(
         e.action = Some(action.to_string());
         e.value = value;
     });
+    // 0.4.2 M12 (issue #24): tre's own answer, after the app's listeners --
+    // revealing a node that's already in view changes nothing, so an app
+    // that also scrolls it doesn't scroll twice.
+    if action == "scroll_into_view" {
+        ctx.tree.borrow_mut().scroll_into_view(node);
+    }
 }
 
 pub(crate) fn stamp_modifiers(event: &mut Event) {

@@ -254,6 +254,12 @@ impl Tree {
         if old == new {
             return None;
         }
+        // 0.4.2 M12 (issue #24): a newly focused node is scrolled into
+        // view, however focus got there -- Tab, a click, `focus()`, or
+        // assistive technology.
+        if let Some(node) = new {
+            self.scroll_into_view(node);
+        }
         Some((old, new))
     }
 
