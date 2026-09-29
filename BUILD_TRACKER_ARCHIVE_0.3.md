@@ -1613,6 +1613,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - `git tag -a v0.3.5.2` on the merge commit, pushed; every build job passed and the GitHub release carries 24 assets, now named `tesserae_engine-0.3.5.2-...`; the release body set to the PR's release note — ✅
 - The `pypi` job, approved by the user, uploaded all 22 wheels to [PyPI](https://pypi.org/project/tesserae-engine/); the sdist was rejected (M107 Phase 2) — ✅
 - Tesserae told: the release, `pip install tesserae-engine` and uninstalling an old `tre` wheel first, the three changes, that `tesserae` is taken on PyPI, and the missing sdist — ✅
+- Tesserae moved onto it — ✅ (reported by its session: `pip uninstall tre`, then `tesserae-engine==0.3.5.2` from PyPI; `undock_panel` present, `get("dark")` `True` before `App.run()` on its Linux desktop through the portal; 1473 passed, 1 skipped, five examples clean; its Dock tests pass unchanged under M105's shown-panel fix; it now depends on `tesserae-engine>=0.3.5.2`, committed as its `bec0cba`, not pushed; undocking in a real Dock and the Linux `color_scheme` event wait on its issues #3 and #17)
 
 ---
 

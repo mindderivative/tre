@@ -70,4 +70,10 @@ public in-place write, unwraps allocation (panics), 4096 pages.
 **Step 10 (2026-09-28).** tree.rs -> tree/ (mod, layout, scroll, layers,
 focus, text_editing, dispatch, access, tests); 77 methods moved.
 
-**Phase 2 complete.** Next: Phase 3, the release (push, CI, PR #17, tag).
+**Phase 2 complete.**
+
+**Phase 3 (2026-09-28).** main merged in (v0.3.5.2); CI green incl. msrv;
+PR #17 merged (dec815c); v0.4.0 tagged; release + PyPI (22 wheels +
+sdist); issue #4 closed; Tesserae told.
+
+Next: Tesserae's report.
