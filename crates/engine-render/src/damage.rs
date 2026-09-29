@@ -13,7 +13,10 @@
 //!
 //! The fingerprint code destructures every state struct without `..`: a
 //! field added later won't compile until someone decides whether it
-//! affects paint.
+//! affects paint. A large terminal or canvas is fingerprinted in full every
+//! frame, with a fast hash (`foldhash`) rather than a content counter: a
+//! counter bumped where content is written would be instrumentation again,
+//! and these states' fields are written directly.
 //!
 //! The rects then merge into a small set (the user's decision D3): any
 //! that overlap merge, then the closest pairs until at most `MAX_RECTS`
@@ -23,7 +26,7 @@
 //! is a full redraw.
 
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 
 use engine_core::{
     CanvasState, CellColor, DrawCommand, ImageState, ItemExtent, Node, NodeId, NodeKind,
@@ -42,6 +45,8 @@ pub const FULL_FRACTION: f64 = 0.5;
 /// More changed rects than this merge straight into their bounding box,
 /// keeping the pair merging's cubic cost bounded.
 const MAX_TRACKED: usize = 64;
+/// The fingerprint hasher, the same every frame (and every run).
+const FINGERPRINT: foldhash::fast::FixedState = foldhash::fast::FixedState::with_seed(0x74_72_65);
 /// Pixels of antialiasing and glyph overhang added around every painted
 /// rect, beyond its geometry.
 const MARGIN: f64 = 2.0;
@@ -148,7 +153,9 @@ impl<'t> walk::Visitor<'t> for Recorder<'_> {
         let painted = round_out(painted_rect(
             self.text, v.id, v.node, v.composed, v.w, v.h, v.bounds, v.visible,
         ));
-        let mut hasher = std::hash::DefaultHasher::new();
+        // Fast and fixed-seed: a frame's fingerprints compare with the
+        // last frame's, and nothing adversarial picks what's hashed.
+        let mut hasher = FINGERPRINT.build_hasher();
         v.parent.hash(&mut hasher);
         v.order.hash(&mut hasher);
         affine(&mut hasher, v.composed);

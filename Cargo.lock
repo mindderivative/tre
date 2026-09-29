@@ -910,6 +910,7 @@ dependencies = [
  "accesskit",
  "engine-core",
  "engine-platform",
+ "foldhash",
  "glifo",
  "kurbo",
  "parley",

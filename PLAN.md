@@ -21,8 +21,9 @@ exception 4. Yes 5. Fix them all".
 4. A per-window renderer in `engine-render` owning the frame renderer,
    caches, persistent target and tracker, with one frame method -- used by
    `app.rs`, the pixel tests, and the benchmark.
-5. Terminal and canvas content generations, so the damage walk hashes a
-   counter instead of every cell and command.
+5. Cheaper terminal and canvas fingerprints. (Done with a fast hash, not
+   a content counter: a counter would be instrumentation, which the
+   tracker avoids.)
 6. A lost surface is recreated; a frame with no damage skips the present
    when the tree asked for it (not when the OS did).
 7. The window's shared fields in one struct instead of three copies;

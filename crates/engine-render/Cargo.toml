@@ -33,6 +33,10 @@ parley = "0.11.1"
 # Reports a glyph `vello_gpu` couldn't draw (the rest of the run still
 # draws); the same `tracing` version `engine-py` installs a subscriber for.
 tracing = "0.1.44"
+# 0.4.0 M6: the damage fingerprints' hasher -- a fast, fixed-seed,
+# non-cryptographic hash (nothing adversarial chooses what's compared),
+# already locked here through the workspace's own dependencies.
+foldhash = "0.2.0"
 peniko = "0.6.1"
 # `ImageSource::from_peniko_image_data` and the geometry types
 # `vello_gpu` doesn't re-export; `vello_gpu`, `vello_common`, and `wgpu`

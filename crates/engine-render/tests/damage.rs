@@ -511,3 +511,44 @@ fn a_terminal_is_damaged_across_its_whole_grid_not_just_its_box() {
         "the far columns are damaged: {damage:?}"
     );
 }
+
+/// 0.4.0 M6: what the walk costs a frame when a large terminal and canvas
+/// sit unchanged beside the one small thing that did change -- every
+/// cell and command is fingerprinted again each frame.
+#[test]
+#[ignore = "perf measurement -- run with: cargo test -p engine-render --test damage \
+            --release -- --ignored --nocapture"]
+fn damage_walk_cost_beside_a_large_terminal_and_canvas() {
+    let mut s = Scene::new();
+    s.add(
+        s.root,
+        NodeKind::Terminal(TerminalState::new(200, 60, "Hack Nerd Font Mono", 12.0)),
+        0.0,
+        0.0,
+        300.0,
+        200.0,
+    );
+    let mut canvas = CanvasState::new();
+    canvas.commands = (0..2000)
+        .map(|i| DrawCommand::FillRect {
+            x: f64::from(i % 50) * 4.0,
+            y: f64::from(i / 50) * 4.0,
+            width: 3.0,
+            height: 3.0,
+            color: BLUE,
+        })
+        .collect();
+    s.add(s.root, NodeKind::Canvas(canvas), 0.0, 200.0, 200.0, 100.0);
+    let dot = s.rect(380.0, 280.0, 6.0, 6.0);
+    s.settle();
+    let frames = 200;
+    let started = Instant::now();
+    for i in 0..frames {
+        s.tree.get_mut(dot).unwrap().paint.background.current = if i % 2 == 0 { BLUE } else { RED };
+        assert!(matches!(s.frame(), Damage::Rects(_)));
+    }
+    let per_frame = started.elapsed() / frames;
+    println!(
+        "damage walk beside a 200x60 terminal and 2000 canvas commands: {per_frame:?} a frame"
+    );
+}

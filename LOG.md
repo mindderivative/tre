@@ -50,4 +50,8 @@ visitors; draw_own unchanged; all pixel tests unchanged.
 the render state; app, pixel tests and bench drive it; engine-py drops
 its direct vello_gpu dependency.
 
-Next: Step 5, content generations.
+**Step 5 (2026-09-28).** foldhash fingerprints instead of SipHash (a
+counter would be instrumentation); walk beside a 200x60 terminal + 2000
+commands: 0.32-0.77 ms -> 0.07-0.10 ms.
+
+Next: Step 6, lost surface and present skipping.
