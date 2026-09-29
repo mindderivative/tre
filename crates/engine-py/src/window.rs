@@ -106,6 +106,9 @@ pub(crate) struct WindowHandles {
     /// 0.4.0 M6: whether the open window's surface allows partial redraw
     /// (it can be copied into) -- `None` until `App.run()` opens it.
     pub(crate) surface_partial: Rc<Cell<Option<bool>>>,
+    /// 0.4.1 M8: `window.set(show_damage=True)` -- each presented frame
+    /// shows what it redrew. Read every frame, like `partial_redraw`.
+    pub(crate) show_damage: Rc<Cell<bool>>,
 }
 
 pub struct WindowState {
@@ -168,6 +171,7 @@ impl PyWindow {
                 os_window: Rc::new(RefCell::new(None)),
                 partial_redraw: Rc::new(Cell::new(true)),
                 surface_partial: Rc::new(Cell::new(None)),
+                show_damage: Rc::new(Cell::new(false)),
             },
         })))
     }

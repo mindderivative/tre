@@ -464,9 +464,9 @@ def test_window_title_is_settable_and_the_rest_read_only() -> None:
     assert w.get("scale_factor") == 1.0
     with pytest.raises(ValueError, match="read-only"):
         w.set(width=10)  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="settable: title, partial_redraw"):
+    with pytest.raises(ValueError, match="settable: title, partial_redraw, show_damage"):
         w.set(colour="red")  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, dark, partial_redraw, partial_redraw_active"):
+    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, dark, partial_redraw, partial_redraw_active, show_damage"):
         w.get("depth")
 
 
@@ -539,3 +539,14 @@ def test_a_window_needs_a_positive_size() -> None:
         tre.Window(width=0, height=100)
     with pytest.raises(ValueError, match="positive width and height"):
         tre.Window(width=100, height=0)
+
+
+def test_show_damage_is_off_by_default_and_can_be_switched_on() -> None:
+    w = window()
+    assert w.get("show_damage") is False
+    w.set(show_damage=True)
+    assert w.get("show_damage") is True
+    w.set(show_damage=False)
+    assert w.get("show_damage") is False
+    with pytest.raises(ValueError, match="must be a bool"):
+        w.set(show_damage="yes")  # type: ignore[arg-type]

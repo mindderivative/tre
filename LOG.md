@@ -12,4 +12,8 @@ workload. Whole-window overhead = damage walk 0.10-0.12 ms (the rest of
 v0.4.0's reported gap was noise). Copy of the kept frame = 0.25 ms.
 
 **M7 complete (2026-09-28).** User: "Do your recommendation" -- Steps 2-3
-decided against (0.05 ms gain / no buffer age). Next: M8, show_damage.
+decided against (0.05 ms gain / no buffer age).
+
+**M8 complete (2026-09-28).** show_damage overlay: SrcOver render into the
+surface after the frame's submit; GPU test proves the kept frame stays
+clean. cargo 373, pytest 451 + 1 skipped. Next: M9.

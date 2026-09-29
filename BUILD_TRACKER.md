@@ -21,12 +21,12 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M5 — Partial Redraw End to End, Measured | `██████████` 100% | ✅ Complete (2026-09-28) — every window redraws only what changed, byte-identical to a full redraw; a small animation in a 1920x1080 window costs 3.7–4.9x less GPU+CPU time a frame than `v0.3.5.1`, a whole-window change the same |
 | M6 — Release `0.4.0` | `██████████` 100% | ✅ Complete (2026-09-28) — `v0.4.0` released on GitHub and PyPI as `tesserae-engine` 0.4.0, closing issue #4; Tesserae moved onto it with nothing broken |
 | M7 — Partial Redraw's Fixed Costs | `██████████` 100% | ✅ Complete (2026-09-28) — measured, not cut: the whole-window overhead is the 0.1 ms damage walk (the rest of `v0.4.0`'s reported gap was noise), and the 0.25 ms copy can't be narrowed safely without swapchain buffer age |
-| M8 — Show What's Redrawn | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
 | M9 — Housekeeping and Release `0.4.1` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** M7 (2026-09-28) -- partial redraw's fixed costs, measured: with partial redraw on, a whole-window change pays only the 0.1 ms damage walk (4-5%; the rest of `v0.4.0`'s reported gap was GPU clocks and run order), and a small partial frame's copy to the surface is 0.25 ms, which can't be narrowed safely without swapchain buffer age. Neither cut is worth making.
+**Just closed:** M8 (2026-09-28) -- `window.set(show_damage=True)`: each presented frame shows what it redrew, damage rects tinted magenta or a full redraw outlined in orange, drawn over the image the window shows and never into the frame `tre` keeps.
 
-**Up next:** M8 -- `window.set(show_damage=True)`, tinting each frame's redrawn areas.
+**Up next:** M9 -- housekeeping, then the `0.4.1` release after the user's manual cross-platform check of partial redraw.
 
 **Known gaps:**
 - None open on this line.
@@ -130,10 +130,10 @@ User: "Start phase 3".
 
 ## Milestone 8 — Show What's Redrawn
 
-**Status: ⬜ Proposed.**
+**Status: ✅ Complete (2026-09-28).** User: "Do your recommendation" (M7 closed, on to M8).
 
-### Phase 1 — The Overlay ⬜
-- Step 1: `window.set(show_damage=True)` tints each frame's redrawn areas, so partial redraw can be seen working and wasted redraws found — ⬜
+### Phase 1 — The Overlay ✅
+- Step 1: `window.set(show_damage=True)` tints each frame's redrawn areas, so partial redraw can be seen working and wasted redraws found — ✅ (2026-09-28: `WindowRenderer::draw_damage_overlay` draws each damage rect filled translucent magenta and outlined, or a full redraw's window edge in orange, over the surface image with the new `FrameRenderer::render_over` (`TargetInit::SrcOver`), in its own submit after the frame's -- two renders in one encoder would share the renderer's buffers, written as each is encoded -- and never into the kept frame; a `show_damage` switch in `WindowHandles`, `set`/`get`, stub, docs; a GPU test finds the damage tinted, the rest untouched, and the next frame without the overlay byte-identical to a full render, and a pytest covers the switch; the test's stand-in swapchain image gained `RENDER_ATTACHMENT`, as a real one has; cargo 373, pytest 451 + 1 skipped)
 
 ---
 

@@ -1039,6 +1039,35 @@ impl FrameRenderer {
             .expect("vello_gpu render failed");
     }
 
+    /// 0.4.1 M8: renders `scene` over `target`'s existing pixels
+    /// (`TargetInit::SrcOver`), clearing nothing -- for drawing on top of a
+    /// finished frame, as the redrawn-areas overlay does.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_over(
+        &mut self,
+        scene: &Scene,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        render_size: &RenderSize,
+        target: &wgpu::TextureView,
+    ) {
+        self.renderer
+            .render(
+                scene,
+                &mut self.resources,
+                device,
+                queue,
+                encoder,
+                render_size,
+                target,
+                None,
+                self.images.bindings(),
+                vello_gpu::TargetInit::SrcOver,
+            )
+            .expect("vello_gpu render failed");
+    }
+
     /// M22 Phase 1 (§5): ensures every real `Image` node in `tree` has
     /// a real, uploaded GPU texture bound before the next `render`
     /// call -- see `ImageTextureCache::sync`'s own doc comment for the

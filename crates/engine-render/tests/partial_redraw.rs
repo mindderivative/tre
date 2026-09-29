@@ -58,7 +58,11 @@ impl Window {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: FORMAT,
-            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            // As a real surface image: copied into, and (the overlay)
+            // rendered onto.
+            usage: wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
         let surface_view = surface.create_view(&wgpu::TextureViewDescriptor::default());
@@ -92,6 +96,18 @@ impl Window {
         );
         gpu.queue.submit([encoder.finish()]);
         damage
+    }
+
+    /// 0.4.1 M8: the redrawn-areas overlay for `damage`, over the image.
+    fn overlay(&mut self, gpu: &Gpu, damage: &Damage) {
+        self.renderer.draw_damage_overlay(
+            damage,
+            W,
+            H,
+            &gpu.device,
+            &gpu.queue,
+            &self.surface_view,
+        );
     }
 
     /// The stand-in swapchain image's pixels -- what the window shows.
@@ -676,5 +692,55 @@ fn a_new_image_frame_at_the_same_size_shows_in_place() {
             };
             state.image = solid_image([0xFF, 0x20, 0x80, 0xFF]);
         },
+    );
+}
+
+#[test]
+fn the_damage_overlay_tints_the_image_but_never_the_kept_frame() {
+    let gpu = Gpu::new();
+    let mut s = scene();
+    let mut window = Window::new(&gpu);
+    window.frame(&gpu, &s.tree, s.root, true);
+
+    // A partial frame, shown with and without the overlay.
+    s.tree.get_mut(s.card).unwrap().paint.background.current =
+        Color::from_rgba8(0xE0, 0x50, 0x50, 0xFF);
+    layout(&mut s.tree, s.root);
+    let damage = window.frame(&gpu, &s.tree, s.root, true);
+    let Damage::Rects(rects) = &damage else {
+        panic!("a small change redraws partially, got {damage:?}")
+    };
+    let plain = window.pixels(&gpu);
+    window.overlay(&gpu, &damage);
+    let tinted = window.pixels(&gpu);
+
+    let bytes_per_row = (u32::from(W) * 4).next_multiple_of(256) as usize;
+    let at = |data: &[u8], x: usize, y: usize| {
+        let i = y * bytes_per_row + x * 4;
+        [data[i], data[i + 1], data[i + 2], data[i + 3]]
+    };
+    let inside = rects[0].center();
+    let (ix, iy) = (inside.x as usize, inside.y as usize);
+    assert_ne!(
+        at(&plain, ix, iy),
+        at(&tinted, ix, iy),
+        "the damage is tinted"
+    );
+    assert_eq!(at(&plain, 5, 150), at(&tinted, 5, 150), "outside it isn't");
+
+    // The next frame, overlay off: the kept frame was never tinted, so it
+    // still matches a fresh full render exactly.
+    s.tree.get_mut(s.tint).unwrap().paint.background.current =
+        Color::from_rgba8(0x30, 0xFF, 0x90, 0x90);
+    layout(&mut s.tree, s.root);
+    window.frame(&gpu, &s.tree, s.root, true);
+    let next = window.pixels(&gpu);
+    let mut reference = Window::new(&gpu);
+    reference.frame(&gpu, &s.tree, s.root, false);
+    let full = reference.pixels(&gpu);
+    let differing = next.iter().zip(&full).filter(|(a, b)| a != b).count();
+    assert_eq!(
+        differing, 0,
+        "{differing} bytes of overlay leaked into the kept frame"
     );
 }

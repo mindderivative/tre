@@ -16,12 +16,20 @@
 //! drawn.
 
 use engine_core::{NodeId, Tree};
-use vello_gpu::{RenderSize, RenderTargetConfig};
+use peniko::Color;
+use peniko::kurbo::{Affine, Rect, Stroke};
+use vello_gpu::{RenderSize, RenderTargetConfig, Scene};
 
 use crate::{
     Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, TextRenderer,
     build_tree_scene, build_tree_scene_in,
 };
+
+/// The redrawn-areas overlay's colours (0.4.1 M8): a translucent fill and a
+/// solid edge for partial damage, and an edge for a full redraw.
+const OVERLAY_FILL: Color = Color::from_rgba8(0xFF, 0x00, 0xC8, 0x40);
+const OVERLAY_EDGE: Color = Color::from_rgba8(0xFF, 0x00, 0xC8, 0xC0);
+const OVERLAY_FULL: Color = Color::from_rgba8(0xFF, 0x90, 0x00, 0xC0);
 
 /// A window's renderer and caches, and its kept frame.
 pub struct WindowRenderer {
@@ -187,5 +195,55 @@ impl WindowRenderer {
         if let Some(target) = &self.target {
             target.copy_to(encoder, surface);
         }
+    }
+
+    /// 0.4.1 M8: tints what `damage` redrew over the frame already in
+    /// `surface_view` -- each damage rect filled translucent magenta and
+    /// outlined, a full redraw outlined at the window's edge, nothing for no
+    /// damage. The kept frame is never touched, so the next partial frame
+    /// starts clean. Submits its own work: call it after the frame's encoder
+    /// is submitted, since the renderer's buffers are written as each render
+    /// is encoded.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_damage_overlay(
+        &mut self,
+        damage: &Damage,
+        width: u16,
+        height: u16,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_view: &wgpu::TextureView,
+    ) {
+        let mut scene = Scene::new(width, height);
+        scene.set_transform(Affine::IDENTITY);
+        match damage {
+            Damage::None => return,
+            Damage::Full => {
+                let edge = Rect::new(0.0, 0.0, f64::from(width), f64::from(height)).inset(-2.0);
+                scene.set_paint(OVERLAY_FULL);
+                scene.set_stroke(Stroke::new(4.0));
+                scene.stroke_rect(&edge);
+            }
+            Damage::Rects(rects) => {
+                for rect in rects {
+                    scene.set_paint(OVERLAY_FILL);
+                    scene.fill_rect(rect);
+                    scene.set_paint(OVERLAY_EDGE);
+                    scene.set_stroke(Stroke::new(2.0));
+                    scene.stroke_rect(&rect.inset(-1.0));
+                }
+            }
+        }
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        self.frame_renderer.render_over(
+            &scene,
+            device,
+            queue,
+            &mut encoder,
+            &RenderSize { width, height },
+            surface_view,
+        );
+        queue.submit([encoder.finish()]);
     }
 }

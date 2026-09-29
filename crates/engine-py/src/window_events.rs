@@ -410,12 +410,14 @@ impl PyWindow {
         Ok(())
     }
 
-    /// Sets window properties: `title` and (0.4.0 M5) `partial_redraw`;
-    /// `width`, `height`, and `scale_factor` are read-only.
+    /// Sets window properties: `title`, (0.4.0 M5) `partial_redraw`, and
+    /// (0.4.1 M8) `show_damage`; `width`, `height`, and `scale_factor` are
+    /// read-only.
     #[pyo3(signature = (**props))]
     fn set(&mut self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let mut title = None;
         let mut partial_redraw = None;
+        let mut show_damage = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -430,15 +432,21 @@ impl PyWindow {
                             PyValueError::new_err("window property `partial_redraw` must be a bool")
                         })?);
                     }
+                    "show_damage" => {
+                        show_damage = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `show_damage` must be a bool")
+                        })?);
+                    }
                     "width" | "height" | "scale_factor" => {
                         return Err(PyValueError::new_err(format!(
                             "window property `{name}` is read-only -- settable: title, \
-                             partial_redraw"
+                             partial_redraw, show_damage"
                         )));
                     }
                     _ => {
                         return Err(PyValueError::new_err(format!(
-                            "unknown window property {name:?} -- settable: title, partial_redraw"
+                            "unknown window property {name:?} -- settable: title, \
+                             partial_redraw, show_damage"
                         )));
                     }
                 }
@@ -453,6 +461,9 @@ impl PyWindow {
         if let Some(on) = partial_redraw {
             self.handles.partial_redraw.set(on);
         }
+        if let Some(on) = show_damage {
+            self.handles.show_damage.set(on);
+        }
         Ok(())
     }
 
@@ -461,7 +472,7 @@ impl PyWindow {
     /// `dark` -- M106 (issue #18): the OS's current appearance, `True`
     /// for dark, or `None` where the platform can't say (on macOS and
     /// Windows, until `App.run()` opens the window) -- `partial_redraw`,
-    /// or (0.4.0) `partial_redraw_active`.
+    /// (0.4.0) `partial_redraw_active`, or (0.4.1) `show_damage`.
     fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
         Ok(match name {
             "width" => f64::from(self.handles.width.get())
@@ -484,6 +495,14 @@ impl PyWindow {
             // 0.4.0 M6: whether the open window really redraws only what
             // changed -- the setting, and a surface that allows it; `None`
             // until `App.run()` opens the window.
+            "show_damage" => self
+                .handles
+                .show_damage
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "partial_redraw_active" => self
                 .handles
                 .surface_partial
@@ -511,7 +530,7 @@ impl PyWindow {
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
-                     scale_factor, dark, partial_redraw, partial_redraw_active"
+                     scale_factor, dark, partial_redraw, partial_redraw_active, show_damage"
                 )));
             }
         })
