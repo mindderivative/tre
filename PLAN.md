@@ -1,36 +1,24 @@
-# PLAN — Branch `0.4.0`: Milestone 6 Phase 2, the Review's Decisions
+# PLAN — Branch `0.4.1`: Milestone 7, Partial Redraw's Fixed Costs
 
-*(Replaces the M5 plan — M5 is complete, and M6 Phase 1 is the pre-release
-review. Every step is in `BUILD_TRACKER.md`.)*
+*(Replaces the M6 plan — `v0.4.0` is released. Every step is in
+`BUILD_TRACKER.md`.)*
 
 ## Goal
 
-Act on every open item of the pre-release review
-([report](https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk3)), as the user
-decided (2026-09-28): "1. Unify them 2. Move into a per-window 3. raise an
-exception 4. Yes 5. Fix them all".
+`v0.4.0`'s one worse number: with partial redraw on, a change covering
+most of the window costs 0.2-1.8 ms more a frame than with it off -- the
+damage tracker fingerprints every node before settling on a full redraw.
+Remove that, and see whether a small partial frame's copy to the surface
+is worth cutting too.
 
 ## Steps
 
-1. MSRV and release pins: `rust-version` from the real dependency floor,
-   an `msrv` CI job; third-party release actions pinned to commit SHAs.
-2. No GPU adapter raises a Python exception from `App.run()` instead of
-   exiting the process; a zero-sized window is rejected at construction.
-3. One tree walk: the paint walk and the damage walk share one traversal
-   (visibility, culling, opacity, clip narrowing, child order).
-4. A per-window renderer in `engine-render` owning the frame renderer,
-   caches, persistent target and tracker, with one frame method -- used by
-   `app.rs`, the pixel tests, and the benchmark.
-5. Cheaper terminal and canvas fingerprints. (Done with a fast hash, not
-   a content counter: a counter would be instrumentation, which the
-   tracker avoids.)
-6. A lost surface is recreated; a frame with no damage skips the present
-   when the tree asked for it (not when the OS did).
-7. The window's shared fields in one struct instead of three copies;
-   `get("partial_redraw_active")` reports the fallback.
-8. The older GPU tests use `tests/support`'s shared setup and readback.
-9. Images drawn from `vello_gpu`'s image atlas, if it keeps in-place frame
-   updates; otherwise recorded why not.
-10. `engine-core`'s `tree.rs` split by concern.
+1. Measure where a frame's time goes -- damage walk, scene, render, copy --
+   for the small and whole-window workloads of `partial_redraw_bench`.
+2. Stop the damage walk once the frame is known to be a full redraw; the
+   next frame compares afresh (one extra full frame when a whole-window
+   change ends, instead of a wasted walk on every frame of it).
+3. Measure the copy to the surface in a small partial frame, and cut it if
+   it's a real share.
 
 Each step: the full chain, docs, tracker, a local commit.
