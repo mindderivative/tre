@@ -66,9 +66,8 @@ def test_an_unknown_orientation_is_a_clear_error():
 
 
 def scroller(window, orientation="vertical", length=1000, parent=None):
-    """A 200x100 scroll view over one content box `length` long (flex_shrink=0,
-    so it keeps its length instead of shrinking to fit), holding a focusable
-    item near the top."""
+    """A 200x100 scroll view over one content box `length` long, holding a
+    focusable item near the top."""
     vertical = orientation == "vertical"
     view = window.create("scroll_view", width=200, height=100, orientation=orientation)
     content = window.create(

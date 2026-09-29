@@ -27,6 +27,7 @@ should happen, then opens a window for a few seconds. Run one with
 | `clipboard.py` | Copy, cut, paste, and select-all in a text input |
 | `layers.py` | An anchored menu and a modal dialog |
 | `scrollable_list.py`, `variable_height_list.py` | Virtual lists with fixed and per-row heights |
+| `scroll_keys.py` | A scroll view driven by keys and focus, with the `scroll` event |
 | `docking.py` | Docked panels dragged between zones |
 | `two_windows.py` | One `App` driving two windows |
 | `threadsafe_reload.py` | A background file watcher reloading settings inside `App.run()` |

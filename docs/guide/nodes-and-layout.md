@@ -201,6 +201,41 @@ animates — how a carousel eases to a snap point:
 view.animate("scroll_offset", 400, 300, easing=(0.2, 0.0, 0.0, 1.0))
 ```
 
+### Keyboard scrolling
+
+Keys scroll the nearest scroll view around the focused node (0.4.2): the arrow
+keys by 40 pixels, Page Up and Page Down by a viewport, Home and End to either
+end. Up, Down, Page Up, and Page Down move a vertical view, Left and Right a
+horizontal one; a view that doesn't scroll along a key's axis passes it to the
+next one out. Keys the focused node uses itself don't scroll: a node with a
+`key_down` listener between the focused node and the view keeps every key, and
+a text input keeps all but Page Up and Page Down. With nothing focused, keys
+scroll nothing. Keyboard scrolls jump rather than ease.
+
+### Revealing a node
+
+`node.scroll_into_view()` scrolls every scroll view around `node`, innermost
+first, by the least that shows it; a node longer than a view is aligned to its
+start. Focus does the same, so Tab never lands on a node out of sight, and so
+does an assistive technology's `scroll_into_view` request.
+
+```python
+rows[40].scroll_into_view()
+```
+
+### The `scroll` event
+
+A scroll view fires `scroll` whenever its offset changes, whatever changed it:
+the wheel, a key, `scroll_into_view`, focus, `set`, or an animation, once a
+frame. `event.old_value` and `event.new_value` are the offsets before and
+after. It doesn't bubble.
+
+```python
+view.on("scroll", lambda e: status.set(text=f"{e.new_value:.0f} px down"))
+```
+
+See `examples/scroll_keys.py`.
+
 ## Virtual lists
 
 A `"virtual_list"` has `item_count` rows but builds only the ones its viewport
