@@ -16,4 +16,8 @@ decided against (0.05 ms gain / no buffer age).
 
 **M8 complete (2026-09-28).** show_damage overlay: SrcOver render into the
 surface after the frame's submit; GPU test proves the kept frame stays
-clean. cargo 373, pytest 451 + 1 skipped. Next: M9.
+clean. cargo 373, pytest 451 + 1 skipped.
+
+**M9 Phase 1 (2026-09-28).** Worktree tre-0.3.5.2 + branch 0.3.5.3 removed
+(content on main); merged local release branches pruned; rect_window.rs
+keeps its surface-bound adapter. Next: the user's manual platform check.

@@ -22,11 +22,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M6 — Release `0.4.0` | `██████████` 100% | ✅ Complete (2026-09-28) — `v0.4.0` released on GitHub and PyPI as `tesserae-engine` 0.4.0, closing issue #4; Tesserae moved onto it with nothing broken |
 | M7 — Partial Redraw's Fixed Costs | `██████████` 100% | ✅ Complete (2026-09-28) — measured, not cut: the whole-window overhead is the 0.1 ms damage walk (the rest of `v0.4.0`'s reported gap was noise), and the 0.25 ms copy can't be narrowed safely without swapchain buffer age |
 | M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
-| M9 — Housekeeping and Release `0.4.1` | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M9 — Housekeeping and Release `0.4.1` | `██░░░░░░░░` 25% | 🚧 In Progress — housekeeping done; the user's manual cross-platform check next, then the release |
 
 **Just closed:** M8 (2026-09-28) -- `window.set(show_damage=True)`: each presented frame shows what it redrew, damage rects tinted magenta or a full redraw outlined in orange, drawn over the image the window shows and never into the frame `tre` keeps.
 
-**Up next:** M9 -- housekeeping, then the `0.4.1` release after the user's manual cross-platform check of partial redraw.
+**Up next:** M9 Phase 2 Step 1 -- the user's manual check of partial redraw on real hardware (X11, Wayland, macOS, Windows), then the `0.4.1` release.
 
 **Known gaps:**
 - None open on this line.
@@ -139,10 +139,10 @@ User: "Start phase 3".
 
 ## Milestone 9 — Housekeeping and Release `0.4.1`
 
-**Status: ⬜ Proposed.**
+**Status: 🚧 In Progress.** Phase 1 done (2026-09-28).
 
-### Phase 1 — Housekeeping ⬜
-- Step 1: retire the local `0.3.5.3` branch and its `tre-0.3.5.2` worktree (its sdist fix shipped in `0.4.0`), prune merged local release branches, and move `rect_window.rs` onto the shared test helpers where it can — ⬜
+### Phase 1 — Housekeeping ✅
+- Step 1: retire the local `0.3.5.3` branch and its `tre-0.3.5.2` worktree (its sdist fix shipped in `0.4.0`), prune merged local release branches, and move `rect_window.rs` onto the shared test helpers where it can — ✅ (2026-09-28: the clean `tre-0.3.5.2` worktree removed and branch `0.3.5.3` deleted -- never pushed, but both its commits' changes are on `main`, the `license-files` fix since `0.4.0` and its tracker line in the 0.3 archive; local branches `0.3.1`-`0.3.5.2` and `0.4.0`, all merged and on `origin`, and a merged M56-era `worktree-agent-...` branch deleted -- local branches are now `main` and `0.4.1`; `rect_window.rs` keeps its own setup, since it picks its adapter for a real window's surface, which the shared helper deliberately doesn't take)
 
 ### Phase 2 — Release ⬜
 - Step 1: the user's manual check of partial redraw on real hardware -- X11, Wayland, macOS, Windows: `partial_redraw_active`, and repaint on uncover, resize, and minimize — ⬜
