@@ -294,9 +294,14 @@ class Window:
     @overload
     def get(self, name: Literal["partial_redraw"]) -> bool: ...
     @overload
+    def get(self, name: Literal["partial_redraw_active"]) -> bool | None: ...
+    @overload
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, `scale_factor`
-        (`1.0` until `App.run()` opens the window), or `partial_redraw`."""
+        (`1.0` until `App.run()` opens the window), `partial_redraw`, or
+        (0.4.0) `partial_redraw_active`: whether the open window really
+        redraws only what changed -- the setting, and a surface that
+        allows it -- `None` until `App.run()` opens the window."""
         ...
     def show_layer(
         self,

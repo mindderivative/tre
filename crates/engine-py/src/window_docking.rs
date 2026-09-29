@@ -19,21 +19,21 @@ impl PyWindow {
     /// `"top"`, `"bottom"`, `"center"`).
     fn add_dock_zone(&self, side: &str, container: PyRef<'_, Node>, size: f64) -> PyResult<()> {
         let side = dock::parse_dock_side(side)?;
-        dock::add_dock_zone(&self.dock, side, container.id, size);
+        dock::add_dock_zone(&self.handles.dock, side, container.id, size);
         Ok(())
     }
 
     /// Docks `panel` into `side`'s zone and shows it.
     fn dock_panel(&self, side: &str, panel: PyRef<'_, Node>) -> PyResult<()> {
         let side = dock::parse_dock_side(side)?;
-        dock::dock_panel(&self.dock, &self.tree, side, panel.id)
+        dock::dock_panel(&self.handles.dock, &self.handles.tree, side, panel.id)
     }
 
     /// M99: shows the `index`th panel docked in `side`'s zone (was
     /// `set_active_tab`).
     fn set_active_panel(&self, side: &str, index: usize) -> PyResult<()> {
         let side = dock::parse_dock_side(side)?;
-        dock::set_active_panel(&self.dock, &self.tree, side, index)
+        dock::set_active_panel(&self.handles.dock, &self.handles.tree, side, index)
     }
 
     /// M99: starts dragging `panel`, a docked panel -- call it from the
@@ -41,9 +41,9 @@ impl PyWindow {
     /// moves, `dock_target` reports the zone under it; the button's
     /// release moves the panel there and reports `dock_drop`.
     fn start_panel_drag(&self, panel: PyRef<'_, Node>) -> PyResult<()> {
-        if !Rc::ptr_eq(&self.tree, &panel.tree) {
+        if !Rc::ptr_eq(&self.handles.tree, &panel.tree) {
             return Err(EngineError::ForeignNode.into());
         }
-        dock::start_drag(&self.dock, panel.id)
+        dock::start_drag(&self.handles.dock, panel.id)
     }
 }

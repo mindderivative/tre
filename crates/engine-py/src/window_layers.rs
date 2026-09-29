@@ -46,7 +46,7 @@ impl PyWindow {
         dismissible: bool,
         py: Python<'_>,
     ) -> PyResult<()> {
-        let (tree, root) = (self.tree.clone(), self.root);
+        let (tree, root) = (self.handles.tree.clone(), self.handles.root);
         for handle in std::iter::once(&node).chain(anchor.as_ref()) {
             if !Rc::ptr_eq(&handle.tree, &tree) {
                 return Err(EngineError::ForeignNode.into());
@@ -80,7 +80,7 @@ impl PyWindow {
     /// it, and shown again with `show_layer` -- and focus inside it returns
     /// to the node that held it when the layer opened.
     fn hide_layer(&self, node: PyRef<'_, Node>, py: Python<'_>) -> PyResult<()> {
-        let (tree, handlers) = (self.tree.clone(), self.handlers.clone());
+        let (tree, handlers) = (self.handles.tree.clone(), self.handles.handlers.clone());
         if !Rc::ptr_eq(&node.tree, &tree) {
             return Err(EngineError::ForeignNode.into());
         }
@@ -117,7 +117,7 @@ impl PyWindow {
         let Some((old, new)) = transition else {
             return;
         };
-        let (tree, handlers) = (self.tree.clone(), self.handlers.clone());
-        fire_focus_transition(&handlers, &tree, &self.completions, old, new, py);
+        let (tree, handlers) = (self.handles.tree.clone(), self.handles.handlers.clone());
+        fire_focus_transition(&handlers, &tree, &self.handles.completions, old, new, py);
     }
 }

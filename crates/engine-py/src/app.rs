@@ -18,7 +18,7 @@
 //! `Rc<RefCell<Tree>>` is `!Send` by design (§9). Revisit if a later
 //! step introduces real GIL contention from a second thread.
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,16 +31,12 @@ use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 use winit::window::{Window, WindowId};
 
-use crate::dispatch::{
-    HandlerMap, SharedCompletions, WindowIo, process_input, run_completions, run_dispatch_outcome,
-};
-use crate::dock::SharedDockState;
+use crate::dispatch::{WindowIo, process_input, run_completions, run_dispatch_outcome};
 use crate::event::NodeContext;
-use crate::listeners::{self, WindowEventType, WindowListenerMap};
-use crate::terminal::TerminalSession;
+use crate::listeners::{self, WindowEventType};
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
-use crate::window::{PyWindow, SharedOsWindow, SharedSize};
+use crate::window::{PyWindow, WindowHandles};
 
 /// A window extent as the renderer takes it (`u16`), clamped -- no real
 /// window reaches 65,535 pixels, but a bad size must not wrap around.
@@ -71,32 +67,10 @@ pub struct AppState {
 /// Python-object-bearing field extracted here rather than converted to
 /// plain data.
 struct WindowSetup {
-    tree: Rc<RefCell<Tree>>,
-    root: NodeId,
+    /// 0.4.0 M6: everything the window shares with this run, cloned
+    /// once (`WindowHandles`).
+    handles: WindowHandles,
     title: String,
-    /// M33 Phase 2 (§4, §5, §8): the real, shared `Rc<Cell<u32>>`
-    /// clone of `PyWindow`'s own field, not a plain `u32` copy -- see
-    /// `window::SharedSize`'s own doc comment for the full real
-    /// reasoning.
-    width: SharedSize,
-    height: SharedSize,
-    handlers: HandlerMap,
-    /// M4 Phase 9 (§11.4): real docking state, plain data (no
-    /// `Py<PyAny>`), extracted the same way `handlers` is.
-    dock: SharedDockState,
-    /// M9 Phase 2 (§5): the window's own `on_complete` registry,
-    /// extracted the same way -- the real `on_frame` closure needs to
-    /// mutate it (removing a callback the instant it's invoked).
-    completions: SharedCompletions,
-    /// M30 Phase 9 Step 4 (§5, §8, §10): every real, live `Terminal`
-    /// session this window has spawned, extracted the same way --
-    /// `WindowRuntime`'s own per-frame closure needs to mutate it
-    /// (draining real PTY output each tick).
-    terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
-    /// M94: see `PyWindow::window_listeners`/`os_window`.
-    window_listeners: WindowListenerMap,
-    os_window: SharedOsWindow,
-    partial_redraw: Rc<Cell<bool>>,
 }
 
 /// M18 Phase 1/2 (§8, §10, §11.9, §11.10): the real per-glyph hit-test
@@ -293,7 +267,7 @@ impl GpuState {
     /// per real frame and reconfiguring only when it's actually `true`
     /// collapses an entire burst of `Resized` events into at most one
     /// real reconfigure per frame, always at the window's true current
-    /// size -- `runtime.width`/`height` (the live `SharedSize` cells)
+    /// size -- `runtime.handles.width`/`height` (the live `SharedSize` cells)
     /// never lag, only the expensive GPU-side reconfigure is coalesced.
     ///
     /// **Real, deliberate design choice, not the naive port of either
@@ -395,22 +369,9 @@ fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
 }
 
 struct WindowRuntime {
-    tree: Rc<RefCell<Tree>>,
-    root: NodeId,
-    /// M33 Phase 2 (§4, §5, §8): the real, shared `Rc<Cell<u32>>` --
-    /// `.get()` at every real per-frame read site below (a plain,
-    /// cheap `Cell::get()`, negligible next to the real GPU/text work
-    /// each frame already does) instead of a plain, separate `u32`
-    /// copy, so `InputEvent::Resized`'s own `.set()` call is
-    /// immediately visible to `PyWindow`'s own fields too, and vice
-    /// versa (`window::SharedSize`'s own doc comment has the full real
-    /// reasoning).
-    width: SharedSize,
-    height: SharedSize,
+    /// 0.4.0 M6: the window's shared handles (`WindowHandles`).
+    handles: WindowHandles,
     gpu: GpuState,
-    handlers: HandlerMap,
-    dock: SharedDockState,
-    completions: SharedCompletions,
     /// M18 Phase 2 (§8, §10): which `TextField` (if any) a real
     /// press-and-drag is currently extending a selection in -- plain,
     /// not `RefCell`-wrapped, since only `on_input`'s own closure ever
@@ -432,15 +393,6 @@ struct WindowRuntime {
     /// M94: the pointer shape last applied to this window, so it's set on
     /// the OS window only when it changes.
     cursor: Cursor,
-    /// M30 Phase 9 Step 4 (§5, §8, §10): the same real, shared session
-    /// table `PyWindow.terminals` owns -- see `WindowSetup.terminals`'s
-    /// own doc comment.
-    terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
-    /// M94: see `PyWindow::window_listeners`/`os_window`.
-    window_listeners: WindowListenerMap,
-    os_window: SharedOsWindow,
-    /// 0.4.0 M5: `window.set(partial_redraw=...)`, read every frame.
-    partial_redraw: Rc<Cell<bool>>,
 }
 
 #[pymethods]
@@ -494,7 +446,7 @@ impl App {
         // pinned before.
         for window in &self.windows {
             let window = window.borrow(py);
-            crate::clock::unpin(&window.tree);
+            crate::clock::unpin(&window.handles.tree);
         }
 
         // Extracted once, up front, while `py` is already held --
@@ -506,18 +458,8 @@ impl App {
             .map(|window| {
                 let window = window.borrow(py);
                 WindowSetup {
-                    tree: window.tree.clone(),
-                    root: window.root,
+                    handles: window.handles.clone(),
                     title: window.title.clone(),
-                    width: window.width.clone(),
-                    height: window.height.clone(),
-                    handlers: window.handlers.clone(),
-                    dock: window.dock.clone(),
-                    completions: window.completions.clone(),
-                    terminals: window.terminals.clone(),
-                    window_listeners: window.window_listeners.clone(),
-                    os_window: window.os_window.clone(),
-                    partial_redraw: window.partial_redraw.clone(),
                 }
             })
             .collect();
@@ -572,32 +514,30 @@ impl App {
         let result = run_windowed_multi(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
-                *setup.os_window.borrow_mut() = Some(window.clone());
-                let gpu = match GpuState::new(window, setup.width.get(), setup.height.get()) {
+                *setup.handles.os_window.borrow_mut() = Some(window.clone());
+                let gpu = match GpuState::new(
+                    window,
+                    setup.handles.width.get(),
+                    setup.handles.height.get(),
+                ) {
                     Ok(gpu) => gpu,
                     Err(err) => {
                         *startup_error_for_created.borrow_mut() = Some(err);
                         return false;
                     }
                 };
+                setup
+                    .handles
+                    .surface_partial
+                    .set(Some(gpu.renderer.has_persistent_target()));
                 runtimes_for_created.borrow_mut().insert(
                     window_id,
                     WindowRuntime {
-                        tree: setup.tree.clone(),
-                        root: setup.root,
-                        width: setup.width.clone(),
-                        height: setup.height.clone(),
+                        handles: setup.handles.clone(),
                         gpu,
-                        handlers: setup.handlers.clone(),
-                        dock: setup.dock.clone(),
-                        completions: setup.completions.clone(),
                         text_drag: None,
                         terminal_drag: None,
                         cursor: Cursor::Default,
-                        terminals: setup.terminals.clone(),
-                        window_listeners: setup.window_listeners.clone(),
-                        os_window: setup.os_window.clone(),
-                        partial_redraw: setup.partial_redraw.clone(),
                     },
                 );
                 true
@@ -617,14 +557,14 @@ impl App {
                     return false;
                 };
 
-                let now = crate::clock::now(&runtime.tree);
-                let (any_active, completed) = runtime.tree.borrow_mut().tick_all(now);
+                let now = crate::clock::now(&runtime.handles.tree);
+                let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
                 // M9 Phase 2 (§5): the real drain -- invokes each
                 // just-completed animation's registered `on_complete`
                 // callback exactly once, the same "look up and call a
                 // registered callback" shape `run_dispatch_outcome`
                 // already uses for click/hover handlers.
-                run_completions(&runtime.completions, completed, py);
+                run_completions(&runtime.handles.completions, completed, py);
 
                 // M30 Phase 9 Step 4 (§5, §8, §10): drains every real,
                 // live `Terminal` session's own pending PTY output into
@@ -646,8 +586,8 @@ impl App {
                 // window, the identical real win M29 Phase 2 already
                 // gave every other case.
                 {
-                    let mut terminals = runtime.terminals.borrow_mut();
-                    let mut tree = runtime.tree.borrow_mut();
+                    let mut terminals = runtime.handles.terminals.borrow_mut();
+                    let mut tree = runtime.handles.tree.borrow_mut();
                     for (&node_id, session) in terminals.iter_mut() {
                         session.drain_into(&mut tree, node_id);
                     }
@@ -677,14 +617,14 @@ impl App {
                 // nothing else changed.
                 let resized = runtime
                     .gpu
-                    .needs_resize(runtime.width.get(), runtime.height.get());
+                    .needs_resize(runtime.handles.width.get(), runtime.handles.height.get());
                 // M86: a `tre.register_font` call touches no `Tree`
                 // state either -- same reasoning as `resized` above. A
                 // family that fell back before may resolve to a real
                 // face now, so this frame must repaint. One atomic load
                 // when nothing was registered.
                 let fonts_changed = runtime.gpu.renderer.text().sync_registered_fonts();
-                let dirty = runtime.tree.borrow_mut().take_dirty();
+                let dirty = runtime.handles.tree.borrow_mut().take_dirty();
                 let changed = dirty || resized || fonts_changed;
                 // 0.4.0 M6: an OS redraw (an expose) with nothing changed
                 // still gets the kept frame presented again -- the surface
@@ -695,13 +635,13 @@ impl App {
 
                 // M96: also builds virtual lists' newly visible rows.
                 crate::node_callbacks::layout(
-                    &runtime.tree,
-                    runtime.root,
+                    &runtime.handles.tree,
+                    runtime.handles.root,
                     Size {
-                        width: AvailableSpace::Definite(runtime.width.get() as f32),
-                        height: AvailableSpace::Definite(runtime.height.get() as f32),
+                        width: AvailableSpace::Definite(runtime.handles.width.get() as f32),
+                        height: AvailableSpace::Definite(runtime.handles.height.get() as f32),
                     },
-                    &runtime.handlers,
+                    &runtime.handles.handlers,
                     py,
                 );
 
@@ -716,27 +656,29 @@ impl App {
                 if resized {
                     runtime
                         .gpu
-                        .resize(runtime.width.get(), runtime.height.get());
+                        .resize(runtime.handles.width.get(), runtime.handles.height.get());
                 }
 
                 // 0.4.0 M5: what changed since the last frame
                 // (`WindowRenderer::prepare`). A newly registered font can
                 // reshape text no node's state records, so it redraws
                 // everything.
-                let (width, height) = runtime.gpu.fit(runtime.width.get(), runtime.height.get());
+                let (width, height) = runtime
+                    .gpu
+                    .fit(runtime.handles.width.get(), runtime.handles.height.get());
                 let (width, height) = (render_extent(width), render_extent(height));
                 if fonts_changed {
                     runtime.gpu.renderer.reset();
                 }
                 let damage = {
-                    let tree_ref = runtime.tree.borrow();
+                    let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;
                     gpu.renderer.prepare(
                         &tree_ref,
-                        runtime.root,
+                        runtime.handles.root,
                         width,
                         height,
-                        runtime.partial_redraw.get(),
+                        runtime.handles.partial_redraw.get(),
                         &gpu.device,
                         &gpu.queue,
                     )
@@ -761,7 +703,7 @@ impl App {
                         // drawn, and its dirty flag is spent; it wasn't
                         // drawn, so the next frame redraws it all.
                         gpu.renderer.reset();
-                        runtime.tree.borrow_mut().mark_dirty();
+                        runtime.handles.tree.borrow_mut().mark_dirty();
                         // 0.4.0 review: an outdated surface recovers once
                         // reconfigured, a lost one once recreated (wgpu 30's
                         // docs) -- then retry at once; a timeout or an
@@ -786,11 +728,11 @@ impl App {
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
                 {
-                    let tree_ref = runtime.tree.borrow();
+                    let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;
                     gpu.renderer.draw(
                         &tree_ref,
-                        runtime.root,
+                        runtime.handles.root,
                         width,
                         height,
                         &damage,
@@ -820,7 +762,11 @@ impl App {
                 let runtime = runtimes
                     .get(&window_id)
                     .expect("build_access_update requested for a window with no runtime state");
-                runtime.tree.borrow().build_access_update(runtime.root)
+                runtime
+                    .handles
+                    .tree
+                    .borrow()
+                    .build_access_update(runtime.handles.root)
             },
             // M4 Phase 1 step 3: the real "meaning-dependent" half
             // `Tree::dispatch` leaves for its own caller (§2 Design
@@ -858,16 +804,16 @@ impl App {
                 // terminal pointer handling.
                 process_input(
                     &NodeContext {
-                        tree: &runtime.tree,
-                        handlers: &runtime.handlers,
-                        completions: &runtime.completions,
+                        tree: &runtime.handles.tree,
+                        handlers: &runtime.handles.handlers,
+                        completions: &runtime.handles.completions,
                     },
                     &WindowIo {
-                        dock: &runtime.dock,
-                        listeners: &runtime.window_listeners,
-                        terminals: &runtime.terminals,
+                        dock: &runtime.handles.dock,
+                        listeners: &runtime.handles.window_listeners,
+                        terminals: &runtime.handles.terminals,
                     },
-                    runtime.root,
+                    runtime.handles.root,
                     &event,
                     py,
                 );
@@ -877,9 +823,13 @@ impl App {
                 | InputEvent::PointerPressed { position, .. }
                 | InputEvent::PointerReleased { position, .. } = &event
                 {
-                    let wanted = cursor_at(&runtime.tree.borrow(), runtime.root, *position);
+                    let wanted = cursor_at(
+                        &runtime.handles.tree.borrow(),
+                        runtime.handles.root,
+                        *position,
+                    );
                     if wanted != runtime.cursor {
-                        if let Some(window) = runtime.os_window.borrow().as_ref() {
+                        if let Some(window) = runtime.handles.os_window.borrow().as_ref() {
                             window.set_cursor(cursor_icon(wanted));
                         }
                         runtime.cursor = wanted;
@@ -896,16 +846,23 @@ impl App {
                         // from `hit_test` to `hit_test_local` -- the
                         // extra local-space point is exactly what a
                         // real click-to-position hit-test needs below.
-                        if let Some((hit, local_point)) =
-                            runtime.tree.borrow().hit_test_local(runtime.root, position)
+                        if let Some((hit, local_point)) = runtime
+                            .handles
+                            .tree
+                            .borrow()
+                            .hit_test_local(runtime.handles.root, position)
                         {
                             if let Some(offset) = text_field_hit_offset(
-                                &runtime.tree,
+                                &runtime.handles.tree,
                                 runtime.gpu.renderer.text(),
                                 hit,
                                 local_point,
                             ) {
-                                runtime.tree.borrow_mut().set_text_field_cursor(hit, offset);
+                                runtime
+                                    .handles
+                                    .tree
+                                    .borrow_mut()
+                                    .set_text_field_cursor(hit, offset);
                                 // M18 Phase 2 (§8, §10): a real press
                                 // on a TextField always ARMS drag
                                 // tracking -- whether it turns into a
@@ -918,7 +875,7 @@ impl App {
                                 // cursor` already left it.
                                 runtime.text_drag = Some(hit);
                             } else if let Some((row, col)) = terminal_hit_cell(
-                                &runtime.tree,
+                                &runtime.handles.tree,
                                 runtime.gpu.renderer.text(),
                                 hit,
                                 local_point,
@@ -930,6 +887,7 @@ impl App {
                                 // press handling just above already
                                 // has.
                                 runtime
+                                    .handles
                                     .tree
                                     .borrow_mut()
                                     .set_terminal_selection_start(hit, row, col);
@@ -958,17 +916,21 @@ impl App {
                         // desktop editors do. A further, real,
                         // un-scoped refinement beyond this phase.
                         if let Some(field) = runtime.text_drag
-                            && let Some((hit, local_point)) =
-                                runtime.tree.borrow().hit_test_local(runtime.root, position)
+                            && let Some((hit, local_point)) = runtime
+                                .handles
+                                .tree
+                                .borrow()
+                                .hit_test_local(runtime.handles.root, position)
                             && hit == field
                             && let Some(offset) = text_field_hit_offset(
-                                &runtime.tree,
+                                &runtime.handles.tree,
                                 runtime.gpu.renderer.text(),
                                 hit,
                                 local_point,
                             )
                         {
                             runtime
+                                .handles
                                 .tree
                                 .borrow_mut()
                                 .extend_text_field_selection(hit, offset);
@@ -977,17 +939,21 @@ impl App {
                         // real `Terminal` sibling -- the identical real
                         // "still over the same node, extend" shape.
                         if let Some(terminal) = runtime.terminal_drag
-                            && let Some((hit, local_point)) =
-                                runtime.tree.borrow().hit_test_local(runtime.root, position)
+                            && let Some((hit, local_point)) = runtime
+                                .handles
+                                .tree
+                                .borrow()
+                                .hit_test_local(runtime.handles.root, position)
                             && hit == terminal
                             && let Some((row, col)) = terminal_hit_cell(
-                                &runtime.tree,
+                                &runtime.handles.tree,
                                 runtime.gpu.renderer.text(),
                                 hit,
                                 local_point,
                             )
                         {
                             runtime
+                                .handles
                                 .tree
                                 .borrow_mut()
                                 .extend_terminal_selection(hit, row, col);
@@ -1016,7 +982,7 @@ impl App {
                     // itself (M99), so it only tells the framework.
                     InputEvent::ThemeChanged { dark } => {
                         listeners::deliver_window(
-                            &runtime.window_listeners,
+                            &runtime.handles.window_listeners,
                             py,
                             WindowEventType::ColorScheme,
                             |e| e.dark = Some(dark),
@@ -1025,18 +991,18 @@ impl App {
                     // M32 Phase 2 (§4, §5): the real, winit-driven
                     // window resize -- `Tree::dispatch` (called just
                     // above, unconditionally, for every real
-                    // `InputEvent`) already resized `runtime.root`'s
+                    // `InputEvent`) already resized `runtime.handles.root`'s
                     // own `layout_style.size` directly (`engine-core`
                     // fully owns that, no need to defer it here); this
                     // arm handles the one thing only `engine-py` can
-                    // (`runtime.width`/`height`, which every per-frame
+                    // (`runtime.handles.width`/`height`, which every per-frame
                     // `compute_layout`/`build_tree_scene`/`RenderSize`
                     // call already reads fresh -- see `RedrawRequested`
                     // above).
                     //
                     // M33 Phase 2 (§4, §5, §8) closed the real, stated
                     // v1 limit this comment used to name here:
-                    // `runtime.width`/`height` are now the identical
+                    // `runtime.handles.width`/`height` are now the identical
                     // real, shared `Rc<Cell<u32>>` `PyWindow`'s own
                     // fields are (`window::SharedSize`), so this `.set()`
                     // call is immediately visible there too -- a
@@ -1063,10 +1029,10 @@ impl App {
                     // either sibling project's own size-bucketing
                     // approach).
                     InputEvent::Resized { width, height } => {
-                        runtime.width.set(width as u32);
-                        runtime.height.set(height as u32);
+                        runtime.handles.width.set(width as u32);
+                        runtime.handles.height.set(height as u32);
                         listeners::deliver_window(
-                            &runtime.window_listeners,
+                            &runtime.handles.window_listeners,
                             py,
                             WindowEventType::Resize,
                             |e| {
@@ -1077,7 +1043,7 @@ impl App {
                     }
                     InputEvent::ScaleFactorChanged { scale_factor } => {
                         listeners::deliver_window(
-                            &runtime.window_listeners,
+                            &runtime.handles.window_listeners,
                             py,
                             WindowEventType::ScaleFactor,
                             |e| e.scale_factor = Some(scale_factor),
@@ -1096,7 +1062,10 @@ impl App {
                 let Some(runtime) = runtimes.get(&window_id) else {
                     return;
                 };
-                let (tree_rc, handlers) = (runtime.tree.clone(), runtime.handlers.clone());
+                let (tree_rc, handlers) = (
+                    runtime.handles.tree.clone(),
+                    runtime.handles.handlers.clone(),
+                );
                 let node = from_access_id(request.target_node);
                 let mut tree = tree_rc.borrow_mut();
                 match request.action {
@@ -1112,7 +1081,7 @@ impl App {
                         run_dispatch_outcome(
                             &handlers,
                             &tree_rc,
-                            &runtime.completions,
+                            &runtime.handles.completions,
                             &outcome,
                             None,
                             py,
@@ -1139,7 +1108,7 @@ impl App {
                             crate::dispatch::fire_focus_transition(
                                 &handlers,
                                 &tree_rc,
-                                &runtime.completions,
+                                &runtime.handles.completions,
                                 old,
                                 new,
                                 py,
@@ -1158,7 +1127,7 @@ impl App {
                             crate::dispatch::fire_focus_transition(
                                 &handlers,
                                 &tree_rc,
-                                &runtime.completions,
+                                &runtime.handles.completions,
                                 old,
                                 new,
                                 py,
@@ -1187,7 +1156,7 @@ impl App {
                             &NodeContext {
                                 tree: &tree_rc,
                                 handlers: &handlers,
-                                completions: &runtime.completions,
+                                completions: &runtime.handles.completions,
                             },
                             node,
                             name,
@@ -1207,19 +1176,19 @@ impl App {
                 };
                 match lifecycle {
                     WindowLifecycle::CloseRequested => !listeners::deliver_window(
-                        &runtime.window_listeners,
+                        &runtime.handles.window_listeners,
                         py,
                         WindowEventType::CloseRequested,
                         |_| {},
                     ),
                     WindowLifecycle::Closed => {
                         listeners::deliver_window(
-                            &runtime.window_listeners,
+                            &runtime.handles.window_listeners,
                             py,
                             WindowEventType::Closed,
                             |_| {},
                         );
-                        *runtime.os_window.borrow_mut() = None;
+                        *runtime.handles.os_window.borrow_mut() = None;
                         true
                     }
                 }
@@ -1232,8 +1201,8 @@ impl App {
                     opener.open_window(WindowRequest {
                         config: WindowConfig {
                             title: setup.title.clone(),
-                            width: setup.width.get(),
-                            height: setup.height.get(),
+                            width: setup.handles.width.get(),
+                            height: setup.handles.height.get(),
                             max_frames,
                         },
                         token: index as u64,
@@ -1246,7 +1215,7 @@ impl App {
                     // waker -- the one real place able to reach it at
                     // all, closing the real, stated v1 cost M30 Phase 9
                     // Step 4 left open.
-                    for session in setup.terminals.borrow().values() {
+                    for session in setup.handles.terminals.borrow().values() {
                         session.set_waker(waker.clone());
                     }
                 }
@@ -1259,7 +1228,8 @@ impl App {
         self.calls.set_waker(None);
         // M94: no window is open any more.
         for setup in setups_for_cleanup.iter() {
-            *setup.os_window.borrow_mut() = None;
+            *setup.handles.os_window.borrow_mut() = None;
+            setup.handles.surface_partial.set(None);
         }
 
         if let Some(err) = startup_error.borrow_mut().take() {

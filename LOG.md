@@ -58,4 +58,7 @@ commands: 0.32-0.77 ms -> 0.07-0.10 ms.
 os_requested to on_frame; no present for loop-requested, undamaged,
 non-animating frames; OS redraws re-present the kept frame.
 
-Next: Step 7, shared window fields and partial_redraw_active.
+**Step 7 (2026-09-28).** WindowHandles (11 shared handles, one struct);
+get("partial_redraw_active").
+
+Next: Step 8, older GPU tests on tests/support.

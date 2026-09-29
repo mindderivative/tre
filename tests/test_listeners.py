@@ -466,7 +466,7 @@ def test_window_title_is_settable_and_the_rest_read_only() -> None:
         w.set(width=10)  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="settable: title, partial_redraw"):
         w.set(colour="red")  # type: ignore[call-arg]
-    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, partial_redraw"):
+    with pytest.raises(ValueError, match="valid: width, height, title, scale_factor, partial_redraw, partial_redraw_active"):
         w.get("depth")
 
 
@@ -477,6 +477,8 @@ def test_partial_redraw_is_on_by_default_and_can_be_switched_off() -> None:
     assert w.get("partial_redraw") is False
     w.set(partial_redraw=True)
     assert w.get("partial_redraw") is True
+    # Not known until App.run() opens the window and sees its surface.
+    assert w.get("partial_redraw_active") is None
     with pytest.raises(ValueError, match="must be a bool"):
         w.set(partial_redraw="no")  # type: ignore[arg-type]
 

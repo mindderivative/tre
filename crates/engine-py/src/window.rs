@@ -33,7 +33,7 @@ const GAP: f32 = 16.0;
 /// `PyWindow`'s own fields -- `App::run`'s own `WindowSetup`/
 /// `WindowRuntime` now clone this same `Rc<Cell<u32>>` instead of
 /// copying its value once at startup, so a real resize's own `.set()`
-/// call is immediately visible to every `self.width`/`self.height`
+/// call is immediately visible to every `self.handles.width`/`self.handles.height`
 /// read, live.
 pub(crate) type SharedSize = Rc<Cell<u32>>;
 
@@ -65,10 +65,13 @@ pub struct PyWindow(ThreadBound<WindowState>);
 thread_bound_shell!(PyWindow => WindowState);
 
 /// `Window`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
-pub struct WindowState {
+/// 0.4.0 M6: the handles a window shares with `App.run()`'s frame loop --
+/// each an `Rc` (or a copy), so the run clones this once rather than
+/// copying field by field into its own structs.
+#[derive(Clone)]
+pub(crate) struct WindowHandles {
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) root: NodeId,
-    pub(crate) title: String,
     pub(crate) width: SharedSize,
     pub(crate) height: SharedSize,
     pub(crate) handlers: HandlerMap,
@@ -100,6 +103,14 @@ pub struct WindowState {
     /// default) -- `window.set(partial_redraw=False)` turns it off. Shared
     /// with `App.run()`'s frame loop, which reads it every frame.
     pub(crate) partial_redraw: Rc<Cell<bool>>,
+    /// 0.4.0 M6: whether the open window's surface allows partial redraw
+    /// (it can be copied into) -- `None` until `App.run()` opens it.
+    pub(crate) surface_partial: Rc<Cell<Option<bool>>>,
+}
+
+pub struct WindowState {
+    pub(crate) handles: WindowHandles,
+    pub(crate) title: String,
 }
 
 /// M94: see `PyWindow::os_window`.
@@ -143,18 +154,21 @@ impl PyWindow {
         let tree = Rc::new(RefCell::new(tree));
         let handlers: HandlerMap = Rc::new(RefCell::new(HashMap::new()));
         Ok(Self(ThreadBound::new(WindowState {
-            tree,
-            root,
             title: title.to_string(),
-            width: Rc::new(Cell::new(width)),
-            height: Rc::new(Cell::new(height)),
-            handlers,
-            dock: Rc::new(RefCell::new(dock::DockState::new())),
-            completions: Rc::new(RefCell::new(CompletionRegistry::new())),
-            terminals: Rc::new(RefCell::new(HashMap::new())),
-            window_listeners: Rc::new(RefCell::new(HashMap::new())),
-            os_window: Rc::new(RefCell::new(None)),
-            partial_redraw: Rc::new(Cell::new(true)),
+            handles: WindowHandles {
+                tree,
+                root,
+                width: Rc::new(Cell::new(width)),
+                height: Rc::new(Cell::new(height)),
+                handlers,
+                dock: Rc::new(RefCell::new(dock::DockState::new())),
+                completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+                terminals: Rc::new(RefCell::new(HashMap::new())),
+                window_listeners: Rc::new(RefCell::new(HashMap::new())),
+                os_window: Rc::new(RefCell::new(None)),
+                partial_redraw: Rc::new(Cell::new(true)),
+                surface_partial: Rc::new(Cell::new(None)),
+            },
         })))
     }
 
@@ -170,16 +184,16 @@ impl PyWindow {
         if !self.0.is_owner() {
             return Ok(());
         }
-        for (handler, _wants_event) in self.handlers.borrow().values() {
+        for (handler, _wants_event) in self.handles.handlers.borrow().values() {
             visit.call(handler)?;
         }
         // M9 Phase 2: `completions` holds real `Py<PyAny>` callbacks --
         // the same cyclic-GC obligation as `handlers`.
-        for callback in self.completions.borrow().callbacks.values() {
+        for callback in self.handles.completions.borrow().callbacks.values() {
             visit.call(callback)?;
         }
         // M94: window listeners are stored callbacks too.
-        for (handler, _wants_event) in self.window_listeners.borrow().values() {
+        for (handler, _wants_event) in self.handles.window_listeners.borrow().values() {
             visit.call(handler)?;
         }
         Ok(())
@@ -189,8 +203,8 @@ impl PyWindow {
         if !self.0.is_owner() {
             return;
         }
-        self.handlers.borrow_mut().clear();
-        self.completions.borrow_mut().callbacks.clear();
-        self.window_listeners.borrow_mut().clear();
+        self.handles.handlers.borrow_mut().clear();
+        self.handles.completions.borrow_mut().callbacks.clear();
+        self.handles.window_listeners.borrow_mut().clear();
     }
 }
