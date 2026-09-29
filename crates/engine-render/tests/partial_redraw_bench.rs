@@ -10,7 +10,11 @@
 //! - **full**: every card animates, so the damage is the whole window and
 //!   partial redraw must fall back without costing anything.
 //!
-//! Each runs with partial redraw on and off. The same workloads on
+//! - **idle** (0.4.1 M7): nothing changes, so each frame is the damage walk
+//!   and the copy of the kept frame to the surface.
+//!
+//! Each runs with partial redraw on and off, and reports a frame's parts:
+//! `prepare` (the damage walk), `draw` (scene and encoding), and the GPU. The same workloads on
 //! `v0.3.5.1` (which always redraws in full, straight into the image) were
 //! measured with a port of this file in a worktree; `BUILD_TRACKER.md` M5
 //! has both sets of figures.
@@ -35,9 +39,21 @@ const CELL: f32 = 60.0;
 const WARMUP: usize = 5;
 const TIMED: usize = 60;
 
-/// The grid, plus one card placed over it; with `all_animate`, every grid
-/// card animates too.
-fn build(start: Instant, all_animate: bool) -> (Tree, NodeId) {
+/// What changes each frame.
+#[derive(Clone, Copy, PartialEq)]
+enum Workload {
+    /// One 48x48 card animates over the static grid.
+    Small,
+    /// Every card animates.
+    Full,
+    /// Nothing changes (0.4.1 M7): each frame is the damage walk and the
+    /// copy of the kept frame to the surface.
+    Idle,
+}
+
+/// The grid, plus one card placed over it; `workload` says which animate.
+fn build(start: Instant, workload: Workload) -> (Tree, NodeId) {
+    let all_animate = workload == Workload::Full;
     let mut tree = Tree::new();
     let root = tree.insert(
         NodeKind::Rect,
@@ -83,12 +99,14 @@ fn build(start: Instant, all_animate: bool) -> (Tree, NodeId) {
         tree.add_child(root, card);
     }
     let mut paint = PaintProperties::new(Color::from_rgba8(0xFF, 0xB0, 0x40, 0xFF), 24.0, 1.0);
-    paint.background.animate_to(
-        Color::from_rgba8(0x40, 0xC0, 0xFF, 0xFF),
-        Duration::from_secs(60),
-        MotionCurve::Linear,
-        start,
-    );
+    if workload != Workload::Idle {
+        paint.background.animate_to(
+            Color::from_rgba8(0x40, 0xC0, 0xFF, 0xFF),
+            Duration::from_secs(60),
+            MotionCurve::Linear,
+            start,
+        );
+    }
     let spinner = tree.insert(
         NodeKind::Rect,
         Style {
@@ -114,10 +132,21 @@ fn build(start: Instant, all_animate: bool) -> (Tree, NodeId) {
 struct Timings {
     median_ms: f64,
     p90_ms: f64,
+    /// Medians of a frame's parts (0.4.1 M7): `prepare` (images, cache
+    /// eviction, the damage walk), `draw` on the CPU (scene building and
+    /// encoding), and the wait for the GPU after submitting.
+    prepare_ms: f64,
+    draw_ms: f64,
+    gpu_ms: f64,
     partial_frames: usize,
 }
 
-fn run(device: &wgpu::Device, queue: &wgpu::Queue, all_animate: bool, partial: bool) -> Timings {
+fn median(mut samples: Vec<f64>) -> f64 {
+    samples.sort_by(f64::total_cmp);
+    samples[samples.len() / 2]
+}
+
+fn run(device: &wgpu::Device, queue: &wgpu::Queue, workload: Workload, partial: bool) -> Timings {
     let format = wgpu::TextureFormat::Rgba8Unorm;
     let image = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("stand-in swapchain image"),
@@ -142,14 +171,17 @@ fn run(device: &wgpu::Device, queue: &wgpu::Queue, all_animate: bool, partial: b
         height: AvailableSpace::Definite(f32::from(HEIGHT)),
     };
 
-    let (mut tree, root) = build(Instant::now(), all_animate);
+    let (mut tree, root) = build(Instant::now(), workload);
     let mut samples = Vec::with_capacity(TIMED);
+    let (mut prepares, mut draws, mut gpus) = (Vec::new(), Vec::new(), Vec::new());
     let mut partial_frames = 0;
     for i in 0..WARMUP + TIMED {
         let begin = Instant::now();
         tree.tick_all(Instant::now());
         tree.compute_layout(root, space);
+        let prepare_start = Instant::now();
         let damage = renderer.prepare(&tree, root, WIDTH, HEIGHT, partial, device, queue);
+        let draw_start = Instant::now();
         let mut encoder =
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         renderer.draw(
@@ -164,12 +196,17 @@ fn run(device: &wgpu::Device, queue: &wgpu::Queue, all_animate: bool, partial: b
             &image,
             &view,
         );
+        let gpu_start = Instant::now();
         queue.submit([encoder.finish()]);
         device
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("device poll failed");
         if i >= WARMUP {
-            samples.push(begin.elapsed().as_secs_f64() * 1000.0);
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+            samples.push(ms(begin.elapsed()));
+            prepares.push(ms(draw_start - prepare_start));
+            draws.push(ms(gpu_start - draw_start));
+            gpus.push(ms(gpu_start.elapsed()));
             if matches!(damage, Damage::Rects(_)) {
                 partial_frames += 1;
             }
@@ -179,6 +216,9 @@ fn run(device: &wgpu::Device, queue: &wgpu::Queue, all_animate: bool, partial: b
     Timings {
         median_ms: samples[samples.len() / 2],
         p90_ms: samples[samples.len() * 9 / 10],
+        prepare_ms: median(prepares),
+        draw_ms: median(draws),
+        gpu_ms: median(gpus),
         partial_frames,
     }
 }
@@ -193,21 +233,27 @@ fn partial_redraw_frame_times() {
         "adapter: {} ({:?}, {:?}), {WIDTH}x{HEIGHT}, {TIMED} timed frames",
         info.name, info.device_type, info.backend
     );
-    for (workload, all_animate) in [("small", false), ("full", true)] {
+    for (name, workload) in [
+        ("small", Workload::Small),
+        ("full", Workload::Full),
+        ("idle", Workload::Idle),
+    ] {
         for partial in [true, false] {
-            let t = run(&device, &queue, all_animate, partial);
+            let t = run(&device, &queue, workload, partial);
             println!(
-                "{workload:5} partial={partial:5}: median {:6.3} ms, p90 {:6.3} ms, {} partial frames",
-                t.median_ms, t.p90_ms, t.partial_frames
+                "{name:5} partial={partial:5}: median {:6.3} ms, p90 {:6.3} ms \
+                 (prepare {:6.3}, draw {:6.3}, gpu {:6.3}), {} partial frames",
+                t.median_ms, t.p90_ms, t.prepare_ms, t.draw_ms, t.gpu_ms, t.partial_frames
             );
-            if partial && !all_animate {
-                assert_eq!(
+            match workload {
+                Workload::Small if partial => assert_eq!(
                     t.partial_frames, TIMED,
                     "the small workload redraws partially"
-                );
-            }
-            if all_animate {
-                assert_eq!(t.partial_frames, 0, "a whole-window change redraws in full");
+                ),
+                Workload::Full => {
+                    assert_eq!(t.partial_frames, 0, "a whole-window change redraws in full")
+                }
+                _ => {}
             }
         }
     }
