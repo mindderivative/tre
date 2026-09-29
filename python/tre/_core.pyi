@@ -246,7 +246,9 @@ class Window:
     more to an `App`, then call `App.run()`.
     """
 
-    def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None: ...
+    def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None:
+        """Raises `ValueError` for a zero width or height."""
+        ...
     def create(self, kind: str, **props: Any) -> Node:
         """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
         `"text_input"`, `"image"`, `"path"`, `"canvas"`, `"scroll_view"`,
@@ -422,7 +424,8 @@ class App:
         each). Design Principle 1's own "one blocking call" -- returns
         `None` (rather than raising) if no real display is reachable,
         the same headless-CI-safe convention every example in this
-        project relies on.
+        project relies on. Raises `RuntimeError` if a window's GPU can't
+        be set up (no adapter, no device, or an unsupported surface).
         """
         ...
 

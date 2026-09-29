@@ -9,7 +9,7 @@ both ordinary nodes shown with `window.show_layer`.
 
 The script drives both with `window.simulate` before opening the window.
 Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
-without a display or GPU. See docs/guide/layers.md.
+without a display. See docs/guide/layers.md.
 """
 
 from tre import App, Window

@@ -191,11 +191,13 @@ struct GpuState {
 }
 
 impl GpuState {
-    fn new(window: Arc<Window>, width: u32, height: u32) -> Self {
+    /// 0.4.0: an `Err` (no adapter, no device, or a surface this adapter
+    /// can't drive) ends the run, and `App.run()` raises it.
+    fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
             .create_surface(window)
-            .expect("failed to create wgpu surface from the window");
+            .map_err(|err| format!("couldn't create a GPU surface for the window: {err}"))?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
@@ -204,23 +206,17 @@ impl GpuState {
             // bucketing (a fingerprinting defence for web content).
             apply_limit_buckets: false,
         }))
-        .unwrap_or_else(|err| {
-            // No GPU reachable is an expected, non-exceptional
-            // condition on some CI runners -- exit 0, don't fail the
-            // process, per TRE v1's own established convention
-            // (finding #261), applied identically everywhere else in
-            // this workspace. `tracing::warn!` (M16 Phase 2): real,
-            // worth logging, but not an error -- a genuinely expected,
-            // gracefully-handled condition, not a bug.
-            tracing::warn!(%err, "no wgpu adapter available, exiting 0");
-            std::process::exit(0);
-        });
+        // 0.4.0 review (the user's decision): no GPU is an error the
+        // caller sees -- `App.run()` raises it -- rather than the old
+        // `exit(0)` inside the interpreter, which skipped `atexit` and
+        // `finally` and reported success.
+        .map_err(|err| format!("no GPU adapter available: {err}"))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("engine-py app device"),
             required_features: wgpu::Features::empty(),
             ..Default::default()
         }))
-        .expect("failed to create wgpu device");
+        .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
 
         // 0.4.0 review: a window larger than the GPU's textures can be
         // renders at the largest size it can, not a panic in `configure`.
@@ -228,7 +224,7 @@ impl GpuState {
         let (width, height) = (width.min(max), height.min(max));
         let mut config = surface
             .get_default_config(&adapter, width, height)
-            .expect("surface is not supported by this adapter");
+            .ok_or("the window's surface isn't supported by this GPU adapter")?;
         // 0.4.0 M3: render into a persistent target and copy it into the
         // swapchain image, where the surface allows copies into it.
         let copyable = surface
@@ -257,7 +253,7 @@ impl GpuState {
             },
         );
 
-        Self {
+        Ok(Self {
             surface,
             surface_config: config,
             device,
@@ -267,7 +263,7 @@ impl GpuState {
             geometry_cache: GeometryCache::new(),
             persistent,
             damage: DamageTracker::new(),
-        }
+        })
     }
 
     /// M32 Phase 2 (§4, §5): reconfigures the real wgpu surface to a
@@ -579,11 +575,21 @@ impl App {
         let calls_for_frame = self.calls.clone();
         let calls_for_setup = self.calls.clone();
 
+        // 0.4.0: why a window's GPU setup failed, raised once the loop
+        // has stopped.
+        let startup_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let startup_error_for_created = startup_error.clone();
         let result = run_windowed_multi(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
                 *setup.os_window.borrow_mut() = Some(window.clone());
-                let gpu = GpuState::new(window, setup.width.get(), setup.height.get());
+                let gpu = match GpuState::new(window, setup.width.get(), setup.height.get()) {
+                    Ok(gpu) => gpu,
+                    Err(err) => {
+                        *startup_error_for_created.borrow_mut() = Some(err);
+                        return false;
+                    }
+                };
                 runtimes_for_created.borrow_mut().insert(
                     window_id,
                     WindowRuntime {
@@ -604,6 +610,7 @@ impl App {
                         partial_redraw: setup.partial_redraw.clone(),
                     },
                 );
+                true
             },
             move |window_id, _frame| -> bool {
                 // M87: run anything a background thread queued via
@@ -1302,18 +1309,20 @@ impl App {
             *setup.os_window.borrow_mut() = None;
         }
 
+        if let Some(err) = startup_error.borrow_mut().take() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(err));
+        }
         match result {
             Ok(()) => Ok(()),
             Err(err) => {
                 // A `run_windowed_multi` failure only ever means "no
-                // display reachable" -- `GpuState::new`'s own no-adapter
-                // case exits the process directly (above), so this is
-                // the one remaining failure mode. Same TRE v1 finding
+                // display reachable" -- a GPU that can't be set up is
+                // raised just above instead. Same TRE v1 finding
                 // #261 convention as every other entry point in this
                 // workspace. `tracing::warn!` (M16 Phase 2): the same
                 // "expected, gracefully-handled, not an error" reasoning
                 // as the no-adapter case above.
-                tracing::warn!(%err, "no display available, exiting cleanly");
+                tracing::warn!(%err, "no display available, returning without running");
                 Ok(())
             }
         }

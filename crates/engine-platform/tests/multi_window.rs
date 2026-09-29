@@ -25,6 +25,7 @@ fn main() {
         move |window_id, token, _window| {
             eprintln!("engine-platform §14 step 14: window {token} created as {window_id:?}");
             created_for_created.borrow_mut().push((token, window_id));
+            true
         },
         move |window_id, frame| {
             frame_counts_for_frame

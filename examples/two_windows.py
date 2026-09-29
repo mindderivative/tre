@@ -4,7 +4,7 @@ title, and `App.run()` opens and drives them together, returning when
 both have closed.
 
 Headless-CI-safe: `max_frames=60` applies to each window, and `App.run()`
-returns quietly without a display or GPU.
+returns quietly without a display.
 """
 
 from tre import App, Window

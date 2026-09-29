@@ -17,11 +17,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M3 — A Persistent Offscreen Target and Blit | `██████████` 100% | ✅ Complete (2026-09-28) — each window renders into a texture that keeps its frame, copied to the screen byte-exact |
 | M4 — Dirty-Region Tracking | `██████████` 100% | ✅ Complete (2026-09-28) — `DamageTracker` reports what changed each frame as at most 4 rects, or a full redraw |
 | M5 — Partial Redraw End to End, Measured | `██████████` 100% | ✅ Complete (2026-09-28) — every window redraws only what changed, byte-identical to a full redraw; a small animation in a 1920x1080 window costs 3.7–4.9x less GPU+CPU time a frame than `v0.3.5.1`, a whole-window change the same |
-| M6 — Release `0.4.0` | `██░░░░░░░░` 15% | 🚧 In Progress — pre-release review done (20 of 32 findings fixed); acting on its decisions: 1 of 10 steps |
+| M6 — Release `0.4.0` | `██░░░░░░░░` 20% | 🚧 In Progress — pre-release review done (20 of 32 findings fixed); acting on its decisions: 2 of 10 steps |
 
 **Just closed:** M6 Phase 1 (2026-09-28) -- the pre-release review: 32 confirmed findings across four lenses, 20 fixed and verified, including a partial-redraw bug where a node's shadow or an overflowing child kept stale pixels, and panics on oversized windows and images. The rest wait on decisions ([report](https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk3)).
 
-**Up next:** M6 Phase 2 Step 2 -- no GPU adapter raises a Python exception; then Steps 3-10, then Phase 3, the release.
+**Up next:** M6 Phase 2 Step 3 -- one traversal shared by the paint and damage walks; then Steps 4-10, then Phase 3, the release.
 
 **Known gaps:**
 - None open on this line.
@@ -87,7 +87,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 6 — Release `0.4.0`
 
-**Status: 🚧 In Progress.** Phase 1 done; Phase 2 Step 1 done (2026-09-28).
+**Status: 🚧 In Progress.** Phase 1 done; Phase 2 Steps 1–2 done (2026-09-28).
 
 ### Phase 1 — Pre-release Review ✅
 - Step 1: a full `/review-project` of the branch -- performance, architecture, security, modernization, each finding adversarially verified — ✅ (2026-09-28, user: "Before we move on to M6, lets do a full /review-project of tre"; [report](https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk3); 33 findings, 32 confirmed, 20 fixed: a real partial-redraw bug -- a node's shadow or a child overflowing a non-clipping parent kept stale pixels when something else changed under it, since paint culled by layout box and skipped whole subtrees -- fixed by one shared painted-extent function (`damage::painted_rect`) both walks use, partial frames culling as full ones do and drawing a node only where that extent reaches a rect, 2 GPU reproducers; windows past the GPU's 8192 texture limit clamped instead of panicking, and a simulated resize validated; images past `MAX_IMAGE_DIMENSION` rejected from Python and otherwise skipped with a warning; an `Outdated` surface reconfigured and retried, `Suboptimal` reconfigured after presenting, and a skipped frame re-marks the tree dirty (new `Tree::mark_dirty`); the damage walk skipped when its answer is unused; list offsets, path geometry, and duplicate in-place rects out of the per-frame walk; a terminal damaged across its whole grid; same-size image frames written into their texture; clear and clip rects both rounded out; the release workflow's write token limited to `publish`; stale `vello_hybrid` comments, a hand-rolled bounds fold, stub typing, a duplicate unpin, over-wide API, and the 0.4.0 tests' duplicated GPU setup cleaned up; left for the user: one shared walker, a per-window renderer type, the exit-0 on no adapter, lost-surface recreation, presenting on unchanged frames, terminal/canvas hashing, MSRV and action SHA pins, and smaller structural items; cargo 370, pytest 433 + 1 skipped, 20 examples)
@@ -95,7 +95,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 ### Phase 2 — The Review's Decisions 🚧
 User, 2026-09-28: "1. Unify them 2. Move into a per-window 3. raise an exception 4. Yes 5. Fix them all".
 - Step 1: MSRV from the real dependency floor with an `msrv` CI job; third-party release actions pinned to commit SHAs — ✅ (2026-09-28: `rust-version = "1.90"` for every crate -- the review expected 1.89 from `vello_gpu`, but `cargo +1.89 check` failed on `ordered-float` 5.5.0, which declares 1.90, the highest in the lock file, and `cargo +1.90 check --workspace --all-targets` passes; CI's new `msrv` job runs that check; `PyO3/maturin-action` pinned to `e83996d1` (v1) and `softprops/action-gh-release` to `3bb12739` (v2))
-- Step 2: no GPU adapter raises a Python exception from `App.run()`; a zero-sized window is rejected — ⬜
+- Step 2: no GPU adapter raises a Python exception from `App.run()`; a zero-sized window is rejected — ✅ (2026-09-28: `GpuState::new` returns a `Result` -- no adapter, no device, a failed surface, or one the adapter can't drive, each formerly `exit(0)` or a panic -- and `engine-platform`'s window-created callback now returns whether setup worked, `false` ending the loop at once; `App.run()` raises the reason as `RuntimeError`; no display still returns `None`, as documented; `Window(0, h)` / `Window(w, 0)` raise `ValueError`; checked by hiding the Vulkan and GL drivers: `RuntimeError: couldn't create a GPU surface...`, with `atexit` still running; docs, stub, and 16 example docstrings updated; pytest 434 + 1 skipped)
 - Step 3: one traversal shared by the paint walk and the damage walk — ⬜
 - Step 4: a per-window renderer in `engine-render`, used by the app, the pixel tests, and the benchmark — ⬜
 - Step 5: terminal and canvas content generations instead of hashing every cell and command — ⬜

@@ -4,7 +4,7 @@ row its own height in place of `item_extent`. As in `scrollable_list.py`,
 only the rows in view are built.
 
 Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
-without a display or GPU.
+without a display.
 """
 
 from tre import App, Window

@@ -32,7 +32,7 @@ fn main() {
     let frame_count_for_frame = frame_count.clone();
 
     let result = run_windowed_multi(
-        |_window_id, _token, _window| {},
+        |_window_id, _token, _window| true,
         move |_window_id, _frame| {
             frame_count_for_frame.fetch_add(1, Ordering::SeqCst);
             true

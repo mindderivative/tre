@@ -351,7 +351,9 @@ impl EventLoopWaker {
 /// fires exactly once with its real `WindowId`, the `token` from
 /// whichever `WindowRequest` produced it, and an owned `Arc<Window>` --
 /// the caller's one chance to build (and stash, keyed by `WindowId`) any
-/// per-window GPU/render state. `on_frame` then fires once per redraw
+/// per-window GPU/render state. It returns whether that worked: `false`
+/// (0.4.0: no GPU adapter, say) closes the window and ends the loop at
+/// once, for the caller to report. `on_frame` then fires once per redraw
 /// with just the `WindowId` and 0-based frame index (the caller already
 /// has everything else from `on_window_created`); `build_access_update`
 /// fires per window the same way, keeping each window's own exposed
@@ -427,7 +429,7 @@ pub fn run_windowed_multi<C, F, A, S, N, X, L>(
     setup: S,
 ) -> Result<(), winit::error::EventLoopError>
 where
-    C: FnMut(WindowId, u64, Arc<Window>),
+    C: FnMut(WindowId, u64, Arc<Window>) -> bool,
     F: FnMut(WindowId, u32) -> bool,
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
@@ -481,6 +483,7 @@ where
     run_windowed_multi(
         move |_id, _token, created| {
             *window_for_created.borrow_mut() = Some(created);
+            true
         },
         move |_id, frame| {
             let window = window
@@ -547,7 +550,7 @@ struct MultiWindowApp<C, F, A, N, X, L> {
 
 impl<C, F, A, N, X, L> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X, L>
 where
-    C: FnMut(WindowId, u64, Arc<Window>),
+    C: FnMut(WindowId, u64, Arc<Window>) -> bool,
     F: FnMut(WindowId, u32) -> bool,
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
@@ -599,7 +602,10 @@ where
                 let id = window.id();
                 let window = Arc::new(window);
 
-                (self.on_window_created)(id, request.token, window.clone());
+                if !(self.on_window_created)(id, request.token, window.clone()) {
+                    event_loop.exit();
+                    return;
+                }
                 self.windows.insert(
                     id,
                     PerWindow {

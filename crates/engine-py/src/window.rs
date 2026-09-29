@@ -109,7 +109,13 @@ pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window:
 impl PyWindow {
     #[new]
     #[pyo3(signature = (width=480, height=200, title="tre v2"))]
-    fn new(width: u32, height: u32, title: &str) -> Self {
+    fn new(width: u32, height: u32, title: &str) -> PyResult<Self> {
+        // 0.4.0 review: a GPU surface can't be zero-sized.
+        if width == 0 || height == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "a window needs a positive width and height, got {width}x{height}"
+            )));
+        }
         let mut tree = Tree::new();
         let root = tree.insert(
             NodeKind::Container,
@@ -136,7 +142,7 @@ impl PyWindow {
         );
         let tree = Rc::new(RefCell::new(tree));
         let handlers: HandlerMap = Rc::new(RefCell::new(HashMap::new()));
-        Self(ThreadBound::new(WindowState {
+        Ok(Self(ThreadBound::new(WindowState {
             tree,
             root,
             title: title.to_string(),
@@ -149,7 +155,7 @@ impl PyWindow {
             window_listeners: Rc::new(RefCell::new(HashMap::new())),
             os_window: Rc::new(RefCell::new(None)),
             partial_redraw: Rc::new(Cell::new(true)),
-        }))
+        })))
     }
 
     /// §11.7's own claim, matching `App::run`'s existing `PyWindow::

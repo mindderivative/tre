@@ -4,7 +4,7 @@ animate on their own, so easing one never disturbs another. The swatch
 pans 60px right and 40px down while it grows to 1.5x about its center.
 
 Headless-CI-safe: it renders `max_frames=180` (3s at 60fps) and exits;
-`App.run()` returns quietly where no display or GPU is reachable. The
+`App.run()` returns quietly where no display is reachable. The
 pixel proof that transforms compose is
 `crates/engine-render/tests/transform_composition.rs`.
 """

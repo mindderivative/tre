@@ -6,7 +6,7 @@ press point that grows and fades, then destroys itself from its
 
 The script checks the ripple's life with `window.simulate` and
 `window.advance`, then opens the window. Headless-CI-safe: `App.run()`
-renders `max_frames=60` and returns quietly without a display or GPU.
+renders `max_frames=60` and returns quietly without a display.
 """
 
 from tre import App, Event, Window

@@ -8,7 +8,7 @@ follows the transform.
 
 The script selects a node and zooms with `window.simulate` and
 `window.advance`, then opens the window. Headless-CI-safe: `App.run()`
-renders `max_frames=60` and returns quietly without a display or GPU.
+renders `max_frames=60` and returns quietly without a display.
 """
 
 from tre import App, Window

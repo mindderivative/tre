@@ -40,4 +40,7 @@ pytest 433 + 1 skipped. Report: https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk
 **Phase 2 Step 1 (2026-09-28).** MSRV 1.90 (1.89 failed on ordered-float
 5.5.0), msrv CI job, maturin-action and action-gh-release pinned to SHAs.
 
-Next: Step 2, no adapter raises.
+**Step 2 (2026-09-28).** GPU setup failures raise RuntimeError from
+App.run (platform created-callback returns bool); zero-size Window raises.
+
+Next: Step 3, one shared traversal.

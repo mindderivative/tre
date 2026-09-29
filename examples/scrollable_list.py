@@ -6,7 +6,7 @@ scrolls it; the scrollbar thumb paints on its right edge.
 
 The script counts the rows actually built, then opens the window.
 Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
-without a display or GPU. See docs/guide/nodes-and-layout.md.
+without a display. See docs/guide/nodes-and-layout.md.
 """
 
 from tre import App, Window

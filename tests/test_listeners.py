@@ -530,3 +530,10 @@ def test_simulated_resize_rejects_a_negative_or_non_finite_size() -> None:
         w.simulate("resize", width=-1.0, height=10.0)
     with pytest.raises(ValueError, match="finite, non-negative"):
         w.simulate("resize", width=float("inf"), height=10.0)
+
+
+def test_a_window_needs_a_positive_size() -> None:
+    with pytest.raises(ValueError, match="positive width and height"):
+        tre.Window(width=0, height=100)
+    with pytest.raises(ValueError, match="positive width and height"):
+        tre.Window(width=100, height=0)

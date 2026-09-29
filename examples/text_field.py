@@ -6,7 +6,7 @@ was typed and `change` each edit's before and after.
 
 The script types into it with `window.simulate`, then opens the window
 so you can type for real. Headless-CI-safe: `App.run()` renders
-`max_frames=60` and returns quietly without a display or GPU. See
+`max_frames=60` and returns quietly without a display. See
 docs/guide/text.md.
 """
 
