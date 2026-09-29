@@ -1154,7 +1154,8 @@ mod tests {
         // this codebase has yet (this module's own doc comment); a
         // named key this minimal model simply doesn't assign meaning to.
         assert_eq!(translate_key(&WinitKey::Character("a".into())), None);
-        assert_eq!(translate_key(&WinitKey::Named(NamedKey::PageDown)), None);
+        // (Page Down was the example here until 0.4.2 gave it a meaning.)
+        assert_eq!(translate_key(&WinitKey::Named(NamedKey::Insert)), None);
     }
 
     #[test]
