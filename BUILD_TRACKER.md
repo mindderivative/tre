@@ -24,13 +24,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
 | M9 — Housekeeping and Release `0.4.1` | `██████████` 100% | ✅ Complete (2026-09-29) — `v0.4.1` released on GitHub and PyPI, closing issue #21; Tesserae moved onto it, its side buttons driving back/forward |
 | M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
-| M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `██████████` 100% | ✅ Complete (2026-09-29) — `display="grid"`, track lists, placements, auto tracks and flow, row/column gaps, and item alignment, read back as set |
 | M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M13 — Release `0.4.2` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
-**Just closed:** `v0.4.1` (2026-09-29; PR #22, merge `97d0b4a`), closing issue [#21](https://github.com/mindderivative/tre/issues/21): `window.set(show_damage=True)`, the mouse's back and forward buttons, and partial redraw's costs measured. On GitHub and PyPI as `tesserae-engine` 0.4.1; Tesserae moved onto it (2503 passed), its side buttons driving `back()`/`forward()`.
+**Just closed:** M11 (2026-09-29) -- issue [#23](https://github.com/mindderivative/tre/issues/23): CSS Grid through node properties -- `display="grid"`, `grid_template_columns`/`rows` as track lists (`"200 1fr auto"`, `repeat()`, `minmax()`), `grid_column`/`grid_row` placements, auto tracks and flow, row and column gaps, and item alignment, each read back as set.
 
-**Up next:** `0.4.2` (user, 2026-09-29: "yes, scope them, we will stay on 0.4.x, they both can be on 0.4.2") -- M11, CSS Grid (#23), then M12, scroll views (#24).
+**Up next:** M12 -- scroll views: Page Up/Down keys, keyboard scrolling, `scroll_into_view` and focus reveal, and a `scroll` event (issue #24).
 
 **Known gaps:**
 - None open on this line.
@@ -166,12 +166,12 @@ User: "Start phase 3".
 
 ## Milestone 11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23))
 
-**Status: ⬜ Proposed.** Taffy 0.14 already implements CSS Grid (its default `grid` feature); tre's layout properties, all parsed in `engine-py`'s `node_layout.rs`, are flexbox only. Values follow tre's conventions: plain numbers are pixels.
+**Status: ✅ Complete (2026-09-29).** User: "yes, start M11". Taffy 0.14 already implements CSS Grid (its default `grid` feature); tre's layout properties, all parsed in `engine-py`'s `node_layout.rs`, are flexbox only. Values follow tre's conventions: plain numbers are pixels.
 
-### Phase 1 — Grid ⬜
-- Step 1: `display` (`"flex"`, `"grid"`); `grid_template_columns`/`grid_template_rows` as a string (`"200 1fr auto"`, `"repeat(3, 1fr)"`, `"minmax(120, 1fr)"`, percentages, `auto`, `min_content`/`max_content`) or a list; `grid_column`/`grid_row` on a child (a line, `"span 2"`, `"1 / 3"`, `"auto"`) — ⬜
-- Step 2: `grid_auto_rows`/`grid_auto_columns`, `grid_auto_flow` (`row`/`column`, with `dense`), `row_gap`/`column_gap` (`gap` still sets both), `justify_items`, `justify_self`, `align_content`; `get()` reads each back as set, and the unknown-property error lists them — ⬜
-- Step 3: headless layout tests, a grid section in the layout guide, an `examples/grid.py`, and the stub — ⬜
+### Phase 1 — Grid ✅
+- Step 1: `display` (`"flex"`, `"grid"`); `grid_template_columns`/`grid_template_rows` as a string (`"200 1fr auto"`, `"repeat(3, 1fr)"`, `"minmax(120, 1fr)"`, percentages, `auto`, `min_content`/`max_content`) or a list; `grid_column`/`grid_row` on a child (a line, `"span 2"`, `"1 / 3"`, `"auto"`) — ✅ (2026-09-29: a new `engine-py/src/grid.rs` parses and formats track lists and placements in plain Rust -- CSS's syntax in `tre`'s units, a plain number being pixels, CSS's hyphenated spellings accepted, errors saying what's wrong -- with 4 unit tests; Taffy's own CSS parser (its `parse` feature) was passed over, since it needs `px` units and would add `cssparser`; `node_layout.rs` takes a string or a list, whose numbers are pixels; named lines and template areas left for later)
+- Step 2: `grid_auto_rows`/`grid_auto_columns`, `grid_auto_flow` (`row`/`column`, with `dense`), `row_gap`/`column_gap` (`gap` still sets both), `justify_items`, `justify_self`, `align_content`; `get()` reads each back as set, and the unknown-property error lists them — ✅ (2026-09-29, done with Step 1 in the same parser: 13 layout properties in all, `grid_auto_flow`'s `"dense"` reading back as `"row dense"`; `row_gap` is Taffy's `gap.height` and `column_gap` its `gap.width`)
+- Step 3: headless layout tests, a grid section in the layout guide, an `examples/grid.py`, and the stub — ✅ (2026-09-29: `tests/test_grid.py`, 15 tests -- round trips, a list form, computed widths for `100 1fr` and `repeat(3, 1fr)` with gaps, flow into a second row, spans, a negative line, and 8 bad values' errors; a Grid layout section in the guide and in the properties reference; `examples/grid.py`, a form whose fields line up and a gallery of `repeat(auto_fill, minmax(96, 1fr))` with a spanning tile, checking its own geometry; the stub lists no layout properties, so needed nothing; cargo 377, pytest 467 + 1 skipped)
 
 ---
 

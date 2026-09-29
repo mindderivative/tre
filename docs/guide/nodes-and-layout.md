@@ -86,6 +86,37 @@ time with `padding_top`, `margin_left`, and so on. A `margin` of `"auto"`
 takes up the free space on that side, which pushes a node to the far end of
 its row.
 
+## Grid layout
+
+`display="grid"` lays a node's children out in rows and columns instead of
+one line, so their edges line up across rows -- a settings form of labels and
+fields, a gallery of equal cells, a dashboard of tiles. The columns and rows
+are track lists: pixels, a percentage, `"auto"`, a share of the free space
+(`"1fr"`), `"minmax(min, max)"`, and `"repeat(n, tracks)"`:
+
+```python
+form = window.create("box", display="grid",
+                     grid_template_columns="auto 1fr", row_gap=8, column_gap=12)
+for label, field in rows:
+    form.add_child(label)   # column 1
+    form.add_child(field)   # column 2, as wide as the rest of the form
+```
+
+Children fill the cells in order, a row at a time (`grid_auto_flow="column"`
+fills columns instead). A child can be placed with `grid_column` and
+`grid_row`: a line number (`2`, or `-1` for the last), a span (`"span 2"`), or
+both ends (`"1 / 3"`). A gallery whose cells wrap to fit the width:
+
+```python
+gallery = window.create("box", display="grid", width="100%", gap=8,
+                        grid_template_columns="repeat(auto_fill, minmax(96, 1fr))")
+```
+
+`row_gap` and `column_gap` space the rows and columns apart (`gap` sets both),
+and `justify_items`/`justify_self` place a child across its cell's width the
+way `align_items`/`align_self` do across its height. The full list is in
+[Node properties](../api/python/properties.md#grid-layout).
+
 ## Absolute positioning
 
 `position="absolute"` takes a node out of the flow and places it at `x`/`y`

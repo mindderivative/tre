@@ -66,6 +66,30 @@ As a flex child, any node:
 `padding` and `margin` read back as one value while all four sides agree, and as
 `(top, right, bottom, left)` once they don't.
 
+## Grid layout
+
+0.4.2. On a node with `display="grid"`:
+
+| Property | Value |
+| --- | --- |
+| `display` | `"flex"` (the default) or `"grid"` |
+| `grid_template_columns`, `grid_template_rows` | A track list, as a string or a list: pixels, a percentage, `"auto"`, `"1fr"`, `"min_content"`, `"max_content"`, `"minmax(min, max)"`, `"fit_content(limit)"`, and `"repeat(n, tracks)"` with `n` a count, `"auto_fill"`, or `"auto_fit"` -- e.g. `"200 1fr auto"`, `[120, "1fr"]` |
+| `grid_auto_columns`, `grid_auto_rows` | The size of tracks made for children placed past the template: a track list without `repeat` |
+| `grid_auto_flow` | `"row"` (the default), `"column"`, `"row dense"`, or `"column dense"` |
+| `row_gap`, `column_gap` | Between rows or columns: a number or a percentage; `gap` sets both |
+| `justify_items` | `align_items`' values, across each child's cell |
+| `align_content` | `justify_content`'s values, for the rows as a whole when they don't fill the height |
+
+As a grid child, any node:
+
+| Property | Value |
+| --- | --- |
+| `grid_column`, `grid_row` | A line (`2`, or `-1` counting from the end), `"span 2"`, `"auto"`, or `"start / end"` such as `"1 / 3"` |
+| `justify_self` | One of `align_items`' values, or `None` to follow the parent |
+
+Track lists and placements read back as strings in this syntax. Named grid
+lines and template areas aren't supported yet.
+
 ## Transform, visibility, and order
 
 Every node.

@@ -7,4 +7,6 @@ versions 0.4.2. User: scope #23 (Grid) and #24 (scroll views) for 0.4.2;
 decisions: nearest scroll view for keys, `scroll` on any change by
 comparison, jump (no easing).
 
-Next: M11 Step 1.
+**M11 complete (2026-09-29).** grid.rs (parse/format, 4 unit tests),
+13 layout properties, tests/test_grid.py (15), docs, examples/grid.py.
+cargo 377, pytest 467 + 1 skipped. Next: M12.

@@ -15,6 +15,7 @@ should happen, then opens a window for a few seconds. Run one with
 | `ripple.py` | A press ripple: a clipped, scaling round box that destroys itself when done |
 | `reorder.py` | A keyed list reordered with `insert_child`, keeping identity, focus, and animations |
 | `layout.py` | An app frame from flex rows, a growing content area, and an absolute badge |
+| `grid.py` | A form whose labels and fields line up in grid columns, over a gallery whose cells wrap to fit |
 | `animation.py` | Linear and bezier easing, retargeting mid-flight, and chained `on_complete` |
 | `pan_zoom.py` | The transform parts animating independently |
 | `shadows.py` | Layered shadows easing between elevation levels |

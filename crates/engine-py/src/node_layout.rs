@@ -1,5 +1,6 @@
 //! M96: the layout properties of `node.set`/`node.get` -- size and position,
-//! flex layout, and a node's place as a flex child. Each property is one
+//! flex layout, and a node's place as a flex child -- and (0.4.2 M11,
+//! issue #23) grid layout, its track lists and placements in `grid`. Each property is one
 //! parser, producing an edit to the node's taffy `Style`, and one reader,
 //! giving the value back the way it was set. The vocabularies are tables
 //! read in both directions.
@@ -7,16 +8,19 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use taffy::prelude::{
-    AlignItems, Dimension, FlexDirection, FlexWrap, JustifyContent, LengthPercentage,
+    AlignItems, Dimension, Display, FlexDirection, FlexWrap, JustifyContent, LengthPercentage,
     LengthPercentageAuto, Position, Rect, Style,
 };
+use taffy::style::GridAutoFlow;
+
+use crate::grid;
 use taffy::style::{ExpandedDimension, ExpandedLengthPercentage, ExpandedLengthPercentageAuto};
 
 /// A parsed, validated layout write, applied once every property passed.
 pub(crate) type StyleEdit = Box<dyn FnOnce(&mut Style)>;
 
 /// Every taffy-style layout property, in the order errors list them.
-pub(crate) const LAYOUT_PROPS: [&str; 29] = [
+pub(crate) const LAYOUT_PROPS: [&str; 42] = [
     "width",
     "height",
     "min_width",
@@ -46,6 +50,31 @@ pub(crate) const LAYOUT_PROPS: [&str; 29] = [
     "margin_right",
     "margin_bottom",
     "margin_left",
+    // 0.4.2 M11 (issue #23): grid.
+    "display",
+    "grid_template_columns",
+    "grid_template_rows",
+    "grid_auto_columns",
+    "grid_auto_rows",
+    "grid_auto_flow",
+    "grid_column",
+    "grid_row",
+    "row_gap",
+    "column_gap",
+    "justify_items",
+    "justify_self",
+    "align_content",
+];
+
+const DISPLAY: [(&str, Display); 2] = [("flex", Display::Flex), ("grid", Display::Grid)];
+
+const GRID_AUTO_FLOW: [(&str, GridAutoFlow); 5] = [
+    ("row", GridAutoFlow::Row),
+    ("column", GridAutoFlow::Column),
+    ("row dense", GridAutoFlow::RowDense),
+    ("column dense", GridAutoFlow::ColumnDense),
+    // CSS's shorthand for "row dense"; reads back as that.
+    ("dense", GridAutoFlow::RowDense),
 ];
 
 pub(crate) const FLEX_DIRECTION: [(&str, FlexDirection); 2] = [
@@ -241,6 +270,48 @@ fn sides_to_py<T: Copy + PartialEq>(
     to_py(sides, py)
 }
 
+/// A track list as text: a string as it is, or a list whose numbers are
+/// pixels and whose strings are tracks or `repeat(...)` groups.
+fn track_list(value: &Bound<'_, PyAny>, name: &str) -> PyResult<String> {
+    let expected = "a track list like \"200 1fr auto\" or [200, \"1fr\", \"auto\"]";
+    if let Ok(text) = value.extract::<String>() {
+        return Ok(text);
+    }
+    let items: Vec<Bound<'_, PyAny>> = value
+        .try_iter()
+        .map_err(|_| invalid(name, expected))?
+        .collect::<PyResult<_>>()?;
+    items
+        .iter()
+        .map(|item| {
+            if let Ok(text) = item.extract::<String>() {
+                Ok(text)
+            } else {
+                non_negative(item, name, expected).map(|v| v.to_string())
+            }
+        })
+        .collect::<PyResult<Vec<_>>>()
+        .map(|parts| parts.join(" "))
+}
+
+/// A grid placement as text: a line number, or a string.
+fn placement_text(value: &Bound<'_, PyAny>, name: &str) -> PyResult<String> {
+    let expected = "a line like 2, \"span 2\", \"1 / 3\", or \"auto\"";
+    if value.is_instance_of::<pyo3::types::PyBool>() {
+        return Err(invalid(name, expected));
+    }
+    if let Ok(n) = value.extract::<i64>() {
+        return Ok(n.to_string());
+    }
+    value
+        .extract::<String>()
+        .map_err(|_| invalid(name, expected))
+}
+
+fn grid_error(name: &str, why: String) -> PyErr {
+    PyValueError::new_err(format!("node property `{name}`: {why}"))
+}
+
 fn edit(f: impl FnOnce(&mut Style) + 'static) -> PyResult<StyleEdit> {
     Ok(Box::new(f))
 }
@@ -400,6 +471,65 @@ fn parse_known(name: &str, value: &Bound<'_, PyAny>) -> PyResult<StyleEdit> {
             let v = dimension(value, name)?;
             edit(move |s| s.flex_basis = v)
         }
+        "display" => {
+            let v = keyword(&DISPLAY, value, name)?;
+            edit(move |s| s.display = v)
+        }
+        "grid_template_columns" | "grid_template_rows" => {
+            let tracks = grid::parse_template(&track_list(value, name)?)
+                .map_err(|why| grid_error(name, why))?;
+            if name == "grid_template_columns" {
+                edit(move |s| s.grid_template_columns = tracks)
+            } else {
+                edit(move |s| s.grid_template_rows = tracks)
+            }
+        }
+        "grid_auto_columns" | "grid_auto_rows" => {
+            let tracks = grid::parse_auto_tracks(&track_list(value, name)?)
+                .map_err(|why| grid_error(name, why))?;
+            if name == "grid_auto_columns" {
+                edit(move |s| s.grid_auto_columns = tracks)
+            } else {
+                edit(move |s| s.grid_auto_rows = tracks)
+            }
+        }
+        "grid_auto_flow" => {
+            let v = keyword(&GRID_AUTO_FLOW, value, name)?;
+            edit(move |s| s.grid_auto_flow = v)
+        }
+        "grid_column" | "grid_row" => {
+            let placement = grid::parse_placement(&placement_text(value, name)?)
+                .map_err(|why| grid_error(name, why))?;
+            if name == "grid_column" {
+                edit(move |s| s.grid_column = placement)
+            } else {
+                edit(move |s| s.grid_row = placement)
+            }
+        }
+        "row_gap" => {
+            let v = length_percentage(value, name)?;
+            edit(move |s| s.gap.height = v)
+        }
+        "column_gap" => {
+            let v = length_percentage(value, name)?;
+            edit(move |s| s.gap.width = v)
+        }
+        "justify_items" => {
+            let v = keyword(&ALIGN, value, name)?;
+            edit(move |s| s.justify_items = Some(v))
+        }
+        "justify_self" => {
+            let v = if value.is_none() {
+                None
+            } else {
+                Some(keyword(&ALIGN, value, name)?)
+            };
+            edit(move |s| s.justify_self = v)
+        }
+        "align_content" => {
+            let v = keyword(&JUSTIFY, value, name)?;
+            edit(move |s| s.align_content = Some(v))
+        }
         _ => unreachable!("parse_layout checks LAYOUT_PROPS first"),
     }
 }
@@ -441,6 +571,19 @@ pub(crate) fn read_layout(
         "flex_grow" => to_py(f64::from(style.flex_grow), py),
         "flex_shrink" => to_py(f64::from(style.flex_shrink), py),
         "flex_basis" => dimension_to_py(style.flex_basis, py),
+        "display" => to_py(name_of(&DISPLAY, &style.display), py),
+        "grid_template_columns" => to_py(grid::template_text(&style.grid_template_columns), py),
+        "grid_template_rows" => to_py(grid::template_text(&style.grid_template_rows), py),
+        "grid_auto_columns" => to_py(grid::auto_tracks_text(&style.grid_auto_columns), py),
+        "grid_auto_rows" => to_py(grid::auto_tracks_text(&style.grid_auto_rows), py),
+        "grid_auto_flow" => to_py(name_of(&GRID_AUTO_FLOW, &style.grid_auto_flow), py),
+        "grid_column" => to_py(grid::placement_text_line(&style.grid_column), py),
+        "grid_row" => to_py(grid::placement_text_line(&style.grid_row), py),
+        "row_gap" => length_percentage_to_py(style.gap.height, py),
+        "column_gap" => length_percentage_to_py(style.gap.width, py),
+        "justify_items" => to_py(style.justify_items.map(|v| name_of(&ALIGN, &v)), py),
+        "justify_self" => to_py(style.justify_self.map(|v| name_of(&ALIGN, &v)), py),
+        "align_content" => to_py(style.align_content.map(|v| name_of(&JUSTIFY, &v)), py),
         _ => return None,
     };
     Some(value)

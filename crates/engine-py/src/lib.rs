@@ -13,6 +13,7 @@ mod dispatch;
 mod dock;
 mod error;
 mod event;
+mod grid;
 mod listeners;
 mod node;
 mod node_callbacks;
