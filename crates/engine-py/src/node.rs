@@ -492,6 +492,12 @@ pub(crate) fn validate_rgba_frame_len(
     let expected_len = (width as usize)
         .checked_mul(height as usize)
         .and_then(|pixels| pixels.checked_mul(4));
+    let max = engine_render::MAX_IMAGE_DIMENSION;
+    if width > max || height > max {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{context}: a {width}x{height} image is larger than the {max}x{max} a GPU texture can be"
+        )));
+    }
     if expected_len != Some(rgba_len) {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
             "{context}: rgba has {rgba_len} bytes, but a {width}x{height} RGBA8 frame needs {}",

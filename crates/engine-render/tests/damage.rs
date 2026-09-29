@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use engine_core::{
     CanvasState, DrawCommand, ImageState, MotionCurve, NodeId, NodeKind, PaintProperties,
-    ScrollViewState, TextFieldState, TextState, Tree,
+    ScrollViewState, TerminalState, TextFieldState, TextState, Tree,
 };
 use engine_render::{Damage, DamageTracker, MAX_RECTS, TextRenderer};
 use peniko::Color;
@@ -485,4 +485,29 @@ fn many_changes_in_one_corner_stay_a_partial_redraw() {
     assert_eq!(rects(&damage).len(), 1, "{damage:?}");
     assert!(covers(&damage, Rect::new(10.0, 10.0, 122.0, 95.0)));
     assert!(within(&damage, Rect::new(10.0, 10.0, 122.0, 95.0), 3.0));
+}
+
+#[test]
+fn a_terminal_is_damaged_across_its_whole_grid_not_just_its_box() {
+    // The grid paints unclipped: a box squeezed narrower than cols x rows
+    // still shows every column.
+    let mut s = Scene::new();
+    let terminal = s.add(
+        s.root,
+        NodeKind::Terminal(TerminalState::new(12, 2, "Hack Nerd Font Mono", 24.0)),
+        10.0,
+        10.0,
+        20.0,
+        20.0,
+    );
+    s.settle();
+    let NodeKind::Terminal(state) = &mut s.tree.get_mut(terminal).unwrap().kind else {
+        unreachable!()
+    };
+    state.cells[11].ch = 'x';
+    let damage = s.frame();
+    assert!(
+        covers(&damage, Rect::new(10.0, 10.0, 110.0, 30.0)),
+        "the far columns are damaged: {damage:?}"
+    );
 }

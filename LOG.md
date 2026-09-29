@@ -30,4 +30,11 @@ fixing what the first run found -- 117-180 ms from the cubic pair merge
 over 577 rects; past 64 rects the merge now takes their bounding box.
 Two new damage tests. cargo 366.
 
-Next: M6, release 0.4.0.
+**Pre-release review (2026-09-28).** Four-lens workflow, 8 agents; 33
+findings, 32 confirmed, 20 fixed. Headline: partial redraw culled by
+layout box and skipped subtrees, so shadows and overflowing children kept
+stale pixels -- now one shared painted extent. Also size clamps, image
+limits, surface Outdated recovery, walk perf, CI token scope. cargo 370,
+pytest 433 + 1 skipped. Report: https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk3
+
+Next: the review's open decisions, then M6 Phase 2 (release).

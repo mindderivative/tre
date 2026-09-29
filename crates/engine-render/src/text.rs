@@ -1,8 +1,8 @@
-//! `parley`-based text shaping, feeding `vello_hybrid`'s low-level glyph
+//! `parley`-based text shaping, feeding `vello_gpu`'s low-level glyph
 //! API (§14 step 4, the typography spike).
 //!
 //! `parley` shapes text (line-breaking, BiDi, font-fallback) into a
-//! `Layout` of positioned glyph runs; `vello_hybrid` only knows how to
+//! `Layout` of positioned glyph runs; `vello_gpu` only knows how to
 //! draw an already-positioned run of glyph ids (`Scene::glyph_run`,
 //! backed by `glifo::Glyph { id, x, y }`) -- this module is the glue
 //! between the two, which is exactly what §14 step 4 exists to spike:
@@ -639,7 +639,7 @@ impl TextRenderer {
     /// Asks `shaped_layout` exactly as `draw` does (`color` included, as
     /// `draw`'s `TextPlacement` passes it), so it reuses the same cached
     /// layout rather than shaping again.
-    pub fn text_extent(
+    pub(crate) fn text_extent(
         &mut self,
         state: &TextState,
         max_width: f32,

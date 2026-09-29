@@ -28,7 +28,7 @@ use std::hash::{Hash, Hasher};
 use engine_core::{
     CanvasState, CellColor, DrawCommand, ImageState, ItemExtent, Node, NodeId, NodeKind,
     PaintProperties, PathState, ScrollViewState, TerminalState, TextFieldState, TextOptions,
-    TextState, Tree, VirtualListState,
+    TextState, Tree, VirtualListState, fit_transform,
 };
 use peniko::Color;
 use peniko::kurbo::{Affine, Rect, Shape};
@@ -121,7 +121,11 @@ impl DamageTracker {
             match previous.get(id) {
                 Some(before) if before == now => {}
                 Some(before) => {
-                    rects.push(before.painted);
+                    // A change in place (a colour, a glyph) needs its rect
+                    // once, not twice toward the `MAX_TRACKED` cap.
+                    if before.painted != now.painted {
+                        rects.push(before.painted);
+                    }
                     rects.push(now.painted);
                 }
                 None => rects.push(now.painted),
@@ -167,16 +171,9 @@ impl Walk<'_> {
         }
         let effective = parent_opacity * opacity;
 
-        let local = self.local_painted(id, node, w, h);
-        let mut painted = transformed_bounds(composed, local);
-        if let NodeKind::TextField(state) = &node.kind
-            && !state.multiline
-        {
-            // A single-line input's text scrolls sideways past its box,
-            // unclipped: take its whole row across the visible width.
-            painted = painted.union(Rect::new(visible.x0, bounds.y0, visible.x1, bounds.y1));
-        }
-        let painted = round_out(painted.inflate(MARGIN, MARGIN).intersect(visible));
+        let painted = round_out(painted_rect(
+            self.text, id, node, composed, w, h, bounds, visible,
+        ));
 
         let mut hasher = std::hash::DefaultHasher::new();
         parent.hash(&mut hasher);
@@ -204,67 +201,105 @@ impl Walk<'_> {
             self.visit(child, composed, child_visible, effective, Some(id), index);
         }
     }
+}
 
-    /// What `node` paints, in its own coordinates: its box, plus whatever
-    /// reaches past it.
-    fn local_painted(&mut self, id: NodeId, node: &Node, w: f64, h: f64) -> Rect {
-        let mut local = Rect::new(0.0, 0.0, w, h);
-        for shadow in &node.paint.shadows.current.0 {
-            if shadow.color.components[3] <= 0.0 {
-                continue;
+/// What `node` paints, in window pixels: its own extent (`local_painted`)
+/// under `composed`, a single-line text input's whole row, and an
+/// antialiasing margin, within `visible`. 0.4.0: shared by the damage walk
+/// and partial redraw's culling, so a node is repainted wherever it's
+/// recorded as painting.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn painted_rect(
+    text: &mut TextRenderer,
+    id: NodeId,
+    node: &Node,
+    composed: Affine,
+    w: f64,
+    h: f64,
+    bounds: Rect,
+    visible: Rect,
+) -> Rect {
+    let local = local_painted(text, id, node, w, h);
+    let mut painted = transformed_bounds(composed, local);
+    if let NodeKind::TextField(state) = &node.kind
+        && !state.multiline
+    {
+        // A single-line input's text scrolls sideways past its box,
+        // unclipped: take its whole row across the visible width.
+        painted = painted.union(Rect::new(visible.x0, bounds.y0, visible.x1, bounds.y1));
+    }
+    painted.inflate(MARGIN, MARGIN).intersect(visible)
+}
+
+/// What `node` paints, in its own coordinates: its box, plus whatever
+/// reaches past it.
+fn local_painted(text: &mut TextRenderer, id: NodeId, node: &Node, w: f64, h: f64) -> Rect {
+    let mut local = Rect::new(0.0, 0.0, w, h);
+    for shadow in &node.paint.shadows.current.0 {
+        if shadow.color.components[3] <= 0.0 {
+            continue;
+        }
+        // A Gaussian blur with standard deviation `blur / 2` fades
+        // out by 3 deviations; `blur * 2` is past that.
+        let reach = shadow.spread + shadow.blur * 2.0;
+        local = local.union(Rect::new(
+            shadow.offset_x - reach,
+            shadow.offset_y - reach,
+            w + shadow.offset_x + reach,
+            h + shadow.offset_y + reach,
+        ));
+    }
+    match &node.kind {
+        NodeKind::Text(state) => {
+            let (tw, th) = text.text_extent(state, w as f32, node.paint.background.current, id);
+            // Glyphs overhang their advance a little (italics,
+            // ascenders); a quarter of the font size covers it.
+            let overhang = f64::from(state.font_size) * 0.25;
+            local = local.union(
+                Rect::new(0.0, 0.0, f64::from(tw), f64::from(th)).inflate(overhang, overhang),
+            );
+        }
+        NodeKind::Path(state) => {
+            // Bounded without building the geometry: the fit is a uniform
+            // scale and a translation, so it maps the data's box exactly,
+            // and a trimmed stroke lies within the whole path.
+            let bounds = fit_transform(state.view_box, w, h)
+                .transform_rect_bbox(state.data.current.0.bounding_box());
+            let half = node.paint.border_width.current / 2.0;
+            local = local.union(bounds.inflate(half, half));
+        }
+        NodeKind::Canvas(state) => {
+            for command in &state.commands {
+                local = local.union(match command {
+                    DrawCommand::FillRect {
+                        x,
+                        y,
+                        width,
+                        height,
+                        ..
+                    } => Rect::new(*x, *y, x + width, y + height),
+                    DrawCommand::FillCircle { cx, cy, radius, .. } => {
+                        Rect::new(cx - radius, cy - radius, cx + radius, cy + radius)
+                    }
+                    DrawCommand::StrokePath { path, width, .. } => {
+                        path.bounding_box().inflate(width / 2.0, width / 2.0)
+                    }
+                });
             }
-            // A Gaussian blur with standard deviation `blur / 2` fades
-            // out by 3 deviations; `blur * 2` is past that.
-            let reach = shadow.spread + shadow.blur * 2.0;
+        }
+        NodeKind::Terminal(state) => {
+            // The whole cols x rows grid, unclipped, whatever the box.
+            let (cw, ch) = text.monospace_cell_size(&state.font_family, state.font_size);
             local = local.union(Rect::new(
-                shadow.offset_x - reach,
-                shadow.offset_y - reach,
-                w + shadow.offset_x + reach,
-                h + shadow.offset_y + reach,
+                0.0,
+                0.0,
+                f64::from(state.cols) * f64::from(cw),
+                f64::from(state.rows) * f64::from(ch),
             ));
         }
-        match &node.kind {
-            NodeKind::Text(state) => {
-                let (tw, th) =
-                    self.text
-                        .text_extent(state, w as f32, node.paint.background.current, id);
-                // Glyphs overhang their advance a little (italics,
-                // ascenders); a quarter of the font size covers it.
-                let overhang = f64::from(state.font_size) * 0.25;
-                local = local.union(
-                    Rect::new(0.0, 0.0, f64::from(tw), f64::from(th)).inflate(overhang, overhang),
-                );
-            }
-            NodeKind::Path(state) => {
-                let (fill, stroke) = state.geometry(w, h);
-                let half = node.paint.border_width.current / 2.0;
-                local = local
-                    .union(fill.bounding_box())
-                    .union(stroke.bounding_box().inflate(half, half));
-            }
-            NodeKind::Canvas(state) => {
-                for command in &state.commands {
-                    local = local.union(match command {
-                        DrawCommand::FillRect {
-                            x,
-                            y,
-                            width,
-                            height,
-                            ..
-                        } => Rect::new(*x, *y, x + width, y + height),
-                        DrawCommand::FillCircle { cx, cy, radius, .. } => {
-                            Rect::new(cx - radius, cy - radius, cx + radius, cy + radius)
-                        }
-                        DrawCommand::StrokePath { path, width, .. } => {
-                            path.bounding_box().inflate(width / 2.0, width / 2.0)
-                        }
-                    });
-                }
-            }
-            _ => {}
-        }
-        local
+        _ => {}
     }
+    local
 }
 
 /// Everything about `node` itself that decides its pixels.
@@ -555,7 +590,10 @@ fn list_fingerprint(h: &mut impl Hasher, state: &VirtualListState) {
         // Its rows are nodes, which fingerprint themselves.
         materialized: _,
         scroll_offset,
-        resolved_offsets,
+        // Moving rows are nodes that fingerprint themselves; the list's
+        // own paint (its thumb) reads only the total extent, hashed below
+        // -- not every offset, which a long list would pay for per frame.
+        resolved_offsets: _,
         thumb_drag_anchor,
     } = state;
     item_count.hash(h);
@@ -564,10 +602,7 @@ fn list_fingerprint(h: &mut impl Hasher, state: &VirtualListState) {
         ItemExtent::Variable => 1u8.hash(h),
     }
     num(h, scroll_offset.current);
-    for (index, offset) in resolved_offsets {
-        index.hash(h);
-        num(h, *offset);
-    }
+    num(h, state.total_extent());
     thumb_drag_anchor
         .map(|(a, b)| (a.to_bits(), b.to_bits()))
         .hash(h);

@@ -28,7 +28,8 @@ take what their own docs say.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, overload
 
 Color = tuple[int, int, int, int]
 """An `(r, g, b, a)` byte tuple, 0-255 per channel, straight alpha."""
@@ -280,8 +281,17 @@ class Window:
     def set(self, *, title: str = ..., partial_redraw: bool = ...) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
-        each frame, `False` redraws the whole window every frame."""
+        each frame, `False` redraws the whole window every frame. A window
+        whose surface can't be copied into always redraws in full, with a
+        warning logged, whatever this says."""
         ...
+    @overload
+    def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
+    @overload
+    def get(self, name: Literal["title"]) -> str: ...
+    @overload
+    def get(self, name: Literal["partial_redraw"]) -> bool: ...
+    @overload
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, `scale_factor`
         (`1.0` until `App.run()` opens the window), or `partial_redraw`."""

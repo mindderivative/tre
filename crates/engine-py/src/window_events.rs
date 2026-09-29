@@ -744,6 +744,11 @@ impl PyWindow {
                 let height = f.f64("height")?;
                 let height = f.required("height", height)?;
                 f.done()?;
+                if !(width.is_finite() && height.is_finite() && width >= 0.0 && height >= 0.0) {
+                    return Err(PyValueError::new_err(
+                        "`resize` needs a finite, non-negative width and height",
+                    ));
+                }
                 self.width.set(width as u32);
                 self.height.set(height as u32);
                 tree.borrow_mut().dispatch(

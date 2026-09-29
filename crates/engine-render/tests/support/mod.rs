@@ -1,11 +1,15 @@
 //! The headless render-to-texture-then-readback harness the building-block
 //! pixel tests share (`m95_paint.rs`, `m96_paint.rs`): a 100x100 target, a
-//! `Frame` to read pixels from, and small tree-building helpers. Each test
-//! binary uses part of it.
+//! `Frame` to read pixels from, and small tree-building helpers -- and
+//! (0.4.0 review) the GPU device setup and readback other tests share
+//! (`persistent_target.rs`, `partial_redraw.rs`, `partial_redraw_bench.rs`).
+//! Each test binary uses part of it.
 #![allow(dead_code)]
 
 use engine_core::{NodeId, NodeKind, PaintProperties, Tree};
-use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
+use engine_render::{
+    FrameRenderer, GeometryCache, PersistentTarget, TextRenderer, build_tree_scene,
+};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, length};
 use vello_gpu::{RenderSize, RenderTargetConfig};
@@ -18,10 +22,9 @@ pub const BLACK: Color = Color::from_rgba8(0x00, 0x00, 0x00, 0xFF);
 pub const GREEN: Color = Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF);
 pub const CLEAR: Color = Color::from_rgba8(0, 0, 0, 0);
 
-pub async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
-    let (width, height) = (SIZE, SIZE);
-    let instance = wgpu::Instance::default();
-    let adapter = instance
+/// A device and queue on the default adapter, with its real limits.
+pub async fn device(label: &str) -> (wgpu::Device, wgpu::Queue) {
+    let adapter = wgpu::Instance::default()
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
             force_fallback_adapter: false,
@@ -30,14 +33,84 @@ pub async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
         })
         .await
         .expect("no wgpu adapter available in this environment");
-    let (device, queue) = adapter
+    adapter
         .request_device(&wgpu::DeviceDescriptor {
-            label: Some("engine-render m95 test device"),
+            label: Some(label),
             required_features: wgpu::Features::empty(),
             ..Default::default()
         })
         .await
-        .expect("failed to create wgpu device");
+        .expect("failed to create wgpu device")
+}
+
+/// `texture`'s pixels, read back once the queue's work is done -- rows
+/// padded to 256 bytes, as `Frame` expects.
+pub fn read_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+) -> Vec<u8> {
+    let bytes_per_row = (texture.width() * 4).next_multiple_of(256);
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: u64::from(bytes_per_row) * u64::from(texture.height()),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bytes_per_row),
+                rows_per_image: None,
+            },
+        },
+        texture.size(),
+    );
+    queue.submit([encoder.finish()]);
+    let slice = readback.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |result| {
+        result.expect("failed to map readback buffer");
+    });
+    device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .expect("device poll failed");
+    let data = slice.get_mapped_range().expect("the readback buffer maps");
+    data.to_vec()
+}
+
+/// Copies `target` into a fresh stand-in swapchain image, as a window's
+/// frame does, and reads the image back.
+pub fn copy_out(device: &wgpu::Device, queue: &wgpu::Queue, target: &PersistentTarget) -> Vec<u8> {
+    let (width, height) = target.size();
+    let image = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("stand-in swapchain image"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let mut encoder =
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    target.copy_to(&mut encoder, &image);
+    queue.submit([encoder.finish()]);
+    read_texture(device, queue, &image)
+}
+
+pub async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
+    let (width, height) = (SIZE, SIZE);
+    let (device, queue) = device("engine-render m95 test device").await;
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("m95 test target"),
         size: wgpu::Extent3d {
@@ -76,46 +149,9 @@ pub async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     frame_renderer.render(&scene, &device, &queue, &mut encoder, &render_size, &view);
-    let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("readback"),
-        size: u64::from(bytes_per_row) * u64::from(height),
-        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-        mapped_at_creation: false,
-    });
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::All,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &readback,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: None,
-            },
-        },
-        wgpu::Extent3d {
-            width: u32::from(width),
-            height: u32::from(height),
-            depth_or_array_layers: 1,
-        },
-    );
     queue.submit([encoder.finish()]);
-    let slice = readback.slice(..);
-    slice.map_async(wgpu::MapMode::Read, |result| {
-        result.expect("failed to map readback buffer");
-    });
-    device
-        .poll(wgpu::PollType::wait_indefinitely())
-        .expect("device poll failed");
-    let data = slice.get_mapped_range().expect("the readback buffer maps");
-    let mut out = vec![0u8; data.len()];
-    out.copy_from_slice(&data);
-    (out, bytes_per_row)
+    let bytes_per_row = (u32::from(width) * 4).next_multiple_of(256);
+    (read_texture(&device, &queue, &texture), bytes_per_row)
 }
 
 pub struct Frame {

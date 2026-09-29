@@ -49,42 +49,8 @@ struct Gpu {
 
 impl Gpu {
     async fn new() -> Self {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                force_fallback_adapter: false,
-                apply_limit_buckets: false,
-                compatible_surface: None,
-            })
-            .await
-            .expect("no wgpu adapter available in this environment");
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("persistent target test device"),
-                ..Default::default()
-            })
-            .await
-            .expect("failed to create wgpu device");
+        let (device, queue) = support::device("persistent target test device").await;
         Self { device, queue }
-    }
-
-    /// A texture standing in for a swapchain image: the size of the
-    /// scene, copied into, and read back.
-    fn swapchain_image(&self) -> wgpu::Texture {
-        self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("stand-in swapchain image"),
-            size: wgpu::Extent3d {
-                width: u32::from(SIZE),
-                height: u32::from(SIZE),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: FORMAT,
-            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        })
     }
 
     /// Renders `tree` into `target`, as a window's frame does.
@@ -126,40 +92,7 @@ impl Gpu {
     /// Copies `target` into a fresh stand-in swapchain image and reads the
     /// image's pixels back, rows padded to 256 bytes as `support::render`'s are.
     fn copy_out(&self, target: &PersistentTarget) -> Vec<u8> {
-        let image = self.swapchain_image();
-        let bytes_per_row = (u32::from(SIZE) * 4).next_multiple_of(256);
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: u64::from(bytes_per_row) * u64::from(SIZE),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        target.copy_to(&mut encoder, &image);
-        encoder.copy_texture_to_buffer(
-            image.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: None,
-                },
-            },
-            image.size(),
-        );
-        self.queue.submit([encoder.finish()]);
-        let slice = readback.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |result| {
-            result.expect("failed to map readback buffer");
-        });
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("device poll failed");
-        let data = slice.get_mapped_range().expect("the readback buffer maps");
-        data.to_vec()
+        support::copy_out(&self.device, &self.queue, target)
     }
 }
 

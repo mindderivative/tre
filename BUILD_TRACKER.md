@@ -17,11 +17,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M3 — A Persistent Offscreen Target and Blit | `██████████` 100% | ✅ Complete (2026-09-28) — each window renders into a texture that keeps its frame, copied to the screen byte-exact |
 | M4 — Dirty-Region Tracking | `██████████` 100% | ✅ Complete (2026-09-28) — `DamageTracker` reports what changed each frame as at most 4 rects, or a full redraw |
 | M5 — Partial Redraw End to End, Measured | `██████████` 100% | ✅ Complete (2026-09-28) — every window redraws only what changed, byte-identical to a full redraw; a small animation in a 1920x1080 window costs 3.7–4.9x less GPU+CPU time a frame than `v0.3.5.1`, a whole-window change the same |
-| M6 — Release `0.4.0` | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M6 — Release `0.4.0` | `███░░░░░░░` 33% | 🚧 In Progress — pre-release review done: 32 confirmed findings, 20 fixed (one a partial-redraw stale-pixel bug), the rest awaiting decisions |
 
-**Just closed:** M5 (2026-09-28) -- partial redraw end to end: each window renders only inside its damage rects over the kept frame, or nothing at all when nothing changed, byte-identical to a full redraw after single changes and every frame of every property the examples animate. A small animation in a 1920x1080 window costs 3.7-4.9x less a frame than `v0.3.5.1`; a whole-window change costs the same, once the measurement's own find -- a cubic merge at 577 changed rects -- was capped. `window.set(partial_redraw=False)` turns it off.
+**Just closed:** M6 Phase 1 (2026-09-28) -- the pre-release review: 32 confirmed findings across four lenses, 20 fixed and verified, including a partial-redraw bug where a node's shadow or an overflowing child kept stale pixels, and panics on oversized windows and images. The rest wait on decisions ([report](https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk3)).
 
-**Up next:** M6, release `0.4.0`.
+**Up next:** the review's open decisions, then M6 Phase 2 -- PR to `main`, CI, merge, tag `v0.4.0`.
 
 **Known gaps:**
 - None open on this line.
@@ -87,9 +87,12 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 6 — Release `0.4.0`
 
-**Status: ⬜ Proposed.**
+**Status: 🚧 In Progress.** Phase 1 done (2026-09-28).
 
-### Phase 1 — Release ⬜
+### Phase 1 — Pre-release Review ✅
+- Step 1: a full `/review-project` of the branch -- performance, architecture, security, modernization, each finding adversarially verified — ✅ (2026-09-28, user: "Before we move on to M6, lets do a full /review-project of tre"; [report](https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk3); 33 findings, 32 confirmed, 20 fixed: a real partial-redraw bug -- a node's shadow or a child overflowing a non-clipping parent kept stale pixels when something else changed under it, since paint culled by layout box and skipped whole subtrees -- fixed by one shared painted-extent function (`damage::painted_rect`) both walks use, partial frames culling as full ones do and drawing a node only where that extent reaches a rect, 2 GPU reproducers; windows past the GPU's 8192 texture limit clamped instead of panicking, and a simulated resize validated; images past `MAX_IMAGE_DIMENSION` rejected from Python and otherwise skipped with a warning; an `Outdated` surface reconfigured and retried, `Suboptimal` reconfigured after presenting, and a skipped frame re-marks the tree dirty (new `Tree::mark_dirty`); the damage walk skipped when its answer is unused; list offsets, path geometry, and duplicate in-place rects out of the per-frame walk; a terminal damaged across its whole grid; same-size image frames written into their texture; clear and clip rects both rounded out; the release workflow's write token limited to `publish`; stale `vello_hybrid` comments, a hand-rolled bounds fold, stub typing, a duplicate unpin, over-wide API, and the 0.4.0 tests' duplicated GPU setup cleaned up; left for the user: one shared walker, a per-window renderer type, the exit-0 on no adapter, lost-surface recreation, presenting on unchanged frames, terminal/canvas hashing, MSRV and action SHA pins, and smaller structural items; cargo 370, pytest 433 + 1 skipped, 20 examples)
+
+### Phase 2 — Release ⬜
 - Step 1: PR to `main`, CI green on all three platforms, merge, re-verify, release note, annotated tag, as with `v0.3.5` — ⬜
 - Step 2: Tesserae moves to `0.4.0` — ⬜
 

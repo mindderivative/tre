@@ -6,7 +6,8 @@
 //! `layout_tree.rs` (step 3).
 //!
 //! The claim this test exists to prove isn't "it compiles" -- it's that
-//! the exact pinned `vello_hybrid` 0.2.0 genuinely runs a Gaussian blur
+//! the exact pinned renderer (`vello_hybrid` 0.2.0 then; 0.4.0: `vello_gpu`
+//! at its pinned commit) genuinely runs a Gaussian blur
 //! over the rect's coverage, not a hard-edged fill. Four points sampled
 //! along one line, straight out from a non-corner edge, must show a
 //! real falloff: fully opaque deep inside, roughly half-coverage right

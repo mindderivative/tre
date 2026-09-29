@@ -204,6 +204,13 @@ impl Tree {
         std::mem::replace(&mut self.dirty, false)
     }
 
+    /// Marks the tree as needing a frame -- for a caller that took the
+    /// flag but couldn't draw that frame (0.4.0 review: a surface that
+    /// had to be reconfigured first), so the next one does.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
     /// Creates a new, parentless node (attach it under another with
     /// `add_child`, or leave it as a root passed to `compute_layout`).
     pub fn insert(

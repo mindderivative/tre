@@ -522,3 +522,11 @@ def test_simulate_rejects_a_node_from_another_window() -> None:
     stranger = add(other, "box", fill=BLACK, width=40, height=40)
     with pytest.raises(Exception, match="(?i)another|foreign|window"):
         w.simulate("click", node=stranger)
+
+
+def test_simulated_resize_rejects_a_negative_or_non_finite_size() -> None:
+    w = window()
+    with pytest.raises(ValueError, match="finite, non-negative"):
+        w.simulate("resize", width=-1.0, height=10.0)
+    with pytest.raises(ValueError, match="finite, non-negative"):
+        w.simulate("resize", width=float("inf"), height=10.0)

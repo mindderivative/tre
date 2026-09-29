@@ -1,6 +1,7 @@
 //! Vello Scene building and GPU rendering.
 //!
-//! §14 build-order step 1: one static rounded rect through `vello_hybrid`.
+//! §14 build-order step 1: one static rounded rect through the renderer
+//! (`vello_hybrid` then; 0.4.0 M2: upstream `vello_gpu` at a pinned commit).
 //! No layout, no text, no Python -- proving the render pipeline itself
 //! exists before anything is built on top of it (Design Principle 5).
 //!
@@ -12,7 +13,7 @@
 //!
 //! §14 build-order step 4 adds `NodeKind::Text` handling to that same
 //! walk, via the `text` module's `TextRenderer` (`parley` shaping fed
-//! into `vello_hybrid`'s low-level glyph API).
+//! into the renderer's low-level glyph API).
 //!
 //! Depends on `engine-core` for `Tree`/`NodeId`/`NodeKind`/
 //! `PaintProperties` and, for windowing, on nothing at all -- this crate
@@ -33,17 +34,18 @@ use engine_core::{
     ScrollViewState, Tree, VirtualListState,
 };
 use peniko::Color;
-use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
+use peniko::kurbo::{Affine, BezPath, Circle, Rect, RoundedRect, Shape, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
-pub use damage::{Damage, DamageTracker, FULL_FRACTION, MAX_RECTS};
+pub use damage::{Damage, DamageTracker, MAX_RECTS};
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
+pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 
 /// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
-/// starting color, not vello_hybrid's own default, so a wrong pixel in a
+/// starting color, not the renderer's own default, so a wrong pixel in a
 /// readback test can't be confused with "the renderer drew nothing and
 /// left its own default."
 pub const INITIAL_COLOR: Color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
@@ -85,8 +87,9 @@ pub fn build_rect_scene(width: u16, height: u16, color: Color, opacity: f64) -> 
     scene
 }
 
-/// §14 build-order step 8: standalone spike proving `vello_hybrid`
-/// 0.2.0's `Scene::fill_blurred_rounded_rect` actually produces a real
+/// §14 build-order step 8: standalone spike proving the renderer's
+/// `Scene::fill_blurred_rounded_rect` (then `vello_hybrid` 0.2.0; 0.4.0:
+/// `vello_gpu`, and `tests/shadow_spike.rs` still checks it) produces a real
 /// Gaussian-blurred shadow, not just that the call compiles -- the
 /// exact risk named in §7.2/§15 ("early-stage per Vello's own release
 /// notes, no API stability guarantee yet, uneven parity across the
@@ -147,8 +150,8 @@ pub fn build_tree_scene(
 
 /// 0.4.0 M5: `build_tree_scene` for a partial redraw -- only what paints
 /// inside `rects` (window pixels, non-overlapping, from `Damage::Rects`):
-/// the scene is clipped to them, and nodes outside their bounding box are
-/// culled. Rendered with `TargetInit::Clear(ClearSettings::Rects)` over
+/// the scene is clipped to them, and a node is drawn only where what it
+/// paints -- shadows and overflow included -- reaches one of them. Rendered with `TargetInit::Clear(ClearSettings::Rects)` over
 /// the kept last frame, it matches a full redraw inside the rects.
 #[allow(clippy::too_many_arguments)]
 pub fn build_tree_scene_in(
@@ -187,24 +190,17 @@ fn build_scene(
     let mut scene = Scene::new(width, height);
     scene.set_transform(Affine::IDENTITY);
     // M8 Phase 1 (§11.8): the real, canvas-space "currently visible"
-    // rect -- the whole viewport at the top of the walk, or (0.4.0 M5)
-    // the damage rects' bounding box -- threaded through `paint_node`'s
-    // own recursion so a clipping node can narrow it on the way into its
-    // children.
-    let window = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
-    let visible = match rects {
-        Some(rects) => rects
-            .iter()
-            .copied()
-            .reduce(|a, b| a.union(b))
-            .unwrap_or(Rect::ZERO)
-            .intersect(window),
-        None => window,
-    };
+    // rect -- the whole viewport at the top of the walk -- threaded
+    // through `paint_node`'s own recursion so a clipping node can narrow
+    // it on the way into its children. A partial redraw keeps the same
+    // `visible`, so it culls exactly as a full redraw does, and tests each
+    // node against the damage `rects` besides.
+    let visible = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
     if let Some(rects) = rects {
         let mut clip = BezPath::new();
         for rect in rects {
-            clip.extend(rect.path_elements(0.1));
+            // Rounded outward to whole pixels, as `render_into` clears.
+            clip.extend(rect.expand().path_elements(0.1));
         }
         scene.push_clip_layer(&clip);
     }
@@ -213,6 +209,7 @@ fn build_scene(
         root,
         Affine::IDENTITY,
         visible,
+        rects,
         &mut scene,
         resources,
         text,
@@ -313,21 +310,7 @@ pub(crate) fn composed_transform(
 /// The window-space bounding box of `rect` (node-local) under
 /// `composed` -- all four corners, so it stays right under rotation.
 pub(crate) fn transformed_bounds(composed: Affine, rect: Rect) -> Rect {
-    let corners = [
-        composed * Point::new(rect.x0, rect.y0),
-        composed * Point::new(rect.x1, rect.y0),
-        composed * Point::new(rect.x0, rect.y1),
-        composed * Point::new(rect.x1, rect.y1),
-    ];
-    let fold = |pick: fn(&Point) -> f64, start: f64, f: fn(f64, f64) -> f64| {
-        corners.iter().map(pick).fold(start, f)
-    };
-    Rect::new(
-        fold(|p| p.x, f64::INFINITY, f64::min),
-        fold(|p| p.y, f64::INFINITY, f64::min),
-        fold(|p| p.x, f64::NEG_INFINITY, f64::max),
-        fold(|p| p.y, f64::NEG_INFINITY, f64::max),
-    )
+    composed.transform_rect_bbox(rect)
 }
 
 /// Whether `node` clips its children to its rounded box: scroll views
@@ -345,6 +328,7 @@ fn paint_node(
     id: NodeId,
     parent_transform: Affine,
     visible: Rect,
+    rects: Option<&[Rect]>,
     scene: &mut Scene,
     resources: &mut Resources,
     text: &mut TextRenderer,
@@ -387,343 +371,371 @@ fn paint_node(
     if opacity <= 0.0 {
         return;
     }
+
+    // 0.4.0 M5: in a partial redraw a node draws only if what it paints
+    // (`damage::painted_rect`, the extent the damage walk records --
+    // shadows and overflow included, not just its box) reaches a damage
+    // rect. A node that clips its children confines its whole subtree to
+    // that extent, so missing skips the subtree; any other node's children
+    // may overflow it, and still decide for themselves.
+    let draw_self = match rects {
+        None => true,
+        Some(rects) => {
+            let painted = damage::painted_rect(text, id, node, composed, w, h, bounds, visible);
+            let hit = rects.iter().any(|r| painted.overlaps(*r));
+            if !hit && clips_children(node) {
+                return;
+            }
+            hit
+        }
+    };
+
     let layered = opacity < 1.0;
     if layered {
         scene.push_layer(None, None, Some(opacity as f32), None, None);
     }
     let own_alpha = 1.0;
 
-    scene.set_transform(composed);
+    'own: {
+        if !draw_self {
+            break 'own;
+        }
+        scene.set_transform(composed);
 
-    // M95: the `shadows` list, CSS `box-shadow`'s model -- each is the
-    // node's own rounded box, offset, grown by `spread` (its corners too),
-    // and blurred; the first listed paints on top, so the list paints in
-    // reverse. A node with differing corner radii shadows with their mean,
-    // the blurred rounded rect taking one radius.
-    let shadows = &node.paint.shadows.current.0;
-    if !shadows.is_empty() {
-        let radius = match &node.paint.corner_radii_override {
-            Some(radii) => radii.current.0.iter().sum::<f64>() / 4.0,
-            None => node.paint.corner_radius.current,
-        };
-        for shadow in shadows.iter().rev() {
-            if shadow.color.components[3] <= 0.0 {
-                continue;
-            }
-            let rect = Rect::new(
-                shadow.offset_x - shadow.spread,
-                shadow.offset_y - shadow.spread,
-                w + shadow.offset_x + shadow.spread,
-                h + shadow.offset_y + shadow.spread,
-            );
-            let shadow_radius = (radius + shadow.spread).max(0.0);
-            scene.set_paint(with_opacity(shadow.color, own_alpha));
-            if shadow.blur > 0.0 {
-                scene.fill_blurred_rounded_rect(
-                    &rect,
-                    shadow_radius as f32,
-                    blur_to_std_dev(shadow.blur as f32),
-                    false,
+        // M95: the `shadows` list, CSS `box-shadow`'s model -- each is the
+        // node's own rounded box, offset, grown by `spread` (its corners too),
+        // and blurred; the first listed paints on top, so the list paints in
+        // reverse. A node with differing corner radii shadows with their mean,
+        // the blurred rounded rect taking one radius.
+        let shadows = &node.paint.shadows.current.0;
+        if !shadows.is_empty() {
+            let radius = match &node.paint.corner_radii_override {
+                Some(radii) => radii.current.0.iter().sum::<f64>() / 4.0,
+                None => node.paint.corner_radius.current,
+            };
+            for shadow in shadows.iter().rev() {
+                if shadow.color.components[3] <= 0.0 {
+                    continue;
+                }
+                let rect = Rect::new(
+                    shadow.offset_x - shadow.spread,
+                    shadow.offset_y - shadow.spread,
+                    w + shadow.offset_x + shadow.spread,
+                    h + shadow.offset_y + shadow.spread,
                 );
-            } else {
-                scene.fill_path(&RoundedRect::from_rect(rect, shadow_radius).to_path(0.1));
+                let shadow_radius = (radius + shadow.spread).max(0.0);
+                scene.set_paint(with_opacity(shadow.color, own_alpha));
+                if shadow.blur > 0.0 {
+                    scene.fill_blurred_rounded_rect(
+                        &rect,
+                        shadow_radius as f32,
+                        blur_to_std_dev(shadow.blur as f32),
+                        false,
+                    );
+                } else {
+                    scene.fill_path(&RoundedRect::from_rect(rect, shadow_radius).to_path(0.1));
+                }
             }
         }
-    }
 
-    match &node.kind {
-        NodeKind::Rect => {
-            let color = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(color);
-            // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
-            // (`[top_left, top_right, bottom_right, bottom_left]`)
-            // wins when set (a segmented group's first/last segment,
-            // rounded only on its outer edge). `None` falls
-            // through to the identical uniform-scalar `RoundedRect`
-            // this arm always painted.
-            // M34 Phase 1 (§5, §8): the real path itself comes from
-            // `geometry` now -- re-tessellated only when this
-            // node's own `w`/`h`/radius genuinely changed since its
-            // last paint, not rebuilt from scratch every frame
-            // (`GeometryCache`'s own doc comment has the real,
-            // measured motivation).
-            let path = match node
-                .paint
-                .corner_radii_override
-                .as_ref()
-                .map(|r| r.current.0)
-            {
-                Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
-                None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
-            };
-            scene.fill_path(path);
-            // M30 Phase 1 (§5, §7): a real stroked border (the Python
-            // API's `stroke_color`/`stroke_width`), universal
-            // `PaintProperties` like `background`/`corner_radius`. Inset by half the stroke
-            // width so the border paints entirely *inside* this node's
-            // own bounds (kurbo strokes are centered on the path by
-            // default) -- a border never grows past the node's own
-            // taffy-computed box the way a naive un-inset stroke would.
-            // Skipped entirely at `border_width <= 0.0`.
-            let border_width = node.paint.border_width.current;
-            if border_width > 0.0 {
-                let inset = border_width / 2.0;
-                // M38 Phase 4 (§5, §7): the border path now matches
-                // whichever real fill geometry this node actually used
-                // just above, closing a real, previously-dormant gap --
-                // `RectPathParams::PerCornerBorder`'s own doc comment
-                // has the full story (`geometry_cache.rs`).
-                let border_path: std::borrow::Cow<'_, BezPath> = if let Some(radii) = node
+        match &node.kind {
+            NodeKind::Rect => {
+                let color = with_opacity(node.paint.background.current, own_alpha);
+                scene.set_paint(color);
+                // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
+                // (`[top_left, top_right, bottom_right, bottom_left]`)
+                // wins when set (a segmented group's first/last segment,
+                // rounded only on its outer edge). `None` falls
+                // through to the identical uniform-scalar `RoundedRect`
+                // this arm always painted.
+                // M34 Phase 1 (§5, §8): the real path itself comes from
+                // `geometry` now -- re-tessellated only when this
+                // node's own `w`/`h`/radius genuinely changed since its
+                // last paint, not rebuilt from scratch every frame
+                // (`GeometryCache`'s own doc comment has the real,
+                // measured motivation).
+                let path = match node
                     .paint
                     .corner_radii_override
                     .as_ref()
                     .map(|r| r.current.0)
                 {
-                    std::borrow::Cow::Borrowed(
-                        geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
-                    )
-                } else {
-                    let radius = (node.paint.corner_radius.current - inset).max(0.0);
-                    std::borrow::Cow::Borrowed(
-                        geometry.rounded_rect_border(id, w, h, radius, inset),
-                    )
+                    Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
+                    None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
                 };
-                let border_color = with_opacity(node.paint.border_color.current, own_alpha);
-                scene.set_paint(border_color);
-                scene.set_stroke(Stroke::new(border_width));
-                scene.stroke_path(&border_path);
+                scene.fill_path(path);
+                // M30 Phase 1 (§5, §7): a real stroked border (the Python
+                // API's `stroke_color`/`stroke_width`), universal
+                // `PaintProperties` like `background`/`corner_radius`. Inset by half the stroke
+                // width so the border paints entirely *inside* this node's
+                // own bounds (kurbo strokes are centered on the path by
+                // default) -- a border never grows past the node's own
+                // taffy-computed box the way a naive un-inset stroke would.
+                // Skipped entirely at `border_width <= 0.0`.
+                let border_width = node.paint.border_width.current;
+                if border_width > 0.0 {
+                    let inset = border_width / 2.0;
+                    // M38 Phase 4 (§5, §7): the border path now matches
+                    // whichever real fill geometry this node actually used
+                    // just above, closing a real, previously-dormant gap --
+                    // `RectPathParams::PerCornerBorder`'s own doc comment
+                    // has the full story (`geometry_cache.rs`).
+                    let border_path: std::borrow::Cow<'_, BezPath> = if let Some(radii) = node
+                        .paint
+                        .corner_radii_override
+                        .as_ref()
+                        .map(|r| r.current.0)
+                    {
+                        std::borrow::Cow::Borrowed(
+                            geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
+                        )
+                    } else {
+                        let radius = (node.paint.corner_radius.current - inset).max(0.0);
+                        std::borrow::Cow::Borrowed(
+                            geometry.rounded_rect_border(id, w, h, radius, inset),
+                        )
+                    };
+                    let border_color = with_opacity(node.paint.border_color.current, own_alpha);
+                    scene.set_paint(border_color);
+                    scene.set_stroke(Stroke::new(border_width));
+                    scene.stroke_path(&border_path);
+                }
             }
-        }
-        NodeKind::Text(state) => {
-            let color = with_opacity(node.paint.background.current, own_alpha);
-            text.draw(
-                scene,
-                resources,
-                state,
-                TextPlacement {
-                    x: 0.0,
-                    y: 0.0,
-                    max_width: w as f32,
-                    color,
-                },
-                id,
-            );
-        }
-        // M15 Phase 1 (§5, §16.7): unlike `NodeKind::Text` (a plain
-        // label with no visible box, `background` repurposed as the
-        // glyph color), a real `TextField` is a genuinely boxed input
-        // -- `background` paints its own real fill first (the same
-        // `RoundedRect` fill every other boxed `NodeKind` uses), and
-        // `draw_field` paints its content/caret/selection on top in
-        // `state.text_tint` (below).
-        NodeKind::TextField(state) => {
-            let radius = node.paint.corner_radius.current;
-            let bg = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(bg);
-            // M38 Phase 7 (§5, §8): a real, previously-uncached fill --
-            // direct grep before this phase found this arm still built
-            // a fresh `RoundedRect::to_path` every frame, despite M38
-            // Phase 1's own completion note claiming otherwise (a real,
-            // honest correction: that claim was wrong, caught here by
-            // checking the actual current source rather than trusting
-            // the prior write-up). Routed through `geometry` now, the
-            // same real cache `Rect`/`Terminal` already use -- also
-            // reused directly below for this same node's
-            // own real clip layer, since both need the identical path.
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
-
-            // M20 Phase 2 (§7.1, §7.3): the real resolved color comes
-            // from `state.text_tint` -- plain dark by default
-            // (byte-for-byte the old hardcoded literal), or whatever
-            // the text input's `fill` sets.
-            let text_color = with_opacity(state.text_tint.current, own_alpha);
-            // M38 Phase 7 (§5, §8): a real, genuinely overflowing
-            // `multiline` field now clips its own painted content to
-            // its own box and shifts it up by `scroll_offset` -- a
-            // real, previously-existing gap (confirmed by direct read
-            // before this phase: no clip layer existed here at all,
-            // so overflowing text simply painted past the node's own
-            // bounds). Single-line fields never set `scroll_offset`
-            // (`Tree::scroll_text_field_caret_into_view`'s own real
-            // multiline-only guard), so `y` stays `0.0` for them,
-            // byte-for-byte unchanged. Clipping only when `multiline`
-            // (not universally): a single-line field's own real
-            // horizontal overflow behavior is unaffected, a real,
-            // deliberate v1 scope match to this phase's own "Code
-            // Editor" title, not a general text-overflow feature.
-            // M39 Phase 1 (§5, §8): `horizontal_scroll_offset`'s own
-            // real paint-time shift, the identical real mechanism
-            // `scroll_offset`'s own `y` shift just above already
-            // establishes -- `0.0` for every field that never sets it
-            // (every single-line field, and every multiline field
-            // whose own longest real line still fits the box).
-            let text_at = TextPlacement {
-                x: -state.horizontal_scroll_offset.current,
-                y: -state.scroll_offset.current,
-                max_width: w as f32,
-                color: text_color,
-            };
-            let show_caret = tree.focused() == Some(id);
-            if state.multiline {
-                let clip = geometry.rounded_rect_fill(id, w, h, radius);
-                scene.push_layer(Some(clip), None, None, None, None);
-                text.draw_field(scene, resources, state, text_at, show_caret, id);
-                scene.pop_layer();
-            } else {
-                text.draw_field(scene, resources, state, text_at, show_caret, id);
+            NodeKind::Text(state) => {
+                let color = with_opacity(node.paint.background.current, own_alpha);
+                text.draw(
+                    scene,
+                    resources,
+                    state,
+                    TextPlacement {
+                        x: 0.0,
+                        y: 0.0,
+                        max_width: w as f32,
+                        color,
+                    },
+                    id,
+                );
             }
-        }
-        // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own cell
-        // grid -- `background` paints the real box fill first (the
-        // same `RoundedRect` fill `TextField`'s own arm just above
-        // already establishes), then `draw_terminal` paints every real
-        // cell's own background/glyph on top, plus the caret, in a
-        // fixed color (`engine-render` has no design system to resolve
-        // one from, §4).
-        NodeKind::Terminal(state) => {
-            let radius = node.paint.corner_radius.current;
-            let bg = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(bg);
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
+            // M15 Phase 1 (§5, §16.7): unlike `NodeKind::Text` (a plain
+            // label with no visible box, `background` repurposed as the
+            // glyph color), a real `TextField` is a genuinely boxed input
+            // -- `background` paints its own real fill first (the same
+            // `RoundedRect` fill every other boxed `NodeKind` uses), and
+            // `draw_field` paints its content/caret/selection on top in
+            // `state.text_tint` (below).
+            NodeKind::TextField(state) => {
+                let radius = node.paint.corner_radius.current;
+                let bg = with_opacity(node.paint.background.current, own_alpha);
+                scene.set_paint(bg);
+                // M38 Phase 7 (§5, §8): a real, previously-uncached fill --
+                // direct grep before this phase found this arm still built
+                // a fresh `RoundedRect::to_path` every frame, despite M38
+                // Phase 1's own completion note claiming otherwise (a real,
+                // honest correction: that claim was wrong, caught here by
+                // checking the actual current source rather than trusting
+                // the prior write-up). Routed through `geometry` now, the
+                // same real cache `Rect`/`Terminal` already use -- also
+                // reused directly below for this same node's
+                // own real clip layer, since both need the identical path.
+                scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
-            let cursor_color =
-                with_opacity(peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF), own_alpha);
-            text.draw_terminal(
-                scene,
-                resources,
-                state,
-                TextPlacement {
-                    x: 0.0,
-                    y: 0.0,
+                // M20 Phase 2 (§7.1, §7.3): the real resolved color comes
+                // from `state.text_tint` -- plain dark by default
+                // (byte-for-byte the old hardcoded literal), or whatever
+                // the text input's `fill` sets.
+                let text_color = with_opacity(state.text_tint.current, own_alpha);
+                // M38 Phase 7 (§5, §8): a real, genuinely overflowing
+                // `multiline` field now clips its own painted content to
+                // its own box and shifts it up by `scroll_offset` -- a
+                // real, previously-existing gap (confirmed by direct read
+                // before this phase: no clip layer existed here at all,
+                // so overflowing text simply painted past the node's own
+                // bounds). Single-line fields never set `scroll_offset`
+                // (`Tree::scroll_text_field_caret_into_view`'s own real
+                // multiline-only guard), so `y` stays `0.0` for them,
+                // byte-for-byte unchanged. Clipping only when `multiline`
+                // (not universally): a single-line field's own real
+                // horizontal overflow behavior is unaffected, a real,
+                // deliberate v1 scope match to this phase's own "Code
+                // Editor" title, not a general text-overflow feature.
+                // M39 Phase 1 (§5, §8): `horizontal_scroll_offset`'s own
+                // real paint-time shift, the identical real mechanism
+                // `scroll_offset`'s own `y` shift just above already
+                // establishes -- `0.0` for every field that never sets it
+                // (every single-line field, and every multiline field
+                // whose own longest real line still fits the box).
+                let text_at = TextPlacement {
+                    x: -state.horizontal_scroll_offset.current,
+                    y: -state.scroll_offset.current,
                     max_width: w as f32,
-                    color: cursor_color,
-                },
-                tree.focused() == Some(id),
-                id,
-            );
-        }
-        // A `VirtualList` container paints nothing itself, same as
-        // `Container` -- it exists purely to give `taffy` something to
-        // lay its (windowed) children out against; the recursive walk
-        // below already only ever sees `VirtualListState::materialized`'s
-        // small real subset, never `item_count`, with zero changes
-        // needed here (§14 step 15, §11.7).
-        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints nothing of
-        // its own, like `Container`/`VirtualList` -- its one real
-        // child's own absolute position is already baked into `layout_
-        // style` by `Tree::sync_scroll_view_layouts`, so the ordinary
-        // recursive walk below (composed transform only, no extra
-        // paint-time offset) already paints it in the right place; the
-        // unconditional clip below is this kind's only other real
-        // paint-time behavior.
-        NodeKind::Container | NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
-        // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
-        // resolved ahead of time by `engine-py`'s `draw` callback
-        // (`canvas.rs`'s own module doc comment) -- every coordinate is
-        // node-local, drawn under the same `composed` transform as
-        // every other `NodeKind`, with zero special-casing beyond this
-        // one match arm.
-        // M25 Phase 2 (§5, §6): every real `DrawCommand`'s own color
-        // now compounds with `own_alpha` -- a real,
-        // previously-missing gap (confirmed via direct read: this arm
-        // painted every command's own raw color, the only real
-        // `NodeKind` arm in this whole match that never touched the
-        // node's own universal opacity at all).
-        NodeKind::Canvas(state) => {
-            for command in &state.commands {
-                match command {
-                    DrawCommand::FillRect {
-                        x,
-                        y,
-                        width,
-                        height,
-                        color,
-                    } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
-                        scene.fill_path(&Rect::new(*x, *y, x + width, y + height).to_path(0.1));
-                    }
-                    DrawCommand::FillCircle {
-                        cx,
-                        cy,
-                        radius,
-                        color,
-                    } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
-                        scene.fill_path(&Circle::new((*cx, *cy), *radius).to_path(0.1));
-                    }
-                    DrawCommand::StrokePath { path, color, width } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
-                        scene.set_stroke(Stroke::new(*width));
-                        scene.stroke_path(path);
+                    color: text_color,
+                };
+                let show_caret = tree.focused() == Some(id);
+                if state.multiline {
+                    let clip = geometry.rounded_rect_fill(id, w, h, radius);
+                    scene.push_layer(Some(clip), None, None, None, None);
+                    text.draw_field(scene, resources, state, text_at, show_caret, id);
+                    scene.pop_layer();
+                } else {
+                    text.draw_field(scene, resources, state, text_at, show_caret, id);
+                }
+            }
+            // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own cell
+            // grid -- `background` paints the real box fill first (the
+            // same `RoundedRect` fill `TextField`'s own arm just above
+            // already establishes), then `draw_terminal` paints every real
+            // cell's own background/glyph on top, plus the caret, in a
+            // fixed color (`engine-render` has no design system to resolve
+            // one from, §4).
+            NodeKind::Terminal(state) => {
+                let radius = node.paint.corner_radius.current;
+                let bg = with_opacity(node.paint.background.current, own_alpha);
+                scene.set_paint(bg);
+                scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
+
+                let cursor_color =
+                    with_opacity(peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF), own_alpha);
+                text.draw_terminal(
+                    scene,
+                    resources,
+                    state,
+                    TextPlacement {
+                        x: 0.0,
+                        y: 0.0,
+                        max_width: w as f32,
+                        color: cursor_color,
+                    },
+                    tree.focused() == Some(id),
+                    id,
+                );
+            }
+            // A `VirtualList` container paints nothing itself, same as
+            // `Container` -- it exists purely to give `taffy` something to
+            // lay its (windowed) children out against; the recursive walk
+            // below already only ever sees `VirtualListState::materialized`'s
+            // small real subset, never `item_count`, with zero changes
+            // needed here (§14 step 15, §11.7).
+            // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints nothing of
+            // its own, like `Container`/`VirtualList` -- its one real
+            // child's own absolute position is already baked into `layout_
+            // style` by `Tree::sync_scroll_view_layouts`, so the ordinary
+            // recursive walk below (composed transform only, no extra
+            // paint-time offset) already paints it in the right place; the
+            // unconditional clip below is this kind's only other real
+            // paint-time behavior.
+            NodeKind::Container | NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
+            // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
+            // resolved ahead of time by `engine-py`'s `draw` callback
+            // (`canvas.rs`'s own module doc comment) -- every coordinate is
+            // node-local, drawn under the same `composed` transform as
+            // every other `NodeKind`, with zero special-casing beyond this
+            // one match arm.
+            // M25 Phase 2 (§5, §6): every real `DrawCommand`'s own color
+            // now compounds with `own_alpha` -- a real,
+            // previously-missing gap (confirmed via direct read: this arm
+            // painted every command's own raw color, the only real
+            // `NodeKind` arm in this whole match that never touched the
+            // node's own universal opacity at all).
+            NodeKind::Canvas(state) => {
+                for command in &state.commands {
+                    match command {
+                        DrawCommand::FillRect {
+                            x,
+                            y,
+                            width,
+                            height,
+                            color,
+                        } => {
+                            scene.set_paint(with_opacity(*color, own_alpha));
+                            scene.fill_path(&Rect::new(*x, *y, x + width, y + height).to_path(0.1));
+                        }
+                        DrawCommand::FillCircle {
+                            cx,
+                            cy,
+                            radius,
+                            color,
+                        } => {
+                            scene.set_paint(with_opacity(*color, own_alpha));
+                            scene.fill_path(&Circle::new((*cx, *cy), *radius).to_path(0.1));
+                        }
+                        DrawCommand::StrokePath { path, color, width } => {
+                            scene.set_paint(with_opacity(*color, own_alpha));
+                            scene.set_stroke(Stroke::new(*width));
+                            scene.stroke_path(path);
+                        }
                     }
                 }
             }
-        }
-        // M22 Phase 1 (§5): an image is an externally owned GPU texture
-        // (`image_cache` has why -- the renderer doesn't take CPU pixel
-        // data), bound under `id`'s `TextureId` in the `TextureBindings`
-        // `FrameRenderer::render` passes on; `sync_image_textures`, run
-        // before `render` each frame, guarantees the binding. 0.4.0 M2:
-        // `vello_gpu` draws it as an `ImageSource::ExternalTexture` paint
-        // over a filled rect -- `source_region` is the part of the image
-        // shown (all of it, or `cover`'s crop), and `transform` maps its
-        // texels onto the node box. The paint has no opacity of its own,
-        // so an opacity layer wraps it, skipped when fully transparent.
-        NodeKind::Image(state) => {
-            let img_width = state.image.width;
-            let img_height = state.image.height;
-            let node_opacity = own_alpha;
-            if img_width > 0 && img_height > 0 && node_opacity > 0.0 {
-                let (source_region, transform) =
-                    image_sample_rect(w, h, img_width, img_height, state.content_fit);
-                // The texture is an image paint: `transform` maps the
-                // source region's texels to the node box, as the paint
-                // transform, and the fill covers the region's image there.
-                let region = peniko::kurbo::Rect::new(
-                    0.0,
-                    0.0,
-                    f64::from(source_region.x1 - source_region.x0),
-                    f64::from(source_region.y1 - source_region.y0),
-                );
-                scene.push_layer(None, None, Some(node_opacity as f32), None, None);
-                scene.set_paint(vello_common::paint::Image {
-                    image: vello_common::paint::ImageSource::external_texture(
-                        image_cache::texture_id_for(id),
-                        source_region,
-                        true,
-                    ),
-                    sampler: peniko::ImageSampler {
-                        quality: peniko::ImageQuality::Medium,
-                        ..Default::default()
-                    },
-                });
-                scene.set_paint_transform(transform);
-                scene.fill_rect(&transform.transform_rect_bbox(region));
-                scene.reset_paint_transform();
-                scene.pop_layer();
+            // M22 Phase 1 (§5): an image is an externally owned GPU texture
+            // (`image_cache` has why -- the renderer doesn't take CPU pixel
+            // data), bound under `id`'s `TextureId` in the `TextureBindings`
+            // `FrameRenderer::render`/`render_into` pass on;
+            // `sync_image_textures`, run before rendering each frame,
+            // guarantees the binding. 0.4.0 M2:
+            // `vello_gpu` draws it as an `ImageSource::ExternalTexture` paint
+            // over a filled rect -- `source_region` is the part of the image
+            // shown (all of it, or `cover`'s crop), and `transform` maps its
+            // texels onto the node box. The paint has no opacity of its own,
+            // so an opacity layer wraps it, skipped when fully transparent.
+            NodeKind::Image(state) => {
+                let img_width = state.image.width;
+                let img_height = state.image.height;
+                let node_opacity = own_alpha;
+                // An image too large to upload has no texture to draw.
+                let fits = img_width <= image_cache::MAX_IMAGE_DIMENSION
+                    && img_height <= image_cache::MAX_IMAGE_DIMENSION;
+                if img_width > 0 && img_height > 0 && fits && node_opacity > 0.0 {
+                    let (source_region, transform) =
+                        image_sample_rect(w, h, img_width, img_height, state.content_fit);
+                    // The texture is an image paint: `transform` maps the
+                    // source region's texels to the node box, as the paint
+                    // transform, and the fill covers the region's image there.
+                    let region = peniko::kurbo::Rect::new(
+                        0.0,
+                        0.0,
+                        f64::from(source_region.x1 - source_region.x0),
+                        f64::from(source_region.y1 - source_region.y0),
+                    );
+                    scene.push_layer(None, None, Some(node_opacity as f32), None, None);
+                    scene.set_paint(vello_common::paint::Image {
+                        image: vello_common::paint::ImageSource::external_texture(
+                            image_cache::texture_id_for(id),
+                            source_region,
+                            true,
+                        ),
+                        sampler: peniko::ImageSampler {
+                            quality: peniko::ImageQuality::Medium,
+                            ..Default::default()
+                        },
+                    });
+                    scene.set_paint_transform(transform);
+                    scene.fill_rect(&transform.transform_rect_bbox(region));
+                    scene.reset_paint_transform();
+                    scene.pop_layer();
+                }
             }
-        }
-        // M95 (D4): any vector path, in node-local pixels once fitted
-        // into the view box. The fill is the whole path; the stroke is
-        // the trimmed outline, centered on the path as in SVG, with round
-        // caps and joins, and its width stays in pixels however the view
-        // box scales the path.
-        NodeKind::Path(state) => {
-            let (fill, stroke) = state.geometry(w, h);
-            let fill_color = node.paint.background.current;
-            if fill_color.components[3] > 0.0 {
-                scene.set_paint(with_opacity(fill_color, own_alpha));
-                scene.fill_path(&fill);
-            }
-            let stroke_width = node.paint.border_width.current;
-            if stroke_width > 0.0 && !stroke.elements().is_empty() {
-                scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
-                scene.set_stroke(
-                    Stroke::new(stroke_width)
-                        .with_caps(peniko::kurbo::Cap::Round)
-                        .with_join(peniko::kurbo::Join::Round),
-                );
-                scene.stroke_path(&stroke);
+            // M95 (D4): any vector path, in node-local pixels once fitted
+            // into the view box. The fill is the whole path; the stroke is
+            // the trimmed outline, centered on the path as in SVG, with round
+            // caps and joins, and its width stays in pixels however the view
+            // box scales the path.
+            NodeKind::Path(state) => {
+                let (fill, stroke) = state.geometry(w, h);
+                let fill_color = node.paint.background.current;
+                if fill_color.components[3] > 0.0 {
+                    scene.set_paint(with_opacity(fill_color, own_alpha));
+                    scene.fill_path(&fill);
+                }
+                let stroke_width = node.paint.border_width.current;
+                if stroke_width > 0.0 && !stroke.elements().is_empty() {
+                    scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+                    scene.set_stroke(
+                        Stroke::new(stroke_width)
+                            .with_caps(peniko::kurbo::Cap::Round)
+                            .with_join(peniko::kurbo::Join::Round),
+                    );
+                    scene.stroke_path(&stroke);
+                }
             }
         }
     }
@@ -765,7 +777,7 @@ fn paint_node(
         let narrowed = visible.intersect(bounds);
         for &child in tree.children_in_paint_order(id).iter() {
             paint_node(
-                tree, child, composed, narrowed, scene, resources, text, geometry,
+                tree, child, composed, narrowed, rects, scene, resources, text, geometry,
             );
         }
 
@@ -780,7 +792,9 @@ fn paint_node(
         // necessarily `composed` any more -- reset it explicitly first,
         // the same real discipline every other paint call in this
         // function already follows.
-        if let NodeKind::ScrollView(state) = &node.kind {
+        if let NodeKind::ScrollView(state) = &node.kind
+            && draw_self
+        {
             paint_scroll_view_thumb(tree, id, state, w, h, composed, scene);
         }
         // M47 (§5, §7, §11.7): the identical real "paint after every
@@ -788,13 +802,15 @@ fn paint_node(
         // real gap M38 Phase 6 left open (named in M37's own trailer
         // note): `VirtualList` has always scrolled correctly via wheel
         // input, it just never had a visual thumb.
-        if let NodeKind::VirtualList(state) = &node.kind {
+        if let NodeKind::VirtualList(state) = &node.kind
+            && draw_self
+        {
             paint_virtual_list_thumb(state, w, h, composed, scene);
         }
     } else {
         for &child in tree.children_in_paint_order(id).iter() {
             paint_node(
-                tree, child, composed, visible, scene, resources, text, geometry,
+                tree, child, composed, visible, rects, scene, resources, text, geometry,
             );
         }
     }
@@ -996,6 +1012,9 @@ impl FrameRenderer {
             .unwrap_or_default()
             .iter()
             .map(|r| {
+                // Whole pixels, rounded outward as the scene's clip is, so
+                // a fractional edge's partly covered pixel is cleared too.
+                let r = r.expand();
                 let at = |v: f64| v.clamp(0.0, f64::from(u16::MAX)) as u16;
                 vello_common::geometry::RectU16::new(at(r.x0), at(r.y0), at(r.x1), at(r.y1))
             })
@@ -1059,7 +1078,7 @@ mod tests {
     /// assert the rect's fill color actually landed where it should --
     /// the center -- and the background is untouched at a corner outside
     /// the rounded rect. This is the same render-to-texture-then-readback
-    /// pattern vello_hybrid's own `render_to_file` example uses, adapted
+    /// pattern the renderer's own `render_to_file` example uses, adapted
     /// to assert instead of write a PNG. Runs without a display or a real
     /// window, so it's safe under `cargo test` on any CI runner --
     /// TRE v1's own lesson (LESSONS_LEARNED.md §3/§4) about needing a

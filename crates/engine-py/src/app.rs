@@ -222,6 +222,10 @@ impl GpuState {
         }))
         .expect("failed to create wgpu device");
 
+        // 0.4.0 review: a window larger than the GPU's textures can be
+        // renders at the largest size it can, not a panic in `configure`.
+        let max = device.limits().max_texture_dimension_2d;
+        let (width, height) = (width.min(max), height.min(max));
         let mut config = surface
             .get_default_config(&adapter, width, height)
             .expect("surface is not supported by this adapter");
@@ -235,7 +239,10 @@ impl GpuState {
             config.usage |= wgpu::TextureUsages::COPY_DST;
             tracing::debug!("rendering through a persistent target, copied to the surface");
         } else {
-            tracing::info!("this window's surface can't be copied into; rendering straight to it");
+            tracing::warn!(
+                "this window's surface can't be copied into: rendering straight to it, \
+                 every frame in full (no partial redraw)"
+            );
         }
         surface.configure(&device, &config);
         let persistent =
@@ -286,6 +293,7 @@ impl GpuState {
     /// resize` below, not from every raw `InputEvent::Resized`. See
     /// `needs_resize`'s own doc comment for the real, measured reason.
     fn resize(&mut self, width: u32, height: u32) {
+        let (width, height) = self.fit(width, height);
         if width == 0 || height == 0 {
             return;
         }
@@ -340,7 +348,17 @@ impl GpuState {
     /// measured cost (well under 1ms), a plain per-frame coalesce
     /// already removes the redundant-reconfigure cost without it.
     fn needs_resize(&self, width: u32, height: u32) -> bool {
+        let (width, height) = self.fit(width, height);
         self.surface_config.width != width || self.surface_config.height != height
+    }
+
+    /// 0.4.0 review: `width` x `height` within the largest texture the
+    /// device can make -- the surface, the persistent target, and the
+    /// render size all stay inside it, so an oversized window renders
+    /// clamped rather than panicking in `configure` or `create_texture`.
+    fn fit(&self, width: u32, height: u32) -> (u32, u32) {
+        let max = self.device.limits().max_texture_dimension_2d;
+        (width.min(max), height.min(max))
     }
 }
 
@@ -490,7 +508,6 @@ impl App {
         // pinned before.
         for window in &self.windows {
             let window = window.borrow(py);
-            crate::clock::unpin(&window.tree);
             crate::clock::unpin(&window.tree);
         }
 
@@ -705,39 +722,54 @@ impl App {
                 // registered font can reshape text no node's state records,
                 // so it redraws everything, as does a window without a
                 // persistent target or with partial redraw switched off.
-                let (width, height) = (
-                    render_extent(runtime.width.get()),
-                    render_extent(runtime.height.get()),
-                );
+                let (width, height) = runtime.gpu.fit(runtime.width.get(), runtime.height.get());
+                let (width, height) = (render_extent(width), render_extent(height));
                 let damage = {
                     let gpu = &mut runtime.gpu;
-                    if fonts_changed || gpu.persistent.is_none() || !runtime.partial_redraw.get() {
-                        gpu.damage.reset();
-                    }
-                    let tree_ref = runtime.tree.borrow();
-                    let damage = gpu.damage.damage(
-                        &tree_ref,
-                        runtime.root,
-                        width,
-                        height,
-                        &mut gpu.text_renderer,
-                    );
                     if gpu.persistent.is_none() || !runtime.partial_redraw.get() {
+                        // No walk: its answer would go unused. The reset
+                        // makes the first frame after switching back on
+                        // full.
+                        gpu.damage.reset();
                         Damage::Full
                     } else {
-                        damage
+                        if fonts_changed {
+                            gpu.damage.reset();
+                        }
+                        let tree_ref = runtime.tree.borrow();
+                        gpu.damage.damage(
+                            &tree_ref,
+                            runtime.root,
+                            width,
+                            height,
+                            &mut gpu.text_renderer,
+                        )
                     }
                 };
                 tracing::trace!(?damage, "frame damage");
 
-                let (wgpu::CurrentSurfaceTexture::Success(output)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(output)) =
-                    runtime.gpu.surface.get_current_texture()
-                else {
-                    // The tracker already recorded this frame's tree as
-                    // drawn; it wasn't, so the next frame redraws it all.
-                    runtime.gpu.damage.reset();
-                    return any_active;
+                let gpu = &mut runtime.gpu;
+                let (output, reconfigure) = match gpu.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(output) => (output, false),
+                    // Usable, but wgpu recommends reconfiguring after it.
+                    wgpu::CurrentSurfaceTexture::Suboptimal(output) => (output, true),
+                    failed => {
+                        // The tracker already recorded this frame's tree as
+                        // drawn, and its dirty flag is spent; it wasn't
+                        // drawn, so the next frame redraws it all.
+                        gpu.damage.reset();
+                        runtime.tree.borrow_mut().mark_dirty();
+                        // 0.4.0 review: an outdated surface recovers once
+                        // reconfigured (wgpu 30's docs), so do that and retry
+                        // at once; a timeout or an occluded window waits for
+                        // the next frame. (A lost surface needs recreating,
+                        // which tre doesn't do yet.)
+                        let retry = matches!(failed, wgpu::CurrentSurfaceTexture::Outdated);
+                        if retry {
+                            gpu.surface.configure(&gpu.device, &gpu.surface_config);
+                        }
+                        return any_active || retry;
+                    }
                 };
                 let view = output
                     .texture
@@ -811,6 +843,12 @@ impl App {
                 }
                 runtime.gpu.queue.submit([encoder.finish()]);
                 runtime.gpu.queue.present(output);
+                if reconfigure {
+                    runtime
+                        .gpu
+                        .surface
+                        .configure(&runtime.gpu.device, &runtime.gpu.surface_config);
+                }
                 any_active
             },
             // §14 step 7: every window this framework opens reports a

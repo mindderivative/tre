@@ -30,6 +30,8 @@ use taffy::prelude::{
 };
 use vello_gpu::{RenderSize, RenderTargetConfig};
 
+mod support;
+
 const WIDTH: u16 = 1920;
 const HEIGHT: u16 = 1080;
 const CELL: f32 = 60.0;
@@ -227,26 +229,8 @@ fn run(device: &wgpu::Device, queue: &wgpu::Queue, all_animate: bool, partial: b
 #[ignore = "perf benchmark -- run with: cargo test -p engine-render --test partial_redraw_bench \
             --release -- --ignored --nocapture"]
 fn partial_redraw_frame_times() {
-    let (adapter, device, queue) = pollster::block_on(async {
-        let adapter = wgpu::Instance::default()
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                force_fallback_adapter: false,
-                apply_limit_buckets: false,
-                compatible_surface: None,
-            })
-            .await
-            .expect("no wgpu adapter available in this environment");
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("partial redraw bench device"),
-                ..Default::default()
-            })
-            .await
-            .expect("failed to create wgpu device");
-        (adapter, device, queue)
-    });
-    let info = adapter.get_info();
+    let (device, queue) = pollster::block_on(support::device("partial redraw bench device"));
+    let info = device.adapter_info();
     println!(
         "adapter: {} ({:?}, {:?}), {WIDTH}x{HEIGHT}, {TIMED} timed frames",
         info.name, info.device_type, info.backend

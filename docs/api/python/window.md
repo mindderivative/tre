@@ -46,7 +46,10 @@ See [Layers](layers.md).
 frame. By default (`True`) each frame redraws only the parts of the window
 that changed, and a frame where nothing visible changed draws nothing.
 The pixels are the same either way; the switch is there for measuring and
-for ruling partial redraw out when chasing a rendering bug.
+for ruling partial redraw out when chasing a rendering bug. A window whose
+surface the platform won't let `tre` copy into always redraws in full, and
+logs a warning saying so; `get("partial_redraw")` reports the setting, not
+that fallback.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), or `partial_redraw`.
 

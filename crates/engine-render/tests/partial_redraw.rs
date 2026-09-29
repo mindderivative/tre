@@ -9,8 +9,8 @@
 use std::time::{Duration, Instant};
 
 use engine_core::{
-    MotionCurve, NodeId, NodeKind, PaintProperties, PathData, PathState, ScrollViewState, Shadow,
-    Shadows, TextState, Tree,
+    ImageState, MotionCurve, NodeId, NodeKind, PaintProperties, PathData, PathState,
+    ScrollViewState, Shadow, Shadows, TextState, Tree,
 };
 use engine_render::{
     Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, TextRenderer,
@@ -24,6 +24,8 @@ const W: u16 = 240;
 const H: u16 = 160;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+mod support;
+
 struct Gpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -31,25 +33,8 @@ struct Gpu {
 
 impl Gpu {
     fn new() -> Self {
-        pollster::block_on(async {
-            let adapter = wgpu::Instance::default()
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::default(),
-                    force_fallback_adapter: false,
-                    apply_limit_buckets: false,
-                    compatible_surface: None,
-                })
-                .await
-                .expect("no wgpu adapter available in this environment");
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
-                    label: Some("partial redraw test device"),
-                    ..Default::default()
-                })
-                .await
-                .expect("failed to create wgpu device");
-            Self { device, queue }
-        })
+        let (device, queue) = pollster::block_on(support::device("partial redraw test device"));
+        Self { device, queue }
     }
 }
 
@@ -83,6 +68,10 @@ impl Window {
 
     /// One frame: full, partial, or nothing, as the damage says. Returns it.
     fn frame(&mut self, gpu: &Gpu, tree: &Tree, root: NodeId, partial: bool) -> Damage {
+        // As the app does each frame: every image's texture uploaded
+        // before the scene that draws it.
+        self.renderer
+            .sync_image_textures(tree, &gpu.device, &gpu.queue);
         let damage = self.tracker.damage(tree, root, W, H, &mut self.text);
         let damage = if partial { damage } else { Damage::Full };
         let rects = match &damage {
@@ -133,53 +122,7 @@ impl Window {
     /// The target's pixels, read back through a copy -- as the window's
     /// swapchain image receives them.
     fn pixels(&self, gpu: &Gpu) -> Vec<u8> {
-        let image = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("stand-in swapchain image"),
-            size: wgpu::Extent3d {
-                width: u32::from(W),
-                height: u32::from(H),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: FORMAT,
-            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let bytes_per_row = (u32::from(W) * 4).next_multiple_of(256);
-        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("readback"),
-            size: u64::from(bytes_per_row) * u64::from(H),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-        self.target.copy_to(&mut encoder, &image);
-        encoder.copy_texture_to_buffer(
-            image.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(bytes_per_row),
-                    rows_per_image: None,
-                },
-            },
-            image.size(),
-        );
-        gpu.queue.submit([encoder.finish()]);
-        let slice = readback.slice(..);
-        slice.map_async(wgpu::MapMode::Read, |result| {
-            result.expect("failed to map readback buffer");
-        });
-        gpu.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .expect("device poll failed");
-        let data = slice.get_mapped_range().expect("the readback buffer maps");
-        data.to_vec()
+        support::copy_out(&gpu.device, &gpu.queue, &self.target)
     }
 }
 
@@ -631,4 +574,133 @@ fn animated_scroll_offset() {
             state.scroll.animate_to(120.0, DURATION, STANDARD, now);
         }
     });
+}
+
+// ---- review: what paints into a damage rect from outside it ------------
+
+/// Like `partial_matches_full`, with extra nodes `build` adds to the scene
+/// before its first frame; `change` gets whatever `build` returned.
+fn built_partial_matches_full<T>(
+    build: impl FnOnce(&mut Tree, NodeId) -> T,
+    change: impl FnOnce(&mut Tree, &T),
+) {
+    let gpu = Gpu::new();
+    let mut s = scene();
+    let ids = build(&mut s.tree, s.root);
+    layout(&mut s.tree, s.root);
+    let mut window = Window::new(&gpu);
+    assert_eq!(window.frame(&gpu, &s.tree, s.root, true), Damage::Full);
+
+    change(&mut s.tree, &ids);
+    layout(&mut s.tree, s.root);
+    let damage = window.frame(&gpu, &s.tree, s.root, true);
+    assert!(
+        matches!(damage, Damage::Rects(_)),
+        "a small change redraws partially, got {damage:?}"
+    );
+    let partial = window.pixels(&gpu);
+    let mut reference = Window::new(&gpu);
+    reference.frame(&gpu, &s.tree, s.root, false);
+    let full = reference.pixels(&gpu);
+    let differing = partial.iter().zip(&full).filter(|(a, b)| a != b).count();
+    assert_eq!(
+        differing, 0,
+        "{differing} bytes differ between partial and full redraw ({damage:?})"
+    );
+}
+
+#[test]
+fn a_change_inside_another_nodes_shadow_repaints_that_shadow() {
+    // The shadow reaches past its node's box, over the changed node; the
+    // shadowed node's box itself is nowhere near the damage.
+    built_partial_matches_full(
+        |tree, root| {
+            let lit = add(
+                tree,
+                root,
+                NodeKind::Rect,
+                placed(20.0, 100.0, 40.0, 30.0),
+                Color::from_rgba8(0xE0, 0xE0, 0xE0, 0xFF),
+            );
+            tree.get_mut(lit).unwrap().paint.shadows.current = Shadows(vec![Shadow {
+                color: Color::from_rgba8(0xFF, 0x40, 0x40, 0xFF),
+                offset_x: 0.0,
+                offset_y: 0.0,
+                blur: 12.0,
+                spread: 4.0,
+            }]);
+            add(
+                tree,
+                root,
+                NodeKind::Rect,
+                placed(70.0, 110.0, 8.0, 8.0),
+                Color::from_rgba8(0x40, 0x40, 0xFF, 0x80),
+            )
+        },
+        |tree, dot| {
+            tree.get_mut(*dot).unwrap().paint.background.current =
+                Color::from_rgba8(0x40, 0xFF, 0x40, 0x80);
+        },
+    );
+}
+
+#[test]
+fn a_child_overflowing_its_parent_is_repainted() {
+    // The parent doesn't clip, and its own box is far from the change.
+    built_partial_matches_full(
+        |tree, root| {
+            let parent = add(
+                tree,
+                root,
+                NodeKind::Rect,
+                placed(10.0, 100.0, 20.0, 20.0),
+                Color::from_rgba8(0x80, 0x80, 0x80, 0xFF),
+            );
+            add(
+                tree,
+                parent,
+                NodeKind::Rect,
+                placed(60.0, 20.0, 20.0, 20.0),
+                Color::from_rgba8(0xFF, 0xC0, 0x40, 0xFF),
+            )
+        },
+        |tree, child| {
+            tree.get_mut(*child).unwrap().paint.background.current =
+                Color::from_rgba8(0x40, 0xC0, 0xFF, 0xFF);
+        },
+    );
+}
+
+/// A 4x4 RGBA8 image of one colour.
+fn solid_image(rgba: [u8; 4]) -> peniko::ImageData {
+    peniko::ImageData {
+        data: peniko::Blob::from(rgba.repeat(16)),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width: 4,
+        height: 4,
+    }
+}
+
+#[test]
+fn a_new_image_frame_at_the_same_size_shows_in_place() {
+    // A video's next frame: written into the existing texture, not a new
+    // one, and it must show exactly as a fresh upload does.
+    built_partial_matches_full(
+        |tree, root| {
+            add(
+                tree,
+                root,
+                NodeKind::Image(ImageState::new(solid_image([0x00, 0xFF, 0x00, 0xFF]))),
+                placed(20.0, 100.0, 40.0, 40.0),
+                Color::from_rgba8(0, 0, 0, 0),
+            )
+        },
+        |tree, image| {
+            let NodeKind::Image(state) = &mut tree.get_mut(*image).unwrap().kind else {
+                unreachable!()
+            };
+            state.image = solid_image([0xFF, 0x20, 0x80, 0xFF]);
+        },
+    );
 }
