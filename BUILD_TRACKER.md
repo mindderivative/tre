@@ -144,7 +144,7 @@ User: "Start phase 3".
 ### Phase 1 — Housekeeping ✅
 - Step 1: retire the local `0.3.5.3` branch and its `tre-0.3.5.2` worktree (its sdist fix shipped in `0.4.0`), prune merged local release branches, and move `rect_window.rs` onto the shared test helpers where it can — ✅ (2026-09-28: the clean `tre-0.3.5.2` worktree removed and branch `0.3.5.3` deleted -- never pushed, but both its commits' changes are on `main`, the `license-files` fix since `0.4.0` and its tracker line in the 0.3 archive; local branches `0.3.1`-`0.3.5.2` and `0.4.0`, all merged and on `origin`, and a merged M56-era `worktree-agent-...` branch deleted -- local branches are now `main` and `0.4.1`; `rect_window.rs` keeps its own setup, since it picks its adapter for a real window's surface, which the shared helper deliberately doesn't take; a new `examples/show_damage.py` for the manual check -- one pulsing card with the overlay on, printing `partial_redraw_active`, `--watch` to keep the window open -- listed in `docs/examples.md`)
 
-### Phase 2 — Release ⬜
+### Phase 2 — Release 🚧
 - Step 1: the user's manual check of partial redraw on real hardware -- X11, Wayland, macOS, Windows: `partial_redraw_active`, and repaint on uncover, resize, and minimize — 🚧 (2026-09-29, with `examples/show_damage.py --watch`: KDE Wayland on this machine ✅ -- `partial_redraw_active = True`, only the pulsing card tinted, the orange edge on resize, and correct after uncover and after minimize/restore (user: "all four looked good on Wayland"); X11, macOS, and Windows to go)
 - Step 2: PR to `main`, CI green, merge, tag `v0.4.1`, release, PyPI — ⬜
 - Step 3: Tesserae moves to `0.4.1` — ⬜
