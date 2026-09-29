@@ -37,4 +37,7 @@ stale pixels -- now one shared painted extent. Also size clamps, image
 limits, surface Outdated recovery, walk perf, CI token scope. cargo 370,
 pytest 433 + 1 skipped. Report: https://claude.ai/artifact/X4Xo6Zwk4spCRxnDTWQMk3
 
-Next: the review's open decisions, then M6 Phase 2 (release).
+**Phase 2 Step 1 (2026-09-28).** MSRV 1.90 (1.89 failed on ordered-float
+5.5.0), msrv CI job, maturin-action and action-gh-release pinned to SHAs.
+
+Next: Step 2, no adapter raises.

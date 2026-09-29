@@ -66,6 +66,24 @@ on:
     branches: [main]
 
 jobs:
+  # The MSRV the root Cargo.toml's `rust-version` states, enforced: the
+  # whole workspace must still build on it.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
+            libxi-dev libxcursor-dev libxinerama-dev libudev-dev \
+            libfontconfig1-dev pkg-config
+      - name: Install the MSRV toolchain
+        run: rustup toolchain install 1.90 --profile minimal
+      - name: Check the workspace on the MSRV
+        run: cargo +1.90 check --workspace --all-targets
+
   test:
     runs-on: ubuntu-latest
     steps:

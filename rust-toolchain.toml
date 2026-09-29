@@ -1,5 +1,5 @@
-# The *development* toolchain, not the MSRV -- see the comment on
-# `rust-version` (currently unset) in the root Cargo.toml. Pinned to the
+# The *development* toolchain, not the MSRV -- that's `rust-version` in
+# the root Cargo.toml (1.90), enforced by CI's `msrv` job. Pinned to the
 # toolchain actually installed when this scaffold was created
 # (2026-09-15); bump deliberately, not silently, when the team decides to
 # -- matching TRE v1's own precedent (archive/rust-toolchain.toml).

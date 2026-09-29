@@ -14,12 +14,13 @@ license = "MIT"
 authors = ["Phil Hodgins <philip.a.hodgins@gmail.com>"]
 repository = "https://github.com/mindderivative/tre"
 homepage = "https://github.com/mindderivative/tre"
-# No `rust-version` yet, deliberately -- see PLAN.md M3 Phase 1. Claiming
-# an MSRV floor before any real dependency exists to derive it from is
-# exactly the mistake LESSONS_LEARNED.md §5 documents (TRE v1's `1.75`
-# that was quietly false). Set this once a real dependency's own
-# `rust-version` gives something to actually check against, then add the
-# enforcing `msrv` CI job in the same commit -- not before.
+# The MSRV, derived rather than claimed (LESSONS_LEARNED.md §5: TRE v1's
+# `1.75` was quietly false). 0.4.0: the highest `rust-version` any locked
+# dependency declares is `ordered-float` 5.5.0's 1.90 (`vello_gpu` and
+# friends at the pinned commit declare 1.89), and `cargo +1.90 check
+# --workspace --all-targets` passes. CI's `msrv` job enforces it; raise
+# both together when a dependency bump raises the floor.
+rust-version = "1.90"
 
 # The renderer, pinned to one upstream commit (0.4.0 M1). `vello_gpu` is
 # `vello_hybrid` renamed upstream, with the no-clear and rect-clear render
