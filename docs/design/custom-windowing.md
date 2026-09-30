@@ -9,8 +9,10 @@
     controls, state and events, fullscreen, minimum size, icon, and
     platform ([#37](https://github.com/mindderivative/tre/issues/37)); M3's
     drag region, resize border, `pointer_cancel`, double-click to maximize,
-    and window menu ([#38](https://github.com/mindderivative/tre/issues/38)).
-    M4–M5 build the rest.
+    and window menu ([#38](https://github.com/mindderivative/tre/issues/38));
+    M4's macOS overlay title bar, `titlebar_inset`, `native_controls`, and
+    double-click setting ([#39](https://github.com/mindderivative/tre/issues/39)).
+    M5–M6 finish it.
 
 ## The goal
 

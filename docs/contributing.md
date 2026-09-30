@@ -30,6 +30,20 @@ mkdocs build --strict
 `stubtest` compares the type stub with the built extension, so run it after
 `maturin develop`; CI runs it and `mypy --strict` on Linux.
 
+Platform-only code (`#[cfg(target_os = ...)]`, such as the macOS title bar
+and the Windows double-click time) can be type-checked from Linux without
+the other OS's SDK:
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-pc-windows-msvc
+PYO3_CROSS_PYTHON_VERSION=3.12 CARGO_TARGET_DIR=target/macos \
+  cargo clippy --workspace --all-targets --target aarch64-apple-darwin -- -D warnings
+PYO3_CROSS_PYTHON_VERSION=3.12 CARGO_TARGET_DIR=target/windows \
+  cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+```
+
+This only compiles; CI's macOS and Windows jobs run the tests.
+
 Building on Linux needs a few system packages; see
 [Installation](installation.md#option-3-build-from-source).
 

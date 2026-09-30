@@ -97,3 +97,23 @@ def test_live_decorations_and_inset():
     assert decorations is False
     assert native is MACOS
     assert (inset != (0.0, 0.0)) is MACOS, "the traffic lights' area, on macOS only"
+
+
+def test_the_documented_layout_follows_the_inset():
+    """docs/api/python/window.md's example: the bar clears the traffic
+    lights and hides its own buttons when the OS shows them."""
+    window = Window(decorations=False)
+    bar = window.create("box", height=40, window_region="drag")
+    own_buttons = [window.create("box", width=30, height=30) for _ in range(3)]
+
+    def lay_out_bar(inset=None):
+        height, width = inset or window.get("titlebar_inset")
+        bar.set(padding_left=width)
+        for button in own_buttons:
+            button.set(visible=not window.get("native_controls"))
+
+    window.on("titlebar_inset", lambda e: lay_out_bar(e.titlebar_inset))
+    lay_out_bar()
+    assert all(b.get("visible") is not MACOS for b in own_buttons)
+    window.simulate("titlebar_inset", height=28, width=78)
+    assert bar.get("padding_left") == 78.0

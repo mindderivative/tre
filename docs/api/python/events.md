@@ -109,6 +109,7 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `dock_drop` | A docking drag ended with the primary button's release; the panel has moved to the zone there, if any | `panel`, `side` |
 | `maximized` | The window was maximized or restored (0.5.0) | `maximized` |
 | `active` | The window gained or lost the OS's focus (0.5.0) | `active` |
+| `titlebar_inset` | The area the OS's window controls take over the content changed — macOS's traffic lights on an undecorated window, 0 in fullscreen (0.5.0) | `titlebar_inset` |
 
 A window event has no node: `event.target` is `None`.
 
@@ -126,8 +127,10 @@ instead of only what changed ([Window](window.md)). `window.get(name)` reads
 `width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`,
 `partial_redraw_active`, or `show_damage`, and (0.5.0) `decorations`,
 `fullscreen`, `min_width`, `min_height`, `maximized`, `minimized`, `active`,
-`platform`, `resize_border`, and `system_menu` — see
-[Window controls and state](window.md#window-controls-and-state) and
+`platform`, `resize_border`, `system_menu`, `titlebar_inset`, and
+`native_controls` — see
+[Window controls and state](window.md#window-controls-and-state),
+[macOS: the overlay title bar](window.md#macos-the-overlay-title-bar), and
 [Title bar and borders](window.md#title-bar-and-borders).
 `root` is the window's root node.
 

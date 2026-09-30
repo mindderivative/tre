@@ -77,9 +77,46 @@ events report state changes: **`maximized`** (`event.maximized`) when the
 window is maximized or restored, and **`active`** (`event.active`) when it
 gains or loses focus — each only when the value changes.
 
-On Windows an undecorated window keeps its shadow. On macOS, where `winit`
-can't let the user resize an undecorated window, `decorations=False` will
-keep the native title bar's controls over the content (0.5.0 M4).
+On Windows an undecorated window keeps its shadow. macOS is different; see
+below.
+
+### macOS: the overlay title bar
+
+`winit` can't let the user resize an undecorated macOS window, so there
+`decorations=False` doesn't remove the title bar: it makes it transparent
+and runs the content up under it. The window keeps its shadow, native
+resizing, and the traffic lights (close, minimize, zoom) in its top-left
+corner, over the app's own title bar. `get("decorations")` is still
+`False`. Two read-only properties say what's there, so one layout works on
+every platform:
+
+| Property | Get |
+| --- | --- |
+| `titlebar_inset` | `(height, width)` in logical pixels: the title-bar strip's height and the traffic lights' width with their margins. `(0.0, 0.0)` for a decorated window, in fullscreen (the traffic lights are hidden), and on every other platform |
+| `native_controls` | Whether the OS shows its own window controls over the content: `True` only for an undecorated macOS window outside fullscreen. A framework hides its own minimize/maximize/close when it is |
+
+The **`titlebar_inset`** window event (`event.titlebar_inset`) fires when
+the inset changes — entering or leaving fullscreen, say.
+
+```python
+window = Window(decorations=False)
+bar = window.create("box", height=40, window_region="drag")
+
+def lay_out_bar(inset=None):
+    height, width = inset or window.get("titlebar_inset")
+    bar.set(padding_left=width)  # clear of the traffic lights
+    for button in own_buttons:
+        button.set(visible=not window.get("native_controls"))
+
+window.on("titlebar_inset", lambda e: lay_out_bar(e.titlebar_inset))
+lay_out_bar()
+```
+
+A drag region can be taller than macOS's own title-bar strip; all of it
+moves the window. The resize border is off on macOS, where the OS resizes
+the window itself. A double-click on the drag region does what the user
+chose in System Settings (Desktop & Dock, "Double-click a window's title
+bar to"): zoom, minimize, or nothing.
 
 ### Title bar and borders
 
@@ -108,9 +145,9 @@ first, then — because the OS takes the pointer for the move — `pointer_cance
 to the pressed node: no `pointer_up` or `click` follows, and any capture is
 released.
 
-**Double-click** on the drag region toggles maximize. The two presses must
-fall within the system's double-click time (Windows, macOS; 500 ms elsewhere)
-and 4 px of each other.
+**Double-click** on the drag region toggles maximize (on macOS, what the
+user chose; see above). The two presses must fall within the system's
+double-click time (Windows, macOS; 500 ms elsewhere) and 4 px of each other.
 
 **The window menu** is opt-in: `window.set(system_menu=True)`, on any
 platform. Then a secondary press on the drag region opens the OS's window
@@ -125,8 +162,8 @@ the framework's own menu.
 logical pixels of an edge resize the window from that edge, or from a corner
 where two edges meet. Over the border the pointer shows the matching resize
 cursor. A press there never reaches a node, and nor does its release. The
-border is off for a decorated window (the OS has one), while maximized or
-fullscreen, and at `0`, the default.
+border is off for a decorated window (the OS has one), on macOS (the OS
+resizes it), while maximized or fullscreen, and at `0`, the default.
 
 | Property | Set | Get |
 | --- | --- | --- |
