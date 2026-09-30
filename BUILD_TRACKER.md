@@ -33,11 +33,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M17 — Shift+Wheel Scrolls Horizontal Views | `██████████` 100% | ✅ Complete (2026-09-30) — Shift+wheel scrolls horizontal views, and a wheel passes views it can't move to the next one out |
 | M18 — Unit Tests for the Scroll Core | `██████████` 100% | ✅ Complete (2026-09-30) — 9 `engine-core` tests cover the scroll API and M17's wheel rule without Python |
 | M19 — Stub Drift Checked in CI | `██████████` 100% | ✅ Complete (2026-09-30) — the stub matches what PyO3 builds, and CI runs `mypy --strict` and `stubtest` |
-| M20 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — after M17–M19, if nothing else joins 0.4.3 |
+| M20 — Release `0.4.3` | `█████░░░░░` 50% | 🚧 In Progress — `v0.4.3` released on GitHub and PyPI, closing issue #27; Tesserae next |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M20 -- release `0.4.3`, if nothing else joins it.
+**Up next:** M20 Step 2 -- Tesserae moves to `0.4.3`.
 
 **Known gaps:**
 - None open on this line.
@@ -269,10 +269,10 @@ User: "Start phase 3".
 
 ## Milestone 20 — Release `0.4.3`
 
-**Status: ⬜ Proposed.** On hold -- user (2026-09-30): "we will hold off on the release until we have some other fixes".
+**Status: 🚧 In Progress.** User: "ok release it then". Held until M17–M19 joined -- user (2026-09-30): "we will hold off on the release until we have some other fixes".
 
-### Phase 1 — Release ⬜
-- Step 1: PR to `main`, CI green, merge, tag `v0.4.3`, release, PyPI — ⬜
+### Phase 1 — Release 🚧
+- Step 1: PR to `main`, CI green, merge, tag `v0.4.3`, release, PyPI — ✅ (2026-09-30: `main` was already in `0.4.3` (PR #26 merged earlier), so no merge into it; PR #29, CI green on Linux, macOS, Windows, and `msrv` -- `mypy --strict` and `stubtest` passing on their first CI run, and the cargo cache saved in every job for the first time since PR #26, though Windows's save ran exactly its 5-minute limit, so it likely timed out and saved nothing; merged as `2a5e7ef`, its tree identical to the tested branch; annotated tag `v0.4.3` ("Tesserae Engine 0.4.3"); the wheels run passed every job and the `pypi` deployment was approved; `tesserae-engine==0.4.3` installed from PyPI in a fresh venv reports 0.4.3 -- a bare `grid_auto_rows=96`, Shift+wheel scrolling a horizontal view 60, and 5000 clamped to 800; issue #27 wasn't linked by the PR's "Closes #27" (GitHub listed no closing issues), so it was closed by hand with a comment naming the fix)
 - Step 2: Tesserae moves to `0.4.3` — ⬜
 
 ---
