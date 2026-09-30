@@ -30,14 +30,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M14 — Keyboard Scrolling Leaves Shortcuts Alone | `██████████` 100% | ✅ Complete (2026-09-30) — keys with Ctrl, Alt, or Meta held are shortcuts and no longer scroll; Shift still does |
 | M15 — `scroll_offset` Clamped When Set | `██████████` 100% | ✅ Complete (2026-09-30) — `set` and `animate` clamp `scroll_offset` to the view's range at once, with one `scroll` event; a created offset is the event's baseline |
 | M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
-| M17 — Shift+Wheel Scrolls Horizontal Views | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M17 — Shift+Wheel Scrolls Horizontal Views | `█████░░░░░` 50% | 🚧 In Progress — Shift+wheel scrolls horizontal views, and a wheel passes views it can't move |
 | M18 — Unit Tests for the Scroll Core | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M19 — Stub Drift Checked in CI | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M20 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — after M17–M19, if nothing else joins 0.4.3 |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M17 Step 1 -- Shift+wheel scrolls a horizontal scroll view.
+**Up next:** M17 Step 2 -- documentation of Shift+wheel and the wheel's axis rule.
 
 **Known gaps:**
 - None open on this line.
@@ -240,10 +240,10 @@ User: "Start phase 3".
 
 ## Milestone 17 — Shift+Wheel Scrolls Horizontal Views
 
-**Status: ⬜ Proposed.** User (2026-09-30): "Scope 1, 2, and 3 for 0.4.3. Then we will look at releasing if there is nothing else after those." Found while recommending (checked 2026-09-30): a horizontal scroll view scrolls only on a wheel's horizontal part, which most mice don't have -- a plain wheel and Shift+wheel both left it at 0 -- where browsers, GTK, and Qt turn Shift+wheel horizontal. Core's `InputEvent::Scroll` carries no modifiers; `engine-py` tracks them (M14's rule lives there too). Plan: with Shift held, a wheel with no horizontal part is delivered to core's dispatch as horizontal, so the nearest horizontal scroll view scrolls; a wheel that already has a horizontal part (macOS turns Shift+wheel horizontal itself) is left alone; a terminal's scrollback still reads the vertical part; `wheel` listeners get the delta as delivered.
+**Status: 🚧 In Progress.** User: "yes, start  M17". Step 1 done (2026-09-30). Scoped (2026-09-30): "Scope 1, 2, and 3 for 0.4.3. Then we will look at releasing if there is nothing else after those." Found while recommending (checked 2026-09-30): a horizontal scroll view scrolls only on a wheel's horizontal part, which most mice don't have -- a plain wheel and Shift+wheel both left it at 0 -- where browsers, GTK, and Qt turn Shift+wheel horizontal. Core's `InputEvent::Scroll` carries no modifiers; `engine-py` tracks them (M14's rule lives there too). Plan: with Shift held, a wheel with no horizontal part is delivered to core's dispatch as horizontal, so the nearest horizontal scroll view scrolls; a wheel that already has a horizontal part (macOS turns Shift+wheel horizontal itself) is left alone; a terminal's scrollback still reads the vertical part; `wheel` listeners get the delta as delivered.
 
-### Phase 1 — Shift+Wheel ⬜
-- Step 1: the mapping in `engine-py`'s input path; pytest for Shift+wheel on a horizontal view, a vertical view under Shift, an already-horizontal wheel, and a terminal — ⬜
+### Phase 1 — Shift+Wheel 🚧
+- Step 1: the mapping in `engine-py`'s input path; pytest for Shift+wheel on a horizontal view, a vertical view under Shift, an already-horizontal wheel, and a terminal — ✅ (2026-09-30: `engine-py`'s new `shift_wheel` turns a wheel with Shift held and no horizontal part horizontal before core's dispatch and the listeners, leaving a wheel with a horizontal part alone, and the terminal's scrollback path reads the wheel as it came; found while building it (probed 2026-09-30): core's wheel walk stopped at the first scroll view under the pointer even when the wheel had no part along its axis, so a plain wheel over a horizontal carousel inside a vertical page scrolled neither, and Shift+wheel would have failed the same way nested -- `Tree::dispatch` now passes a scroll view or virtual list the wheel can't move on to the next one out, as `scroll_view_for_key` does for keys; 5 new pytest cases -- Shift+wheel on a horizontal view, a plain wheel over a carousel scrolling its page, Shift+wheel over the carousel scrolling it and below it scrolling nothing, a wheel already horizontal left alone, and a `wheel` listener hearing (60, 0) with Shift -- and the terminal test's scrollback wheel now holds Shift; cargo 377, pytest 504 + 1 skipped)
 - Step 2: the guide's Scrolling section, the events reference, and the 0.4.3 migration section — ⬜
 
 ---

@@ -391,12 +391,14 @@ pub(crate) fn process_input(
         return DispatchOutcome::None;
     }
     listeners::note_input_modality(event);
-    let target = listeners::target_before(&ctx.tree.borrow(), root, event);
-    let outcome = ctx
-        .tree
-        .borrow_mut()
-        .dispatch(root, event.clone(), crate::clock::now(ctx.tree));
-    listeners::route_input(ctx, target, event, py);
+    let shifted = shift_wheel(event);
+    let delivered = shifted.as_ref().unwrap_or(event);
+    let target = listeners::target_before(&ctx.tree.borrow(), root, delivered);
+    let outcome =
+        ctx.tree
+            .borrow_mut()
+            .dispatch(root, delivered.clone(), crate::clock::now(ctx.tree));
+    listeners::route_input(ctx, target, delivered, py);
     // M96: layers an outside press or Escape asked to dismiss.
     let dismissed = ctx.tree.borrow_mut().take_dismissals();
     for layer in dismissed {
@@ -415,6 +417,32 @@ pub(crate) fn process_input(
     keyboard_scroll(ctx, event);
     listeners::fire_scroll_changes(ctx, py);
     outcome
+}
+
+/// 0.4.3 M17: with Shift held, a wheel that has no horizontal part scrolls
+/// horizontally, as in a browser, GTK, or Qt -- most mice have no other way
+/// to scroll a horizontal view. Core's `Scroll` carries no modifiers, so
+/// the wheel is turned here, before dispatch; the listeners get it as
+/// turned. A wheel that already has a horizontal part is left alone (macOS
+/// turns Shift+wheel itself), and a terminal's scrollback (`shortcuts`)
+/// reads the wheel as it came.
+fn shift_wheel(event: &InputEvent) -> Option<InputEvent> {
+    use engine_core::ScrollDelta;
+    let InputEvent::Scroll { delta, position } = event else {
+        return None;
+    };
+    if !listeners::modifiers().shift {
+        return None;
+    }
+    let delta = match *delta {
+        ScrollDelta::Lines(x, y) if x == 0.0 && y != 0.0 => ScrollDelta::Lines(y, 0.0),
+        ScrollDelta::Pixels(x, y) if x == 0.0 && y != 0.0 => ScrollDelta::Pixels(y, 0.0),
+        _ => return None,
+    };
+    Some(InputEvent::Scroll {
+        delta,
+        position: *position,
+    })
 }
 
 /// 0.4.2 M12 (issue #24): the arrows, Page Up/Down, and Home/End scroll the

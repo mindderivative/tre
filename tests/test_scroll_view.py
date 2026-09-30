@@ -355,3 +355,62 @@ def test_a_create_time_offset_is_the_first_events_old_value():
     assert offset(view) == 500.0 and seen == [], "created there: nothing moved"
     view.set(scroll_offset=600.0)
     assert seen == [(500.0, 600.0)]
+
+
+# --- 0.4.3 M17: Shift+wheel, and a wheel passing views it can't move ------------
+
+
+def page_with_carousel(window):
+    """A vertical page (300x200 over 1000) holding a horizontal carousel
+    (300x80 over 1200) at its top."""
+    page = window.create("scroll_view", width=300, height=200)
+    column = window.create("box", width=300, height=1000, flex_direction="vertical")
+    carousel = window.create("scroll_view", width=300, height=80, orientation="horizontal")
+    carousel.add_child(window.create("box", width=1200, height=80))
+    column.add_child(carousel)
+    page.add_child(column)
+    window.root.add_child(page)
+    return page, column, carousel
+
+
+def test_shift_wheel_scrolls_a_horizontal_view():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window, orientation="horizontal")
+    window.simulate("wheel", node=view, delta_y=60.0)
+    assert offset(view) == 0.0, "a plain wheel has no horizontal part"
+    window.simulate("wheel", node=view, delta_y=60.0, shift=True)
+    assert offset(view) == 60.0
+
+
+def test_a_plain_wheel_over_a_carousel_scrolls_the_page():
+    window = Window(width=800, height=600)
+    page, _, carousel = page_with_carousel(window)
+    window.simulate("wheel", node=carousel, delta_y=60.0)
+    assert (offset(page), offset(carousel)) == (60.0, 0.0)
+
+
+def test_shift_wheel_over_a_carousel_scrolls_the_carousel():
+    window = Window(width=800, height=600)
+    page, column, carousel = page_with_carousel(window)
+    window.simulate("wheel", node=carousel, delta_y=60.0, shift=True)
+    assert (offset(page), offset(carousel)) == (0.0, 60.0)
+    window.simulate("wheel", node=column, x=10, y=150, delta_y=60.0, shift=True)
+    assert offset(page) == 0.0, "below the carousel, nothing scrolls sideways"
+
+
+def test_a_wheel_already_horizontal_is_left_alone():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window, orientation="horizontal")
+    window.simulate("wheel", node=view, delta_x=50.0, shift=True)
+    assert offset(view) == 50.0
+    window.simulate("wheel", node=view, delta_x=20.0, delta_y=90.0, shift=True)
+    assert offset(view) == 70.0, "its horizontal part, not the vertical"
+
+
+def test_wheel_listeners_hear_shift_wheel_as_horizontal():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window, orientation="horizontal")
+    heard = []
+    view.on("wheel", lambda e: heard.append((e.delta_x, e.delta_y, e.shift)))
+    window.simulate("wheel", node=view, delta_y=60.0, shift=True)
+    assert heard == [(60.0, 0.0, True)]
