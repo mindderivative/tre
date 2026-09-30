@@ -393,6 +393,9 @@ pub(crate) fn process_input(
     if send_to_focused_terminal(ctx, io, event) {
         return DispatchOutcome::None;
     }
+    if resize_from_border(ctx, io, event) {
+        return DispatchOutcome::None;
+    }
     listeners::note_input_modality(event);
     let shifted = shift_wheel(event);
     let delivered = shifted.as_ref().unwrap_or(event);
@@ -433,6 +436,79 @@ pub(crate) fn process_input(
     keyboard_scroll(ctx, event);
     listeners::fire_scroll_changes(ctx, py);
     outcome
+}
+
+/// 0.5.0 M3 (issue #28): which edge or corner of the window's resize border
+/// `position` is on, if any -- `window.set(resize_border=N)`, the
+/// framework's own border, live only while the window is undecorated (the
+/// OS's decorations have their own edges) and neither maximized nor
+/// fullscreen (nothing to resize). In layout pixels, like the pointer.
+pub(crate) fn border_direction(
+    window: &crate::window::WindowHandles,
+    position: peniko::kurbo::Point,
+) -> Option<winit::window::ResizeDirection> {
+    let border = window.resize_border.get();
+    if border <= 0.0
+        || window.decorations.get()
+        || window.maximized.get()
+        || window.fullscreen.get()
+    {
+        return None;
+    }
+    edge_at(
+        border,
+        f64::from(window.width.get()),
+        f64::from(window.height.get()),
+        position,
+    )
+}
+
+/// 0.5.0 M3: the edge or corner of a `w` x `h` window that `position` is
+/// within `border` pixels of, if any -- a corner where two edges meet.
+fn edge_at(
+    border: f64,
+    w: f64,
+    h: f64,
+    position: peniko::kurbo::Point,
+) -> Option<winit::window::ResizeDirection> {
+    use winit::window::ResizeDirection as Dir;
+    let (x, y) = (position.x, position.y);
+    let (west, east) = (x < border, x >= w - border);
+    let (north, south) = (y < border, y >= h - border);
+    Some(match (north, south, west, east) {
+        (true, _, true, _) => Dir::NorthWest,
+        (true, _, _, true) => Dir::NorthEast,
+        (_, true, true, _) => Dir::SouthWest,
+        (_, true, _, true) => Dir::SouthEast,
+        (true, ..) => Dir::North,
+        (_, true, ..) => Dir::South,
+        (_, _, true, _) => Dir::West,
+        (_, _, _, true) => Dir::East,
+        _ => return None,
+    })
+}
+
+/// 0.5.0 M3: a primary press on the resize border resizes the window from
+/// that edge or corner (`winit`'s `drag_resize_window`) and reaches no node,
+/// so a splitter or scrollbar at the edge doesn't also start its own drag;
+/// its release, if it comes, is swallowed too. Whether it was taken.
+fn resize_from_border(ctx: &NodeContext<'_>, io: &WindowIo<'_>, event: &InputEvent) -> bool {
+    let InputEvent::PointerPressed {
+        position,
+        button: PointerButton::Primary,
+    } = *event
+    else {
+        return false;
+    };
+    let Some(direction) = border_direction(io.window, position) else {
+        return false;
+    };
+    if let Some(window) = io.window.os_window.borrow().as_ref() {
+        let _ = window.drag_resize_window(direction);
+    }
+    ctx.tree.borrow_mut().cancel_press();
+    io.window.press_cancelled.set(true);
+    true
 }
 
 /// 0.5.0 M3 (issue #28): a primary press on a drag region -- a framework's
@@ -869,4 +945,27 @@ pub(crate) fn cut_focused_selection_to_clipboard(
     tree.borrow_mut().cut_text_field_selection(field);
     deliver_change(&ctx, field, old_for_listeners, py);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edge_at;
+    use peniko::kurbo::Point;
+    use winit::window::ResizeDirection as Dir;
+
+    #[test]
+    fn edge_at_names_each_edge_and_corner_of_the_border() {
+        let at = |x, y| edge_at(8.0, 400.0, 300.0, Point::new(x, y));
+        assert_eq!(at(200.0, 150.0), None, "inside");
+        assert_eq!(at(3.0, 150.0), Some(Dir::West));
+        assert_eq!(at(396.0, 150.0), Some(Dir::East));
+        assert_eq!(at(200.0, 2.0), Some(Dir::North));
+        assert_eq!(at(200.0, 295.0), Some(Dir::South));
+        assert_eq!(at(1.0, 1.0), Some(Dir::NorthWest));
+        assert_eq!(at(399.0, 1.0), Some(Dir::NorthEast));
+        assert_eq!(at(1.0, 299.0), Some(Dir::SouthWest));
+        assert_eq!(at(399.0, 299.0), Some(Dir::SouthEast));
+        assert_eq!(at(7.9, 150.0), Some(Dir::West), "the border's last pixel");
+        assert_eq!(at(8.0, 150.0), None, "just past it");
+    }
 }

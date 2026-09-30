@@ -340,6 +340,17 @@ fn cursor_at(tree: &Tree, root: NodeId, position: Point) -> Cursor {
     Cursor::Default
 }
 
+/// 0.5.0 M3: the resize cursor for an edge or corner of the resize border.
+fn border_cursor(direction: winit::window::ResizeDirection) -> Cursor {
+    use winit::window::ResizeDirection as Dir;
+    match direction {
+        Dir::North | Dir::South => Cursor::NsResize,
+        Dir::East | Dir::West => Cursor::EwResize,
+        Dir::NorthWest | Dir::SouthEast => Cursor::NwseResize,
+        Dir::NorthEast | Dir::SouthWest => Cursor::NeswResize,
+    }
+}
+
 /// M94: `winit`'s icon for each of the engine's cursor shapes.
 fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
     use winit::window::CursorIcon as Icon;
@@ -854,11 +865,16 @@ impl App {
                 | InputEvent::PointerPressed { position, .. }
                 | InputEvent::PointerReleased { position, .. } = &event
                 {
-                    let wanted = cursor_at(
-                        &runtime.handles.tree.borrow(),
-                        runtime.handles.root,
-                        *position,
-                    );
+                    // 0.5.0 M3: the resize border's cursors come first.
+                    let wanted = crate::dispatch::border_direction(&runtime.handles, *position)
+                        .map(border_cursor)
+                        .unwrap_or_else(|| {
+                            cursor_at(
+                                &runtime.handles.tree.borrow(),
+                                runtime.handles.root,
+                                *position,
+                            )
+                        });
                     if wanted != runtime.cursor {
                         if let Some(window) = runtime.handles.os_window.borrow().as_ref() {
                             window.set_cursor(cursor_icon(wanted));

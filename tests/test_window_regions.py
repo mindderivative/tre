@@ -141,3 +141,70 @@ def test_a_secondary_press_on_the_drag_region_does_not_drag():
     bar.on("pointer_cancel", lambda: cancelled.append(True))
     window.simulate("pointer_down", node=bar, x=200, y=20, button="secondary")
     assert cancelled == []
+
+
+# --- Step 2: the resize border ----------------------------------------------------
+
+
+def bordered(decorations=False, border=8):
+    """A 400x300 window whose content is one node filling it, with a resize
+    border."""
+    window = Window(width=400, height=300, decorations=decorations)
+    window.root.set(padding=0)
+    fill = window.create("box", width=400, height=300)
+    window.root.add_child(fill)
+    window.set(resize_border=border)
+    heard = []
+    for event in EVENTS:
+        fill.on(event, lambda event=event: heard.append(event))
+    return window, heard
+
+
+def test_resize_border_reads_back_and_is_validated():
+    window = Window()
+    assert window.get("resize_border") == 0.0
+    window.set(resize_border=6)
+    assert window.get("resize_border") == 6.0
+    with pytest.raises(ValueError, match="`resize_border` must be a number >= 0"):
+        window.set(resize_border=-1)
+    with pytest.raises(ValueError):
+        window.set(resize_border=10, colour=1)
+    assert window.get("resize_border") == 6.0, "a failed set changes nothing"
+
+
+@pytest.mark.parametrize("x, y", [(3, 150), (397, 150), (200, 2), (200, 297), (1, 1), (399, 299)])
+def test_a_press_on_the_border_resizes_and_reaches_no_node(x, y):
+    window, heard = bordered()
+    window.simulate("pointer_down", x=x, y=y)
+    window.simulate("pointer_up", x=x, y=y)
+    assert heard == [], "the press and its release both go to the resize"
+
+
+def test_a_press_inside_the_border_is_ordinary():
+    window, heard = bordered()
+    window.simulate("pointer_down", x=200, y=150)
+    window.simulate("pointer_up", x=200, y=150)
+    assert heard == ["pointer_down", "pointer_up", "click"]
+
+
+def test_the_border_is_off_for_a_decorated_window():
+    window, heard = bordered(decorations=True)
+    window.simulate("pointer_down", x=3, y=150)
+    assert heard == ["pointer_down"]
+
+
+@pytest.mark.parametrize("state", ["maximized", "fullscreen"])
+def test_the_border_is_off_while_maximized_or_fullscreen(state):
+    window, heard = bordered()
+    if state == "maximized":
+        window.simulate("maximized", maximized=True)
+    else:
+        window.set(fullscreen=True)
+    window.simulate("pointer_down", x=3, y=150)
+    assert heard == ["pointer_down"]
+
+
+def test_a_zero_border_resizes_nothing():
+    window, heard = bordered(border=0)
+    window.simulate("pointer_down", x=0, y=0)
+    assert heard == ["pointer_down"]

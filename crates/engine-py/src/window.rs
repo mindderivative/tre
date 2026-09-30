@@ -132,6 +132,9 @@ pub(crate) struct WindowHandles {
     /// (`pointer_cancel`), so its release, if the platform delivers one at
     /// all, reaches no listener. The next press clears it.
     pub(crate) press_cancelled: Rc<Cell<bool>>,
+    /// 0.5.0 M3: how many pixels along each edge resize an undecorated
+    /// window; 0 for none.
+    pub(crate) resize_border: Rc<Cell<f64>>,
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
@@ -209,6 +212,7 @@ impl PyWindow {
                 min_size: Rc::new(Cell::new((0.0, 0.0))),
                 icon: Rc::new(RefCell::new(None)),
                 press_cancelled: Rc::new(Cell::new(false)),
+                resize_border: Rc::new(Cell::new(0.0)),
                 waker: Rc::new(RefCell::new(None)),
             },
         })))

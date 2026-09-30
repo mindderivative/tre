@@ -229,7 +229,7 @@ impl PyWindow {
 
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
 const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
-    min_width, min_height, icon";
+    min_width, min_height, icon, resize_border";
 
 /// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
 /// RGBA8 bytes, `width * height * 4` of them.
@@ -559,6 +559,7 @@ impl PyWindow {
         let mut fullscreen = None;
         let (mut min_width, mut min_height) = (None, None);
         let mut icon = None;
+        let mut resize_border = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -590,6 +591,7 @@ impl PyWindow {
                     }
                     "min_width" => min_width = Some(parse_min_edge(&name, &value)?),
                     "min_height" => min_height = Some(parse_min_edge(&name, &value)?),
+                    "resize_border" => resize_border = Some(parse_min_edge(&name, &value)?),
                     "icon" => {
                         icon = Some(if value.is_none() {
                             None
@@ -628,6 +630,9 @@ impl PyWindow {
                 window.set_decorations(on);
             }
             self.handles.decorations.set(on);
+        }
+        if let Some(border) = resize_border {
+            self.handles.resize_border.set(border);
         }
         let window = self.handles.os_window.borrow();
         if let Some(on) = fullscreen {
@@ -739,6 +744,13 @@ impl PyWindow {
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
+            "resize_border" => self
+                .handles
+                .resize_border
+                .get()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
             "min_height" => self
                 .handles
                 .min_size
@@ -803,7 +815,7 @@ impl PyWindow {
                     "unknown window property {name:?} -- valid: width, height, title, \
                      scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
-                     min_height, platform"
+                     min_height, platform, resize_border"
                 )));
             }
         })

@@ -338,6 +338,7 @@ class Window:
         min_width: float = ...,
         min_height: float = ...,
         icon: tuple[bytes, int, int] | None = ...,
+        resize_border: float = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -354,7 +355,11 @@ class Window:
         `width * height * 4` of them -- or `None`, for the taskbar and
         window switcher on Windows and X11 (Wayland and macOS take the app's
         icon from its desktop file or bundle). Each applies live to an open
-        window, or when `App.run()` opens it."""
+        window, or when `App.run()` opens it. `resize_border`: how many
+        pixels along each edge of an undecorated window resize it -- a
+        primary press there starts the resize and reaches no node, and the
+        pointer shows a resize cursor; off while maximized or fullscreen,
+        0 (the default) for none."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -374,7 +379,7 @@ class Window:
         ],
     ) -> bool: ...
     @overload
-    def get(self, name: Literal["min_width", "min_height"]) -> float: ...
+    def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
     @overload
     def get(self, name: Literal["platform"]) -> str: ...
     @overload
@@ -391,7 +396,7 @@ class Window:
         `show_damage`, or (0.5.0) `decorations`, `maximized`, `minimized`,
         and `active` (whether the window has focus) -- the open window's
         own answer, or before `App.run()` what it opens as -- `fullscreen`,
-        `min_width`, `min_height`, and `platform`: `"wayland"`, `"x11"`,
+        `min_width`, `min_height`, `resize_border`, and `platform`: `"wayland"`, `"x11"`,
         `"windows"`, or `"macos"` (on Linux, the open window's own answer;
         before, the backend `winit` would pick)."""
         ...
