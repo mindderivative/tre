@@ -1,4 +1,4 @@
-site_name: tre
+site_name: Tesserae Engine
 site_description: >-
   A GPU-rendered retained-mode UI engine for Python, written in Rust --
   the building blocks of a desktop UI.

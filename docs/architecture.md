@@ -47,7 +47,7 @@ input or `call_soon`.
   layout, paint, or interpolation — only inside callbacks.
 - **One animation mechanism.** Every animatable value is the same
   `Animated<T>`, ticked by one pass.
-- **Mechanism in the engine, meaning and look in the framework.** `tre`
+- **Mechanism in the engine, meaning and look in the framework.** Tesserae Engine
   reports what it can know — pointer, focus, whether focus came from the
   keyboard — and draws only what it's told.
 - **Data in, not files.** Pixels, fonts, and tree content arrive as data;
@@ -55,7 +55,7 @@ input or `call_soon`.
 
 ## History
 
-`tre` is a from-scratch second iteration of an earlier Vulkan engine,
+Tesserae Engine is a from-scratch second iteration of an earlier Vulkan engine,
 archived under
 [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
 its lessons learned.

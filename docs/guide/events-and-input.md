@@ -81,7 +81,7 @@ other side of the move, so a composite widget can tell focus moving between
 its own parts from focus leaving it. `focus` also carries `focus_visible`:
 `True` when focus came from the keyboard or an assistive technology, `False`
 after a pointer press — the rule browsers use for `:focus-visible`, and the
-one to show a focus ring by. `tre` draws no focus ring itself.
+one to show a focus ring by. Tesserae Engine draws no focus ring itself.
 
 ## Text input
 

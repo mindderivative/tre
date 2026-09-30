@@ -38,7 +38,7 @@ that changed it, in case your code or tests relied on the old one.
   [Keyboard scrolling](guide/nodes-and-layout.md#keyboard-scrolling).
 - **Focus reveals.** Focusing a node — by Tab, a click, `node.focus()`, or an
   assistive technology — scrolls the scroll views around it just enough to
-  show it, and `tre` now answers an assistive technology's
+  show it, and Tesserae Engine now answers an assistive technology's
   `scroll_into_view` request itself. A test that focuses a node below the
   fold and then checks a scroll offset will see it move.
 - **New:** `node.scroll_into_view()`, the `scroll` event, CSS Grid layout

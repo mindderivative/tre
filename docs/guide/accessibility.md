@@ -1,8 +1,8 @@
 # Accessibility
 
-Every frame, `tre` builds an [AccessKit](https://github.com/AccessKit/accesskit)
+Every frame, Tesserae Engine builds an [AccessKit](https://github.com/AccessKit/accesskit)
 tree from the node tree and hands it to the platform's screen reader. What
-a node tells assistive technology is what you set on it: `tre` knows boxes
+a node tells assistive technology is what you set on it: Tesserae Engine knows boxes
 and paths, not buttons and switches, so a widget declares what it is.
 
 ## Role, name, and state
@@ -74,7 +74,7 @@ slider.on("a11y_action", on_action)
 ```
 
 `event.action` is `"increment"`, `"decrement"`, `"expand"`, `"collapse"`,
-`"scroll_into_view"`, or `"set_value"` (with `event.value`). `tre` answers
+`"scroll_into_view"`, or `"set_value"` (with `event.value`). Tesserae Engine answers
 `"scroll_into_view"` itself, after your listeners run: it scrolls every
 scroll view around the node just enough to show it, as
 [`node.scroll_into_view()`](nodes-and-layout.md#revealing-a-node) does, so a

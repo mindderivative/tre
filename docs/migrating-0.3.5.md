@@ -1,10 +1,10 @@
 # Migrating to 0.3.5
 
-`tre` 0.3.5 makes `tre` a small building-block engine: nodes, layout, paint,
+0.3.5 makes Tesserae Engine a small building-block engine: nodes, layout, paint,
 animation, events, text, accessibility, layers, and threading. Everything built
 *from* those blocks — declarative views, data binding and reactivity, the
 Material Design 3 widgets, theming, and file loading — now belongs to a framework
-built on `tre`, such as Tesserae. Every surviving name also takes one consistent
+built on Tesserae Engine, such as Tesserae. Every surviving name also takes one consistent
 form: `window.create`, `node.set`/`get`/`on`, and `window.simulate`.
 
 It's a breaking release. Nothing is kept for compatibility; a removed name fails

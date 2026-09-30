@@ -1,7 +1,7 @@
 # Getting Started
 
 This builds a small counter: a label, and a button that counts clicks. See
-[Installation](installation.md) first if you haven't installed `tre`.
+[Installation](installation.md) first if you haven't installed Tesserae Engine.
 
 ## A window
 
@@ -71,7 +71,7 @@ Now Tab reaches it, and Enter or Space clicks it.
 
 ## Feedback
 
-`tre` draws no hover or press effect; you choose one. Fade the button while
+Tesserae Engine draws no hover or press effect; you choose one. Fade the button while
 the pointer is over it:
 
 ```python

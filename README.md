@@ -1,8 +1,8 @@
-# tre
+# Tesserae Engine
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust.**
 
-`tre` gives Python the building blocks of a desktop UI — nodes, flexbox
+Tesserae Engine (imported as `tre`) gives Python the building blocks of a desktop UI — nodes, flexbox
 and grid layout, paint, animation, input and events, text, accessibility, layers,
 and threading — and renders them on the GPU, redrawing only what changed, with
 [`vello_gpu`](https://github.com/linebender/vello), laid out by
@@ -92,5 +92,5 @@ headlessly through `window.simulate` and `window.advance`.
 [`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) tracks the current `0.4.x` line; the
 milestone-by-milestone history through `v0.3.5.2` is in
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md).
-`tre` is a from-scratch second iteration of an earlier Vulkan engine,
+Tesserae Engine is a from-scratch second iteration of an earlier Vulkan engine,
 archived under [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with its lessons learned.

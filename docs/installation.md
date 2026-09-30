@@ -1,6 +1,6 @@
 # Installation
 
-`tre` ships as a compiled Python extension module (`tre._core`, built with
+Tesserae Engine ships as a compiled Python extension module (`tre._core`, built with
 [PyO3](https://pyo3.rs/)/[maturin](https://www.maturin.rs/)) plus a thin
 pure-Python package (`tre`) on top of it. There are two ways to get it:
 install a pre-built wheel, or build one yourself from source.
@@ -18,8 +18,8 @@ install a pre-built wheel, or build one yourself from source.
 pip install tesserae-engine
 ```
 
-`tre` is published on PyPI as **`tesserae-engine`** — the name `tre` there
-belongs to an unrelated project. The import name is still `tre`:
+Tesserae Engine is published on PyPI as **`tesserae-engine`** — the name
+`tre` there belongs to an unrelated project. The import name is `tre`:
 
 ```python
 import tre

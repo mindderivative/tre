@@ -1,6 +1,6 @@
 # Building a Widget
 
-`tre` has no buttons, switches, or sliders. It has the blocks they're built
+Tesserae Engine has no buttons, switches, or sliders. It has the blocks they're built
 from, and this page builds one — an on/off switch — to show how the blocks
 fit: layout and paint for how it looks, listeners for what it does,
 animation for how it moves, and accessibility for what a screen reader says.
@@ -48,7 +48,7 @@ class Switch:
 ```
 
 `role="switch"`, `label`, and `checked` are all a screen reader needs, and
-because the role is button-like, `tre` offers assistive technology an
+because the role is button-like, Tesserae Engine offers assistive technology an
 activate action for it — see [Accessibility](accessibility.md).
 `focusable=True` puts it in the Tab order.
 

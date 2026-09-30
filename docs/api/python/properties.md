@@ -183,7 +183,7 @@ rows = window.create("virtual_list", item_count=len(items), item_extent=32,
 | `size_hint` | `size_hint(index)` → that row's height, for rows of different heights |
 | `materialize` | `materialize(index)` → a node this window made, for that row |
 
-`tre` keeps exactly the rows the viewport shows built: whenever layout runs —
+Tesserae Engine keeps exactly the rows the viewport shows built: whenever layout runs —
 each frame, `window.advance`, `window.simulate`, and any `layout_*` read — it
 calls `materialize` for each newly visible row, gives the row the list's width
 and its own height, and detaches rows scrolled away. A detached row is freed

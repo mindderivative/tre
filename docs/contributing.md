@@ -43,7 +43,7 @@ mkdocs build   # static site in site/
 
 !!! note
     Don't use `pip install '.[docs]'` for this — installing extras from a
-    local `pyproject.toml` always builds the base package too (`tre`'s
+    local `pyproject.toml` always builds the base package too (Tesserae Engine's
     real Rust extension), which needs a full Rust toolchain and
     `fontconfig` dev headers you don't need just to build docs. The
     plain install above only ever runs `mkdocs`, never imports `tre`.

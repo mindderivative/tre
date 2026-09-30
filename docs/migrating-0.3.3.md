@@ -6,7 +6,7 @@
     bindings — was removed or renamed in 0.3.5; see
     [Migrating to 0.3.5](migrating-0.3.5.md).
 
-`tre` 0.3.3 renames properties so that one concept has one name across
+Tesserae Engine 0.3.3 renames properties so that one concept has one name across
 the Python API (`Window.add_*`, `Node`) and declarative views. It's a
 breaking release: code and view files written for 0.3.2 need the
 changes below. Old names fail loudly — none is silently ignored.
@@ -70,7 +70,7 @@ above. Review its diff: a widget whose `kind:` is written after a nested
   relying on such a rule may lay out differently.
 - **Check your text colors.** Because `background` used to be the text
   color of a label, code that passed a transparent or background-matching
-  color there drew invisible text — `tre`'s own examples had nine such
+  color there drew invisible text — Tesserae Engine's own examples had nine such
   labels. Migrating makes the intent explicit; a `foreground` of
   `(0, 0, 0, 0)` is still invisible.
 - **Live updates keep bound values** ([issue #8](https://github.com/mindderivative/tre/issues/8)).

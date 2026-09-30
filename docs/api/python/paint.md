@@ -102,7 +102,7 @@ interpolate component-wise in sRGB.
 
 ## Text inputs, scroll views, and terminals
 
-`tre` paints no color you can't set:
+Tesserae Engine paints no color you can't set:
 
 | Kind | Property | Value |
 | --- | --- | --- |
@@ -116,5 +116,5 @@ interpolate component-wise in sRGB.
 | terminal | `palette` | a dict with any of `ansi` (16 colors), `foreground`, `background`, `cursor`, `selection` — keys you leave out keep their colors |
 
 A terminal resolves each cell's color against its palette when it paints, so a
-new palette recolors what's already on screen. `tre` draws no focus ring on a
+new palette recolors what's already on screen. Tesserae Engine draws no focus ring on a
 node you build: show focus yourself from the `focus` and `unfocus` events.

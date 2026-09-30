@@ -32,5 +32,6 @@ keyboard/`scroll_into_view` scrolls jump.
 Each step: the full chain, docs, tracker, a local commit.
 
 1. Documentation audit: every MkDocs page, README, ARCHITECTURE, the stub (done).
-2. PR to `main`, CI, merge, tag `v0.4.2`, release, PyPI -- after the user says to push.
-3. Tesserae moves to `0.4.2`.
+2. The project named Tesserae Engine in the docs (done).
+3. PR to `main`, CI, merge, tag `v0.4.2`, release, PyPI -- after the user says to push.
+4. Tesserae moves to `0.4.2`.

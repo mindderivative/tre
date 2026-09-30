@@ -1,8 +1,8 @@
 # Layers
 
 Menus, dialogs, tooltips, snackbars, and sheets all float over the window's
-content. `tre` has one mechanism for all of them: build the content from
-ordinary nodes and show it as a layer. `tre` stacks it, places it against
+content. Tesserae Engine has one mechanism for all of them: build the content from
+ordinary nodes and show it as a layer. Tesserae Engine stacks it, places it against
 an anchor, keeps it on screen, routes input around it, scopes focus to it,
 and tells you when the user dismisses it. What it looks like — and whether
 there's a scrim — is yours.

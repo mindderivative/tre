@@ -1,7 +1,7 @@
 # Nodes and Layout
 
 Everything on screen is a node in a window's tree. You create nodes, attach
-them under one another, and set their layout properties; `tre` lays the tree
+them under one another, and set their layout properties; Tesserae Engine lays the tree
 out with flexbox or CSS Grid ([taffy](https://github.com/DioxusLabs/taffy)) whenever it
 changes, and paints it every frame.
 

@@ -26,11 +26,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
 | M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `██████████` 100% | ✅ Complete (2026-09-29) — `display="grid"`, track lists, placements, auto tracks and flow, row/column gaps, and item alignment, read back as set |
 | M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `██████████` 100% | ✅ Complete (2026-09-29) — Page Up/Down keys, keyboard scrolling, `scroll_into_view` with focus reveal, and the `scroll` event |
-| M13 — Release `0.4.2` | `███░░░░░░░` 33% | 🚧 In Progress — documentation audited and corrected |
+| M13 — Release `0.4.2` | `█████░░░░░` 50% | 🚧 In Progress — documentation audited and corrected, the project named Tesserae Engine |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M13 Step 2 -- release `0.4.2` (M11 grid and M12 scrolling), awaiting the user's go-ahead to push.
+**Up next:** M13 Step 3 -- release `0.4.2` (M11 grid and M12 scrolling), awaiting the user's go-ahead to push.
 
 **Known gaps:**
 - None open on this line.
@@ -194,8 +194,9 @@ User: "Start phase 3".
 
 ### Phase 1 — Release 🚧
 - Step 1: documentation audit -- every MkDocs page, the README, ARCHITECTURE.md, and the stub, checked against the code with every snippet run — ✅ (2026-09-29: five read-only audit agents over the intro pages and README, the two halves of the guide, the Python API reference with the stub, and ARCHITECTURE with the design and migration pages, each claim they reported re-checked before editing; about 70 fixes -- wrong: `justify_content` has no `"baseline"`, grid line `-1` is past the last column, the stub's `Node.get(property=)` keyword (the runtime's is `name`), `simulate`'s modifiers only on pointer, wheel, click, and key events, `animate`'s `TypeError`, icons as never-hit targets, engine-core's never-built `AppHandler`, `accesskit` "pinned exactly", Painter's unbuilt `fill_path`/`draw_text`, the root as a `box`, and the grid form snippet whose `1fr` column came out 0 wide; stale: 0.3.x versions in the install page, the tracker described as all history, the target-API page still "being implemented", the 0.3.3 migration page and its removed tool, a resolved partial-redraw risk; missing: grid and partial redraw in the overview pages, a Redrawing section in the painting guide, keyboard scrolling and focus reveal in the accessibility, events, and widget guides, `scroll_into_view` in the Node reference, the side buttons and `wheel` in the events guide, Linux build packages and the MSRV, text-input style limits, a terminal's read-only `text`, the `scroll`/`dismiss` events in the stub, and a new `docs/migrating-0.4.md` listing 0.4.x's behavior changes; mkdocs strict, rustdoc `-D warnings`, mypy strict, and pytest 481 + 1 skipped clean; stubtest left with only a hand-written PyO3 stub's structural differences)
-- Step 2: PR to `main`, CI green, merge, tag `v0.4.2`, release, PyPI — ⬜
-- Step 3: Tesserae moves to `0.4.2` — ⬜
+- Step 2: the project named Tesserae Engine throughout the documentation — ✅ (2026-09-29, user: "Change the project name in the docs to Tesserae Engine"; the MkDocs site name and page titles, and every prose mention of the project in the README, ARCHITECTURE.md, and the docs site, now say Tesserae Engine, with "imported as `tre`" at the first mention on the entry pages; what names code keeps `tre` -- `import tre`, the `tre` package and `tre._core`, the repository and its URLs, the crates, PyPI's unrelated `tre` project, and the default window title `"tre v2"`; the `docs/design/` pages, dated records of the 0.3.x design, and the type stub are unchanged; mkdocs strict clean)
+- Step 3: PR to `main`, CI green, merge, tag `v0.4.2`, release, PyPI — ⬜
+- Step 4: Tesserae moves to `0.4.2` — ⬜
 
 ---
 

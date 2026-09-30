@@ -1,8 +1,8 @@
-# tre
+# Tesserae Engine
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust.**
 
-`tre` gives Python the building blocks of a desktop UI — nodes, layout,
+Tesserae Engine (imported as `tre`) gives Python the building blocks of a desktop UI — nodes, layout,
 paint, animation, input, text, accessibility, and layers — and renders them
 on the GPU. It has no widgets and no theme of its own: a framework built on
 it, such as Tesserae, turns the blocks into buttons, dialogs, and design
@@ -55,14 +55,14 @@ app.run()
 [Building a Widget](guide/building-a-widget.md) puts them together into a
 complete switch.
 
-## What `tre` leaves to the framework
+## What Tesserae Engine leaves to the framework
 
 - **Widgets and design** — Material Design 3 or any other design system is
-  built from the blocks; `tre` draws no default styling, focus ring, or
+  built from the blocks; Tesserae Engine draws no default styling, focus ring, or
   scrim.
 - **Declarative views and state** — views, bindings, and reactivity sit on
   top of `window.create`, `node.set`, and `insert_child`.
-- **Files** — images arrive as decoded pixels and fonts as bytes; `tre`
+- **Files** — images arrive as decoded pixels and fonts as bytes; Tesserae Engine
   reads no files and chooses no formats.
 
 ## Where to go next
@@ -78,7 +78,7 @@ complete switch.
   the framework and what was renamed.
 - **[Architecture](architecture.md)** — the crates and how a frame is made.
 
-`tre` is a second, from-scratch iteration of an earlier Vulkan engine,
+Tesserae Engine is a second, from-scratch iteration of an earlier Vulkan engine,
 archived under
 [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
 the lessons learned that shaped it. Its build history is in

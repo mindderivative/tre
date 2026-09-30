@@ -56,7 +56,7 @@ bar.on("unfocus", on_unfocus)
 ```
 
 `focus` also carries `event.focus_visible`, which says whether to draw a focus
-indicator (`tre` draws none itself):
+indicator (Tesserae Engine draws none itself):
 
 - `True` when focus arrived by keyboard: Tab, Shift+Tab, or an assistive
   technology's focus request.

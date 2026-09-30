@@ -37,7 +37,7 @@ That's how a button hugs its label, or a chip fits its text.
 
 ## Fonts
 
-`tre` bundles Roboto (regular and medium), Noto Sans Arabic, and Hack Nerd
+Tesserae Engine bundles Roboto (regular and medium), Noto Sans Arabic, and Hack Nerd
 Font Mono, and never loads system fonts, so text renders the same on every
 machine. `tre.MONOSPACE_FONT_FAMILY` names the monospace face, which
 terminals use — use it for anything that must line up with one, such as an

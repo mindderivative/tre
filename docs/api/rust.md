@@ -1,6 +1,6 @@
 # Rust Crates
 
-`tre` is a Cargo workspace of four crates with a strict, one-directional
+Tesserae Engine is a Cargo workspace of four crates with a strict, one-directional
 dependency layering — the Python API (`engine-py`) is a thin boundary
 over the rest, never the other way around. Full API docs for the Rust
 side are generated with `rustdoc`, not this site. See
