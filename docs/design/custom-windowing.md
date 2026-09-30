@@ -5,7 +5,10 @@
     reviewed by Tesserae and decided by the project owner: every
     recommendation accepted, with Tesserae's refinements, and five
     [additions](#additions-from-the-review). Each question below ends with
-    its **Decided** line. Nothing here exists yet; M2–M5 build it.
+    its **Decided** line. Built so far: M2's undecorated windows,
+    controls, state and events, fullscreen, minimum size, icon, and
+    platform ([#37](https://github.com/mindderivative/tre/issues/37)); M3–M5
+    build the rest.
 
 ## The goal
 

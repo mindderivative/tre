@@ -3,8 +3,10 @@
 Owns one node tree and the OS window it's painted into. Add windows to an
 [`App`](app.md), then call `App.run()`.
 
-**`Window(width=480, height=200, title="tre v2")`** — raises `ValueError`
-for a zero width or height.
+**`Window(width=480, height=200, title="tre v2", decorations=True)`** —
+raises `ValueError` for a zero width or height. `decorations=False` (0.5.0)
+opens the window without the OS's title bar and borders, for the framework
+to draw its own; see [Window controls and state](#window-controls-and-state).
 
 ```python
 window = Window(width=640, height=400, title="Inbox")
@@ -35,11 +37,55 @@ dismissible=True)`** shows `node` over the window's content, and
 **`hide_layer(node)`** hides it — for menus, dialogs, tooltips, and sheets.
 See [Layers](layers.md).
 
+## Window controls and state
+
+Since 0.5.0, a window can be run without the OS's title bar and borders
+(`decorations=False`, or `set(decorations=...)` live), so the framework can
+draw its own — and needs these to wire it up. See the
+[custom-windowing design](../../design/custom-windowing.md).
+
+**`minimize()`**, **`maximize()`**, and **`restore()`** act on the open
+window; before `App.run()` they set how it opens. **`close()`** closes the
+window as if the user had: `close_requested` fires first and a listener can
+cancel it. It happens on the loop's next turn, not during the call, and a
+window that isn't open has nothing to close.
+
+```python
+minimize_button.on("click", lambda: window.minimize())
+maximize_button.on("click", lambda: window.restore() if window.get("maximized") else window.maximize())
+close_button.on("click", lambda: window.close())
+window.on("maximized", lambda e: swap_icon(e.maximized))
+window.on("active", lambda e: title_bar.set(opacity=1.0 if e.active else 0.6))
+```
+
+| Property | Set | Get |
+| --- | --- | --- |
+| `decorations` | Whether the OS draws the title bar and borders | The open window's answer |
+| `fullscreen` | Borderless fullscreen on the window's monitor | Whether it is |
+| `min_width`, `min_height` | The smallest size the user can resize to; 0 for none | The setting |
+| `icon` | `(rgba, width, height)` — RGBA8 bytes, `width * height * 4` of them — or `None`; shown on Windows and X11 (Wayland and macOS take the app's icon from its desktop file or bundle) | — |
+| `maximized`, `minimized` | — (use the methods above) | The open window's state, or before `App.run()` how it opens |
+| `active` | — | Whether the window has the OS's focus |
+| `platform` | — | `"wayland"`, `"x11"`, `"windows"`, or `"macos"` |
+
+Each settable one applies live to an open window, or when `App.run()` opens
+it. A window smaller than its minimum is grown to it, when the minimum is
+set and after any resize: on Wayland a minimum otherwise only limits what
+the user can drag it to, and leaving fullscreen can restore a smaller size.
+A maximized or fullscreen window isn't resized to its minimum. Two window
+events report state changes: **`maximized`** (`event.maximized`) when the
+window is maximized or restored, and **`active`** (`event.active`) when it
+gains or loses focus — each only when the value changes.
+
+On Windows an undecorated window keeps its shadow. On macOS, where `winit`
+can't let the user resize an undecorated window, `decorations=False` will
+keep the native title bar's controls over the content (0.5.0 M4).
+
 ## Window events and properties
 
 **`on(event, handler)`** and **`off(event)`** listen to the window itself —
 `resize`, `color_scheme`, `scale_factor`, `close_requested`, `closed`,
-`dock_target`, and `dock_drop`; see
+`dock_target`, `dock_drop`, and (0.5.0) `maximized` and `active`; see
 [Events and Listeners](events.md#window-listeners).
 
 **`set(title=...)`** changes the title, live if the window is open.
@@ -61,7 +107,8 @@ draw. Off by default.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), `dark` — the OS's current appearance,
 or `None` where it can't say ([Window properties](events.md#window-properties))
-— `partial_redraw`, `partial_redraw_active`, or `show_damage`.
+— `partial_redraw`, `partial_redraw_active`, `show_damage`, or the
+[window's controls and state](#window-controls-and-state) above.
 
 **`resize(width, height)`** sets the window's size from code, and the
 root's layout box follows. It fires no `resize` event — that reports a

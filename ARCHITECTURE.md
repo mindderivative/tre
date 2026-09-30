@@ -278,6 +278,8 @@ plus the animation-completion registry and the window's own listeners. `Window` 
 
 One `Tree` per OS window. `winit` tags each event with its `WindowId`, so routing it to the right tree is a lookup. A `NodeId` means something only in the tree that issued it: moving a node to another window is an accepted gap — rebuild it there.
 
+**Window settings and controls** (0.5.0 M2, issue #28). How a window is made beyond its title and size travels in `engine-platform`'s `WindowOptions` (decorations, maximized, fullscreen, a minimum size, an icon); `engine-py` keeps each setting in the window's handles, applies it live through the open `winit::Window`, or passes it in `WindowOptions` when `App.run()` opens the window. Two requests go to the loop through its proxy rather than acting at once: `EventLoopWaker::close_window` runs the user-close path (`close_requested`, cancellable) on the loop's next turn, so a close from a listener never re-enters the loop, and `report_size` reports a size the app changed itself as an ordinary resize, since `winit` may apply it with no `Resized` (Wayland does). State is reported the way the OS gives it: `maximized` is checked after each resize (`winit` sends no maximize event), `active` comes from `WindowEvent::Focused` (`InputEvent::Focused`, which dispatch ignores), and both fire only on a change. A window below its minimum is grown to it after every resize, because Wayland treats a minimum as a limit on the user's drag only. See `docs/design/custom-windowing.md`.
+
 ### 11.2 App shell
 
 Moved to the framework (M99). A shell is an ordinary tree: regions are boxes, navigation is `old.remove()` then `root.add_child(new)`, and a removed screen keeps its state for reattaching.
