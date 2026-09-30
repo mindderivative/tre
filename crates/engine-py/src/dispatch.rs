@@ -434,6 +434,7 @@ pub(crate) fn process_input(
     );
     shortcuts(ctx, io, root, event, py);
     keyboard_scroll(ctx, event);
+    system_menu_key(io, event);
     listeners::fire_scroll_changes(ctx, py);
     outcome
 }
@@ -526,14 +527,22 @@ fn window_drag(
     target: Option<NodeId>,
     py: Python<'_>,
 ) {
-    let InputEvent::PointerPressed {
-        position,
-        button: PointerButton::Primary,
-    } = *event
-    else {
+    let InputEvent::PointerPressed { position, button } = *event else {
         return;
     };
-    if !starts_window_drag(ctx, target) {
+    let menu = button == PointerButton::Secondary && io.window.system_menu.get();
+    if (button != PointerButton::Primary && !menu) || !starts_window_drag(ctx, target) {
+        return;
+    }
+    // A secondary press opens the OS's window menu there, as on a native
+    // title bar -- after its `pointer_down` listeners, which can show their
+    // own instead if `system_menu` is off. `winit` shows it on Windows and
+    // Wayland and ignores it elsewhere.
+    if menu {
+        if let Some(window) = io.window.os_window.borrow().as_ref() {
+            window.show_window_menu(winit::dpi::PhysicalPosition::new(position.x, position.y));
+        }
+        end_press(ctx, io, target, position, py);
         return;
     }
     // A second press soon after, near the first, is a double-click: it
@@ -554,6 +563,20 @@ fn window_drag(
         None if double => io.window.maximized.set(!io.window.maximized.get()),
         None => {}
     }
+    end_press(ctx, io, target, position, py);
+}
+
+/// 0.5.0 M3: a press the window took -- to move, maximize, or show its
+/// menu -- ends without a click, releasing any pointer capture, and tells
+/// the pressed node with `pointer_cancel`; its release, if the platform
+/// delivers one, reaches no listener.
+fn end_press(
+    ctx: &NodeContext<'_>,
+    io: &WindowIo<'_>,
+    target: Option<NodeId>,
+    position: peniko::kurbo::Point,
+    py: Python<'_>,
+) {
     let pressed = ctx.tree.borrow_mut().cancel_press();
     io.window.press_cancelled.set(true);
     if let Some(node) = pressed.or(target) {
@@ -567,6 +590,29 @@ fn window_drag(
                 listeners::stamp_modifiers(e);
             },
         );
+    }
+}
+
+/// 0.5.0 M3: on Windows, Alt+Space opens an undecorated window's menu, which
+/// the OS gives only a decorated one. (On Linux the compositor usually owns
+/// the shortcut; macOS has no window menu.)
+fn system_menu_key(io: &WindowIo<'_>, event: &InputEvent) {
+    if !cfg!(target_os = "windows")
+        || !matches!(
+            event,
+            InputEvent::KeyPressed {
+                key: Key::Space,
+                ..
+            }
+        )
+        || !listeners::modifiers().alt
+        || io.window.decorations.get()
+        || !io.window.system_menu.get()
+    {
+        return;
+    }
+    if let Some(window) = io.window.os_window.borrow().as_ref() {
+        window.show_window_menu(winit::dpi::PhysicalPosition::new(0.0, 0.0));
     }
 }
 

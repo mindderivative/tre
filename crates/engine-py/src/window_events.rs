@@ -229,7 +229,7 @@ impl PyWindow {
 
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
 const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
-    min_width, min_height, icon, resize_border";
+    min_width, min_height, icon, resize_border, system_menu";
 
 /// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
 /// RGBA8 bytes, `width * height * 4` of them.
@@ -560,6 +560,7 @@ impl PyWindow {
         let (mut min_width, mut min_height) = (None, None);
         let mut icon = None;
         let mut resize_border = None;
+        let mut system_menu = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -592,6 +593,11 @@ impl PyWindow {
                     "min_width" => min_width = Some(parse_min_edge(&name, &value)?),
                     "min_height" => min_height = Some(parse_min_edge(&name, &value)?),
                     "resize_border" => resize_border = Some(parse_min_edge(&name, &value)?),
+                    "system_menu" => {
+                        system_menu = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `system_menu` must be a bool")
+                        })?);
+                    }
                     "icon" => {
                         icon = Some(if value.is_none() {
                             None
@@ -633,6 +639,9 @@ impl PyWindow {
         }
         if let Some(border) = resize_border {
             self.handles.resize_border.set(border);
+        }
+        if let Some(on) = system_menu {
+            self.handles.system_menu.set(on);
         }
         let window = self.handles.os_window.borrow();
         if let Some(on) = fullscreen {
@@ -744,6 +753,14 @@ impl PyWindow {
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
+            "system_menu" => self
+                .handles
+                .system_menu
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "resize_border" => self
                 .handles
                 .resize_border
@@ -815,7 +832,7 @@ impl PyWindow {
                     "unknown window property {name:?} -- valid: width, height, title, \
                      scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
-                     min_height, platform, resize_border"
+                     min_height, platform, resize_border, system_menu"
                 )));
             }
         })

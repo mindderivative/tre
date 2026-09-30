@@ -339,6 +339,7 @@ class Window:
         min_height: float = ...,
         icon: tuple[bytes, int, int] | None = ...,
         resize_border: float = ...,
+        system_menu: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -359,7 +360,10 @@ class Window:
         pixels along each edge of an undecorated window resize it -- a
         primary press there starts the resize and reaches no node, and the
         pointer shows a resize cursor; off while maximized or fullscreen,
-        0 (the default) for none."""
+        0 (the default) for none. `system_menu`: whether a secondary press
+        on a `window_region="drag"` node (and, on Windows, Alt+Space on an
+        undecorated window) opens the OS's window menu -- on by default, off
+        for a framework that shows its own."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -375,7 +379,13 @@ class Window:
     def get(
         self,
         name: Literal[
-            "show_damage", "decorations", "maximized", "minimized", "active", "fullscreen"
+            "show_damage",
+            "decorations",
+            "maximized",
+            "minimized",
+            "active",
+            "fullscreen",
+            "system_menu",
         ],
     ) -> bool: ...
     @overload

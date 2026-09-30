@@ -134,12 +134,12 @@ def test_the_next_press_after_a_drag_is_ordinary():
     assert heard == ["pointer_down", "pointer_up", "click"]
 
 
-def test_a_secondary_press_on_the_drag_region_does_not_drag():
+def test_a_middle_press_on_the_drag_region_is_ordinary():
     window = Window(width=400, height=300)
     bar, _ = title_bar(window)
     cancelled = []
     bar.on("pointer_cancel", lambda: cancelled.append(True))
-    window.simulate("pointer_down", node=bar, x=200, y=20, button="secondary")
+    window.simulate("pointer_down", node=bar, x=200, y=20, button="middle")
     assert cancelled == []
 
 
@@ -253,3 +253,54 @@ def test_a_press_on_a_button_in_the_bar_is_not_half_a_double_click():
     window.simulate("pointer_down", node=inner)
     window.simulate("pointer_up", node=inner)
     assert window.get("maximized") is False
+
+
+# --- Step 5: the window menu ------------------------------------------------------
+
+
+def secondary_press(window, node, **fields):
+    window.simulate("pointer_down", node=node, button="secondary", **fields)
+    window.simulate("pointer_up", node=node, button="secondary", **fields)
+
+
+def test_system_menu_is_on_by_default_and_validated():
+    window = Window()
+    assert window.get("system_menu") is True
+    window.set(system_menu=False)
+    assert window.get("system_menu") is False
+    with pytest.raises(ValueError, match="`system_menu` must be a bool"):
+        window.set(system_menu="off")
+
+
+def test_a_secondary_press_on_the_drag_region_opens_the_window_menu():
+    window = Window(width=400, height=300)
+    bar, _ = title_bar(window)
+    heard = []
+    for event in ("pointer_down", "pointer_cancel", "secondary_click"):
+        bar.on(event, lambda event=event: heard.append(event))
+    secondary_press(window, bar, x=200, y=20)
+    assert heard == ["pointer_down", "pointer_cancel"], (
+        "the press reaches its listeners, then the OS's menu takes it"
+    )
+
+
+def test_with_system_menu_off_a_secondary_press_is_the_frameworks():
+    window = Window(width=400, height=300)
+    window.set(system_menu=False)
+    bar, _ = title_bar(window)
+    heard = []
+    for event in ("pointer_down", "pointer_cancel", "secondary_click"):
+        bar.on(event, lambda event=event: heard.append(event))
+    secondary_press(window, bar, x=200, y=20)
+    assert heard == ["pointer_down", "secondary_click"], "for its own context menu"
+
+
+def test_a_secondary_press_on_a_button_in_the_bar_is_ordinary():
+    window = Window(width=400, height=300)
+    _, inner = title_bar(window)
+    inner.set(focusable=True)
+    heard = []
+    for event in ("pointer_cancel", "secondary_click"):
+        inner.on(event, lambda event=event: heard.append(event))
+    secondary_press(window, inner)
+    assert heard == ["secondary_click"]

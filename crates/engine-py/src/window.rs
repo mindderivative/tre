@@ -138,6 +138,10 @@ pub(crate) struct WindowHandles {
     /// 0.5.0 M3: when and where the last press on a drag region was, for a
     /// double-click to toggle maximize.
     pub(crate) last_drag_press: Rc<Cell<Option<(std::time::Instant, peniko::kurbo::Point)>>>,
+    /// 0.5.0 M3: whether a secondary press on a drag region (and Alt+Space
+    /// on Windows) opens the OS's window menu -- off for a framework that
+    /// shows its own.
+    pub(crate) system_menu: Rc<Cell<bool>>,
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
@@ -217,6 +221,7 @@ impl PyWindow {
                 press_cancelled: Rc::new(Cell::new(false)),
                 resize_border: Rc::new(Cell::new(0.0)),
                 last_drag_press: Rc::new(Cell::new(None)),
+                system_menu: Rc::new(Cell::new(true)),
                 waker: Rc::new(RefCell::new(None)),
             },
         })))
