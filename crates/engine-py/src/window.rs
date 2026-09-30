@@ -135,6 +135,9 @@ pub(crate) struct WindowHandles {
     /// 0.5.0 M3: how many pixels along each edge resize an undecorated
     /// window; 0 for none.
     pub(crate) resize_border: Rc<Cell<f64>>,
+    /// 0.5.0 M3: when and where the last press on a drag region was, for a
+    /// double-click to toggle maximize.
+    pub(crate) last_drag_press: Rc<Cell<Option<(std::time::Instant, peniko::kurbo::Point)>>>,
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
@@ -213,6 +216,7 @@ impl PyWindow {
                 icon: Rc::new(RefCell::new(None)),
                 press_cancelled: Rc::new(Cell::new(false)),
                 resize_border: Rc::new(Cell::new(0.0)),
+                last_drag_press: Rc::new(Cell::new(None)),
                 waker: Rc::new(RefCell::new(None)),
             },
         })))

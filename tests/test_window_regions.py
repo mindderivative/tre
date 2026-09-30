@@ -208,3 +208,48 @@ def test_a_zero_border_resizes_nothing():
     window, heard = bordered(border=0)
     window.simulate("pointer_down", x=0, y=0)
     assert heard == ["pointer_down"]
+
+
+# --- Step 4: a double-click on the title bar toggles maximize ----------------------
+
+
+def double_press(window, node, gap_ms=0, second=(200, 20)):
+    window.simulate("pointer_down", node=node, x=200, y=20)
+    window.simulate("pointer_up", node=node, x=200, y=20)
+    window.advance(gap_ms)
+    window.simulate("pointer_down", node=node, x=second[0], y=second[1])
+    window.simulate("pointer_up", node=node, x=second[0], y=second[1])
+
+
+def test_a_double_click_on_the_drag_region_toggles_maximize():
+    window = Window(width=400, height=300)
+    bar, _ = title_bar(window)
+    window.advance(0)
+    double_press(window, bar, gap_ms=100)
+    assert window.get("maximized") is True
+    window.advance(1000)
+    double_press(window, bar, gap_ms=100)
+    assert window.get("maximized") is False, "and back"
+
+
+def test_presses_too_far_apart_in_time_or_space_are_two_drags():
+    window = Window(width=400, height=300)
+    bar, _ = title_bar(window)
+    window.advance(0)
+    double_press(window, bar, gap_ms=600)  # past the 500 ms default
+    assert window.get("maximized") is False
+    window.advance(1000)
+    double_press(window, bar, second=(220, 20))  # 20 px away
+    assert window.get("maximized") is False
+
+
+def test_a_press_on_a_button_in_the_bar_is_not_half_a_double_click():
+    window = Window(width=400, height=300)
+    bar, inner = title_bar(window)
+    inner.set(focusable=True)
+    window.advance(0)
+    window.simulate("pointer_down", node=bar, x=200, y=20)
+    window.simulate("pointer_up", node=bar, x=200, y=20)
+    window.simulate("pointer_down", node=inner)
+    window.simulate("pointer_up", node=inner)
+    assert window.get("maximized") is False

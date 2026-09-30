@@ -877,8 +877,10 @@ dependencies = [
  "accesskit",
  "accesskit_winit",
  "engine-core",
+ "objc2-app-kit 0.2.2",
  "peniko",
  "taffy",
+ "windows-sys 0.52.0",
  "winit",
  "zbus",
 ]

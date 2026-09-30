@@ -298,6 +298,30 @@ impl Default for WindowOptions {
     }
 }
 
+/// 0.5.0 M3 (issue #28): how close together two presses must be to make a
+/// double-click -- the user's own setting on Windows and macOS, 500 ms
+/// elsewhere, where there's no one system setting to read.
+#[cfg(target_os = "windows")]
+pub fn double_click_time() -> std::time::Duration {
+    // SAFETY: a plain Win32 call with no arguments or preconditions.
+    let ms = unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() };
+    std::time::Duration::from_millis(u64::from(ms))
+}
+
+/// 0.5.0 M3: see the Windows version.
+#[cfg(target_os = "macos")]
+pub fn double_click_time() -> std::time::Duration {
+    // SAFETY: a class property read with no preconditions.
+    let seconds = unsafe { objc2_app_kit::NSEvent::doubleClickInterval() };
+    std::time::Duration::from_secs_f64(seconds)
+}
+
+/// 0.5.0 M3: see the Windows version.
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+pub fn double_click_time() -> std::time::Duration {
+    std::time::Duration::from_millis(500)
+}
+
 /// 0.5.0 M2 (issue #28): which windowing system `window` runs on --
 /// `"wayland"`, `"x11"`, `"windows"`, or `"macos"` -- for a framework whose
 /// title bar behaves differently on each. On Linux the open window's own

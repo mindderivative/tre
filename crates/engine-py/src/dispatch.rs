@@ -536,8 +536,23 @@ fn window_drag(
     if !starts_window_drag(ctx, target) {
         return;
     }
-    if let Some(window) = io.window.os_window.borrow().as_ref() {
-        let _ = window.drag_window();
+    // A second press soon after, near the first, is a double-click: it
+    // toggles maximize, as a native title bar's does, instead of moving.
+    let now = crate::clock::now(ctx.tree);
+    let double = io.window.last_drag_press.get().is_some_and(|(then, at)| {
+        now.saturating_duration_since(then) <= engine_platform::double_click_time()
+            && (at - position).hypot() <= DOUBLE_CLICK_SLOP
+    });
+    io.window
+        .last_drag_press
+        .set((!double).then_some((now, position)));
+    match io.window.os_window.borrow().as_ref() {
+        Some(window) if double => window.set_maximized(!window.is_maximized()),
+        Some(window) => {
+            let _ = window.drag_window();
+        }
+        None if double => io.window.maximized.set(!io.window.maximized.get()),
+        None => {}
     }
     let pressed = ctx.tree.borrow_mut().cancel_press();
     io.window.press_cancelled.set(true);
@@ -554,6 +569,9 @@ fn window_drag(
         );
     }
 }
+
+/// 0.5.0 M3: how far apart, in pixels, a double-click's two presses may be.
+const DOUBLE_CLICK_SLOP: f64 = 4.0;
 
 /// 0.5.0 M3: the custom-windowing design's Q1 rule. Walking up from the
 /// pressed node: a `window_region="drag"` node moves the window, a

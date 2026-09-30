@@ -29,6 +29,15 @@ winit = "0.30.13"
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.5", default-features = false, features = ["async-io", "blocking-api"] }
 
+# 0.5.0 M3 (issue #28): the system's double-click time, for double-clicking
+# a framework-drawn title bar. Both are `winit`'s own dependencies at these
+# versions, with these features already on, so nothing new is built.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.52.0", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.2.2", features = ["NSEvent"] }
+
 [dev-dependencies]
 taffy = "0.14.0"
 
