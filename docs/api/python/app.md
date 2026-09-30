@@ -39,7 +39,7 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 ```
 
 - `max_frames`, when given, is a **per-window** budget, not a whole-app
-  one — useful for headless/CI runs with no real display loop end.
+  one — useful for headless/CI runs that must end on their own.
 - Raises `RuntimeError` if called with zero registered windows.
 - Delivers real input — pointer, wheel, keyboard, text and input-method
   composition, window events, and screen-reader requests — through the
@@ -56,12 +56,12 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 
 **`thread_handle() -> LoopHandle`**
 
-`App`, `Window`, `Node`, and every other `tre` object may only be used
+`App`, `Window`, `Node`, and every other Tesserae Engine object may only be used
 from the thread that created them — using one from another thread
 raises `PanicException` (a `BaseException`, not an `Exception`).
-*Dropping* one there is safe: if Python's garbage collector frees a `tre`
+*Dropping* one there is safe: if Python's garbage collector frees a Tesserae Engine
 object on a background thread, the actual free happens on its own thread
-at the next frame or `tre` call. `thread_handle()` returns the one object a
+at the next frame or Tesserae Engine call. `thread_handle()` returns the one object a
 background thread may use: a [`LoopHandle`](#loophandle) onto this
 `App`'s event loop. Every handle from one `App` shares the same queue.
 

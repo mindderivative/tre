@@ -1,8 +1,8 @@
 # Nodes and Layout
 
 Everything on screen is a node in a window's tree. You create nodes, attach
-them under one another, and set their layout properties; `tre` lays the tree
-out with flexbox ([taffy](https://github.com/DioxusLabs/taffy)) whenever it
+them under one another, and set their layout properties; Tesserae Engine lays the tree
+out with flexbox or CSS Grid ([taffy](https://github.com/DioxusLabs/taffy)) whenever it
 changes, and paints it every frame.
 
 ## Windows and the app
@@ -85,6 +85,44 @@ content = window.create("box", flex_grow=1)
 time with `padding_top`, `margin_left`, and so on. A `margin` of `"auto"`
 takes up the free space on that side, which pushes a node to the far end of
 its row.
+
+`min_width`, `max_width`, `min_height`, and `max_height` bound a size, and
+`aspect_ratio` fixes width over height. `flex_wrap="wrap"` lets children
+flow onto more lines, and `align_content` spaces those lines. The
+[property reference](../api/python/properties.md) lists every layout
+property and its values.
+
+## Grid layout
+
+`display="grid"` lays a node's children out in rows and columns instead of
+one line, so their edges line up across rows — a settings form of labels and
+fields, a gallery of equal cells, a dashboard of tiles. The columns and rows
+are track lists: pixels, a percentage, `"auto"`, a share of the free space
+(`"1fr"`), `"minmax(min, max)"`, and `"repeat(n, tracks)"`:
+
+```python
+form = window.create("box", display="grid", width="100%",
+                     grid_template_columns="auto 1fr", row_gap=8, column_gap=12)
+for label, field in rows:
+    form.add_child(label)   # column 1
+    form.add_child(field)   # column 2, as wide as the rest of the form
+```
+
+Children fill the cells in order, a row at a time (`grid_auto_flow="column"`
+fills columns instead). A child can be placed with `grid_column` and
+`grid_row`: a start line (`2`; negative lines count from the end, so `-2`
+is the last column's), a span (`"span 2"`), or
+both ends (`"1 / 3"`). A gallery whose cells wrap to fit the width:
+
+```python
+gallery = window.create("box", display="grid", width="100%", gap=8,
+                        grid_template_columns="repeat(auto_fill, minmax(96, 1fr))")
+```
+
+`row_gap` and `column_gap` space the rows and columns apart (`gap` sets both),
+and `justify_items`/`justify_self` place a child across its cell's width the
+way `align_items`/`align_self` do across its height. The full list is in
+[Node properties](../api/python/properties.md#grid-layout).
 
 ## Absolute positioning
 
@@ -169,6 +207,44 @@ animates — how a carousel eases to a snap point:
 ```python
 view.animate("scroll_offset", 400, 300, easing=(0.2, 0.0, 0.0, 1.0))
 ```
+
+### Keyboard scrolling
+
+Keys scroll the nearest scroll view around the focused node (0.4.2): the arrow
+keys by 40 pixels, Page Up and Page Down by a viewport, Home and End to either
+end. Up, Down, Page Up, and Page Down move a vertical view, Left and Right a
+horizontal one; a view that doesn't scroll along a key's axis passes it to the
+next one out. Keys the focused node uses itself don't scroll: a node with a
+`key_down` listener between the focused node and the view keeps every key, and
+a text input keeps all but Page Up and Page Down. With nothing focused, keys
+scroll nothing. Keyboard scrolls jump rather than ease.
+
+Keys, `scroll_into_view`, and the `scroll` event below apply to
+`"scroll_view"` nodes; a `"virtual_list"` scrolls by wheel only.
+
+### Revealing a node
+
+`node.scroll_into_view()` scrolls every scroll view around `node`, innermost
+first, by the least that shows it; a node longer than a view is aligned to its
+start. Focus does the same, so Tab never lands on a node out of sight, and so
+does an assistive technology's `scroll_into_view` request.
+
+```python
+rows[40].scroll_into_view()
+```
+
+### The `scroll` event
+
+A scroll view fires `scroll` whenever its offset changes, whatever changed it:
+the wheel, a key, `scroll_into_view`, focus, `set`, or an animation, once a
+frame. `event.old_value` and `event.new_value` are the offsets before and
+after. It doesn't bubble.
+
+```python
+view.on("scroll", lambda e: status.set(text=f"{e.new_value:.0f} px down"))
+```
+
+See `examples/scroll_keys.py`.
 
 ## Virtual lists
 

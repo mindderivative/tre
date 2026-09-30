@@ -50,7 +50,7 @@ On a node with children:
 | `flex_direction` | `"horizontal"` or `"vertical"` |
 | `flex_wrap` | `"no_wrap"` or `"wrap"` |
 | `align_items` | `"start"`, `"end"`, `"flex_start"`, `"flex_end"`, `"center"`, `"baseline"`, `"stretch"` |
-| `justify_content` | `align_items`' values, plus `"space_between"`, `"space_around"`, `"space_evenly"` |
+| `justify_content` | `"start"`, `"end"`, `"flex_start"`, `"flex_end"`, `"center"`, `"stretch"`, `"space_between"`, `"space_around"`, `"space_evenly"` |
 | `gap` | Between children: a number or a percentage |
 | `padding`, `padding_top`, `padding_right`, `padding_bottom`, `padding_left` | A number or a percentage |
 
@@ -65,6 +65,30 @@ As a flex child, any node:
 
 `padding` and `margin` read back as one value while all four sides agree, and as
 `(top, right, bottom, left)` once they don't.
+
+## Grid layout
+
+0.4.2. On a node with `display="grid"`:
+
+| Property | Value |
+| --- | --- |
+| `display` | `"flex"` (the default) or `"grid"` |
+| `grid_template_columns`, `grid_template_rows` | A track list, as a string or a list: pixels, a percentage, `"auto"`, `"1fr"`, `"min_content"`, `"max_content"`, `"minmax(min, max)"`, `"fit_content(limit)"`, and `"repeat(n, tracks)"` with `n` a count, `"auto_fill"`, or `"auto_fit"` -- e.g. `"200 1fr auto"`, `[120, "1fr"]` |
+| `grid_auto_columns`, `grid_auto_rows` | The size of tracks made for children placed past the template: a track list without `repeat` |
+| `grid_auto_flow` | `"row"` (the default), `"column"`, `"row dense"` (or `"dense"`), or `"column dense"` |
+| `row_gap`, `column_gap` | Between rows or columns: a number or a percentage; `gap` sets both |
+| `justify_items` | `align_items`' values, across each child's cell |
+| `align_content` | `justify_content`'s values, for the rows as a whole when they don't fill the height |
+
+As a grid child, any node:
+
+| Property | Value |
+| --- | --- |
+| `grid_column`, `grid_row` | A line (`2`, or `-1` counting from the end), `"span 2"`, `"auto"`, or `"start / end"` such as `"1 / 3"` |
+| `justify_self` | One of `align_items`' values, or `None` to follow the parent |
+
+Track lists and placements read back as strings in this syntax. Named grid
+lines and template areas aren't supported yet.
 
 ## Transform, visibility, and order
 
@@ -159,7 +183,7 @@ rows = window.create("virtual_list", item_count=len(items), item_extent=32,
 | `size_hint` | `size_hint(index)` → that row's height, for rows of different heights |
 | `materialize` | `materialize(index)` → a node this window made, for that row |
 
-`tre` keeps exactly the rows the viewport shows built: whenever layout runs —
+Tesserae Engine keeps exactly the rows the viewport shows built: whenever layout runs —
 each frame, `window.advance`, `window.simulate`, and any `layout_*` read — it
 calls `materialize` for each newly visible row, gives the row the list's width
 and its own height, and detaches rows scrolled away. A detached row is freed
@@ -173,6 +197,7 @@ unless you keep a handle to it to reuse. Changing `item_count`, `item_extent`,
 | `cols`, `rows` | The grid size, 1–1000 each; the terminal's box follows its grid and font |
 | `selection` | `(start_row, start_col, end_row, end_col)`, or `None` |
 | `shell`, `scrollback_lines` | Given to `create` only |
+| `text` | Read-only: the visible grid, one line per row, trailing blanks trimmed |
 
 Plus `font_size` and the `palette` on
 [Paint, Paths, and Animation](paint.md#text-inputs-scroll-views-and-terminals).

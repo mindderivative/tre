@@ -352,6 +352,9 @@ impl Tree {
                 }
             }
             Key::Escape => None,
+            // 0.4.2 M12: a text field doesn't page; the scroll view around
+            // it does.
+            Key::PageUp | Key::PageDown => None,
         }
     }
 

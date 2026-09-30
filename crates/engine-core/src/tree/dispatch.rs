@@ -317,7 +317,9 @@ impl Tree {
                     | Key::ArrowUp
                     | Key::ArrowDown
                     | Key::Home
-                    | Key::End => DispatchOutcome::None,
+                    | Key::End
+                    | Key::PageUp
+                    | Key::PageDown => DispatchOutcome::None,
                 }
             }
             InputEvent::KeyReleased { .. } => DispatchOutcome::None,

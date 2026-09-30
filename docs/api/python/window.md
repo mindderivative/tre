@@ -3,7 +3,8 @@
 Owns one node tree and the OS window it's painted into. Add windows to an
 [`App`](app.md), then call `App.run()`.
 
-**`Window(width=480, height=200, title="tre v2")`**
+**`Window(width=480, height=200, title="tre v2")`** — raises `ValueError`
+for a zero width or height.
 
 ```python
 window = Window(width=640, height=400, title="Inbox")
@@ -47,7 +48,7 @@ frame. By default (`True`) each frame redraws only the parts of the window
 that changed, and a frame where nothing visible changed draws nothing.
 The pixels are the same either way; the switch is there for measuring and
 for ruling partial redraw out when chasing a rendering bug. A window whose
-surface the platform won't let `tre` copy into always redraws in full, and
+surface the platform won't let Tesserae Engine copy into always redraws in full, and
 logs a warning saying so; `get("partial_redraw")` reports the setting, and
 `get("partial_redraw_active")` whether it's in effect (`None` until
 `App.run()` opens the window).
@@ -55,7 +56,7 @@ logs a warning saying so; `get("partial_redraw")` reports the setting, and
 redrew: its damage rects tinted magenta, or, for a full redraw, the window's
 edge outlined in orange. It's for seeing partial redraw work and for finding
 redraws an app didn't mean to cause. The tint goes on the image the window
-shows, never on the frame `tre` keeps, so it never changes what later frames
+shows, never on the frame Tesserae Engine keeps, so it never changes what later frames
 draw. Off by default.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), `dark` — the OS's current appearance,

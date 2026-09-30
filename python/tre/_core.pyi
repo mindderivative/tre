@@ -12,7 +12,7 @@ confidence.
 
 Scope: every class `crates/engine-py/src/lib.rs`'s own `#[pymodule]`
 function registers via `m.add_class::<...>()` (`App`, `Window`, `Node`,
-`Painter`, `Event`), including methods on components that predate
+`Painter`, `Event`, `LoopHandle`) and `register_font`, including methods on components that predate
 this stub file -- Phase 0's own explicit charge is the *current* real
 API surface, not just what M30's later phases add. Each later phase
 extends this file with its own new components in the same phase that
@@ -47,9 +47,11 @@ class Event:
     the mouse's side buttons, `"back"` and `"forward"`. Only the primary
     button's press and release make a `click`."""
     old_value: Any | None
-    """`"change"` only: a text input's text immediately before the edit."""
+    """`"change"`: a text input's text immediately before the edit.
+    `"scroll"` (0.4.2): the scroll view's offset before the change."""
     new_value: Any | None
-    """`"change"` only: the text immediately after the edit."""
+    """`"change"`: the text immediately after the edit. `"scroll"`: the
+    offset after it."""
 
     # M94: the M93 target-API fields. Every field but `type` is `None`
     # unless the event has something to say about it.
@@ -156,7 +158,7 @@ class Node:
     def stop_animation(self, name: str) -> None:
         """M95: stops `name`'s running animation where it is."""
         ...
-    def get(self, property: str) -> Any:
+    def get(self, name: str) -> Any:
         """Reads one property: any property `set` accepts -- an animating
         one at its current, mid-animation value -- plus the read-only
         `kind` (by the name `create` takes), `focused`, `layer_placement`,
@@ -181,15 +183,24 @@ class Node:
         other kind."""
         ...
     def focus(self) -> None:
-        """M94: moves keyboard focus to this node, firing `unfocus`/`focus`."""
+        """M94: moves keyboard focus to this node, firing `unfocus`/`focus`.
+        (0.4.2) Scroll views around it scroll to show it, as they do for any
+        focus change."""
+        ...
+    def scroll_into_view(self) -> None:
+        """0.4.2: scrolls every scroll view around this node just enough to
+        show it, innermost first, at once. The `scroll_into_view`
+        accessibility action does the same, after any `a11y_action`
+        listener."""
         ...
     def on(self, event: str, handler: Callable[..., object]) -> None:
         """M94: registers `handler` for `event`, replacing any earlier
         listener for it. Events: `pointer_enter`, `pointer_leave`,
         `pointer_down`, `pointer_move`, `pointer_up`, `click`,
         `secondary_click`, `wheel`, `key_down`, `key_up`, `input`,
-        `focus`, `unfocus`, `change`, `a11y_action`. All but
-        `pointer_enter`/`pointer_leave`/`change` bubble to ancestors
+        `focus`, `unfocus`, `change`, `a11y_action`, `dismiss` (a layer
+        asked to close), `scroll`. All but `pointer_enter`/`pointer_leave`/
+        `change`/`dismiss`/`scroll` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
         `ValueError` for an unknown event.
@@ -316,7 +327,8 @@ class Window:
         once the window is open -- `partial_redraw`, or (0.4.0)
         `partial_redraw_active`: whether the open window really redraws
         only what changed -- the setting, and a surface that allows it --
-        `None` until `App.run()` opens the window."""
+        `None` until `App.run()` opens the window -- or (0.4.1)
+        `show_damage`."""
         ...
     def show_layer(
         self,
@@ -454,7 +466,8 @@ class App:
         `None` (rather than raising) if no real display is reachable,
         the same headless-CI-safe convention every example in this
         project relies on. Raises `RuntimeError` if a window's GPU can't
-        be set up (no adapter, no device, or an unsupported surface).
+        be set up (no adapter, no device, or an unsupported surface), or
+        if no window was added.
         """
         ...
 

@@ -1,5 +1,9 @@
 # Legacy widget behavior
 
+*A record as of 0.3.4:* the widgets and engine behavior this page describes
+were removed in 0.3.5 (M99); the rebuild recipes use the current API and are
+run by `tests/test_legacy_behavior.py`.
+
 What the [legacy widget reference](legacy-widgets.md) can't show: how the
 widgets 0.3.5 removes move, respond, and draw. The reference is each factory's
 static tree; this page is everything dynamic, read from the source, with the

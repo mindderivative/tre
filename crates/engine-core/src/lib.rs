@@ -43,4 +43,6 @@ pub use node::{
 };
 pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
-pub use tree::{FocusDirection, Tree, from_access_id, node_id_as_u64, to_access_id};
+pub use tree::{
+    FocusDirection, KEY_SCROLL_LINE, Tree, from_access_id, node_id_as_u64, to_access_id,
+};

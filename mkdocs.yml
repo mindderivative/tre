@@ -1,4 +1,4 @@
-site_name: tre
+site_name: Tesserae Engine
 site_description: >-
   A GPU-rendered retained-mode UI engine for Python, written in Rust --
   the building blocks of a desktop UI.
@@ -73,6 +73,7 @@ nav:
   - Rust Crates: api/rust.md
   - Architecture: architecture.md
   - Migrating:
+      - To 0.4.x: migrating-0.4.md
       - To 0.3.5: migrating-0.3.5.md
       - To 0.3.3: migrating-0.3.3.md
   - Design:

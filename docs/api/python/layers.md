@@ -2,8 +2,8 @@
 
 One mechanism for everything that floats over a window's
 content — dialogs, menus, tooltips, snackbars, side sheets, drawers, context
-menus. You build the content from ordinary nodes; `tre` stacks it, places it,
-routes input around it, and tells you when it's dismissed. `tre` draws no scrim:
+menus. You build the content from ordinary nodes; Tesserae Engine stacks it, places it,
+routes input around it, and tells you when it's dismissed. Tesserae Engine draws no scrim:
 a modal's scrim is a window-sized `box` inside the layer.
 
 ```python

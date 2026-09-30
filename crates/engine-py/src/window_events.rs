@@ -161,6 +161,8 @@ fn engine_key(name: &str) -> Option<Key> {
         "arrow_down" => Key::ArrowDown,
         "home" => Key::Home,
         "end" => Key::End,
+        "page_up" => Key::PageUp,
+        "page_down" => Key::PageDown,
         _ => return None,
     })
 }
@@ -611,6 +613,14 @@ impl PyWindow {
         let (_, completed) = tree.borrow_mut().tick_all(now);
         run_completions(&self.handles.completions, completed, py);
         node_callbacks::layout(&tree, root, self.available(), &handlers, py);
+        listeners::fire_scroll_changes(
+            &NodeContext {
+                tree: &tree,
+                handlers: &handlers,
+                completions: &self.handles.completions,
+            },
+            py,
+        );
         Ok(())
     }
 
@@ -792,6 +802,7 @@ impl PyWindow {
                     )));
                 }
                 listeners::deliver_a11y_action(&ctx, id, &action, value, py);
+                listeners::fire_scroll_changes(&ctx, py);
             }
             "change" => {
                 return Err(PyValueError::new_err(

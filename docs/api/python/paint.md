@@ -91,7 +91,9 @@ the value arrives; an animation replaced by another, or stopped, never calls it.
 
 Animatable: `fill`, `stroke_color`, `stroke_width`, `opacity`, `corner_radius`
 (a number or a 4-tuple), `shadows` (lists of different lengths fade the extra
-shadows in or out), and a path's `data`, `trim_start`, and `trim_end`. Colors
+shadows in or out), the transform parts `translate_x`, `translate_y`, `scale`,
+and `rotation_deg`, a scroll view's `scroll_offset`, and a path's `data`,
+`trim_start`, and `trim_end`. Colors
 interpolate component-wise in sRGB.
 
 **`get(name)`** returns the value on screen, mid-animation included;
@@ -100,7 +102,7 @@ interpolate component-wise in sRGB.
 
 ## Text inputs, scroll views, and terminals
 
-`tre` paints no color you can't set:
+Tesserae Engine paints no color you can't set:
 
 | Kind | Property | Value |
 | --- | --- | --- |
@@ -114,5 +116,5 @@ interpolate component-wise in sRGB.
 | terminal | `palette` | a dict with any of `ansi` (16 colors), `foreground`, `background`, `cursor`, `selection` — keys you leave out keep their colors |
 
 A terminal resolves each cell's color against its palette when it paints, so a
-new palette recolors what's already on screen. `tre` draws no focus ring on a
+new palette recolors what's already on screen. Tesserae Engine draws no focus ring on a
 node you build: show focus yourself from the `focus` and `unfocus` events.

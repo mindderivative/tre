@@ -29,7 +29,7 @@ def pick(event):
 list_box.on("click", pick)
 ```
 
-`pointer_enter`, `pointer_leave`, `change`, and `dismiss` don't bubble.
+`pointer_enter`, `pointer_leave`, `change`, `dismiss`, and `scroll` don't bubble.
 `pointer_enter`/`pointer_leave` fire when the pointer enters or leaves the
 node's whole subtree, not when it moves between the node and its children —
 so a hover effect doesn't flicker as the pointer crosses a label.
@@ -37,7 +37,11 @@ so a hover effect doesn't flicker as the pointer crosses a label.
 ## Pointer
 
 A press delivers `pointer_down`, then `pointer_up`, then `click` if both
-landed on the same node (`secondary_click` for the secondary button).
+landed on the same node (`secondary_click` for the secondary button). The
+middle button and the mouse's side buttons (`event.button` is `"back"` or
+`"forward"`, 0.4.1) make no click; watch `pointer_down` for them. A wheel or
+trackpad scroll arrives as `wheel`, with `delta_x`/`delta_y` in pixels,
+positive right and down; it bubbles.
 `event.x`/`event.y` are local to `event.current`; `window_x`/`window_y` are
 in the window. Text nodes are never the target, so a press on a button's
 label lands on the button. `hit_testable=False` makes any node transparent to
@@ -68,20 +72,23 @@ under the pointer.
 The focused node gets `key_down`/`key_up`, which bubble; when nothing is
 focused, the root gets them. Enter and Space on a focused node fire `click` —
 except in a text input or terminal, which take every key — so a focusable box
-is already a keyboard button.
+is already a keyboard button. Keys the focused node doesn't use scroll the
+nearest scroll view around it (0.4.2) — see
+[Keyboard scrolling](nodes-and-layout.md#keyboard-scrolling).
 
 `focus` and `unfocus` bubble too, and carry `related_target`, the node on the
 other side of the move, so a composite widget can tell focus moving between
 its own parts from focus leaving it. `focus` also carries `focus_visible`:
 `True` when focus came from the keyboard or an assistive technology, `False`
 after a pointer press — the rule browsers use for `:focus-visible`, and the
-one to show a focus ring by. `tre` draws no focus ring itself.
+one to show a focus ring by. Tesserae Engine draws no focus ring itself.
 
 ## Text input
 
 A focused `"text_input"` handles its own editing: typing, the arrow keys and
 Home/End (with Shift to select), Backspace and Delete, Enter in a `multiline`
-input, and Ctrl+C, Ctrl+X, Ctrl+V, and Ctrl+A. Two events report it:
+input, and Ctrl+C, Ctrl+X, Ctrl+V, and Ctrl+A. Page Up and Page Down it
+leaves alone, to scroll the view around it. Two events report it:
 
 - `input` — committed text arrived (`event.text`), from typing, an input
   method, or a paste.

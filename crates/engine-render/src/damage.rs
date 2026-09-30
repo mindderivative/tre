@@ -542,6 +542,8 @@ fn scroll_fingerprint(h: &mut impl Hasher, state: &ScrollViewState) {
         thumb_drag_anchor,
         scrollbar_fill,
         scrollbar_width,
+        // Bookkeeping for the `scroll` event; paints nothing.
+        reported: _,
     } = state;
     num(h, scroll.current);
     horizontal.hash(h);

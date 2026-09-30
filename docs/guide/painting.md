@@ -1,6 +1,6 @@
 # Painting
 
-`tre` paints what you set and nothing else: no default borders, no focus
+Tesserae Engine paints what you set and nothing else: no default borders, no focus
 rings, no theme. Every node shares one set of paint properties; paths,
 images, and canvases add their own. Everything here can be set with
 `create` or `set`, and most of it [animates](animation.md).
@@ -88,7 +88,7 @@ Animating `data` morphs one shape into another — see
 ## Images
 
 An `"image"` node shows straight-alpha RGBA8 pixels you've already decoded.
-`tre` never reads image files, so any decoder works:
+Tesserae Engine never reads image files, so any decoder works:
 
 ```python
 from PIL import Image
@@ -125,9 +125,20 @@ is hit as its whole box unless its painter narrows that with
 `set_hit_test_circle` or `set_hit_test_path` — so a click on a chart's point
 can land on that point alone.
 
-## What `tre` leaves to you
+## Redrawing
 
-The colors `tre` draws for you all have properties: a text input's
+A window redraws only what changed each frame (0.4.0): Tesserae Engine compares the
+frame with the last one and repaints the changed areas, or the whole window
+when most of it changed. Nothing in your code has to say what changed.
+`window.set(partial_redraw=False)` redraws the whole window every frame
+instead, and `window.get("partial_redraw_active")` says whether the open
+window really redraws partially (`None` before `App.run()` opens it).
+`window.set(show_damage=True)` (0.4.1) tints each frame's redrawn areas, for
+debugging. See [Window](../api/python/window.md).
+
+## What Tesserae Engine leaves to you
+
+The colors Tesserae Engine draws for you all have properties: a text input's
 `placeholder_fill`, `caret_color`, and `selection_fill`; a scroll view's
 `scrollbar_fill` and `scrollbar_width`; a terminal's `palette`. Hover and
 press feedback, focus rings, ripples, and disabled styling are yours to draw

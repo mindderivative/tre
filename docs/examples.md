@@ -2,9 +2,9 @@
 
 Each script in
 [`examples/`](https://github.com/mindderivative/tre/tree/main/examples) is
-small, runnable, and self-checking: it drives its building block
-headlessly with `window.simulate` and `window.advance`, asserts what
-should happen, then opens a window for a few seconds. Run one with
+small and runnable. Most are self-checking: they drive their building
+block headlessly with `window.simulate` and `window.advance` and assert
+what should happen before opening a window for a few seconds. Run one with
 `python examples/<name>.py`.
 
 | Script | Shows |
@@ -15,6 +15,7 @@ should happen, then opens a window for a few seconds. Run one with
 | `ripple.py` | A press ripple: a clipped, scaling round box that destroys itself when done |
 | `reorder.py` | A keyed list reordered with `insert_child`, keeping identity, focus, and animations |
 | `layout.py` | An app frame from flex rows, a growing content area, and an absolute badge |
+| `grid.py` | A form whose labels and fields line up in grid columns, over a gallery whose cells wrap to fit |
 | `animation.py` | Linear and bezier easing, retargeting mid-flight, and chained `on_complete` |
 | `pan_zoom.py` | The transform parts animating independently |
 | `shadows.py` | Layered shadows easing between elevation levels |
@@ -26,6 +27,7 @@ should happen, then opens a window for a few seconds. Run one with
 | `clipboard.py` | Copy, cut, paste, and select-all in a text input |
 | `layers.py` | An anchored menu and a modal dialog |
 | `scrollable_list.py`, `variable_height_list.py` | Virtual lists with fixed and per-row heights |
+| `scroll_keys.py` | A scroll view driven by keys and focus, with the `scroll` event |
 | `docking.py` | Docked panels dragged between zones |
 | `two_windows.py` | One `App` driving two windows |
 | `threadsafe_reload.py` | A background file watcher reloading settings inside `App.run()` |

@@ -1,6 +1,6 @@
 # Building a Widget
 
-`tre` has no buttons, switches, or sliders. It has the blocks they're built
+Tesserae Engine has no buttons, switches, or sliders. It has the blocks they're built
 from, and this page builds one — an on/off switch — to show how the blocks
 fit: layout and paint for how it looks, listeners for what it does,
 animation for how it moves, and accessibility for what a screen reader says.
@@ -48,7 +48,7 @@ class Switch:
 ```
 
 `role="switch"`, `label`, and `checked` are all a screen reader needs, and
-because the role is button-like, `tre` offers assistive technology an
+because the role is button-like, Tesserae Engine offers assistive technology an
 activate action for it — see [Accessibility](accessibility.md).
 `focusable=True` puts it in the Tab order.
 
@@ -161,7 +161,13 @@ The same pieces build the rest of a widget set:
 - **A slider** captures the pointer on `pointer_down` so a drag keeps
   tracking off the track, steps on `arrow_left`/`arrow_right` in `key_down`,
   and answers `increment`, `decrement`, and `set_value` in `a11y_action` —
-  `examples/slider.py` is one.
+  `examples/slider.py` is one. A `key_down` listener keeps every key for
+  itself: while the slider, or anything inside a node with such a listener,
+  is focused, the arrows, Page Up/Down, Home, and End no longer scroll the
+  scroll view around it, even keys the listener ignores. The switch above
+  takes Space and Enter as `click` instead, so those keys still scroll the
+  page around it. See
+  [Keyboard scrolling](nodes-and-layout.md#keyboard-scrolling).
 - **A button's ripple** is a round box inside a `clip_children` button,
   scaled up and faded out from the press point, destroying itself from its
   `on_complete` — `examples/ripple.py`.

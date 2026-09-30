@@ -1,6 +1,12 @@
 # Migrating to 0.3.3
 
-`tre` 0.3.3 renames properties so that one concept has one name across
+!!! note "Historical"
+    This page describes the 0.3.2 → 0.3.3 upgrade. Everything it maps
+    *to* — the `add_*` widget factories, `foreground`, declarative views and
+    bindings — was removed or renamed in 0.3.5; see
+    [Migrating to 0.3.5](migrating-0.3.5.md).
+
+Tesserae Engine 0.3.3 renames properties so that one concept has one name across
 the Python API (`Window.add_*`, `Node`) and declarative views. It's a
 breaking release: code and view files written for 0.3.2 need the
 changes below. Old names fail loudly — none is silently ignored.
@@ -23,7 +29,9 @@ widget types, like class names, rather than being option values.
 
 ## Migrating view files
 
-`tools/migrate_views_0_3_3.py` in the `tre` repository rewrites YAML
+`tools/migrate_views_0_3_3.py` (in the `tre` repository up to
+[`v0.3.4`](https://github.com/mindderivative/tre/tree/v0.3.4/tools); removed
+in 0.3.5 with the declarative layer) rewrites YAML
 views, stylesheets, and themes in place, keeping comments and
 formatting:
 
@@ -62,7 +70,7 @@ above. Review its diff: a widget whose `kind:` is written after a nested
   relying on such a rule may lay out differently.
 - **Check your text colors.** Because `background` used to be the text
   color of a label, code that passed a transparent or background-matching
-  color there drew invisible text — `tre`'s own examples had nine such
+  color there drew invisible text — Tesserae Engine's own examples had nine such
   labels. Migrating makes the intent explicit; a `foreground` of
   `(0, 0, 0, 0)` is still invisible.
 - **Live updates keep bound values** ([issue #8](https://github.com/mindderivative/tre/issues/8)).

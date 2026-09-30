@@ -1,8 +1,8 @@
 # Accessibility
 
-Every frame, `tre` builds an [AccessKit](https://github.com/AccessKit/accesskit)
+Every frame, Tesserae Engine builds an [AccessKit](https://github.com/AccessKit/accesskit)
 tree from the node tree and hands it to the platform's screen reader. What
-a node tells assistive technology is what you set on it: `tre` knows boxes
+a node tells assistive technology is what you set on it: Tesserae Engine knows boxes
 and paths, not buttons and switches, so a widget declares what it is.
 
 ## Role, name, and state
@@ -34,7 +34,11 @@ Screen readers follow keyboard focus, so everything a keyboard user can
 operate should be `focusable=True` — see
 [Focus and the keyboard](events-and-input.md#focus-and-the-keyboard). An
 assistive technology's request to focus a node focuses it exactly as Tab
-would, and `focus_visible` is `True` for it.
+would, and `focus_visible` is `True` for it. However focus arrives — Tab,
+a click, `node.focus()`, or an assistive technology — the scroll views
+around the node scroll just enough to show it (0.4.2), so a screen reader
+never lands on a node that's out of sight. See
+[Revealing a node](nodes-and-layout.md#revealing-a-node).
 
 ## Actions
 
@@ -70,7 +74,11 @@ slider.on("a11y_action", on_action)
 ```
 
 `event.action` is `"increment"`, `"decrement"`, `"expand"`, `"collapse"`,
-`"scroll_into_view"`, or `"set_value"` (with `event.value`).
+`"scroll_into_view"`, or `"set_value"` (with `event.value`). Tesserae Engine answers
+`"scroll_into_view"` itself, after your listeners run: it scrolls every
+scroll view around the node just enough to show it, as
+[`node.scroll_into_view()`](nodes-and-layout.md#revealing-a-node) does, so a
+widget needs no listener for it.
 
 ## Announcing and hiding
 
@@ -89,3 +97,7 @@ property reads back with `get`:
 window.simulate("a11y_action", node=slider, action="set_value", value=0.75)
 assert slider.get("value") == 0.75
 ```
+
+An assistive technology's `scroll_into_view` request is testable the same
+way: simulate it on a row, then read its scroll view's
+`get("scroll_offset")`.

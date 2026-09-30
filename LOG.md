@@ -1,36 +1,22 @@
-# LOG — Branch `0.4.1`: Milestone 7
+# LOG — Branch `0.4.2`: Milestones 11–13
 
 ## Status
 
-**Scaffolded (2026-09-28).** Branch `0.4.1` off `main` at `53bb1bb`,
-versions 0.4.1. User: "yes" to 0.4.1 = the overhead fix (M7), a
-redrawn-areas overlay (M8), housekeeping and release (M9) with a manual
-cross-platform check before tagging.
+**Scaffolded (2026-09-29).** Branch `0.4.2` off `main` at `30c7f27`,
+versions 0.4.2. User: scope #23 (Grid) and #24 (scroll views) for 0.4.2;
+decisions: nearest scroll view for keys, `scroll` on any change by
+comparison, jump (no easing).
 
-**M7 Step 1 (2026-09-28).** Bench split into prepare/draw/gpu + idle
-workload. Whole-window overhead = damage walk 0.10-0.12 ms (the rest of
-v0.4.0's reported gap was noise). Copy of the kept frame = 0.25 ms.
+**M11 complete (2026-09-29).** grid.rs (parse/format, 4 unit tests),
+13 layout properties, tests/test_grid.py (15), docs, examples/grid.py.
+cargo 377, pytest 467 + 1 skipped. Next: M12.
 
-**M7 complete (2026-09-28).** User: "Do your recommendation" -- Steps 2-3
-decided against (0.05 ms gain / no buffer age).
+**M12 complete (2026-09-29).** Page Up/Down keys; keyboard scrolling of the
+nearest scroll view; `scroll_into_view`, its a11y action, and focus reveal;
+the `scroll` event (`old_value`/`new_value`); guide, ARCHITECTURE §11.7a,
+`examples/scroll_keys.py`. The planned `flex_shrink=0` docs note was wrong
+and dropped. cargo 377, pytest 481 + 1 skipped.
 
-**M8 complete (2026-09-28).** show_damage overlay: SrcOver render into the
-surface after the frame's submit; GPU test proves the kept frame stays
-clean. cargo 373, pytest 451 + 1 skipped.
-
-**M9 Phase 1 (2026-09-28).** Worktree tre-0.3.5.2 + branch 0.3.5.3 removed
-(content on main); merged local release branches pruned; rect_window.rs
-keeps its surface-bound adapter.
-
-**Manual check (2026-09-29).** Wayland (KDE): all good, active = True.
-X11 (XWayland): all good, active = True. macOS, Windows: can't be
-checked by hand (user); CI only.
-
-**M10, issue #21 (2026-09-29).** User: "before that check your issues".
-Back/forward mouse buttons: PointerButton::Back/Forward, "back"/"forward",
-no click. cargo 373, pytest 452 + 1 skipped.
-
-**Released (2026-09-29).** PR #22 merged (97d0b4a), v0.4.1 tagged, 24
-assets, PyPI 22 wheels + sdist, #21 closed, Tesserae told.
-Tesserae moved: 2503 passed, side buttons drive back/forward, no issues.
-**M9 complete; 0.4.1 is done.** Open: #23 (Grid), #24 (scroll_view keys).
+**Docs audit (2026-09-29).** Before the 0.4.2 release: every MkDocs page,
+README, ARCHITECTURE, and the stub checked against the code, snippets run.
+Next: M13 (release 0.4.2).

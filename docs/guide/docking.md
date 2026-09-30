@@ -2,7 +2,7 @@
 
 Docking arranges panels in zones around a window's content — a file tree on
 the left, an inspector on the right, a terminal at the bottom — and lets the
-user drag a panel from one zone to another. `tre` docks panels, drags them,
+user drag a panel from one zone to another. Tesserae Engine docks panels, drags them,
 and reports what's happening; what a drag looks like — the handle you grab
 and the highlight over the target zone — is yours to draw.
 

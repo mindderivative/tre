@@ -42,6 +42,7 @@ mod focus;
 mod layers;
 mod layout;
 mod scroll;
+pub use scroll::KEY_SCROLL_LINE;
 #[cfg(test)]
 mod tests;
 mod text_editing;
