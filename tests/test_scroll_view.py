@@ -160,6 +160,27 @@ def test_keys_scroll_nothing_without_focus():
     assert offset(view) == 0.0
 
 
+# 0.4.3 M14: a key with Ctrl, Alt, or Meta held is a shortcut, not a scroll.
+@pytest.mark.parametrize("modifier", ["ctrl", "alt", "meta"])
+@pytest.mark.parametrize("key", ["arrow_down", "page_down", "end"])
+def test_a_shortcut_modifier_keeps_keys_from_scrolling(modifier, key):
+    window = Window(width=800, height=600)
+    view, _, item = scroller(window)
+    item.focus()
+    window.simulate("key_down", key=key, **{modifier: True})
+    assert offset(view) == 0.0
+    window.simulate("key_down", key=key)  # released: the same key scrolls
+    assert offset(view) > 0.0
+
+
+def test_shift_still_scrolls():
+    window = Window(width=800, height=600)
+    view, _, item = scroller(window)
+    item.focus()
+    window.simulate("key_down", key="page_down", shift=True)
+    assert offset(view) == 100.0
+
+
 # --- 0.4.2 M12 (issue #24): scroll_into_view and revealing focus -------------------
 
 

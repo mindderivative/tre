@@ -423,10 +423,19 @@ pub(crate) fn process_input(
 /// itself: a text input, which keeps its arrows, Home, and End (not Page
 /// Up/Down), or any node with its own `key_down` listener, such as a slider
 /// built from boxes. (A focused terminal already took every key.)
+///
+/// 0.4.3 M14: a key pressed with Ctrl, Alt, or Meta held is a shortcut --
+/// Ctrl+Page Down switching tabs, Alt+Left going back -- so it scrolls
+/// nothing. Shift still scrolls, as it does in a browser. Core's
+/// `KeyPressed` carries only Shift; the rest are tracked here.
 fn keyboard_scroll(ctx: &NodeContext<'_>, event: &InputEvent) {
     let InputEvent::KeyPressed { key, .. } = *event else {
         return;
     };
+    let held = listeners::modifiers();
+    if held.ctrl || held.alt || held.meta {
+        return;
+    }
     let mut tree = ctx.tree.borrow_mut();
     let Some(focused) = tree.focused() else {
         return;
