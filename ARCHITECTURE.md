@@ -2,7 +2,7 @@
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust — the building blocks of a desktop UI.**
 
-Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made Tesserae Engine a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.x` line (partial redraw on upstream `vello_gpu` in 0.4.0; the mouse's side buttons in 0.4.1; CSS Grid and scroll-view keys, reveal, and the `scroll` event in 0.4.2) is tracked in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
+Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made Tesserae Engine a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.x` line (partial redraw on upstream `vello_gpu` in 0.4.0; the mouse's side buttons in 0.4.1; CSS Grid and scroll-view keys, reveal, and the `scroll` event in 0.4.2) is in [`BUILD_TRACKER_ARCHIVE_0.4.md`](BUILD_TRACKER_ARCHIVE_0.4.md); from 0.5.0 (custom windowing) the work is tracked in the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3). Update this document as decisions change; don't let it drift from the code.
 
 ---
 
@@ -348,7 +348,7 @@ tre/
 ├── docs/                      # MkDocs site
 ├── tools/                     # build-tracker artifact generator
 ├── planning/archive/          # earlier per-phase PLAN/LOG files
-├── BUILD_TRACKER*.md, PLAN.md, LOG.md
+├── BUILD_TRACKER*.md, PLAN.md, LOG.md   # tracking before 0.5.0; now the GitHub project
 └── archive/                   # the first TRE engine and its lessons learned
 ```
 
@@ -385,7 +385,7 @@ python examples/switch.py
 
 ## 14. Build Order
 
-Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md) (the 0.3 line) and [`BUILD_TRACKER.md`](BUILD_TRACKER.md) (the `0.4.x` line).
+Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md) (the 0.3 line) [`BUILD_TRACKER_ARCHIVE_0.4.md`](BUILD_TRACKER_ARCHIVE_0.4.md) (the `0.4.x` line), and the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) from 0.5.0.
 
 ---
 

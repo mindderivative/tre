@@ -90,7 +90,7 @@ Every rendering capability has a headless, GPU-backed pixel test under
 headlessly through `window.simulate` and `window.advance`.
 
 [`ARCHITECTURE.md`](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md) is the design reference, and
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) tracks the current `0.5.x` line; the `0.4.x` line is in
+the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) tracks the work from `0.5.0` on; the `0.4.x` line is in
 [`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md), and the
 milestone-by-milestone history through `v0.3.5.2` is in
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md).

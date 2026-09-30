@@ -56,7 +56,8 @@ mkdocs build   # static site in site/
 
 This project holds itself to one discipline end to end for every real
 change: investigate → plan → implement → test → document → commit. See
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.5.x),
+the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) (0.5.0 on; its
+README describes how a step is recorded),
 [`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md), and
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md) for the
 milestone-by-milestone history this discipline has produced, and
