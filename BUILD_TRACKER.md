@@ -36,11 +36,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M20 — Release `0.4.3` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.3` released on GitHub and PyPI, closing issue #27; Tesserae moved onto it with nothing broken |
 | M21 — Scroll Chaining | `██████████` 100% | ✅ Complete (2026-09-30) — a wheel or key passes a view that can't move its way to the next one out, as in a browser |
 | M22 — A Windows CI Cache That Saves | `██████████` 100% | ✅ Complete (2026-09-30) — CI caches the dependencies only, keyed exactly: about 450 MB on Windows, saved in seconds, and no longer growing |
-| M23 — Release `0.4.4` | `█████░░░░░` 50% | 🚧 In Progress — `v0.4.4` released on GitHub and PyPI; Tesserae next |
+| M23 — Release `0.4.4` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.4` released on GitHub and PyPI; Tesserae moved onto it, only its pinned scroll-chaining test flipping |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M23 Step 2 -- Tesserae moves to `0.4.4`.
+**Up next:** nothing on the 0.4 line -- `0.5.0` (custom windowing, issue #28) is scaffolded on its own branch with a new tracker; fixes to `0.4.4` would ship as `0.4.x` patches recorded here.
 
 **Known gaps:**
 - None open on this line.
@@ -303,11 +303,11 @@ User: "Start phase 3".
 
 ## Milestone 23 — Release `0.4.4`
 
-**Status: 🚧 In Progress.** User: "yes, release 0.4.4".
+**Status: ✅ Complete (2026-09-30).** `v0.4.4` released, and Tesserae on it. User: "yes, release 0.4.4".
 
-### Phase 1 — Release 🚧
+### Phase 1 — Release ✅
 - Step 1: PR to `main`, CI green, merge, tag `v0.4.4`, release, PyPI — ✅ (2026-09-30: `main` was already in `0.4.4`; PR #30, CI green on Linux, macOS, Windows, and `msrv` -- M22's trimmed cache on its first real run saved in 10-16 s in every job, Windows's 452 MB (was 3.3 GB and timing out), macOS's 375 MB, Linux's 1.18 GB (its release build's dependencies too); merged as `d04ee53`, its tree identical to the tested branch; annotated tag `v0.4.4` ("Tesserae Engine 0.4.4"); the wheels run passed every job and the user approved the `pypi` deployment, after a wait that outlasted an hour-long poll; `tesserae-engine==0.4.4` installed from PyPI in a fresh venv reports 0.4.4, and a wheel over an inner view at its end scrolled the page 60; once `main`'s CI saved its trimmed caches, the three stale 3.3/2.5/1.2 GB caches and PR #30's copies were deleted by ID -- by key would have taken `main`'s new ones, which share keys -- leaving 2.0 GB of GitHub's 10 GB)
-- Step 2: Tesserae moves to `0.4.4` — ⬜
+- Step 2: Tesserae moves to `0.4.4` — ✅ (2026-09-30: reported by its session, its M80: the release's 24 assets and PyPI's 22 wheels plus sdist checked; its floor `>=0.4.4` and its CI's and release workflow's checkout at `v0.4.4` (committed locally there, `56a1e74`); exactly one failure on 0.4.4, the test pinning 0.4.3's nested-wheel behaviour, flipped -- a vertical scroll view inside another whose content fits now passes the wheel on and the page scrolls 50; a new test: Page Down on a row in an inner view that can't move scrolls the page 100, its two-way binding hearing it, and Home brings it back; 2659 passed, all five examples clean; no tre bugs; noted: its CI picked up 0.4.4 through the old `>=0.4.3` floor before it moved, so a tre release reaches Tesserae's CI at once)
 
 ---
 
