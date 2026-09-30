@@ -27,13 +27,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `██████████` 100% | ✅ Complete (2026-09-29) — `display="grid"`, track lists, placements, auto tracks and flow, row/column gaps, and item alignment, read back as set |
 | M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `██████████` 100% | ✅ Complete (2026-09-29) — Page Up/Down keys, keyboard scrolling, `scroll_into_view` with focus reveal, and the `scroll` event |
 | M13 — Release `0.4.2` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.2` released on GitHub and PyPI, closing issues #23 and #24; Tesserae moved onto it, its scroll view now following tre's keys, reveal, and `scroll` event |
-| M14 — Keyboard Scrolling Leaves Shortcuts Alone | `█████░░░░░` 50% | 🚧 In Progress — keys with Ctrl, Alt, or Meta held no longer scroll |
+| M14 — Keyboard Scrolling Leaves Shortcuts Alone | `██████████` 100% | ✅ Complete (2026-09-30) — keys with Ctrl, Alt, or Meta held are shortcuts and no longer scroll; Shift still does |
 | M15 — `scroll_offset` Clamped When Set | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M16 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — on hold until more fixes join 0.4.3 |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M14 Step 2 -- documentation of the shortcut rule.
+**Up next:** M15 Step 1 -- `set` and `animate` clamp `scroll_offset` against a fresh layout.
 
 **Known gaps:**
 - None open on this line.
@@ -205,11 +205,11 @@ User: "Start phase 3".
 
 ## Milestone 14 — Keyboard Scrolling Leaves Shortcuts Alone
 
-**Status: 🚧 In Progress.** User: "yes, start M14, we will hold off on the release until we have some other fixes". Step 1 done (2026-09-30). Scoped (2026-09-30): "yes, push it and scope both as 0.4.3" -- the first of Tesserae's two 0.4.2 observations: arrows, Page Up/Down, and Home/End scroll the nearest scroll view even with Ctrl, Alt, or Meta held, so Ctrl+Page Down (a tab switch in browsers) or Alt+Left (back) also scrolls. Plan: with Ctrl, Alt, or Meta held, `engine-py`'s `keyboard_scroll` leaves the key alone; Shift still scrolls, as it does in a browser. The rule lives in `engine-py`, which already tracks every modifier (`listeners::modifiers()`); core's `KeyPressed` carries only Shift.
+**Status: ✅ Complete (2026-09-30).** User: "yes, start M14, we will hold off on the release until we have some other fixes". Scoped (2026-09-30): "yes, push it and scope both as 0.4.3" -- the first of Tesserae's two 0.4.2 observations: arrows, Page Up/Down, and Home/End scroll the nearest scroll view even with Ctrl, Alt, or Meta held, so Ctrl+Page Down (a tab switch in browsers) or Alt+Left (back) also scrolls. Plan: with Ctrl, Alt, or Meta held, `engine-py`'s `keyboard_scroll` leaves the key alone; Shift still scrolls, as it does in a browser. The rule lives in `engine-py`, which already tracks every modifier (`listeners::modifiers()`); core's `KeyPressed` carries only Shift.
 
-### Phase 1 — Modifiers 🚧
+### Phase 1 — Modifiers ✅
 - Step 1: no keyboard scroll while Ctrl, Alt, or Meta is held; Shift unchanged; pytest cases for each modifier, plain keys, and Shift — ✅ (2026-09-30: `keyboard_scroll` returns early when `listeners::modifiers()` has Ctrl, Alt, or Meta; `simulate` holds its modifiers for the whole dispatch through `with_modifiers`, so the tests take the live path; 10 new pytest cases -- each of the three modifiers with the arrow, Page Down, and End keys scrolling nothing, then the same key unmodified scrolling, and Shift+Page Down scrolling a viewport; cargo 377, pytest 491 + 1 skipped)
-- Step 2: the guide's Keyboard scrolling section, the events guide, and a 0.4.3 section in `docs/migrating-0.4.md` — ⬜
+- Step 2: the guide's Keyboard scrolling section, the events guide, and a 0.4.3 section in `docs/migrating-0.4.md` — ✅ (2026-09-30: the rule in the layout guide's Keyboard scrolling section and the events guide's focus section; `docs/migrating-0.4.md` gains a 0.4.3 section and its intro now covers all of 0.4.x; ARCHITECTURE.md §11.7a names the rule and where the modifiers come from; mkdocs strict clean)
 
 ---
 

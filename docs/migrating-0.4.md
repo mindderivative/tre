@@ -1,6 +1,6 @@
 # Upgrading to 0.4.x
 
-No name was removed or renamed in 0.4.0–0.4.2: code written for 0.3.5 runs
+No name was removed or renamed in 0.4.x: code written for 0.3.5 runs
 unchanged. A few behaviors changed, and each is listed here with the release
 that changed it, in case your code or tests relied on the old one.
 
@@ -44,3 +44,10 @@ that changed it, in case your code or tests relied on the old one.
 - **New:** `node.scroll_into_view()`, the `scroll` event, CSS Grid layout
   (`display="grid"`), and the Page Up and Page Down keys, which a terminal
   receives as `\x1b[5~` and `\x1b[6~`.
+
+## 0.4.3
+
+- **Shortcuts don't scroll.** An arrow, Page Up/Down, Home, or End pressed
+  with Ctrl, Alt, or Meta held no longer scrolls the scroll view around the
+  focused node, so it's free for a shortcut such as Ctrl+Page Down. Shift
+  still scrolls.

@@ -73,7 +73,7 @@ The focused node gets `key_down`/`key_up`, which bubble; when nothing is
 focused, the root gets them. Enter and Space on a focused node fire `click` —
 except in a text input or terminal, which take every key — so a focusable box
 is already a keyboard button. Keys the focused node doesn't use scroll the
-nearest scroll view around it (0.4.2) — see
+nearest scroll view around it (0.4.2), unless Ctrl, Alt, or Meta is held (0.4.3) — see
 [Keyboard scrolling](nodes-and-layout.md#keyboard-scrolling).
 
 `focus` and `unfocus` bubble too, and carry `related_target`, the node on the

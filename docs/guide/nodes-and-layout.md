@@ -217,7 +217,9 @@ horizontal one; a view that doesn't scroll along a key's axis passes it to the
 next one out. Keys the focused node uses itself don't scroll: a node with a
 `key_down` listener between the focused node and the view keeps every key, and
 a text input keeps all but Page Up and Page Down. With nothing focused, keys
-scroll nothing. Keyboard scrolls jump rather than ease.
+scroll nothing. A key pressed with Ctrl, Alt, or Meta held is a shortcut, not a
+scroll (0.4.3) — Ctrl+Page Down or Alt+Left stays yours — while Shift still
+scrolls. Keyboard scrolls jump rather than ease.
 
 Keys, `scroll_into_view`, and the `scroll` event below apply to
 `"scroll_view"` nodes; a `"virtual_list"` scrolls by wheel only.
