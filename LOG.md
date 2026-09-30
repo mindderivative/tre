@@ -28,3 +28,10 @@ merged into 0.4.3. Next: M17 (release), held for more fixes.
 **Scoped (2026-09-30).** User: "Scope 1, 2, and 3 for 0.4.3". M17
 Shift+wheel horizontal, M18 core scroll tests, M19 stub drift in CI; the
 release is now M20, after them if nothing else joins. Next: M17.
+
+**M17 complete (2026-09-30).** `shift_wheel` in engine-py turns Shift+wheel
+(no x part) horizontal before dispatch; core's wheel walk passes a view it
+can't move on (found: a carousel in a page swallowed a plain wheel). 5
+pytest cases plus Shift on the terminal scrollback wheel; guide, events,
+migration, ARCHITECTURE §11.7a. cargo 377, pytest 504 + 1 skipped.
+Next: M18.

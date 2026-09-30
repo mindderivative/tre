@@ -41,7 +41,8 @@ landed on the same node (`secondary_click` for the secondary button). The
 middle button and the mouse's side buttons (`event.button` is `"back"` or
 `"forward"`, 0.4.1) make no click; watch `pointer_down` for them. A wheel or
 trackpad scroll arrives as `wheel`, with `delta_x`/`delta_y` in pixels,
-positive right and down; it bubbles.
+positive right and down; it bubbles. With Shift held, a wheel with no
+horizontal part arrives as `delta_x`, so it scrolls sideways (0.4.3).
 `event.x`/`event.y` are local to `event.current`; `window_x`/`window_y` are
 in the window. Text nodes are never the target, so a press on a button's
 label lands on the button. `hit_testable=False` makes any node transparent to

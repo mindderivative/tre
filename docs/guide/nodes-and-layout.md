@@ -202,7 +202,10 @@ for name in names:
 view.add_child(content)
 ```
 
-The mouse wheel scrolls it, and so does setting `scroll_offset`, which also
+The mouse wheel scrolls it — the nearest scroll view under the pointer that
+scrolls along the wheel's direction, so a plain wheel over a horizontal
+carousel scrolls the page around it, and Shift+wheel scrolls a horizontal
+view (0.4.3). So does setting `scroll_offset`, which also
 animates — how a carousel eases to a snap point:
 
 ```python

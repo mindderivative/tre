@@ -60,3 +60,12 @@ that changed it, in case your code or tests relied on the old one.
   second. `animate` to a point past the end eases to the real end. A view
   created with `scroll_offset` fires nothing on its first frame, and its
   first `scroll` event's `old_value` is that offset, not 0.
+- **Shift+wheel scrolls sideways.** With Shift held, a wheel with no
+  horizontal part scrolls a horizontal scroll view, and a `wheel` listener
+  hears it as `delta_x`. A wheel that already has a horizontal part (macOS
+  turns Shift+wheel itself) is unchanged, and a terminal's scrollback still
+  follows the wheel.
+- **A wheel passes views it can't move.** A wheel over a scroll view or
+  virtual list that doesn't scroll in the wheel's direction goes on to the
+  next one out: a plain wheel over a horizontal carousel now scrolls the
+  page around it, where it used to scroll nothing.
