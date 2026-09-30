@@ -24,7 +24,9 @@ its Python surface is the one stability contract. `engine-platform` and
 ## How a frame is made
 
 1. **Input** from `winit` (or `window.simulate`) is hit-tested, moves focus,
-   edits text, and reaches your listeners, bubbling from the target.
+   edits text, and reaches your listeners, bubbling from the target. A press
+   on a drawn title bar or resize border then goes to the OS, to move or
+   resize the window ([Custom Title Bars](guide/custom-title-bars.md)).
 2. Callbacks queued with **`LoopHandle.call_soon`** run.
 3. **One central tick** advances every running animation; completion
    callbacks run after it.
