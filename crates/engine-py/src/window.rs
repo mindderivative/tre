@@ -120,6 +120,14 @@ pub(crate) struct WindowHandles {
     /// 0.5.0 M2: whether the window has the OS's focus, as last reported
     /// (`WindowEvent::Focused`) -- `false` until it's first focused.
     pub(crate) active: Rc<Cell<bool>>,
+    /// 0.5.0 M2: whether the window is fullscreen (borderless on its
+    /// monitor) -- before `App.run()`, whether it opens so.
+    pub(crate) fullscreen: Rc<Cell<bool>>,
+    /// 0.5.0 M2: the smallest inner size the user can resize to, in
+    /// logical pixels; `(0.0, 0.0)` for none.
+    pub(crate) min_size: Rc<Cell<(f64, f64)>>,
+    /// 0.5.0 M2: the window's icon, RGBA8 with its width and height.
+    pub(crate) icon: Rc<RefCell<Option<IconPixels>>>,
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
@@ -129,6 +137,9 @@ pub struct WindowState {
     pub(crate) handles: WindowHandles,
     pub(crate) title: String,
 }
+
+/// 0.5.0 M2: a window icon -- straight-alpha RGBA8 bytes, width, height.
+pub(crate) type IconPixels = (Vec<u8>, u32, u32);
 
 /// M94: see `PyWindow::os_window`.
 pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window::Window>>>>;
@@ -190,6 +201,9 @@ impl PyWindow {
                 maximized: Rc::new(Cell::new(false)),
                 minimized: Rc::new(Cell::new(false)),
                 active: Rc::new(Cell::new(false)),
+                fullscreen: Rc::new(Cell::new(false)),
+                min_size: Rc::new(Cell::new((0.0, 0.0))),
+                icon: Rc::new(RefCell::new(None)),
                 waker: Rc::new(RefCell::new(None)),
             },
         })))

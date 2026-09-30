@@ -228,7 +228,76 @@ impl PyWindow {
 }
 
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
-const SETTABLE: &str = "title, partial_redraw, show_damage, decorations";
+const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
+    min_width, min_height, icon";
+
+/// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
+/// RGBA8 bytes, `width * height * 4` of them.
+fn parse_icon(value: &Bound<'_, PyAny>) -> PyResult<(Vec<u8>, u32, u32)> {
+    let bad = || {
+        PyValueError::new_err(
+            "window property `icon` must be (rgba, width, height): RGBA8 bytes and two \
+             positive ints, or None",
+        )
+    };
+    let (rgba, width, height): (Vec<u8>, u32, u32) = value.extract().map_err(|_| bad())?;
+    if width == 0 || height == 0 {
+        return Err(bad());
+    }
+    let wanted = width as usize * height as usize * 4;
+    if rgba.len() != wanted {
+        return Err(PyValueError::new_err(format!(
+            "window property `icon`: {width}x{height} needs {wanted} bytes of RGBA8, got {}",
+            rgba.len()
+        )));
+    }
+    Ok((rgba, width, height))
+}
+
+/// 0.5.0 M2: grows the open window to its minimum size if it's smaller --
+/// found live on Wayland, where a minimum only limits what the user can
+/// resize to: a window already smaller, or restored from fullscreen to a
+/// smaller size, stays that size. Checked when the minimum is set and after
+/// every resize. A maximized or fullscreen window is left alone -- resizing
+/// it would un-maximize it.
+pub(crate) fn grow_to_minimum(handles: &crate::window::WindowHandles) {
+    let (min_w, min_h) = handles.min_size.get();
+    let window = handles.os_window.borrow();
+    let Some(window) = window.as_ref() else {
+        return;
+    };
+    if window.is_maximized() || window.fullscreen().is_some() {
+        return;
+    }
+    let now: winit::dpi::LogicalSize<f64> = window.inner_size().to_logical(window.scale_factor());
+    if now.width >= min_w && now.height >= min_h {
+        return;
+    }
+    let applied = window.request_inner_size(winit::dpi::LogicalSize::new(
+        now.width.max(min_w),
+        now.height.max(min_h),
+    ));
+    // Applied at once (Wayland), maybe with no resize event: the loop
+    // reports it, so layout and `resize` listeners follow.
+    if applied.is_some()
+        && let Some(waker) = handles.waker.borrow().as_ref()
+    {
+        waker.report_size(window.id());
+    }
+}
+
+/// 0.5.0 M2: a minimum-size edge, a non-negative number of pixels.
+fn parse_min_edge(name: &str, value: &Bound<'_, PyAny>) -> PyResult<f64> {
+    let bad = || PyValueError::new_err(format!("window property `{name}` must be a number >= 0"));
+    if value.is_instance_of::<pyo3::types::PyBool>() {
+        return Err(bad());
+    }
+    let edge: f64 = value.extract().map_err(|_| bad())?;
+    if edge < 0.0 || !edge.is_finite() {
+        return Err(bad());
+    }
+    Ok(edge)
+}
 
 #[pymethods]
 impl PyWindow {
@@ -487,6 +556,9 @@ impl PyWindow {
         let mut partial_redraw = None;
         let mut show_damage = None;
         let mut decorations = None;
+        let mut fullscreen = None;
+        let (mut min_width, mut min_height) = (None, None);
+        let mut icon = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -511,7 +583,22 @@ impl PyWindow {
                             PyValueError::new_err("window property `decorations` must be a bool")
                         })?);
                     }
-                    "width" | "height" | "scale_factor" => {
+                    "fullscreen" => {
+                        fullscreen = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `fullscreen` must be a bool")
+                        })?);
+                    }
+                    "min_width" => min_width = Some(parse_min_edge(&name, &value)?),
+                    "min_height" => min_height = Some(parse_min_edge(&name, &value)?),
+                    "icon" => {
+                        icon = Some(if value.is_none() {
+                            None
+                        } else {
+                            Some(parse_icon(&value)?)
+                        });
+                    }
+                    "width" | "height" | "scale_factor" | "maximized" | "minimized" | "active"
+                    | "platform" => {
                         return Err(PyValueError::new_err(format!(
                             "window property `{name}` is read-only -- settable: {SETTABLE}"
                         )));
@@ -541,6 +628,33 @@ impl PyWindow {
                 window.set_decorations(on);
             }
             self.handles.decorations.set(on);
+        }
+        let window = self.handles.os_window.borrow();
+        if let Some(on) = fullscreen {
+            if let Some(window) = window.as_ref() {
+                window.set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
+            }
+            self.handles.fullscreen.set(on);
+        }
+        if min_width.is_some() || min_height.is_some() {
+            let (w, h) = self.handles.min_size.get();
+            let size = (min_width.unwrap_or(w), min_height.unwrap_or(h));
+            self.handles.min_size.set(size);
+            if let Some(window) = window.as_ref() {
+                window.set_min_inner_size(
+                    (size != (0.0, 0.0)).then(|| winit::dpi::LogicalSize::new(size.0, size.1)),
+                );
+                grow_to_minimum(&self.handles);
+            }
+        }
+        if let Some(icon) = icon {
+            if let Some(window) = window.as_ref() {
+                window.set_window_icon(
+                    icon.clone()
+                        .and_then(|(rgba, w, h)| winit::window::Icon::from_rgba(rgba, w, h).ok()),
+                );
+            }
+            *self.handles.icon.borrow_mut() = icon;
         }
         Ok(())
     }
@@ -607,6 +721,39 @@ impl PyWindow {
                     .into_any()
                     .unbind()
             }
+            "fullscreen" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_ref()
+                    .map_or(self.handles.fullscreen.get(), |w| w.fullscreen().is_some())
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()
+                    .unbind()
+            }
+            "min_width" => self
+                .handles
+                .min_size
+                .get()
+                .0
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "min_height" => self
+                .handles
+                .min_size
+                .get()
+                .1
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "platform" => {
+                let window = self.handles.os_window.borrow();
+                engine_platform::platform_name(window.as_deref())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
             "decorations" => self
                 .handles
                 .os_window
@@ -655,7 +802,8 @@ impl PyWindow {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
                      scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
-                     decorations, maximized, minimized, active"
+                     decorations, maximized, minimized, active, fullscreen, min_width, \
+                     min_height, platform"
                 )));
             }
         })

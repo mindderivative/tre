@@ -275,6 +275,15 @@ pub struct WindowOptions {
     pub decorations: bool,
     /// Whether the window opens maximized.
     pub maximized: bool,
+    /// Whether the window opens fullscreen, borderless on its monitor.
+    pub fullscreen: bool,
+    /// The smallest inner size, `(width, height)` in logical pixels, the
+    /// user can resize the window to.
+    pub min_size: Option<(f64, f64)>,
+    /// The window's icon, straight-alpha RGBA8 with its width and height --
+    /// used on Windows and X11; Wayland and macOS take the app's icon from
+    /// its desktop file or bundle.
+    pub icon: Option<(Vec<u8>, u32, u32)>,
 }
 
 impl Default for WindowOptions {
@@ -282,7 +291,37 @@ impl Default for WindowOptions {
         Self {
             decorations: true,
             maximized: false,
+            fullscreen: false,
+            min_size: None,
+            icon: None,
         }
+    }
+}
+
+/// 0.5.0 M2 (issue #28): which windowing system `window` runs on --
+/// `"wayland"`, `"x11"`, `"windows"`, or `"macos"` -- for a framework whose
+/// title bar behaves differently on each. On Linux the open window's own
+/// handle answers; before one opens, it's the backend `winit` would pick
+/// (`WINIT_UNIX_BACKEND` if set, else Wayland when `WAYLAND_DISPLAY` is).
+pub fn platform_name(window: Option<&Window>) -> &'static str {
+    if cfg!(target_os = "windows") {
+        return "windows";
+    }
+    if cfg!(target_os = "macos") {
+        return "macos";
+    }
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    if let Some(handle) = window.and_then(|w| w.window_handle().ok()) {
+        return match handle.as_raw() {
+            RawWindowHandle::Wayland(_) => "wayland",
+            _ => "x11",
+        };
+    }
+    match std::env::var("WINIT_UNIX_BACKEND").as_deref() {
+        Ok("x11") => "x11",
+        Ok("wayland") => "wayland",
+        _ if std::env::var_os("WAYLAND_DISPLAY").is_some() => "wayland",
+        _ => "x11",
     }
 }
 
@@ -326,6 +365,9 @@ enum PlatformEvent {
     /// (`EventLoopWaker::close_window`) -- handled exactly as the user
     /// closing it, `CloseRequested` first, which the app may refuse.
     CloseWindow(WindowId),
+    /// 0.5.0 M2: report window `id`'s current size as a resize --
+    /// `EventLoopWaker::report_size`.
+    ReportSize(WindowId),
 }
 
 impl From<accesskit_winit::Event> for PlatformEvent {
@@ -385,6 +427,14 @@ impl EventLoopWaker {
     /// already closed, or once the loop has exited.
     pub fn close_window(&self, id: WindowId) {
         let _ = self.proxy.send_event(PlatformEvent::CloseWindow(id));
+    }
+
+    /// 0.5.0 M2: has the loop report window `id`'s current size to
+    /// `on_input` as an `InputEvent::Resized`, on its next turn -- for a size
+    /// the app changed itself, which `winit` may apply at once without a
+    /// `WindowEvent::Resized` (Wayland does).
+    pub fn report_size(&self, id: WindowId) {
+        let _ = self.proxy.send_event(PlatformEvent::ReportSize(id));
     }
 }
 
@@ -639,15 +689,27 @@ where
                 // must be created before the window is ever shown,
                 // which means creating the window invisible first.
                 let options = &request.config.options;
-                let attrs = WindowAttributes::default()
-                    .with_title(request.config.title.clone())
-                    .with_inner_size(winit::dpi::LogicalSize::new(
-                        request.config.width,
-                        request.config.height,
-                    ))
-                    .with_decorations(options.decorations)
-                    .with_maximized(options.maximized)
-                    .with_visible(false);
+                let mut attrs =
+                    WindowAttributes::default()
+                        .with_title(request.config.title.clone())
+                        .with_inner_size(winit::dpi::LogicalSize::new(
+                            request.config.width,
+                            request.config.height,
+                        ))
+                        .with_decorations(options.decorations)
+                        .with_maximized(options.maximized)
+                        .with_fullscreen(
+                            options
+                                .fullscreen
+                                .then_some(winit::window::Fullscreen::Borderless(None)),
+                        )
+                        .with_window_icon(options.icon.clone().and_then(|(rgba, w, h)| {
+                            winit::window::Icon::from_rgba(rgba, w, h).ok()
+                        }))
+                        .with_visible(false);
+                if let Some((w, h)) = options.min_size {
+                    attrs = attrs.with_min_inner_size(winit::dpi::LogicalSize::new(w, h));
+                }
                 // 0.5.0 M2: Windows drops an undecorated window's shadow
                 // unless asked to keep it; a decorated one has it anyway.
                 #[cfg(target_os = "windows")]
@@ -756,6 +818,19 @@ where
             PlatformEvent::ThemeChanged(dark) => {
                 for (&id, win) in &self.windows {
                     (self.on_input)(id, InputEvent::ThemeChanged { dark });
+                    win.window.request_redraw();
+                }
+            }
+            PlatformEvent::ReportSize(id) => {
+                if let Some(win) = self.windows.get(&id) {
+                    let size = win.window.inner_size();
+                    (self.on_input)(
+                        id,
+                        InputEvent::Resized {
+                            width: size.width as f32,
+                            height: size.height as f32,
+                        },
+                    );
                     win.window.request_redraw();
                 }
             }

@@ -332,6 +332,10 @@ class Window:
         partial_redraw: bool = ...,
         show_damage: bool = ...,
         decorations: bool = ...,
+        fullscreen: bool = ...,
+        min_width: float = ...,
+        min_height: float = ...,
+        icon: tuple[bytes, int, int] | None = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -341,7 +345,14 @@ class Window:
         tints what each presented frame redrew -- its damage rects in
         magenta, a full redraw outlined in orange -- over the image, never
         the kept frame; off by default. (0.5.0) `decorations`: whether the
-        OS draws the title bar and borders, live on an open window."""
+        OS draws the title bar and borders, live on an open window;
+        `fullscreen`: borderless on the window's monitor; `min_width` and
+        `min_height`: the smallest size the user can resize it to, 0 for
+        none; `icon`: `(rgba, width, height)` -- straight-alpha RGBA8 bytes,
+        `width * height * 4` of them -- or `None`, for the taskbar and
+        window switcher on Windows and X11 (Wayland and macOS take the app's
+        icon from its desktop file or bundle). Each applies live to an open
+        window, or when `App.run()` opens it."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -356,8 +367,14 @@ class Window:
     @overload
     def get(
         self,
-        name: Literal["show_damage", "decorations", "maximized", "minimized", "active"],
+        name: Literal[
+            "show_damage", "decorations", "maximized", "minimized", "active", "fullscreen"
+        ],
     ) -> bool: ...
+    @overload
+    def get(self, name: Literal["min_width", "min_height"]) -> float: ...
+    @overload
+    def get(self, name: Literal["platform"]) -> str: ...
     @overload
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, `scale_factor` (`1.0`
@@ -371,7 +388,10 @@ class Window:
         `None` until `App.run()` opens the window -- (0.4.1)
         `show_damage`, or (0.5.0) `decorations`, `maximized`, `minimized`,
         and `active` (whether the window has focus) -- the open window's
-        own answer, or before `App.run()` what it opens as."""
+        own answer, or before `App.run()` what it opens as -- `fullscreen`,
+        `min_width`, `min_height`, and `platform`: `"wayland"`, `"x11"`,
+        `"windows"`, or `"macos"` (on Linux, the open window's own answer;
+        before, the backend `winit` would pick)."""
         ...
     def show_layer(
         self,

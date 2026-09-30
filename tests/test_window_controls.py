@@ -171,3 +171,79 @@ def test_a_live_maximize_and_restore_fire_maximized():
         print(log if log else "NO_DISPLAY")
     """)
     assert log == "[('event', True), ('get', True), ('event', False)]"
+
+
+# --- Step 4: fullscreen, minimum size, icon, platform ----------------------------
+
+
+def test_fullscreen_is_set_and_read_back():
+    window = Window()
+    assert window.get("fullscreen") is False
+    window.set(fullscreen=True)
+    assert window.get("fullscreen") is True
+    with pytest.raises(ValueError, match="`fullscreen` must be a bool"):
+        window.set(fullscreen=1)
+
+
+def test_a_minimum_size_is_set_per_edge():
+    window = Window()
+    assert (window.get("min_width"), window.get("min_height")) == (0.0, 0.0)
+    window.set(min_width=320)
+    window.set(min_height=240.5)
+    assert (window.get("min_width"), window.get("min_height")) == (320.0, 240.5)
+
+
+@pytest.mark.parametrize("value", [-1, True, "320", float("inf")])
+def test_a_minimum_edge_must_be_a_number_at_least_zero(value):
+    with pytest.raises(ValueError, match="`min_width` must be a number >= 0"):
+        Window().set(min_width=value)
+
+
+def test_an_icon_is_rgba_bytes_with_its_size():
+    window = Window()
+    window.set(icon=(bytes(16 * 16 * 4), 16, 16))
+    window.set(icon=None)  # clears it
+    with pytest.raises(ValueError, match="16x16 needs 1024 bytes of RGBA8, got 4"):
+        window.set(icon=(bytes(4), 16, 16))
+    with pytest.raises(ValueError, match="must be \\(rgba, width, height\\)"):
+        window.set(icon=(bytes(0), 0, 0))
+    with pytest.raises(ValueError, match="must be \\(rgba, width, height\\)"):
+        window.set(icon="icon.png")
+
+
+def test_the_platform_is_one_of_four():
+    assert Window().get("platform") in {"wayland", "x11", "windows", "macos"}
+
+
+def test_state_and_platform_are_read_only():
+    for name in ("maximized", "minimized", "active", "platform"):
+        with pytest.raises(ValueError, match="read-only"):
+            Window().set(**{name: True})
+
+
+def test_live_fullscreen_and_a_minimum_larger_than_the_window():
+    log = run_live("""
+        from tre import App, Window
+        w = Window(width=300, height=200, decorations=False)
+        box = w.create("box", width=20, height=20)
+        w.root.add_child(box)
+        log = []
+        def grown():
+            log.append(("min", w.get("width"), w.get("height")))
+            w.close()
+        def windowed():
+            log.append(("fullscreen", w.get("fullscreen")))
+            w.set(fullscreen=False, min_width=400, min_height=300)
+            box.animate("opacity", 0.8, 400, on_complete=grown)
+        def start():
+            w.set(fullscreen=True)
+            box.animate("opacity", 0.2, 400, on_complete=windowed)
+        box.animate("opacity", 0.5, 100, on_complete=start)
+        app = App()
+        app.add_window(w)
+        app.run(max_frames=10_000_000)
+        print(log if log else "NO_DISPLAY")
+    """)
+    assert log == "[('fullscreen', True), ('min', 400.0, 300.0)]", (
+        "a minimum larger than the window grows it, whatever the platform does"
+    )

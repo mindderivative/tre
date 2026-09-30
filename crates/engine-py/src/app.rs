@@ -1096,6 +1096,9 @@ impl App {
                                 runtime.handles.minimized.set(minimized);
                             }
                         }
+                        // 0.5.0 M2: e.g. leaving fullscreen to a size below
+                        // the minimum, which Wayland allows.
+                        crate::window_events::grow_to_minimum(&runtime.handles);
                     }
                     InputEvent::ScaleFactorChanged { scale_factor } => {
                         listeners::deliver_window(
@@ -1263,6 +1266,10 @@ impl App {
                             options: WindowOptions {
                                 decorations: setup.handles.decorations.get(),
                                 maximized: setup.handles.maximized.get(),
+                                fullscreen: setup.handles.fullscreen.get(),
+                                min_size: Some(setup.handles.min_size.get())
+                                    .filter(|size| *size != (0.0, 0.0)),
+                                icon: setup.handles.icon.borrow().clone(),
                             },
                         },
                         token: index as u64,
