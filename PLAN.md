@@ -5,14 +5,14 @@
 
 User (2026-09-30): "scope 1 and 2 as 0.4.4".
 
-## M21 — Scroll chaining
+## M21 — Scroll chaining — done
 
 A view keeps a wheel along its axis even when it can't move (content fits,
 or at that end); browsers pass it to the view outside. In core's wheel walk,
 pass on when the view can't move in the wheel's direction; a view that can
 move takes the whole wheel, clamped.
 1. Wheel: core tests + pytest (fits, each end, mid-way, virtual list, nested).
-2. Keys, if the user agrees: `scroll_view_for_key` picks the nearest view
+2. Keys (the user agreed): `scroll_view_for_key` picks the nearest view
    that can move in the key's direction.
 3. Guide, ARCHITECTURE §11.7a, 0.4.4 migration section.
 

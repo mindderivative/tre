@@ -203,9 +203,11 @@ view.add_child(content)
 ```
 
 The mouse wheel scrolls it — the nearest scroll view under the pointer that
-scrolls along the wheel's direction, so a plain wheel over a horizontal
-carousel scrolls the page around it, and Shift+wheel scrolls a horizontal
-view (0.4.3). So does setting `scroll_offset`, which also
+can move the wheel's way. A view the wheel can't move passes it on to the one
+outside it (scroll chaining, 0.4.4): a plain wheel over a horizontal carousel
+scrolls the page around it, and so does a wheel over an inner list that's
+already at its end, or has nothing to scroll. Shift+wheel scrolls a
+horizontal view (0.4.3). So does setting `scroll_offset`, which also
 animates — how a carousel eases to a snap point:
 
 ```python
@@ -221,8 +223,9 @@ and an animation eases all the way there.
 Keys scroll the nearest scroll view around the focused node (0.4.2): the arrow
 keys by 40 pixels, Page Up and Page Down by a viewport, Home and End to either
 end. Up, Down, Page Up, and Page Down move a vertical view, Left and Right a
-horizontal one; a view that doesn't scroll along a key's axis passes it to the
-next one out. Keys the focused node uses itself don't scroll: a node with a
+horizontal one. A view that can't move a key's way — across its axis, at that
+end, or with nothing to scroll — passes it to the next one out (0.4.4), so
+Page Down at the end of an inner list moves the page. Keys the focused node uses itself don't scroll: a node with a
 `key_down` listener between the focused node and the view keeps every key, and
 a text input keeps all but Page Up and Page Down. With nothing focused, keys
 scroll nothing. A key pressed with Ctrl, Alt, or Meta held is a shortcut, not a
