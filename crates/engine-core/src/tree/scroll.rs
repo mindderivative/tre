@@ -505,15 +505,26 @@ impl Tree {
     /// key's axis: Up/Down and Page Up/Down for a vertical one, Left/Right
     /// for a horizontal one, Home/End for either. So arrows in a carousel
     /// inside a page still move the page up and down.
+    ///
+    /// 0.4.4 M21: and that can move the key's way (`can_scroll`) -- Down,
+    /// Right, Page Down, and End toward the end, the rest toward the start
+    /// -- so a key at an inner view's end moves the view outside it, as
+    /// the wheel does and as in a browser. `None` when nothing can.
     pub fn scroll_view_for_key(&self, from: NodeId, key: Key) -> Option<NodeId> {
-        let wants_horizontal = match key {
-            Key::ArrowUp | Key::ArrowDown | Key::PageUp | Key::PageDown => Some(false),
-            Key::ArrowLeft | Key::ArrowRight => Some(true),
-            Key::Home | Key::End => None,
+        let (wants_horizontal, toward) = match key {
+            Key::ArrowUp | Key::PageUp => (Some(false), -1.0),
+            Key::ArrowDown | Key::PageDown => (Some(false), 1.0),
+            Key::ArrowLeft => (Some(true), -1.0),
+            Key::ArrowRight => (Some(true), 1.0),
+            Key::Home => (None, -1.0),
+            Key::End => (None, 1.0),
             _ => return None,
         };
         self.ancestors(from).find(|&id| match &self.nodes[id].kind {
-            NodeKind::ScrollView(state) => wants_horizontal.is_none_or(|h| h == state.horizontal),
+            NodeKind::ScrollView(state) => {
+                wants_horizontal.is_none_or(|h| h == state.horizontal)
+                    && self.can_scroll(id, toward)
+            }
             _ => false,
         })
     }

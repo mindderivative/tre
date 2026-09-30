@@ -463,3 +463,26 @@ def test_a_virtual_list_at_its_end_passes_the_wheel():
     assert offset(page) == 0.0, "the list scrolls to its end first"
     window.simulate("wheel", node=rows, delta_y=60.0)
     assert offset(page) == 60.0
+
+
+def test_keys_chain_past_an_inner_view_at_its_end():
+    window = Window(width=800, height=600)
+    page = window.create("scroll_view", width=300, height=200)
+    column = window.create("box", width=300, height=1000, flex_direction="vertical")
+    inner = window.create("scroll_view", width=300, height=100)
+    inner_content = window.create("box", width=300, height=200, flex_direction="vertical")
+    item = window.create("box", width=50, height=20, focusable=True)
+    inner_content.add_child(item)
+    inner.add_child(inner_content)
+    column.add_child(inner)
+    page.add_child(column)
+    window.root.add_child(page)
+    item.focus()
+    window.simulate("key_down", key="page_down")
+    assert (offset(page), offset(inner)) == (0.0, 100.0), "the inner view first"
+    window.simulate("key_down", key="page_down")
+    assert (offset(page), offset(inner)) == (200.0, 100.0), "at its end: the page"
+    window.simulate("key_down", key="home")
+    assert (offset(page), offset(inner)) == (200.0, 0.0), "Home: the nearest that can"
+    window.simulate("key_down", key="home")
+    assert (offset(page), offset(inner)) == (0.0, 0.0), "then the page"

@@ -5762,7 +5762,30 @@ fn max_scroll_is_zero_when_content_fits_and_none_without_content() {
 
 #[test]
 fn scroll_view_for_key_finds_the_nearest_view_along_the_keys_axis() {
-    let (tree, view, content) = scrollable_view(false);
+    // 0.4.4 M21: one that can move the key's way, too.
+    let (mut tree, view, content) = scrollable_view(false);
+    for key in [Key::ArrowDown, Key::PageDown, Key::End] {
+        assert_eq!(
+            tree.scroll_view_for_key(content, key),
+            Some(view),
+            "{key:?}"
+        );
+    }
+    for key in [Key::ArrowUp, Key::PageUp, Key::Home] {
+        assert_eq!(
+            tree.scroll_view_for_key(content, key),
+            None,
+            "{key:?} at the top"
+        );
+    }
+    for key in [Key::ArrowLeft, Key::ArrowRight] {
+        assert_eq!(
+            tree.scroll_view_for_key(content, key),
+            None,
+            "{key:?} is across"
+        );
+    }
+    tree.scroll_scroll_view_by(view, 100.0);
     for key in [
         Key::ArrowUp,
         Key::ArrowDown,
@@ -5774,25 +5797,21 @@ fn scroll_view_for_key_finds_the_nearest_view_along_the_keys_axis() {
         assert_eq!(
             tree.scroll_view_for_key(content, key),
             Some(view),
-            "{key:?}"
+            "{key:?} mid-way"
         );
     }
-    for key in [Key::ArrowLeft, Key::ArrowRight] {
-        assert_eq!(
-            tree.scroll_view_for_key(content, key),
-            None,
-            "{key:?} is across"
-        );
-    }
+
     let (tree, view, content) = scrollable_view(true);
-    for key in [Key::ArrowLeft, Key::ArrowRight, Key::Home, Key::End] {
+    for key in [Key::ArrowRight, Key::End] {
         assert_eq!(
             tree.scroll_view_for_key(content, key),
             Some(view),
             "{key:?}"
         );
     }
-    assert_eq!(tree.scroll_view_for_key(content, Key::PageDown), None);
+    for key in [Key::ArrowLeft, Key::Home, Key::PageDown] {
+        assert_eq!(tree.scroll_view_for_key(content, key), None, "{key:?}");
+    }
     assert_eq!(
         tree.scroll_view_for_key(view, Key::ArrowRight),
         Some(view),
@@ -5802,25 +5821,55 @@ fn scroll_view_for_key_finds_the_nearest_view_along_the_keys_axis() {
 
 #[test]
 fn scroll_view_for_key_passes_a_carousel_for_the_page_around_it() {
+    // A 100x50 carousel over 400, at the top of a page with 300 of travel.
     let (mut tree, page, boxes) = view_over_boxes(&[50.0]);
     let carousel = tree.insert(
         NodeKind::ScrollView(ScrollViewState::new(true)),
-        Style::default(),
+        Style {
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        },
         PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
     );
-    let (k, s, p) = leaf(10.0, 10.0);
+    let (k, s, p) = leaf(400.0, 50.0);
     let item = tree.insert(k, s, p);
     tree.add_child(carousel, item);
     tree.add_child(boxes[0], carousel);
+    tree.compute_layout(
+        page,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
     assert_eq!(
         tree.scroll_view_for_key(item, Key::ArrowRight),
         Some(carousel)
     );
-    assert_eq!(tree.scroll_view_for_key(item, Key::ArrowDown), Some(page));
+    assert_eq!(
+        tree.scroll_view_for_key(item, Key::ArrowDown),
+        Some(page),
+        "across it"
+    );
     assert_eq!(
         tree.scroll_view_for_key(item, Key::End),
         Some(carousel),
         "nearest"
+    );
+    tree.scroll_scroll_view_by(carousel, 1000.0);
+    assert_eq!(
+        tree.scroll_view_for_key(item, Key::End),
+        Some(page),
+        "0.4.4 M21: at the carousel's end, End chains to the page"
+    );
+    assert_eq!(tree.scroll_view_for_key(item, Key::Home), Some(carousel));
+    assert_eq!(
+        tree.scroll_view_for_key(item, Key::ArrowRight),
+        None,
+        "nothing can"
     );
 }
 
