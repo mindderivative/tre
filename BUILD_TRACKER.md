@@ -34,13 +34,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M18 — Unit Tests for the Scroll Core | `██████████` 100% | ✅ Complete (2026-09-30) — 9 `engine-core` tests cover the scroll API and M17's wheel rule without Python |
 | M19 — Stub Drift Checked in CI | `██████████` 100% | ✅ Complete (2026-09-30) — the stub matches what PyO3 builds, and CI runs `mypy --strict` and `stubtest` |
 | M20 — Release `0.4.3` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.3` released on GitHub and PyPI, closing issue #27; Tesserae moved onto it with nothing broken |
-| M21 — Scroll Chaining | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M21 — Scroll Chaining | `███░░░░░░░` 33% | 🚧 In Progress — a wheel passes a view that can't move its way to the next one out |
 | M22 — A Windows CI Cache That Saves | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M23 — Release `0.4.4` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M21 Step 1 -- a wheel passes a view that can't move in its direction to the next one out.
+**Up next:** M21 Step 2 -- keys chain the same way.
 
 **Known gaps:**
 - None open on this line.
@@ -282,11 +282,11 @@ User: "Start phase 3".
 
 ## Milestone 21 — Scroll Chaining
 
-**Status: ⬜ Proposed.** User (2026-09-30): "scope 1 and 2 as 0.4.4" -- Tesserae's 0.4.3 observation: a scroll view keeps a wheel along its own axis even when it can't move -- its content fits, or it's already at that end -- so a vertical view inside a vertical page stops the wheel there and the page doesn't scroll. Browsers chain: a wheel a box can't use goes on to the box outside it. M17 made a view pass a wheel with no part along its axis; this makes it pass one it can't move by, either. Plan: in core's wheel walk, a scroll view or virtual list passes the wheel on when it can't move in the wheel's direction -- nothing to scroll, or at that end; a view that can move at all takes the whole wheel, clamped, as now (no splitting one wheel across two views). Keys (Step 2) follow the same rule if the user agrees -- browsers chain keyboard scrolling too -- so Page Down at the end of an inner list moves the page. Tesserae has a test pinning today's behaviour.
+**Status: 🚧 In Progress.** User: "yes, keys should chain too, start M21". Step 1 done (2026-09-30). Scoped (2026-09-30): "scope 1 and 2 as 0.4.4" -- Tesserae's 0.4.3 observation: a scroll view keeps a wheel along its own axis even when it can't move -- its content fits, or it's already at that end -- so a vertical view inside a vertical page stops the wheel there and the page doesn't scroll. Browsers chain: a wheel a box can't use goes on to the box outside it. M17 made a view pass a wheel with no part along its axis; this makes it pass one it can't move by, either. Plan: in core's wheel walk, a scroll view or virtual list passes the wheel on when it can't move in the wheel's direction -- nothing to scroll, or at that end; a view that can move at all takes the whole wheel, clamped, as now (no splitting one wheel across two views). Keys (Step 2) follow the same rule -- the user agreed (2026-09-30), browsers chain keyboard scrolling too -- so Page Down at the end of an inner list moves the page. Tesserae has a test pinning today's behaviour.
 
-### Phase 1 — Chaining ⬜
-- Step 1: the wheel: core tests and pytest for content that fits, each end, a view mid-way, a virtual list at its end, and nesting — ⬜
-- Step 2: keys, if the user agrees: `scroll_view_for_key` picks the nearest view that can move in the key's direction; tests — ⬜
+### Phase 1 — Chaining 🚧
+- Step 1: the wheel: core tests and pytest for content that fits, each end, a view mid-way, a virtual list at its end, and nesting — ✅ (2026-09-30: new `Tree::can_scroll(id, delta)` says whether a scroll view or virtual list can move in a direction -- something to scroll, and not at that end -- and core's wheel walk keeps the wheel only at a view that can, M17's no-part-along-the-axis case included (a zero delta can't move anything); a view that can move takes the whole wheel, clamped; 1 core test -- an inner view mid-way, back at its top with the page at its top too, at its end passing to the page, and with content that fits -- and 3 pytest cases -- an inner view mid-way, clamped, then passing at its end; one with nothing to scroll; a virtual list at its end; cargo 387, pytest 507 + 1 skipped)
+- Step 2: keys: `scroll_view_for_key` picks the nearest view that can move in the key's direction; tests — ⬜
 - Step 3: the guide's Scrolling section, ARCHITECTURE.md §11.7a, and a 0.4.4 migration section — ⬜
 
 ---

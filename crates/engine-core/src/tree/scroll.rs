@@ -633,6 +633,32 @@ impl Tree {
         Some((f64::from(content) - f64::from(viewport)).max(0.0))
     }
 
+    /// 0.4.4 M21: whether scroll view or virtual list `id` can move by
+    /// `delta` along its own axis -- positive toward the end -- at all:
+    /// something to scroll, and not already at that end. What scroll
+    /// chaining asks of each view on the way out: one that can't passes the
+    /// wheel, or the key, to the next. `false` for any other node, or a
+    /// `delta` of zero.
+    pub fn can_scroll(&self, id: NodeId, delta: f64) -> bool {
+        let (current, max) = match self.nodes.get(id).map(|n| &n.kind) {
+            Some(NodeKind::ScrollView(state)) => {
+                let Some(max) = self.max_scroll(id) else {
+                    return false;
+                };
+                (state.scroll.current, max)
+            }
+            Some(NodeKind::VirtualList(state)) => {
+                let viewport = f64::from(self.layout(id).size.height);
+                (
+                    state.scroll_offset.current,
+                    (state.total_extent() - viewport).max(0.0),
+                )
+            }
+            _ => return false,
+        };
+        (delta > 0.0 && current < max) || (delta < 0.0 && current > 0.0)
+    }
+
     /// 0.4.2 M12 (issue #24): every scroll view whose offset has changed
     /// since this was last asked -- `(view, old, new)` -- by comparison, so
     /// no cause is missed: the wheel, keys, `scroll_into_view`, focus,
