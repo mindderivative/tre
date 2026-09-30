@@ -2,7 +2,9 @@
 
 *(Replaces the 0.4.4 plan — `v0.4.4` is released. From 0.5.0 every step is
 tracked in the GitHub project Tesserae Rendering Engine: M1–M6 are issues
-#31–#36, sub-issues of #28; the 0.4 line is in `BUILD_TRACKER_ARCHIVE_0.4.md`.)*
+#31–#36, sub-issues of #28, and M2–M6's phases are #37–#41 (each a sub-issue
+of its milestone, its steps a checklist there); the 0.4 and 0.5 trackers are
+archived as `BUILD_TRACKER_ARCHIVE_0.4.md` and `_0.5.md`.)*
 
 User (2026-09-30): "yes, scope #28 for 0.5.0".
 
