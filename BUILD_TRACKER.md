@@ -27,10 +27,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `██████████` 100% | ✅ Complete (2026-09-29) — `display="grid"`, track lists, placements, auto tracks and flow, row/column gaps, and item alignment, read back as set |
 | M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `██████████` 100% | ✅ Complete (2026-09-29) — Page Up/Down keys, keyboard scrolling, `scroll_into_view` with focus reveal, and the `scroll` event |
 | M13 — Release `0.4.2` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.2` released on GitHub and PyPI, closing issues #23 and #24; Tesserae moved onto it, its scroll view now following tre's keys, reveal, and `scroll` event |
+| M14 — Keyboard Scrolling Leaves Shortcuts Alone | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M15 — `scroll_offset` Clamped When Set | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M16 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** nothing scoped -- the 0.4.2 line is complete; the next milestone waits for the user.
+**Up next:** M14 Step 1 -- keyboard scrolling ignores keys pressed with Ctrl, Alt, or Meta.
 
 **Known gaps:**
 - None open on this line.
@@ -197,6 +200,46 @@ User: "Start phase 3".
 - Step 2: the project named Tesserae Engine throughout the documentation — ✅ (2026-09-29, user: "Change the project name in the docs to Tesserae Engine"; the MkDocs site name and page titles, and every prose mention of the project in the README, ARCHITECTURE.md, and the docs site, now say Tesserae Engine, with "imported as `tre`" at the first mention on the entry pages; what names code keeps `tre` -- `import tre`, the `tre` package and `tre._core`, the repository and its URLs, the crates, PyPI's unrelated `tre` project, and the default window title `"tre v2"`; the `docs/design/` pages, dated records of the 0.3.x design, and the type stub are unchanged; mkdocs strict clean)
 - Step 3: PR to `main`, CI green, merge, tag `v0.4.2`, release, PyPI — ✅ (2026-09-30, user: "yes, push and start the release": `main` hadn't moved, so no merge into `0.4.2`; PR #25, CI green on Linux, macOS, Windows, and `msrv` -- the Windows job's tests passed but its post-job cargo-cache upload hung for over 8 minutes, so the run was cancelled and the Windows job re-run, which passed; merged as `2fcc381`, its tree identical to the tested `1180f06`; annotated tag `v0.4.2` ("Tesserae Engine 0.4.2"); the wheels run passed every job and the user approved the `pypi` deployment; `tesserae-engine==0.4.2` installed from PyPI in a fresh venv reports 0.4.2 and has grid layout and `scroll_into_view`; issues #23 and #24 closed by the merge; the docs site redeployed under the new name)
 - Step 4: Tesserae moves to `0.4.2` — ✅ (2026-09-30: reported by its session: the release's 24 assets and PyPI's 22 wheels plus sdist checked; its floor now `>=0.4.2` and its CI's and release workflow's checkout at `v0.4.2` (committed locally there); 2563 passed and 1 failed straight after the move, all five examples clean, then 2565 passed and 0 failed -- the failure was behaviour change 2: its own M71 scroll view had supplied keys, focus reveal, and `scroll_into_view` itself, and tre's reveal now ran before its focus listener, so its two-way `scroll_offset` binding missed the change; probing also showed its `key_down` listener on the scroll view kept every key from tre, per the key rule; fixed on its side by dropping its own keys and reveals and following the `scroll` event, with a new test pinning tre's key rule; no tre bugs; its observations, not bugs: the keys scroll with modifiers held too (Ctrl+Page Down included), and a `scroll_offset` set past the end reads back as set until layout clamps it, then fires a second `scroll` with the clamped value; grid isn't used in Tesserae yet, its M74)
+
+---
+
+## Milestone 14 — Keyboard Scrolling Leaves Shortcuts Alone
+
+**Status: ⬜ Proposed.** User (2026-09-30): "yes, push it and scope both as 0.4.3" -- the first of Tesserae's two 0.4.2 observations: arrows, Page Up/Down, and Home/End scroll the nearest scroll view even with Ctrl, Alt, or Meta held, so Ctrl+Page Down (a tab switch in browsers) or Alt+Left (back) also scrolls. Plan: with Ctrl, Alt, or Meta held, `engine-py`'s `keyboard_scroll` leaves the key alone; Shift still scrolls, as it does in a browser. The rule lives in `engine-py`, which already tracks every modifier (`listeners::modifiers()`); core's `KeyPressed` carries only Shift.
+
+### Phase 1 — Modifiers ⬜
+- Step 1: no keyboard scroll while Ctrl, Alt, or Meta is held; Shift unchanged; pytest cases for each modifier, plain keys, and Shift — ⬜
+- Step 2: the guide's Keyboard scrolling section, the events guide, and a 0.4.3 section in `docs/migrating-0.4.md` — ⬜
+
+---
+
+## Milestone 15 — `scroll_offset` Clamped When Set
+
+**Status: ⬜ Proposed.** User (2026-09-30): "scope both as 0.4.3" -- Tesserae's second observation: `set(scroll_offset=...)` past the end reads back as set until the next layout clamps it, which then fires a second `scroll` event with the clamped value. Found while scoping (checked 2026-09-30): an offset given to `create` never becomes the `scroll` event's baseline -- `reported` starts at 0 -- so the first event's `old_value` is 0 instead of that offset. Plan: `Node.set`'s and `animate`'s `scroll_offset` run layout, then clamp to the view's range, so the read-back is right at once and one `scroll` event fires with the clamped value, and an animation eases to the real end rather than stalling there; `create` keeps today's rule (clamped at the first layout), so an offset given before the content is attached still survives adding it; a view's initial offset is its reported baseline.
+
+### Phase 1 — Clamping ⬜
+- Step 1: `set` and `animate` clamp `scroll_offset` against a fresh layout; one `scroll` event; pytest for past the end, below the content, a shrinking content box, and an animation's target — ⬜
+- Step 2: the create-time offset is the `scroll` event's baseline; a pytest that the first event's `old_value` is that offset — ⬜
+- Step 3: the property reference, the guide, and the 0.4.3 migration section — ⬜
+
+---
+
+## Milestone 16 — Release `0.4.3`
+
+**Status: ⬜ Proposed.**
+
+### Phase 1 — Release ⬜
+- Step 1: PR to `main`, CI green, merge, tag `v0.4.3`, release, PyPI — ⬜
+- Step 2: Tesserae moves to `0.4.3` — ⬜
+
+---
+
+## Branch: `0.4.3` — Scaffold
+
+**Status: ✅ Scaffolded (2026-09-30).**
+
+- Branch `0.4.3` created off `main` at `6b7c70f` (`v0.4.2` plus its release records) — ✅
+- `Cargo.toml` and `pyproject.toml` bumped to `0.4.3`; `Cargo.lock` updated via `cargo metadata` — ✅
 
 ---
 
