@@ -253,6 +253,7 @@ impl Tree {
             access: AccessNodeData::default(),
             hit_testable: true,
             cursor: None,
+            window_region: crate::node::WindowRegion::Default,
             visible: true,
             z_index: 0,
         });

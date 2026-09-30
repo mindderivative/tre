@@ -1,20 +1,28 @@
-# LOG — Branch `0.4.4`: Milestones 21–23
+# LOG — Branch `0.5.0`: custom windowing
 
 ## Status
 
-**Scaffolded (2026-09-30).** Branch `0.4.4` off `main` at `176a7f0`,
-versions 0.4.4. User: scope scroll chaining (M21, Tesserae's 0.4.3
-observation) and a Windows CI cache that saves (M22) as 0.4.4. Open
-question: should keys chain too (M21 Step 2)? Next: M21.
+**Scaffolded (2026-09-30).** Branch `0.5.0` off `main` at `a6f1853`,
+versions 0.5.0; the 0.4 tracker archived as `BUILD_TRACKER_ARCHIVE_0.4.md`
+and a new tracker started at M1. winit 0.30.13 surveyed: decorations off
+everywhere; drag_window everywhere (right after a press); drag_resize_window
+not on macOS; Windows undecorated shadow; show_window_menu. Next: M1 design.
 
-**M21 complete (2026-09-30).** `Tree::can_scroll`; the wheel walk and
-`scroll_view_for_key` chain past views that can't move their way. User:
-keys chain too. 1 core test (+2 rewritten), 4 pytest cases; guide,
-migration 0.4.4, ARCHITECTURE §11.7a. cargo 387, pytest 508 + 1 skipped.
-Next: M22.
+**M1 complete (2026-09-30).** Design page decided (`d734290`): every
+recommendation with Tesserae's refinements, plus pointer_cancel,
+fullscreen, icon, minimum size, platform. Tracking moved to the GitHub
+project (user's choice): milestone `0.5.0`, #31 (M1, closed) and #32–#36;
+`BUILD_TRACKER.md` is now a pointer. Next: M2 (#32).
 
-**M22 complete (2026-09-30).** Measured on a temporary branch (deleted):
-cold ~3m35s; registry 123 MB -> 3m24s; deps 452 MB, saved 12 s -> 1m14s;
-full 1.18 GB fresh, but CI's 3.3 GB from restore-keys carrying old builds
-forward. ci.yml (`2521191`): trim to dependencies before each save, exact
-keys, all three jobs. First CI run: the release PR. Next: M23.
+**Trackers archived (2026-09-30).** User: finish the build tracker to a
+stable state and archive it, then use only the GitHub project. The 0.5
+tracker's last full version (`2b37456`: M1 complete, M2–M6 carried on as
+issues #32–#36) is `BUILD_TRACKER_ARCHIVE_0.5.md`; the 0.4 archive now
+matches `main`'s final 0.4 tracker (`4a1a0cd`, M23 complete);
+`BUILD_TRACKER.md` is removed.
+
+**M2 complete (2026-09-30, #32/#37).** Undecorated windows, minimize/
+maximize/restore/close (close via the loop, cancellable), maximized/
+minimized/active with events, fullscreen, minimum size (grown to after
+every resize -- Wayland), icon, platform. Live-checked on KDE Wayland.
+cargo 387, pytest 530 + 1 skipped. Next: M3 (#33/#38).

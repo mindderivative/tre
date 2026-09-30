@@ -109,6 +109,46 @@ pub(crate) struct WindowHandles {
     /// 0.4.1 M8: `window.set(show_damage=True)` -- each presented frame
     /// shows what it redrew. Read every frame, like `partial_redraw`.
     pub(crate) show_damage: Rc<Cell<bool>>,
+    /// 0.5.0 M2 (issue #28): whether the OS draws the window's title bar
+    /// and borders -- `Window(decorations=False)` or a live `set` turns them
+    /// off for the framework to draw its own.
+    pub(crate) decorations: Rc<Cell<bool>>,
+    /// 0.5.0 M2: whether the window is maximized, and minimized -- before
+    /// `App.run()` opens it, what it opens as.
+    pub(crate) maximized: Rc<Cell<bool>>,
+    pub(crate) minimized: Rc<Cell<bool>>,
+    /// 0.5.0 M2: whether the window has the OS's focus, as last reported
+    /// (`WindowEvent::Focused`) -- `false` until it's first focused.
+    pub(crate) active: Rc<Cell<bool>>,
+    /// 0.5.0 M2: whether the window is fullscreen (borderless on its
+    /// monitor) -- before `App.run()`, whether it opens so.
+    pub(crate) fullscreen: Rc<Cell<bool>>,
+    /// 0.5.0 M4: the OS's window controls' area over the content,
+    /// `(height, width)` in logical pixels, as last reported -- non-zero
+    /// only for macOS's overlay title bar.
+    pub(crate) titlebar_inset: Rc<Cell<(f64, f64)>>,
+    /// 0.5.0 M2: the smallest inner size the user can resize to, in
+    /// logical pixels; `(0.0, 0.0)` for none.
+    pub(crate) min_size: Rc<Cell<(f64, f64)>>,
+    /// 0.5.0 M2: the window's icon, RGBA8 with its width and height.
+    pub(crate) icon: Rc<RefCell<Option<IconPixels>>>,
+    /// 0.5.0 M3: a press was taken to move or resize the window
+    /// (`pointer_cancel`), so its release, if the platform delivers one at
+    /// all, reaches no listener. The next press clears it.
+    pub(crate) press_cancelled: Rc<Cell<bool>>,
+    /// 0.5.0 M3: how many pixels along each edge resize an undecorated
+    /// window; 0 for none.
+    pub(crate) resize_border: Rc<Cell<f64>>,
+    /// 0.5.0 M3: when and where the last press on a drag region was, for a
+    /// double-click to toggle maximize.
+    pub(crate) last_drag_press: Rc<Cell<Option<(std::time::Instant, peniko::kurbo::Point)>>>,
+    /// 0.5.0 M3: whether a secondary press on a drag region (and Alt+Space
+    /// on Windows) opens the OS's window menu. Off by default: a framework
+    /// opts in, on any platform, unless it shows its own.
+    pub(crate) system_menu: Rc<Cell<bool>>,
+    /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
+    /// open, for `close()` -- `None` before and after.
+    pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
 }
 
 pub struct WindowState {
@@ -116,14 +156,17 @@ pub struct WindowState {
     pub(crate) title: String,
 }
 
+/// 0.5.0 M2: a window icon -- straight-alpha RGBA8 bytes, width, height.
+pub(crate) type IconPixels = (Vec<u8>, u32, u32);
+
 /// M94: see `PyWindow::os_window`.
 pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window::Window>>>>;
 
 #[pymethods]
 impl PyWindow {
     #[new]
-    #[pyo3(signature = (width=480, height=200, title="tre v2"))]
-    fn new(width: u32, height: u32, title: &str) -> PyResult<Self> {
+    #[pyo3(signature = (width=480, height=200, title="tre v2", decorations=true))]
+    fn new(width: u32, height: u32, title: &str, decorations: bool) -> PyResult<Self> {
         // 0.4.0 review: a GPU surface can't be zero-sized.
         if width == 0 || height == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -172,6 +215,19 @@ impl PyWindow {
                 partial_redraw: Rc::new(Cell::new(true)),
                 surface_partial: Rc::new(Cell::new(None)),
                 show_damage: Rc::new(Cell::new(false)),
+                decorations: Rc::new(Cell::new(decorations)),
+                maximized: Rc::new(Cell::new(false)),
+                minimized: Rc::new(Cell::new(false)),
+                active: Rc::new(Cell::new(false)),
+                fullscreen: Rc::new(Cell::new(false)),
+                titlebar_inset: Rc::new(Cell::new((0.0, 0.0))),
+                min_size: Rc::new(Cell::new((0.0, 0.0))),
+                icon: Rc::new(RefCell::new(None)),
+                press_cancelled: Rc::new(Cell::new(false)),
+                resize_border: Rc::new(Cell::new(0.0)),
+                last_drag_press: Rc::new(Cell::new(None)),
+                system_menu: Rc::new(Cell::new(false)),
+                waker: Rc::new(RefCell::new(None)),
             },
         })))
     }

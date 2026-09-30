@@ -2,7 +2,7 @@
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust — the building blocks of a desktop UI.**
 
-Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made Tesserae Engine a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.x` line (partial redraw on upstream `vello_gpu` in 0.4.0; the mouse's side buttons in 0.4.1; CSS Grid and scroll-view keys, reveal, and the `scroll` event in 0.4.2) is tracked in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
+Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made Tesserae Engine a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.x` line (partial redraw on upstream `vello_gpu` in 0.4.0; the mouse's side buttons in 0.4.1; CSS Grid and scroll-view keys, reveal, and the `scroll` event in 0.4.2) is in [`BUILD_TRACKER_ARCHIVE_0.4.md`](BUILD_TRACKER_ARCHIVE_0.4.md); from 0.5.0 (custom windowing) the work is tracked in the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3). Update this document as decisions change; don't let it drift from the code.
 
 ---
 
@@ -47,6 +47,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 | Callback exceptions | Caught, logged, non-fatal | A broken handler never takes down a shipped app |
 | AccessKit tree | Built in `engine-core` from the node tree every frame (§10) | It can't drift from what's on screen |
 | Multiple windows | One `Tree` per OS window (§11.1) | No change to the node model; cross-window node moves are an accepted gap |
+| Custom windowing | Undecorated windows; a `window_region` node property and a resize border decide which presses the OS takes; macOS keeps a transparent title bar (§11.12) | Moving and resizing are the platform's; the title bar's look is the framework's |
 | Docking | Fixed five zones; Tesserae Engine docks, drags, and reports; the framework draws handles and highlights (§11.4) | The mechanism is hard to get right; the look is design |
 | Virtualization | `virtual_list` kind that builds its own visible rows from `materialize(index)` (§11.7) | 100k real nodes would blow the frame budget |
 | Versioning | 0.3.x ended at `0.3.5`, with fixes as `0.3.5.x`; the `0.4.x` line began with `0.4.0`, partial redraw on upstream `vello_gpu` (issue #4); `0.4.1` and `0.4.2` are feature releases on it | The user's policy |
@@ -162,7 +163,7 @@ pub struct PaintProperties {
 
 pub enum NodeKind {
     Rect,                              // "box"
-    Container,                         // the window root
+    Container,                         // the window root; paints as a Rect (0.5.0)
     Text(TextState),
     TextField(TextFieldState),         // "text_input"
     Image(ImageState),
@@ -328,6 +329,16 @@ The pointer is resolved in reverse paint order (layers first), mapping the point
 
 No special mechanism: canvases (or path nodes) for drawing, transforms for pan and zoom, precise canvas hit tests for picking, and virtualization and culling for size.
 
+### 11.12 Custom windowing (0.5.0)
+
+A window can drop the OS's title bar and borders so the framework draws its own (issue #28, `docs/design/custom-windowing.md`). The engine owns what only the platform can do — moving, resizing, maximizing, reporting state — and the framework owns the look, as everywhere else (principle 5).
+
+**Window settings and controls** (0.5.0 M2, issue #28). How a window is made beyond its title and size travels in `engine-platform`'s `WindowOptions` (decorations, maximized, fullscreen, a minimum size, an icon); `engine-py` keeps each setting in the window's handles, applies it live through the open `winit::Window`, or passes it in `WindowOptions` when `App.run()` opens the window. Two requests go to the loop through its proxy rather than acting at once: `EventLoopWaker::close_window` runs the user-close path (`close_requested`, cancellable) on the loop's next turn, so a close from a listener never re-enters the loop, and `report_size` reports a size the app changed itself as an ordinary resize, since `winit` may apply it with no `Resized` (Wayland does). State is reported the way the OS gives it: `maximized` is checked after each resize (`winit` sends no maximize event), `active` comes from `WindowEvent::Focused` (`InputEvent::Focused`, which dispatch ignores), and both fire only on a change. A window below its minimum is grown to it after every resize, because Wayland treats a minimum as a limit on the user's drag only. See `docs/design/custom-windowing.md`.
+
+**Title bar and borders** (0.5.0 M3). `Node.window_region` (`Default`/`Drag`/`NoDrag` in `engine-core`) marks a framework's title bar; the decision and the OS calls live in `engine-py`'s `dispatch.rs`, around the ordinary routing. Before routing, `resize_from_border` takes a primary press within `resize_border` of an edge of an undecorated, unmaximized, windowed window and calls `drag_resize_window` — the press never reaches the tree. After routing (so `pointer_down` listeners have run and may have taken the capture), `window_drag` walks from the target up to the nearest `Drag` ancestor: `NoDrag`, or an interactive node (focusable, a text field or terminal, a `click` listener, the capture holder), stops it. A drag-region press then calls `drag_window`, or `set_maximized` for the second press of a double-click (`engine-platform::double_click_time`, 4 px slop), or `show_window_menu` for a secondary press while the framework has opted in with `system_menu` (off by default). In each case the press is ended at once, because `winit` swallows the release on some platforms: `Tree::cancel_press` clears the pressed node and capture, `pointer_cancel` is delivered, and the matching release is swallowed (`press_cancelled`). The drag has to start from the press itself — `winit` needs the button still down.
+
+**macOS's overlay title bar** (0.5.0 M4). `winit` can't resize an undecorated macOS window, so `engine-platform::titlebar` keeps it decorated with a transparent title bar over full-size content: `WindowAttributesExtMacOS` at creation, and the `NSWindow`'s style mask, `titlebarAppearsTransparent`, and `titleVisibility` set directly for a live change (`winit` 0.30 has no setter). The same module answers `titlebar_inset` (frame height minus `contentLayoutRect`'s, and the close-to-zoom button span; 0 in fullscreen), `OVERLAY_TITLEBAR` (which turns the resize border off and makes `get("decorations")` answer from the setting), and the title-bar double-click action (`AppleActionOnDoubleClick`, else maximize). `engine-py` re-reads fullscreen and the inset after every resize, where both changes arrive, and fires `titlebar_inset` on a change — never from inside `Window.set`, which holds the window mutably while a listener might read it. `show_window_menu` is called on every platform: `winit` documents it as Windows-only, but implements it for Wayland through xdg-shell, and it does nothing elsewhere.
+
 ---
 
 ## 12. Project Structure
@@ -348,7 +359,7 @@ tre/
 ├── docs/                      # MkDocs site
 ├── tools/                     # build-tracker artifact generator
 ├── planning/archive/          # earlier per-phase PLAN/LOG files
-├── BUILD_TRACKER*.md, PLAN.md, LOG.md
+├── BUILD_TRACKER*.md, PLAN.md, LOG.md   # tracking before 0.5.0; now the GitHub project
 └── archive/                   # the first TRE engine and its lessons learned
 ```
 
@@ -385,7 +396,7 @@ python examples/switch.py
 
 ## 14. Build Order
 
-Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md) (the 0.3 line) and [`BUILD_TRACKER.md`](BUILD_TRACKER.md) (the `0.4.x` line).
+Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md) (the 0.3 line) [`BUILD_TRACKER_ARCHIVE_0.4.md`](BUILD_TRACKER_ARCHIVE_0.4.md) (the `0.4.x` line), and the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) from 0.5.0.
 
 ---
 

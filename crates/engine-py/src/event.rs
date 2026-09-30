@@ -130,6 +130,16 @@ pub struct Event {
     pub(crate) height: Option<f64>,
     #[pyo3(get)]
     pub(crate) dark: Option<bool>,
+    /// 0.5.0 M2: the window's `maximized` event -- whether it now is.
+    #[pyo3(get)]
+    pub(crate) maximized: Option<bool>,
+    /// 0.5.0 M2: the window's `active` event -- whether it now has focus.
+    #[pyo3(get)]
+    pub(crate) active: Option<bool>,
+    /// 0.5.0 M4: the window's `titlebar_inset` event -- the new
+    /// `(height, width)`.
+    #[pyo3(get)]
+    pub(crate) titlebar_inset: Option<(f64, f64)>,
     #[pyo3(get)]
     pub(crate) scale_factor: Option<f64>,
     /// `focus`/`unfocus`: the node on the other side of the move -- losing
@@ -226,6 +236,9 @@ impl Event {
             width: None,
             height: None,
             dark: None,
+            maximized: None,
+            active: None,
+            titlebar_inset: None,
             scale_factor: None,
             related_target: None,
             focus_visible: None,

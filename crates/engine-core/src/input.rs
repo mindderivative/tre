@@ -253,6 +253,13 @@ pub enum InputEvent {
     ThemeChanged {
         dark: bool,
     },
+    /// 0.5.0 M2 (issue #28): the window gained or lost the OS's focus --
+    /// `winit::WindowEvent::Focused`. Like `ThemeChanged`, `Tree::dispatch`
+    /// ignores it; `engine-py` reports it as the window's `active` event, so
+    /// a framework's title bar can dim while the window is inactive.
+    Focused {
+        focused: bool,
+    },
     /// M32 Phase 2 (§4, §5): the OS-level window client area genuinely
     /// changed size -- `winit::WindowEvent::Resized`, translated in
     /// `engine-platform`, in the same window-client-pixel space every

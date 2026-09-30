@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 20] = [
+const SIMULATED_EVENTS: [&str; 23] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -61,6 +61,9 @@ const SIMULATED_EVENTS: [&str; 20] = [
     "close_requested",
     "closed",
     "change",
+    "maximized",
+    "active",
+    "titlebar_inset",
 ];
 
 /// `simulate`'s keyword fields, consumed one by one so anything left over
@@ -223,6 +226,102 @@ impl PyWindow {
             height: AvailableSpace::Definite(self.handles.height.get() as f32),
         }
     }
+}
+
+/// 0.5.0 M2: the window properties `set` takes, for its error messages.
+const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
+    min_width, min_height, icon, resize_border, system_menu";
+
+/// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
+/// RGBA8 bytes, `width * height * 4` of them.
+fn parse_icon(value: &Bound<'_, PyAny>) -> PyResult<(Vec<u8>, u32, u32)> {
+    let bad = || {
+        PyValueError::new_err(
+            "window property `icon` must be (rgba, width, height): RGBA8 bytes and two \
+             positive ints, or None",
+        )
+    };
+    let (rgba, width, height): (Vec<u8>, u32, u32) = value.extract().map_err(|_| bad())?;
+    if width == 0 || height == 0 {
+        return Err(bad());
+    }
+    let wanted = width as usize * height as usize * 4;
+    if rgba.len() != wanted {
+        return Err(PyValueError::new_err(format!(
+            "window property `icon`: {width}x{height} needs {wanted} bytes of RGBA8, got {}",
+            rgba.len()
+        )));
+    }
+    Ok((rgba, width, height))
+}
+
+/// 0.5.0 M4: whether the OS draws its window controls over the content --
+/// macOS's traffic lights on an undecorated window, hidden in fullscreen --
+/// so the framework leaves room for them rather than drawing its own.
+pub(crate) fn native_controls(handles: &crate::window::WindowHandles) -> bool {
+    engine_platform::titlebar::OVERLAY_TITLEBAR
+        && !handles.decorations.get()
+        && !handles.fullscreen.get()
+}
+
+/// 0.5.0 M4: re-reads the open window's titlebar inset, firing
+/// `titlebar_inset` if it changed.
+pub(crate) fn refresh_titlebar_inset(handles: &crate::window::WindowHandles, py: Python<'_>) {
+    let inset = match handles.os_window.borrow().as_deref() {
+        Some(window) => engine_platform::titlebar::titlebar_inset(window),
+        None => return,
+    };
+    listeners::update_titlebar_inset(
+        &handles.window_listeners,
+        py,
+        &handles.titlebar_inset,
+        inset,
+    );
+}
+
+/// 0.5.0 M2: grows the open window to its minimum size if it's smaller --
+/// found live on Wayland, where a minimum only limits what the user can
+/// resize to: a window already smaller, or restored from fullscreen to a
+/// smaller size, stays that size. Checked when the minimum is set and after
+/// every resize. A maximized or fullscreen window is left alone -- resizing
+/// it would un-maximize it.
+pub(crate) fn grow_to_minimum(handles: &crate::window::WindowHandles) {
+    let (min_w, min_h) = handles.min_size.get();
+    let window = handles.os_window.borrow();
+    let Some(window) = window.as_ref() else {
+        return;
+    };
+    if window.is_maximized() || window.fullscreen().is_some() {
+        return;
+    }
+    let now: winit::dpi::LogicalSize<f64> = window.inner_size().to_logical(window.scale_factor());
+    if now.width >= min_w && now.height >= min_h {
+        return;
+    }
+    let applied = window.request_inner_size(winit::dpi::LogicalSize::new(
+        now.width.max(min_w),
+        now.height.max(min_h),
+    ));
+    // Applied at once (Wayland), maybe with no resize event: the loop
+    // reports it, so layout and `resize` listeners follow.
+    if applied.is_some()
+        && let Some(waker) = handles.waker.borrow().as_ref()
+    {
+        waker.report_size(window.id());
+    }
+}
+
+/// 0.5.0 M2: a minimum-size edge, a non-negative number of pixels.
+fn parse_min_edge(name: &str, value: &Bound<'_, PyAny>) -> PyResult<f64> {
+    let bad = || PyValueError::new_err(format!("window property `{name}` must be a number >= 0"));
+    if value.is_instance_of::<pyo3::types::PyBool>() {
+        return Err(bad());
+    }
+    let edge: f64 = value.extract().map_err(|_| bad())?;
+    if edge < 0.0 || !edge.is_finite() {
+        return Err(bad());
+    }
+    Ok(edge)
 }
 
 #[pymethods]
@@ -425,14 +524,68 @@ impl PyWindow {
         Ok(())
     }
 
-    /// Sets window properties: `title`, (0.4.0 M5) `partial_redraw`, and
-    /// (0.4.1 M8) `show_damage`; `width`, `height`, and `scale_factor` are
-    /// read-only.
+    /// 0.5.0 M2 (issue #28): minimizes the window -- once `App.run()` opens
+    /// it, if it isn't open yet.
+    fn minimize(&self) {
+        match self.handles.os_window.borrow().as_ref() {
+            Some(window) => window.set_minimized(true),
+            None => self.handles.minimized.set(true),
+        }
+    }
+
+    /// 0.5.0 M2: maximizes the window -- or opens it maximized.
+    fn maximize(&self) {
+        match self.handles.os_window.borrow().as_ref() {
+            Some(window) => window.set_maximized(true),
+            None => self.handles.maximized.set(true),
+        }
+    }
+
+    /// 0.5.0 M2: restores a minimized or maximized window to its normal
+    /// size -- or, before `App.run()`, undoes `minimize()`/`maximize()`.
+    fn restore(&self) {
+        match self.handles.os_window.borrow().as_ref() {
+            Some(window) => {
+                if window.is_minimized() == Some(true) {
+                    window.set_minimized(false);
+                }
+                if window.is_maximized() {
+                    window.set_maximized(false);
+                }
+            }
+            None => {
+                self.handles.minimized.set(false);
+                self.handles.maximized.set(false);
+            }
+        }
+    }
+
+    /// 0.5.0 M2: closes the window as if the user had: `close_requested`
+    /// fires first, and a listener that cancels it keeps the window open.
+    /// It happens on the loop's next turn, not during this call. A window
+    /// that isn't open has nothing to close.
+    fn close(&self) {
+        let window = self.handles.os_window.borrow();
+        if let (Some(window), Some(waker)) = (window.as_ref(), self.handles.waker.borrow().as_ref())
+        {
+            waker.close_window(window.id());
+        }
+    }
+
+    /// Sets window properties: `title`, (0.4.0 M5) `partial_redraw`,
+    /// (0.4.1 M8) `show_damage`, and (0.5.0 M2) `decorations`; `width`,
+    /// `height`, and `scale_factor` are read-only.
     #[pyo3(signature = (**props))]
     fn set(&mut self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let mut title = None;
         let mut partial_redraw = None;
         let mut show_damage = None;
+        let mut decorations = None;
+        let mut fullscreen = None;
+        let (mut min_width, mut min_height) = (None, None);
+        let mut icon = None;
+        let mut resize_border = None;
+        let mut system_menu = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -452,16 +605,40 @@ impl PyWindow {
                             PyValueError::new_err("window property `show_damage` must be a bool")
                         })?);
                     }
-                    "width" | "height" | "scale_factor" => {
+                    "decorations" => {
+                        decorations = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `decorations` must be a bool")
+                        })?);
+                    }
+                    "fullscreen" => {
+                        fullscreen = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `fullscreen` must be a bool")
+                        })?);
+                    }
+                    "min_width" => min_width = Some(parse_min_edge(&name, &value)?),
+                    "min_height" => min_height = Some(parse_min_edge(&name, &value)?),
+                    "resize_border" => resize_border = Some(parse_min_edge(&name, &value)?),
+                    "system_menu" => {
+                        system_menu = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `system_menu` must be a bool")
+                        })?);
+                    }
+                    "icon" => {
+                        icon = Some(if value.is_none() {
+                            None
+                        } else {
+                            Some(parse_icon(&value)?)
+                        });
+                    }
+                    "width" | "height" | "scale_factor" | "maximized" | "minimized" | "active"
+                    | "platform" | "titlebar_inset" | "native_controls" => {
                         return Err(PyValueError::new_err(format!(
-                            "window property `{name}` is read-only -- settable: title, \
-                             partial_redraw, show_damage"
+                            "window property `{name}` is read-only -- settable: {SETTABLE}"
                         )));
                     }
                     _ => {
                         return Err(PyValueError::new_err(format!(
-                            "unknown window property {name:?} -- settable: title, \
-                             partial_redraw, show_damage"
+                            "unknown window property {name:?} -- settable: {SETTABLE}"
                         )));
                     }
                 }
@@ -478,6 +655,45 @@ impl PyWindow {
         }
         if let Some(on) = show_damage {
             self.handles.show_damage.set(on);
+        }
+        if let Some(on) = decorations {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                engine_platform::titlebar::set_decorations(window, on);
+            }
+            self.handles.decorations.set(on);
+        }
+        if let Some(border) = resize_border {
+            self.handles.resize_border.set(border);
+        }
+        if let Some(on) = system_menu {
+            self.handles.system_menu.set(on);
+        }
+        let window = self.handles.os_window.borrow();
+        if let Some(on) = fullscreen {
+            if let Some(window) = window.as_ref() {
+                window.set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
+            }
+            self.handles.fullscreen.set(on);
+        }
+        if min_width.is_some() || min_height.is_some() {
+            let (w, h) = self.handles.min_size.get();
+            let size = (min_width.unwrap_or(w), min_height.unwrap_or(h));
+            self.handles.min_size.set(size);
+            if let Some(window) = window.as_ref() {
+                window.set_min_inner_size(
+                    (size != (0.0, 0.0)).then(|| winit::dpi::LogicalSize::new(size.0, size.1)),
+                );
+                grow_to_minimum(&self.handles);
+            }
+        }
+        if let Some(icon) = icon {
+            if let Some(window) = window.as_ref() {
+                window.set_window_icon(
+                    icon.clone()
+                        .and_then(|(rgba, w, h)| winit::window::Icon::from_rgba(rgba, w, h).ok()),
+                );
+            }
+            *self.handles.icon.borrow_mut() = icon;
         }
         Ok(())
     }
@@ -510,6 +726,121 @@ impl PyWindow {
             // 0.4.0 M6: whether the open window really redraws only what
             // changed -- the setting, and a surface that allows it; `None`
             // until `App.run()` opens the window.
+            // 0.5.0 M2: the open window's own answer, else the setting.
+            // 0.5.0 M2: the open window's own answer, else the last known
+            // state -- or, before `App.run()`, what it opens as.
+            "maximized" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_ref()
+                    .map_or(self.handles.maximized.get(), |w| w.is_maximized())
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()
+                    .unbind()
+            }
+            "minimized" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_ref()
+                    .and_then(|w| w.is_minimized())
+                    .unwrap_or(self.handles.minimized.get())
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()
+                    .unbind()
+            }
+            "active" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_ref()
+                    .map_or(self.handles.active.get(), |w| w.has_focus())
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()
+                    .unbind()
+            }
+            "fullscreen" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_ref()
+                    .map_or(self.handles.fullscreen.get(), |w| w.fullscreen().is_some())
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()
+                    .unbind()
+            }
+            "min_width" => self
+                .handles
+                .min_size
+                .get()
+                .0
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "system_menu" => self
+                .handles
+                .system_menu
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "resize_border" => self
+                .handles
+                .resize_border
+                .get()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "min_height" => self
+                .handles
+                .min_size
+                .get()
+                .1
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "platform" => {
+                let window = self.handles.os_window.borrow();
+                engine_platform::platform_name(window.as_deref())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
+            // On macOS `winit` keeps an undecorated window decorated, under
+            // an overlay title bar, so the setting answers there.
+            "decorations" => self
+                .handles
+                .os_window
+                .borrow()
+                .as_ref()
+                .filter(|_| !engine_platform::titlebar::OVERLAY_TITLEBAR)
+                .map_or(self.handles.decorations.get(), |window| {
+                    window.is_decorated()
+                })
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            // 0.5.0 M4: the open window's own answer, else the last known.
+            "titlebar_inset" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_deref()
+                    .map_or(
+                        self.handles.titlebar_inset.get(),
+                        engine_platform::titlebar::titlebar_inset,
+                    )
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
+            "native_controls" => native_controls(&self.handles)
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "show_damage" => self
                 .handles
                 .show_damage
@@ -545,7 +876,10 @@ impl PyWindow {
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
-                     scale_factor, dark, partial_redraw, partial_redraw_active, show_damage"
+                     scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
+                     decorations, maximized, minimized, active, fullscreen, min_width, \
+                     min_height, platform, resize_border, system_menu, titlebar_inset, \
+                     native_controls"
                 )));
             }
         })
@@ -670,6 +1004,7 @@ impl PyWindow {
             dock: &self.handles.dock,
             listeners: &self.handles.window_listeners,
             terminals: &self.handles.terminals,
+            window: &self.handles,
         };
         let mut f = Fields::new(event, fields)?;
         let need_node = |f: &Fields<'_>| -> PyResult<NodeId> {
@@ -861,6 +1196,42 @@ impl PyWindow {
                     py,
                     WindowEventType::ColorScheme,
                     |e| e.dark = Some(dark),
+                );
+            }
+            // 0.5.0 M2: what the live window reports when it's maximized or
+            // restored, or gains or loses focus -- the state changes, and
+            // the event fires if it changed.
+            "maximized" | "active" => {
+                let value = f.bool(event)?;
+                let value = f.required(event, value)?;
+                f.done()?;
+                let (cell, event_type) = if event == "maximized" {
+                    (&self.handles.maximized, WindowEventType::Maximized)
+                } else {
+                    (&self.handles.active, WindowEventType::Active)
+                };
+                listeners::update_window_state(
+                    &self.handles.window_listeners,
+                    py,
+                    cell,
+                    value,
+                    event_type,
+                );
+            }
+            // 0.5.0 M4: what the live window reports when its title bar's
+            // controls take a different area -- a macOS window entering or
+            // leaving fullscreen, say.
+            "titlebar_inset" => {
+                let height = f.f64("height")?;
+                let height = f.required("height", height)?;
+                let width = f.f64("width")?;
+                let width = f.required("width", width)?;
+                f.done()?;
+                listeners::update_titlebar_inset(
+                    &self.handles.window_listeners,
+                    py,
+                    &self.handles.titlebar_inset,
+                    (height, width),
                 );
             }
             "scale_factor" => {

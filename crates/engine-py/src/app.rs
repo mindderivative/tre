@@ -24,7 +24,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
-use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
+use engine_platform::{
+    WindowConfig, WindowLifecycle, WindowOptions, WindowRequest, run_windowed_multi,
+};
 use engine_render::{TextPlacement, TextRenderer, WindowRenderer};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
@@ -338,6 +340,17 @@ fn cursor_at(tree: &Tree, root: NodeId, position: Point) -> Cursor {
     Cursor::Default
 }
 
+/// 0.5.0 M3: the resize cursor for an edge or corner of the resize border.
+fn border_cursor(direction: winit::window::ResizeDirection) -> Cursor {
+    use winit::window::ResizeDirection as Dir;
+    match direction {
+        Dir::North | Dir::South => Cursor::NsResize,
+        Dir::East | Dir::West => Cursor::EwResize,
+        Dir::NorthWest | Dir::SouthEast => Cursor::NwseResize,
+        Dir::NorthEast | Dir::SouthWest => Cursor::NeswResize,
+    }
+}
+
 /// M94: `winit`'s icon for each of the engine's cursor shapes.
 fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
     use winit::window::CursorIcon as Icon;
@@ -515,6 +528,11 @@ impl App {
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
                 *setup.handles.os_window.borrow_mut() = Some(window.clone());
+                // 0.5.0 M2: `winit` can open a window maximized, but not
+                // minimized -- a `minimize()` before `App.run()` lands here.
+                if setup.handles.minimized.get() {
+                    window.set_minimized(true);
+                }
                 let gpu = match GpuState::new(
                     window,
                     setup.handles.width.get(),
@@ -835,6 +853,7 @@ impl App {
                         dock: &runtime.handles.dock,
                         listeners: &runtime.handles.window_listeners,
                         terminals: &runtime.handles.terminals,
+                        window: &runtime.handles,
                     },
                     runtime.handles.root,
                     &event,
@@ -846,11 +865,16 @@ impl App {
                 | InputEvent::PointerPressed { position, .. }
                 | InputEvent::PointerReleased { position, .. } = &event
                 {
-                    let wanted = cursor_at(
-                        &runtime.handles.tree.borrow(),
-                        runtime.handles.root,
-                        *position,
-                    );
+                    // 0.5.0 M3: the resize border's cursors come first.
+                    let wanted = crate::dispatch::border_direction(&runtime.handles, *position)
+                        .map(border_cursor)
+                        .unwrap_or_else(|| {
+                            cursor_at(
+                                &runtime.handles.tree.borrow(),
+                                runtime.handles.root,
+                                *position,
+                            )
+                        });
                     if wanted != runtime.cursor {
                         if let Some(window) = runtime.handles.os_window.borrow().as_ref() {
                             window.set_cursor(cursor_icon(wanted));
@@ -1011,6 +1035,16 @@ impl App {
                             |e| e.dark = Some(dark),
                         );
                     }
+                    // 0.5.0 M2 (issue #28): the window gained or lost focus.
+                    InputEvent::Focused { focused } => {
+                        listeners::update_window_state(
+                            &runtime.handles.window_listeners,
+                            py,
+                            &runtime.handles.active,
+                            focused,
+                            WindowEventType::Active,
+                        );
+                    }
                     // M32 Phase 2 (§4, §5): the real, winit-driven
                     // window resize -- `Tree::dispatch` (called just
                     // above, unconditionally, for every real
@@ -1063,6 +1097,41 @@ impl App {
                                 e.height = Some(f64::from(height));
                             },
                         );
+                        // 0.5.0 M2: `winit` sends no maximize event -- a
+                        // maximize or restore arrives as a resize, so the
+                        // state is checked after each one.
+                        let window = runtime.handles.os_window.borrow().clone();
+                        if let Some(window) = window {
+                            listeners::update_window_state(
+                                &runtime.handles.window_listeners,
+                                py,
+                                &runtime.handles.maximized,
+                                window.is_maximized(),
+                                WindowEventType::Maximized,
+                            );
+                            if let Some(minimized) = window.is_minimized() {
+                                runtime.handles.minimized.set(minimized);
+                            }
+                            // 0.5.0 M4: fullscreen entered or left by the
+                            // user (macOS's green button) arrives as a
+                            // resize too. On macOS the overlay title bar is
+                            // re-applied after it -- setting it is a no-op
+                            // when it's already on -- and changing either
+                            // moves the traffic lights.
+                            runtime
+                                .handles
+                                .fullscreen
+                                .set(window.fullscreen().is_some());
+                            if engine_platform::titlebar::OVERLAY_TITLEBAR
+                                && !runtime.handles.decorations.get()
+                            {
+                                engine_platform::titlebar::set_decorations(&window, false);
+                            }
+                            crate::window_events::refresh_titlebar_inset(&runtime.handles, py);
+                        }
+                        // 0.5.0 M2: e.g. leaving fullscreen to a size below
+                        // the minimum, which Wayland allows.
+                        crate::window_events::grow_to_minimum(&runtime.handles);
                     }
                     InputEvent::ScaleFactorChanged { scale_factor } => {
                         listeners::deliver_window(
@@ -1227,6 +1296,14 @@ impl App {
                             width: setup.handles.width.get(),
                             height: setup.handles.height.get(),
                             max_frames,
+                            options: WindowOptions {
+                                decorations: setup.handles.decorations.get(),
+                                maximized: setup.handles.maximized.get(),
+                                fullscreen: setup.handles.fullscreen.get(),
+                                min_size: Some(setup.handles.min_size.get())
+                                    .filter(|size| *size != (0.0, 0.0)),
+                                icon: setup.handles.icon.borrow().clone(),
+                            },
                         },
                         token: index as u64,
                     });
@@ -1241,6 +1318,8 @@ impl App {
                     for session in setup.handles.terminals.borrow().values() {
                         session.set_waker(waker.clone());
                     }
+                    // 0.5.0 M2: for `window.close()`.
+                    *setup.handles.waker.borrow_mut() = Some(waker.clone());
                 }
             },
         );
@@ -1252,6 +1331,7 @@ impl App {
         // M94: no window is open any more.
         for setup in setups_for_cleanup.iter() {
             *setup.handles.os_window.borrow_mut() = None;
+            *setup.handles.waker.borrow_mut() = None;
             setup.handles.surface_partial.set(None);
         }
 

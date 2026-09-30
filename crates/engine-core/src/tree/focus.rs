@@ -329,4 +329,15 @@ impl Tree {
     pub fn set_pointer_capture(&mut self, node: Option<NodeId>) {
         self.pointer_capture = node.filter(|&id| self.nodes.contains_key(id));
     }
+
+    /// 0.5.0 M3 (issue #28): ends the current press without a click and
+    /// releases any pointer capture -- for a press that started a window
+    /// move or resize, whose release the platform may never deliver.
+    /// Returns the node that was pressed.
+    pub fn cancel_press(&mut self) -> Option<NodeId> {
+        let pressed = self.pressed.map(|(_, id)| id);
+        self.set_pressed(None);
+        self.pointer_capture = None;
+        pressed
+    }
 }

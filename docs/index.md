@@ -51,6 +51,8 @@ app.run()
 - **[Threading](guide/threading.md)** — hand work from any thread to the
   event loop.
 - **[Docking](guide/docking.md)** — panels in zones, dragged between them.
+- **[Custom Title Bars](guide/custom-title-bars.md)** — an undecorated window
+  with a title bar, buttons, and borders of your own (0.5.0).
 
 [Building a Widget](guide/building-a-widget.md) puts them together into a
 complete switch.
@@ -72,6 +74,8 @@ complete switch.
 - **[Getting Started](getting-started.md)** — a first window, step by step.
 - **[Python API Reference](api/python/index.md)** — every class, method,
   property, and event.
+- **[Upgrading to 0.5.0](migrating-0.5.md)** — from 0.4.x: no renames,
+  custom windowing, and a window root's fill now paints.
 - **[Upgrading to 0.4.x](migrating-0.4.md)** — from 0.3.5: no renames, a
   few behavior changes.
 - **[Migrating to 0.3.5](migrating-0.3.5.md)** — from 0.3.4: what moved to
@@ -82,6 +86,7 @@ Tesserae Engine is a second, from-scratch iteration of an earlier Vulkan engine,
 archived under
 [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
 the lessons learned that shaped it. Its build history is in
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.4.x) and
+the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) (0.5.0 on),
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) (0.4.x), and
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
 (through 0.3.5).

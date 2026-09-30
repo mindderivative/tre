@@ -24,7 +24,9 @@ its Python surface is the one stability contract. `engine-platform` and
 ## How a frame is made
 
 1. **Input** from `winit` (or `window.simulate`) is hit-tested, moves focus,
-   edits text, and reaches your listeners, bubbling from the target.
+   edits text, and reaches your listeners, bubbling from the target. A press
+   on a drawn title bar or resize border then goes to the OS, to move or
+   resize the window ([Custom Title Bars](guide/custom-title-bars.md)).
 2. Callbacks queued with **`LoopHandle.call_soon`** run.
 3. **One central tick** advances every running animation; completion
    callbacks run after it.
@@ -59,8 +61,9 @@ Tesserae Engine is a from-scratch second iteration of an earlier Vulkan engine,
 archived under
 [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
 its lessons learned.
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
-records the 0.4.x line, and
+The GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3)
+records the work from 0.5.0 on,
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) the 0.4.x line, and
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
 every earlier milestone, including the 0.3.5 program that moved Material
 Design 3 and the declarative layer out to the framework.

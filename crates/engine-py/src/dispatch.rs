@@ -365,6 +365,9 @@ pub(crate) struct WindowIo<'a> {
     pub(crate) dock: &'a SharedDockState,
     pub(crate) listeners: &'a WindowListenerMap,
     pub(crate) terminals: &'a SharedTerminals,
+    /// 0.5.0 M3: the window itself -- its OS window, for moving and
+    /// resizing it from a press, and its state.
+    pub(crate) window: &'a crate::window::WindowHandles,
 }
 
 /// A window's terminal sessions, by node.
@@ -390,6 +393,9 @@ pub(crate) fn process_input(
     if send_to_focused_terminal(ctx, io, event) {
         return DispatchOutcome::None;
     }
+    if resize_from_border(ctx, io, event) {
+        return DispatchOutcome::None;
+    }
     listeners::note_input_modality(event);
     let shifted = shift_wheel(event);
     let delivered = shifted.as_ref().unwrap_or(event);
@@ -398,7 +404,20 @@ pub(crate) fn process_input(
         ctx.tree
             .borrow_mut()
             .dispatch(root, delivered.clone(), crate::clock::now(ctx.tree));
-    listeners::route_input(ctx, target, delivered, py);
+    // 0.5.0 M3: a cancelled press's release reaches no listener; a new
+    // press starts afresh.
+    let swallowed = match delivered {
+        InputEvent::PointerPressed { .. } => {
+            io.window.press_cancelled.set(false);
+            false
+        }
+        InputEvent::PointerReleased { .. } => io.window.press_cancelled.replace(false),
+        _ => false,
+    };
+    if !swallowed {
+        listeners::route_input(ctx, target, delivered, py);
+    }
+    window_drag(ctx, io, delivered, target, py);
     // M96: layers an outside press or Escape asked to dismiss.
     let dismissed = ctx.tree.borrow_mut().take_dismissals();
     for layer in dismissed {
@@ -415,8 +434,235 @@ pub(crate) fn process_input(
     );
     shortcuts(ctx, io, root, event, py);
     keyboard_scroll(ctx, event);
+    system_menu_key(io, event);
     listeners::fire_scroll_changes(ctx, py);
     outcome
+}
+
+/// 0.5.0 M3 (issue #28): which edge or corner of the window's resize border
+/// `position` is on, if any -- `window.set(resize_border=N)`, the
+/// framework's own border, live only while the window is undecorated (the
+/// OS's decorations have their own edges) and neither maximized nor
+/// fullscreen (nothing to resize). In layout pixels, like the pointer.
+pub(crate) fn border_direction(
+    window: &crate::window::WindowHandles,
+    position: peniko::kurbo::Point,
+) -> Option<winit::window::ResizeDirection> {
+    let border = window.resize_border.get();
+    // On macOS an undecorated window keeps the OS's own resizing (M4).
+    if border <= 0.0
+        || engine_platform::titlebar::OVERLAY_TITLEBAR
+        || window.decorations.get()
+        || window.maximized.get()
+        || window.fullscreen.get()
+    {
+        return None;
+    }
+    edge_at(
+        border,
+        f64::from(window.width.get()),
+        f64::from(window.height.get()),
+        position,
+    )
+}
+
+/// 0.5.0 M3: the edge or corner of a `w` x `h` window that `position` is
+/// within `border` pixels of, if any -- a corner where two edges meet.
+fn edge_at(
+    border: f64,
+    w: f64,
+    h: f64,
+    position: peniko::kurbo::Point,
+) -> Option<winit::window::ResizeDirection> {
+    use winit::window::ResizeDirection as Dir;
+    let (x, y) = (position.x, position.y);
+    let (west, east) = (x < border, x >= w - border);
+    let (north, south) = (y < border, y >= h - border);
+    Some(match (north, south, west, east) {
+        (true, _, true, _) => Dir::NorthWest,
+        (true, _, _, true) => Dir::NorthEast,
+        (_, true, true, _) => Dir::SouthWest,
+        (_, true, _, true) => Dir::SouthEast,
+        (true, ..) => Dir::North,
+        (_, true, ..) => Dir::South,
+        (_, _, true, _) => Dir::West,
+        (_, _, _, true) => Dir::East,
+        _ => return None,
+    })
+}
+
+/// 0.5.0 M3: a primary press on the resize border resizes the window from
+/// that edge or corner (`winit`'s `drag_resize_window`) and reaches no node,
+/// so a splitter or scrollbar at the edge doesn't also start its own drag;
+/// its release, if it comes, is swallowed too. Whether it was taken.
+fn resize_from_border(ctx: &NodeContext<'_>, io: &WindowIo<'_>, event: &InputEvent) -> bool {
+    let InputEvent::PointerPressed {
+        position,
+        button: PointerButton::Primary,
+    } = *event
+    else {
+        return false;
+    };
+    let Some(direction) = border_direction(io.window, position) else {
+        return false;
+    };
+    if let Some(window) = io.window.os_window.borrow().as_ref() {
+        let _ = window.drag_resize_window(direction);
+    }
+    ctx.tree.borrow_mut().cancel_press();
+    io.window.press_cancelled.set(true);
+    true
+}
+
+/// 0.5.0 M3 (issue #28): a primary press on a drag region -- a framework's
+/// own title bar (`window_region`) -- moves the window. Runs after the
+/// press reached its listeners, so one that took the pointer capture counts
+/// as interactive. The move is `winit`'s `drag_window()`, which must follow
+/// the press at once; the press then ends with `pointer_cancel` rather than
+/// a `click`, since the platform may never deliver its release. Without an
+/// open window (`simulate`) there's nothing to move, but the press still
+/// ends the same way, so the decision is testable.
+fn window_drag(
+    ctx: &NodeContext<'_>,
+    io: &WindowIo<'_>,
+    event: &InputEvent,
+    target: Option<NodeId>,
+    py: Python<'_>,
+) {
+    let InputEvent::PointerPressed { position, button } = *event else {
+        return;
+    };
+    // A fullscreen window has no frame to move, maximize, or show a menu
+    // for: its drag region's presses are ordinary ones.
+    let menu = button == PointerButton::Secondary && io.window.system_menu.get();
+    if (button != PointerButton::Primary && !menu)
+        || io.window.fullscreen.get()
+        || !starts_window_drag(ctx, target)
+    {
+        return;
+    }
+    // A secondary press opens the OS's window menu there, as on a native
+    // title bar -- after its `pointer_down` listeners -- when the framework
+    // opted in with `system_menu` (off by default). `winit` shows it on
+    // Windows and Wayland and ignores it elsewhere.
+    if menu {
+        if let Some(window) = io.window.os_window.borrow().as_ref() {
+            window.show_window_menu(winit::dpi::PhysicalPosition::new(position.x, position.y));
+        }
+        end_press(ctx, io, target, position, py);
+        return;
+    }
+    // A second press soon after, near the first, is a double-click: it
+    // toggles maximize, as a native title bar's does, instead of moving.
+    let now = crate::clock::now(ctx.tree);
+    let double = io.window.last_drag_press.get().is_some_and(|(then, at)| {
+        now.saturating_duration_since(then) <= engine_platform::double_click_time()
+            && (at - position).hypot() <= DOUBLE_CLICK_SLOP
+    });
+    io.window
+        .last_drag_press
+        .set((!double).then_some((now, position)));
+    // 0.5.0 M4: what the double-click does is the user's setting on macOS.
+    use engine_platform::titlebar::TitleBarDoubleClick as Action;
+    let action = double.then(engine_platform::titlebar::title_bar_double_click);
+    match (io.window.os_window.borrow().as_ref(), action) {
+        (Some(window), Some(Action::Maximize)) => window.set_maximized(!window.is_maximized()),
+        (Some(window), Some(Action::Minimize)) => window.set_minimized(true),
+        (Some(window), None) => {
+            let _ = window.drag_window();
+        }
+        (None, Some(Action::Maximize)) => io.window.maximized.set(!io.window.maximized.get()),
+        (None, Some(Action::Minimize)) => io.window.minimized.set(true),
+        (_, Some(Action::Nothing)) | (None, None) => {}
+    }
+    end_press(ctx, io, target, position, py);
+}
+
+/// 0.5.0 M3: a press the window took -- to move, maximize, or show its
+/// menu -- ends without a click, releasing any pointer capture, and tells
+/// the pressed node with `pointer_cancel`; its release, if the platform
+/// delivers one, reaches no listener.
+fn end_press(
+    ctx: &NodeContext<'_>,
+    io: &WindowIo<'_>,
+    target: Option<NodeId>,
+    position: peniko::kurbo::Point,
+    py: Python<'_>,
+) {
+    let pressed = ctx.tree.borrow_mut().cancel_press();
+    io.window.press_cancelled.set(true);
+    if let Some(node) = pressed.or(target) {
+        listeners::deliver(
+            ctx,
+            py,
+            EventType::PointerCancel,
+            node,
+            Some(position),
+            |e| {
+                listeners::stamp_modifiers(e);
+            },
+        );
+    }
+}
+
+/// 0.5.0 M3: on Windows, Alt+Space opens an undecorated window's menu, which
+/// the OS gives only a decorated one. (On Linux the compositor usually owns
+/// the shortcut; macOS has no window menu.)
+fn system_menu_key(io: &WindowIo<'_>, event: &InputEvent) {
+    if !cfg!(target_os = "windows")
+        || !matches!(
+            event,
+            InputEvent::KeyPressed {
+                key: Key::Space,
+                ..
+            }
+        )
+        || !listeners::modifiers().alt
+        || io.window.decorations.get()
+        || !io.window.system_menu.get()
+    {
+        return;
+    }
+    if let Some(window) = io.window.os_window.borrow().as_ref() {
+        window.show_window_menu(winit::dpi::PhysicalPosition::new(0.0, 0.0));
+    }
+}
+
+/// 0.5.0 M3: how far apart, in pixels, a double-click's two presses may be.
+const DOUBLE_CLICK_SLOP: f64 = 4.0;
+
+/// 0.5.0 M3: the custom-windowing design's Q1 rule. Walking up from the
+/// pressed node: a `window_region="drag"` node moves the window, a
+/// `"none"` one doesn't, and so doesn't an interactive one met first --
+/// focusable, a text input or terminal, with a `click` listener, or holding
+/// the pointer capture. Hover and `pointer_down` listeners don't count, so a
+/// tooltip's anchor or a context menu's target in a title bar still drags,
+/// and nothing above the drag region is looked at.
+fn starts_window_drag(ctx: &NodeContext<'_>, target: Option<NodeId>) -> bool {
+    let Some(target) = target else {
+        return false;
+    };
+    let tree = ctx.tree.borrow();
+    let handlers = ctx.handlers.borrow();
+    let capture = tree.pointer_capture();
+    for id in tree.ancestors(target) {
+        let Some(node) = tree.get(id) else {
+            return false;
+        };
+        match node.window_region {
+            engine_core::WindowRegion::Drag => return true,
+            engine_core::WindowRegion::NoDrag => return false,
+            engine_core::WindowRegion::Default => {}
+        }
+        let interactive = node.access.focusable == Some(true)
+            || matches!(node.kind, NodeKind::TextField(_) | NodeKind::Terminal(_))
+            || handlers.contains_key(&(id, HandlerKey::Listener(EventType::Click)))
+            || capture == Some(id);
+        if interactive {
+            return false;
+        }
+    }
+    false
 }
 
 /// 0.4.3 M17: with Shift held, a wheel that has no horizontal part scrolls
@@ -775,4 +1021,27 @@ pub(crate) fn cut_focused_selection_to_clipboard(
     tree.borrow_mut().cut_text_field_selection(field);
     deliver_change(&ctx, field, old_for_listeners, py);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edge_at;
+    use peniko::kurbo::Point;
+    use winit::window::ResizeDirection as Dir;
+
+    #[test]
+    fn edge_at_names_each_edge_and_corner_of_the_border() {
+        let at = |x, y| edge_at(8.0, 400.0, 300.0, Point::new(x, y));
+        assert_eq!(at(200.0, 150.0), None, "inside");
+        assert_eq!(at(3.0, 150.0), Some(Dir::West));
+        assert_eq!(at(396.0, 150.0), Some(Dir::East));
+        assert_eq!(at(200.0, 2.0), Some(Dir::North));
+        assert_eq!(at(200.0, 295.0), Some(Dir::South));
+        assert_eq!(at(1.0, 1.0), Some(Dir::NorthWest));
+        assert_eq!(at(399.0, 1.0), Some(Dir::NorthEast));
+        assert_eq!(at(1.0, 299.0), Some(Dir::SouthWest));
+        assert_eq!(at(399.0, 299.0), Some(Dir::SouthEast));
+        assert_eq!(at(7.9, 150.0), Some(Dir::West), "the border's last pixel");
+        assert_eq!(at(8.0, 150.0), None, "just past it");
+    }
 }

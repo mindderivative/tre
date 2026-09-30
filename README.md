@@ -56,8 +56,8 @@ mkdocs serve   # http://127.0.0.1:8000
 
 Start with Getting Started, then the guide's page for each building block;
 [Building a Widget](https://mindderivative.github.io/tre/guide/building-a-widget/) puts them together.
-Upgrading from 0.3.5? See [Upgrading to 0.4.x](https://mindderivative.github.io/tre/migrating-0.4/);
-from 0.3.4, [Migrating to 0.3.5](https://mindderivative.github.io/tre/migrating-0.3.5/).
+Upgrading from 0.4.x? See [Upgrading to 0.5.0](https://mindderivative.github.io/tre/migrating-0.5/);
+from 0.3.5, [Upgrading to 0.4.x](https://mindderivative.github.io/tre/migrating-0.4/); from 0.3.4, [Migrating to 0.3.5](https://mindderivative.github.io/tre/migrating-0.3.5/).
 
 ## Building from source
 
@@ -90,7 +90,8 @@ Every rendering capability has a headless, GPU-backed pixel test under
 headlessly through `window.simulate` and `window.advance`.
 
 [`ARCHITECTURE.md`](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md) is the design reference, and
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) tracks the current `0.4.x` line; the
+the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) tracks the work from `0.5.0` on; the `0.4.x` line is in
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md), and the
 milestone-by-milestone history through `v0.3.5.2` is in
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md).
 Tesserae Engine is a from-scratch second iteration of an earlier Vulkan engine,

@@ -30,6 +30,20 @@ mkdocs build --strict
 `stubtest` compares the type stub with the built extension, so run it after
 `maturin develop`; CI runs it and `mypy --strict` on Linux.
 
+Platform-only code (`#[cfg(target_os = ...)]`, such as the macOS title bar
+and the Windows double-click time) can be type-checked from Linux without
+the other OS's SDK:
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-pc-windows-msvc
+PYO3_CROSS_PYTHON_VERSION=3.12 CARGO_TARGET_DIR=target/macos \
+  cargo clippy --workspace --all-targets --target aarch64-apple-darwin -- -D warnings
+PYO3_CROSS_PYTHON_VERSION=3.12 CARGO_TARGET_DIR=target/windows \
+  cargo clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+```
+
+This only compiles; CI's macOS and Windows jobs run the tests.
+
 Building on Linux needs a few system packages; see
 [Installation](installation.md#option-3-build-from-source).
 
@@ -56,7 +70,9 @@ mkdocs build   # static site in site/
 
 This project holds itself to one discipline end to end for every real
 change: investigate → plan → implement → test → document → commit. See
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.4.x) and
+the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) (0.5.0 on; its
+README describes how a step is recorded),
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md), and
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md) for the
 milestone-by-milestone history this discipline has produced, and
 [Architecture](architecture.md) for the design principles that shape it.

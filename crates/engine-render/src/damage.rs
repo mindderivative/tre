@@ -291,6 +291,8 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
         access: _,
         hit_testable: _,
         cursor: _,
+        // 0.5.0 M3: which presses move the window; paints nothing.
+        window_region: _,
     } = node;
     visible.hash(h);
     z_index.hash(h);

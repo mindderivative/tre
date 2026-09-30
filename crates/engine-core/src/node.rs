@@ -1238,6 +1238,26 @@ pub struct Node {
     /// M94: the pointer shape shown over this node; `None` inherits the
     /// nearest ancestor's, and the default arrow when none sets one.
     pub cursor: Option<Cursor>,
+    /// 0.5.0 M3 (issue #28): whether a primary press here moves the window
+    /// -- the framework's own title bar. See `WindowRegion`.
+    pub window_region: WindowRegion,
+}
+
+/// 0.5.0 M3 (issue #28): a node's part in moving the window, for a
+/// framework that draws its own title bar (`docs/design/custom-windowing.md`,
+/// Q1). A press starts a move when, walking up from the pressed node, a
+/// `Drag` node comes before a `NoDrag` one or an interactive one --
+/// focusable, with a `click` listener, or holding the pointer capture, which
+/// `engine-py` judges.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WindowRegion {
+    /// Decided by the nodes around it.
+    #[default]
+    Default,
+    /// A press here, or on a non-interactive node inside, moves the window.
+    Drag,
+    /// A press here, or inside, never moves the window.
+    NoDrag,
 }
 
 /// M94: the pointer shapes a node can ask for -- CSS's own vocabulary, in

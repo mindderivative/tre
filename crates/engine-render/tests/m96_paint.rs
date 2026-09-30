@@ -174,3 +174,25 @@ fn synthesized_italics_lean_right() {
         assert!(lean(true).await >= 2, "leans right toward the top");
     });
 }
+
+/// 0.5.0 M5: a window's root is a `Container`, and takes a box's paint
+/// properties -- `window.root.set(fill=...)` painted nothing from v0.2.0
+/// until this, because only `Rect` painted a fill.
+#[test]
+fn a_container_paints_its_fill_like_a_box() {
+    pollster::block_on(async {
+        let (mut tree, root) = scene();
+        let container = tree.insert(
+            NodeKind::Container,
+            placed(10.0, 10.0, 40.0, 40.0),
+            PaintProperties::new(RED, 8.0, 1.0),
+        );
+        tree.add_child(root, container);
+        rect(&mut tree, container, 5.0, 5.0, 10.0, 10.0, GREEN);
+        layout(&mut tree, root);
+        let frame = Frame::of(&tree, root).await;
+        assert_eq!(frame.at(35, 35), rgba(RED), "its fill");
+        assert_eq!(frame.at(20, 20), rgba(GREEN), "its children over it");
+        assert_eq!(frame.at(11, 11), rgba(BACKGROUND), "its corner radius");
+    });
+}

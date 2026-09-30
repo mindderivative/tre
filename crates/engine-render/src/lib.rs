@@ -128,9 +128,9 @@ pub fn build_shadow_scene(
 /// `NodeKind::Text` at its absolute on-screen position:
 /// `taffy::Layout::location` is parent-relative, so this accumulates each
 /// ancestor's offset on the way down rather than trusting a child's
-/// location alone. `Container` nodes paint nothing themselves but still
-/// recurse into their children -- they exist purely to give `taffy`
-/// something to lay children out against.
+/// location alone. A `Container` (a window's root) paints like a `Rect`
+/// (0.5.0 M5); a `VirtualList` or `ScrollView` paints nothing itself but
+/// still recurses into its children.
 ///
 /// `resources`/`text` are threaded through for `NodeKind::Text` nodes:
 /// glyph atlasing (`resources`) and font/shaping state (`text`) both
@@ -513,7 +513,10 @@ fn draw_own(
     }
 
     match &node.kind {
-        NodeKind::Rect => {
+        // 0.5.0 M5: a `Container` -- a window's root -- takes a box's paint
+        // properties too; it painted nothing before, so a root's fill never
+        // showed.
+        NodeKind::Rect | NodeKind::Container => {
             let color = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(color);
             // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
@@ -683,21 +686,21 @@ fn draw_own(
                 id,
             );
         }
-        // A `VirtualList` container paints nothing itself, same as
-        // `Container` -- it exists purely to give `taffy` something to
-        // lay its (windowed) children out against; the recursive walk
+        // A `VirtualList` container paints nothing itself -- it exists
+        // purely to give `taffy` something to lay its (windowed) children
+        // out against; the recursive walk
         // below already only ever sees `VirtualListState::materialized`'s
         // small real subset, never `item_count`, with zero changes
         // needed here (§14 step 15, §11.7).
         // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints nothing of
-        // its own, like `Container`/`VirtualList` -- its one real
+        // its own, like `VirtualList` -- its one real
         // child's own absolute position is already baked into `layout_
         // style` by `Tree::sync_scroll_view_layouts`, so the ordinary
         // recursive walk below (composed transform only, no extra
         // paint-time offset) already paints it in the right place; the
         // unconditional clip below is this kind's only other real
         // paint-time behavior.
-        NodeKind::Container | NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
+        NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
         // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
         // resolved ahead of time by `engine-py`'s `draw` callback
         // (`canvas.rs`'s own module doc comment) -- every coordinate is

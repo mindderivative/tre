@@ -99,6 +99,13 @@ class Event:
     height: float | None
     dark: bool | None
     """`color_scheme`: whether the OS switched to dark mode."""
+    maximized: bool | None
+    """(0.5.0) `maximized`: whether the window is now maximized."""
+    active: bool | None
+    """(0.5.0) `active`: whether the window now has the OS's focus."""
+    titlebar_inset: tuple[float, float] | None
+    """(0.5.0) `titlebar_inset`: the new `(height, width)` the OS's window
+    controls take over the content."""
     scale_factor: float | None
     """`scale_factor`: the window's new scale factor."""
     related_target: Node | None
@@ -203,7 +210,9 @@ class Node:
         `pointer_down`, `pointer_move`, `pointer_up`, `click`,
         `secondary_click`, `wheel`, `key_down`, `key_up`, `input`,
         `focus`, `unfocus`, `change`, `a11y_action`, `dismiss` (a layer
-        asked to close), `scroll`. All but `pointer_enter`/`pointer_leave`/
+        asked to close), `scroll`, and (0.5.0) `pointer_cancel` -- the press
+        was taken to move or resize the window, and no `pointer_up` or
+        `click` will follow it. All but `pointer_enter`/`pointer_leave`/
         `change`/`dismiss`/`scroll` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
@@ -264,8 +273,12 @@ class Window:
     more to an `App`, then call `App.run()`.
     """
 
-    def __new__(cls, width: int = 480, height: int = 200, title: str = "tre v2") -> Window:
-        """Raises `ValueError` for a zero width or height."""
+    def __new__(
+        cls, width: int = 480, height: int = 200, title: str = "tre v2", decorations: bool = True
+    ) -> Window:
+        """Raises `ValueError` for a zero width or height. (0.5.0)
+        `decorations=False` opens the window without the OS's title bar and
+        borders, for the framework to draw its own."""
         ...
     def create(self, kind: str, **props: Any) -> Node:
         """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
@@ -290,16 +303,48 @@ class Window:
     def on(self, event: str, handler: Callable[..., object]) -> None:
         """M94: registers `handler` for a window event -- `resize`,
         `color_scheme`, `scale_factor`, `close_requested` (cancellable
-        with `event.cancel()`), `closed`, or (M99) the docking drag's
-        `dock_target`/`dock_drop` -- replacing any earlier one.
+        with `event.cancel()`), `closed`, (M99) the docking drag's
+        `dock_target`/`dock_drop`, or (0.5.0) `maximized` and `active`,
+        fired when the window is maximized or restored and when it gains
+        or loses focus, and `titlebar_inset`, fired when the area the OS's
+        window controls take over the content changes (macOS) --
+        replacing any earlier one.
         Raises `ValueError` for an unknown event.
         """
         ...
     def off(self, event: str) -> None:
         """M94: removes the window's listener for `event`, if any."""
         ...
+    def minimize(self) -> None:
+        """(0.5.0) Minimizes the window -- or, before `App.run()`, opens it
+        minimized."""
+        ...
+    def maximize(self) -> None:
+        """(0.5.0) Maximizes the window -- or opens it maximized."""
+        ...
+    def restore(self) -> None:
+        """(0.5.0) Restores a minimized or maximized window to its normal
+        size; before `App.run()`, undoes `minimize()`/`maximize()`."""
+        ...
+    def close(self) -> None:
+        """(0.5.0) Closes the window as if the user had: `close_requested`
+        fires first, and a listener that cancels it keeps the window open.
+        It happens on the loop's next turn, not during the call; a window
+        that isn't open has nothing to close."""
+        ...
     def set(
-        self, *, title: str = ..., partial_redraw: bool = ..., show_damage: bool = ...
+        self,
+        *,
+        title: str = ...,
+        partial_redraw: bool = ...,
+        show_damage: bool = ...,
+        decorations: bool = ...,
+        fullscreen: bool = ...,
+        min_width: float = ...,
+        min_height: float = ...,
+        icon: tuple[bytes, int, int] | None = ...,
+        resize_border: float = ...,
+        system_menu: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -308,7 +353,23 @@ class Window:
         warning logged, whatever this says. (0.4.1) `show_damage`: `True`
         tints what each presented frame redrew -- its damage rects in
         magenta, a full redraw outlined in orange -- over the image, never
-        the kept frame; off by default."""
+        the kept frame; off by default. (0.5.0) `decorations`: whether the
+        OS draws the title bar and borders, live on an open window;
+        `fullscreen`: borderless on the window's monitor; `min_width` and
+        `min_height`: the smallest size the user can resize it to, 0 for
+        none; `icon`: `(rgba, width, height)` -- straight-alpha RGBA8 bytes,
+        `width * height * 4` of them -- or `None`, for the taskbar and
+        window switcher on Windows and X11 (Wayland and macOS take the app's
+        icon from its desktop file or bundle). Each applies live to an open
+        window, or when `App.run()` opens it. `resize_border`: how many
+        pixels along each edge of an undecorated window resize it -- a
+        primary press there starts the resize and reaches no node, and the
+        pointer shows a resize cursor; off while maximized or fullscreen,
+        0 (the default) for none. `system_menu`: whether a secondary press
+        on a `window_region="drag"` node (and, on Windows, Alt+Space on an
+        undecorated window) opens the OS's window menu -- off by default,
+        an opt-in on every platform for a framework that doesn't show its
+        own."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -321,7 +382,25 @@ class Window:
     @overload
     def get(self, name: Literal["dark"]) -> bool | None: ...
     @overload
-    def get(self, name: Literal["show_damage"]) -> bool: ...
+    def get(
+        self,
+        name: Literal[
+            "show_damage",
+            "decorations",
+            "maximized",
+            "minimized",
+            "active",
+            "fullscreen",
+            "system_menu",
+            "native_controls",
+        ],
+    ) -> bool: ...
+    @overload
+    def get(self, name: Literal["titlebar_inset"]) -> tuple[float, float]: ...
+    @overload
+    def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
+    @overload
+    def get(self, name: Literal["platform"]) -> str: ...
     @overload
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, `scale_factor` (`1.0`
@@ -332,8 +411,17 @@ class Window:
         once the window is open -- `partial_redraw`, or (0.4.0)
         `partial_redraw_active`: whether the open window really redraws
         only what changed -- the setting, and a surface that allows it --
-        `None` until `App.run()` opens the window -- or (0.4.1)
-        `show_damage`."""
+        `None` until `App.run()` opens the window -- (0.4.1)
+        `show_damage`, or (0.5.0) `decorations`, `maximized`, `minimized`,
+        and `active` (whether the window has focus) -- the open window's
+        own answer, or before `App.run()` what it opens as -- `fullscreen`,
+        `min_width`, `min_height`, `resize_border`, and `platform`: `"wayland"`, `"x11"`,
+        `"windows"`, or `"macos"` (on Linux, the open window's own answer;
+        before, the backend `winit` would pick) -- and `titlebar_inset`:
+        `(height, width)`, the top-left area the OS's window controls take
+        over the content, non-zero only for an undecorated macOS window
+        outside fullscreen, and `native_controls`: whether those controls
+        are shown (so the framework hides its own)."""
         ...
     def show_layer(
         self,
@@ -396,7 +484,10 @@ class Window:
         `scroll_into_view`, `set_value`), and `value`. `shift`/`ctrl`/`alt`/`meta` hold
         modifiers. Window events: `resize` (`width`, `height`),
         `color_scheme` (`dark`), `scale_factor` (`scale_factor`),
-        `close_requested`, `closed`. Unknown events or fields raise
+        `close_requested`, `closed`, and (0.5.0) `maximized` (`maximized`)
+        and `active` (`active`), which set the window's state and fire only
+        when it changes, as the live window does, and `titlebar_inset`
+        (`height`, `width`), likewise. Unknown events or fields raise
         `ValueError`.
         """
         ...

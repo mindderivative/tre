@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::Duration;
 
-use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
+use engine_platform::{WindowConfig, WindowOptions, WindowRequest, run_windowed_multi};
 
 fn main() {
     let frame_count = Arc::new(AtomicU32::new(0));
@@ -56,6 +56,7 @@ fn main() {
                     width: 200,
                     height: 150,
                     max_frames: Some(10),
+                    options: WindowOptions::default(),
                 },
                 token: 0,
             });

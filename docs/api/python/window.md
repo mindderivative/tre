@@ -3,8 +3,10 @@
 Owns one node tree and the OS window it's painted into. Add windows to an
 [`App`](app.md), then call `App.run()`.
 
-**`Window(width=480, height=200, title="tre v2")`** — raises `ValueError`
-for a zero width or height.
+**`Window(width=480, height=200, title="tre v2", decorations=True)`** —
+raises `ValueError` for a zero width or height. `decorations=False` (0.5.0)
+opens the window without the OS's title bar and borders, for the framework
+to draw its own; see [Window controls and state](#window-controls-and-state).
 
 ```python
 window = Window(width=640, height=400, title="Inbox")
@@ -35,11 +37,149 @@ dismissible=True)`** shows `node` over the window's content, and
 **`hide_layer(node)`** hides it — for menus, dialogs, tooltips, and sheets.
 See [Layers](layers.md).
 
+## Window controls and state
+
+Since 0.5.0, a window can be run without the OS's title bar and borders
+(`decorations=False`, or `set(decorations=...)` live), so the framework can
+draw its own — and needs these to wire it up. See the
+[custom-windowing design](../../design/custom-windowing.md).
+
+**`minimize()`**, **`maximize()`**, and **`restore()`** act on the open
+window; before `App.run()` they set how it opens. **`close()`** closes the
+window as if the user had: `close_requested` fires first and a listener can
+cancel it. It happens on the loop's next turn, not during the call, and a
+window that isn't open has nothing to close.
+
+```python
+minimize_button.on("click", lambda: window.minimize())
+maximize_button.on("click", lambda: window.restore() if window.get("maximized") else window.maximize())
+close_button.on("click", lambda: window.close())
+window.on("maximized", lambda e: swap_icon(e.maximized))
+window.on("active", lambda e: title_bar.set(opacity=1.0 if e.active else 0.6))
+```
+
+| Property | Set | Get |
+| --- | --- | --- |
+| `decorations` | Whether the OS draws the title bar and borders | The open window's answer |
+| `fullscreen` | Borderless fullscreen on the window's monitor | Whether it is |
+| `min_width`, `min_height` | The smallest size the user can resize to; 0 for none | The setting |
+| `icon` | `(rgba, width, height)` — RGBA8 bytes, `width * height * 4` of them — or `None`; shown on Windows and X11 (Wayland and macOS take the app's icon from its desktop file or bundle) | — |
+| `maximized`, `minimized` | — (use the methods above) | The open window's state, or before `App.run()` how it opens |
+| `active` | — | Whether the window has the OS's focus |
+| `platform` | — | `"wayland"`, `"x11"`, `"windows"`, or `"macos"` |
+
+Each settable one applies live to an open window, or when `App.run()` opens
+it. A window smaller than its minimum is grown to it, when the minimum is
+set and after any resize: on Wayland a minimum otherwise only limits what
+the user can drag it to, and leaving fullscreen can restore a smaller size.
+A maximized or fullscreen window isn't resized to its minimum. Two window
+events report state changes: **`maximized`** (`event.maximized`) when the
+window is maximized or restored, and **`active`** (`event.active`) when it
+gains or loses focus — each only when the value changes.
+
+On Windows an undecorated window keeps its shadow. macOS is different; see
+below.
+
+### macOS: the overlay title bar
+
+`winit` can't let the user resize an undecorated macOS window, so there
+`decorations=False` doesn't remove the title bar: it makes it transparent
+and runs the content up under it. The window keeps its shadow, native
+resizing, and the traffic lights (close, minimize, zoom) in its top-left
+corner, over the app's own title bar. `get("decorations")` is still
+`False`. Two read-only properties say what's there, so one layout works on
+every platform:
+
+| Property | Get |
+| --- | --- |
+| `titlebar_inset` | `(height, width)` in logical pixels: the title-bar strip's height and the traffic lights' width with their margins. `(0.0, 0.0)` for a decorated window, in fullscreen (the traffic lights are hidden), and on every other platform |
+| `native_controls` | Whether the OS shows its own window controls over the content: `True` only for an undecorated macOS window outside fullscreen. A framework hides its own minimize/maximize/close when it is |
+
+The **`titlebar_inset`** window event (`event.titlebar_inset`) fires when
+the inset changes — entering or leaving fullscreen, say.
+
+```python
+window = Window(decorations=False)
+bar = window.create("box", height=40, window_region="drag")
+
+def lay_out_bar(inset=None):
+    height, width = inset or window.get("titlebar_inset")
+    bar.set(padding_left=width)  # clear of the traffic lights
+    for button in own_buttons:
+        button.set(visible=not window.get("native_controls"))
+
+window.on("titlebar_inset", lambda e: lay_out_bar(e.titlebar_inset))
+lay_out_bar()
+```
+
+A drag region can be taller than macOS's own title-bar strip; all of it
+moves the window. The resize border is off on macOS, where the OS resizes
+the window itself. A double-click on the drag region does what the user
+chose in System Settings (Desktop & Dock, "Double-click a window's title
+bar to"): zoom, minimize, or nothing.
+
+### Title bar and borders
+
+An undecorated window has no title bar to move it by and no border to resize
+it by (0.5.0). The framework marks its own; the OS does the moving and
+resizing.
+
+```python
+window = Window(width=800, height=600, decorations=False)
+window.set(resize_border=6, min_width=320, min_height=200)
+bar = window.create("box", height=36, window_region="drag")
+close = window.create("box", width=36, height=36, focusable=True)
+close.on("click", lambda: window.close())
+bar.add_child(close)                              # a button in the bar stays a button
+bar.on("pointer_cancel", lambda: bar.set(opacity=1.0))
+```
+
+**The drag region.** A primary press on a node with `window_region="drag"`,
+or on a node inside it that isn't interactive, moves the window. A node is
+interactive when it's `focusable`, a text field or terminal, has a `click`
+listener, or holds the pointer capture; only the nodes from the one pressed
+up to the drag region are checked. `window_region="none"` turns dragging off
+for a node and what's inside it, and `"drag"` on a node inside a button turns
+it back on (a draggable icon, say). The press still delivers `pointer_down`
+first, then — because the OS takes the pointer for the move — `pointer_cancel`
+to the pressed node: no `pointer_up` or `click` follows, and any capture is
+released.
+
+**Double-click** on the drag region toggles maximize (on macOS, what the
+user chose; see above). The two presses must fall within the system's
+double-click time (Windows, macOS; 500 ms elsewhere) and 4 px of each other.
+
+**The window menu** is opt-in: `window.set(system_menu=True)`, on any
+platform. Then a secondary press on the drag region opens the OS's window
+menu (Restore, Move, Size, Minimize, Maximize, Close) where the platform has
+one — Windows, and Wayland compositors that offer one; elsewhere nothing
+opens — and ends the press with `pointer_cancel`, so no `secondary_click`
+follows. On Windows, Alt+Space on an undecorated window opens it too. Off,
+the default, a secondary press on the drag region is an ordinary one, for
+the framework's own menu.
+
+**The resize border.** `set(resize_border=N)` makes a press within `N`
+logical pixels of an edge resize the window from that edge, or from a corner
+where two edges meet. Over the border the pointer shows the matching resize
+cursor. A press there never reaches a node, and nor does its release. The
+border is off for a decorated window (the OS has one), on macOS (the OS
+resizes it), while maximized or fullscreen, and at `0`, the default.
+
+| Property | Set | Get |
+| --- | --- | --- |
+| `resize_border` | Border width in logical pixels, a number `>= 0` | The setting |
+| `system_menu` | Whether a secondary press on the drag region (and Alt+Space on Windows) opens the OS's window menu; `False` by default | The setting |
+
+In fullscreen the drag region and the border do nothing: their presses are
+ordinary ones, delivered to the nodes as usual. The move, resize, and menu are the OS's and need a real
+display; `simulate` exercises everything else — the rule, `pointer_cancel`,
+double-click timing (with `advance`), and the border — without one.
+
 ## Window events and properties
 
 **`on(event, handler)`** and **`off(event)`** listen to the window itself —
 `resize`, `color_scheme`, `scale_factor`, `close_requested`, `closed`,
-`dock_target`, and `dock_drop`; see
+`dock_target`, `dock_drop`, and (0.5.0) `maximized` and `active`; see
 [Events and Listeners](events.md#window-listeners).
 
 **`set(title=...)`** changes the title, live if the window is open.
@@ -61,7 +201,8 @@ draw. Off by default.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), `dark` — the OS's current appearance,
 or `None` where it can't say ([Window properties](events.md#window-properties))
-— `partial_redraw`, `partial_redraw_active`, or `show_damage`.
+— `partial_redraw`, `partial_redraw_active`, `show_damage`, or the
+[window's controls and state](#window-controls-and-state) above.
 
 **`resize(width, height)`** sets the window's size from code, and the
 root's layout box follows. It fires no `resize` event — that reports a

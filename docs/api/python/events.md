@@ -20,6 +20,7 @@ listing the valid ones.
 | --- | --- | --- |
 | `pointer_enter`, `pointer_leave` | The pointer enters or leaves the node's **subtree** — not when it moves between the node and its own descendants, and `pointer_leave` also fires when the pointer leaves the window | no |
 | `pointer_down`, `pointer_move`, `pointer_up` | A button is pressed, the pointer moves, a button is released | yes |
+| `pointer_cancel` | A press was taken by the OS — to move the window from a drag region, toggle maximize, or show the window menu — so no `pointer_up` or click follows, and any pointer capture is released (0.5.0) | yes |
 | `click` | Primary press and release on the same node, or keyboard activation | yes |
 | `secondary_click` | Secondary press and release on the same node | yes |
 | `wheel` | A wheel or trackpad scroll | yes |
@@ -106,6 +107,9 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `closed` | The window closed — by the user or by reaching `max_frames` | — |
 | `dock_target` | During a docking drag, the pointer moved into another dock zone, or out of every zone | `side` |
 | `dock_drop` | A docking drag ended with the primary button's release; the panel has moved to the zone there, if any | `panel`, `side` |
+| `maximized` | The window was maximized or restored (0.5.0) | `maximized` |
+| `active` | The window gained or lost the OS's focus (0.5.0) | `active` |
+| `titlebar_inset` | The area the OS's window controls take over the content changed — macOS's traffic lights on an undecorated window, 0 in fullscreen (0.5.0) | `titlebar_inset` |
 
 A window event has no node: `event.target` is `None`.
 
@@ -121,7 +125,14 @@ window.get("dark")          # True, False, or None where the OS can't say
 `window.set(partial_redraw=False)` redraws the whole window every frame
 instead of only what changed ([Window](window.md)). `window.get(name)` reads
 `width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`,
-`partial_redraw_active`, or `show_damage`. `root` is the window's root node.
+`partial_redraw_active`, or `show_damage`, and (0.5.0) `decorations`,
+`fullscreen`, `min_width`, `min_height`, `maximized`, `minimized`, `active`,
+`platform`, `resize_border`, `system_menu`, `titlebar_inset`, and
+`native_controls` — see
+[Window controls and state](window.md#window-controls-and-state),
+[macOS: the overlay title bar](window.md#macos-the-overlay-title-bar), and
+[Title bar and borders](window.md#title-bar-and-borders).
+`root` is the window's root node.
 
 `dark` is the OS's appearance right now, so an app that follows it can start
 in the right one and then listen to `color_scheme`. Linux reads it from the
@@ -148,6 +159,7 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `related_target` | `focus`, `unfocus` — the node on the other side of the move |
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
+| `maximized` / `active` | `maximized` / `active` — the window's new state |
 | `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |
 | `panel` | `dock_drop` — the dragged panel |
 
@@ -187,6 +199,7 @@ window.simulate("resize", width=800, height=600)
 | `color_scheme` | `dark` |
 | `scale_factor` | `scale_factor` |
 | `close_requested`, `closed` | — |
+| `maximized` / `active` | `maximized` / `active` — sets the window's state; the event fires only if it changed, as the live window's does |
 
 Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
 window-space `x`/`y` without a node. Pointer, wheel, click, and key events also

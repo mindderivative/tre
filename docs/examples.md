@@ -30,4 +30,5 @@ what should happen before opening a window for a few seconds. Run one with
 | `scroll_keys.py` | A scroll view driven by keys and focus, with the `scroll` event |
 | `docking.py` | Docked panels dragged between zones |
 | `two_windows.py` | One `App` driving two windows |
+| `custom_titlebar.py` | An undecorated window drawing its own title bar: a drag region, minimize/maximize/close, a resize border, and room for macOS's traffic lights; `--watch` keeps it open, `--menu` adds the OS's window menu |
 | `threadsafe_reload.py` | A background file watcher reloading settings inside `App.run()` |

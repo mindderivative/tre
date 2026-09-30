@@ -6,7 +6,7 @@
 
 use engine_core::{
     AccessValue, Animated, CornerRadii, Cursor, Interpolate, Live, NodeKind, PathData, Role,
-    Shadow, Shadows, TerminalPalette,
+    Shadow, Shadows, TerminalPalette, WindowRegion,
 };
 use peniko::Color;
 use peniko::kurbo::Rect;
@@ -23,7 +23,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 42] = [
+const SETTABLE: [&str; 43] = [
     "visible",
     "z_index",
     "clip_children",
@@ -66,6 +66,7 @@ const SETTABLE: [&str; 42] = [
     "tab_index",
     "cursor",
     "hit_testable",
+    "window_region",
 ];
 
 /// The M93 role vocabulary.
@@ -119,6 +120,8 @@ pub(crate) enum Change {
     Focusable(bool),
     TabIndex(i32),
     Cursor(Option<Cursor>),
+    /// 0.5.0 M3: `window_region`.
+    WindowRegion(WindowRegion),
     HitTestable(bool),
     Style(StyleEdit),
     Kind(KindChange),
@@ -614,6 +617,19 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             })
         }
         "hit_testable" => Change::HitTestable(boolean(value, name)?),
+        // 0.5.0 M3 (issue #28): `"drag"` makes the node a title bar -- a
+        // primary press on it, or on a non-interactive node inside, moves
+        // the window -- `"none"` rules that out, `None` leaves it to the
+        // nodes around it.
+        "window_region" => {
+            let region: Option<String> = optional(value, name, "\"drag\", \"none\", or None")?;
+            Change::WindowRegion(match region.as_deref() {
+                None => WindowRegion::Default,
+                Some("drag") => WindowRegion::Drag,
+                Some("none") => WindowRegion::NoDrag,
+                Some(_) => return Err(invalid(name, "\"drag\", \"none\", or None")),
+            })
+        }
         "data" => {
             let data: String = required(value, name, "SVG path data (a str)")?;
             Change::Data(PathData::from_svg(&data).map_err(|err| {
@@ -830,6 +846,11 @@ impl Node {
                     .into_any()
                     .unbind(),
                 "hit_testable" => any(node.hit_testable.into_pyobject(py)?.to_owned().into_any()),
+                "window_region" => match node.window_region {
+                    WindowRegion::Default => py.None(),
+                    WindowRegion::Drag => any("drag".into_pyobject(py)?.into_any()),
+                    WindowRegion::NoDrag => any("none".into_pyobject(py)?.into_any()),
+                },
                 "visible" => any(node.visible.into_pyobject(py)?.to_owned().into_any()),
                 "z_index" => any(node.z_index.into_pyobject(py)?.into_any()),
                 "clip_children" => any(node
@@ -1065,6 +1086,7 @@ impl Node {
                 Change::Focusable(focusable) => access.focusable = Some(focusable),
                 Change::TabIndex(index) => access.tab_index = index,
                 Change::Cursor(cursor) => node.cursor = cursor,
+                Change::WindowRegion(region) => node.window_region = region,
                 Change::HitTestable(hit_testable) => node.hit_testable = hit_testable,
                 Change::Style(edit) => edit(style.get_or_insert_with(|| node.layout_style.clone())),
                 Change::Kind(kind_change) => {
