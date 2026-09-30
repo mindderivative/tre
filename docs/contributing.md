@@ -56,7 +56,8 @@ mkdocs build   # static site in site/
 
 This project holds itself to one discipline end to end for every real
 change: investigate → plan → implement → test → document → commit. See
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.4.x) and
+[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.5.x),
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md), and
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md) for the
 milestone-by-milestone history this discipline has produced, and
 [Architecture](architecture.md) for the design principles that shape it.

@@ -60,7 +60,8 @@ archived under
 [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
 its lessons learned.
 [`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
-records the 0.4.x line, and
+records the 0.5.x line,
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) the 0.4.x line, and
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
 every earlier milestone, including the 0.3.5 program that moved Material
 Design 3 and the declarative layer out to the framework.

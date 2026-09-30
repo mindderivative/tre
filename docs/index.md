@@ -82,6 +82,7 @@ Tesserae Engine is a second, from-scratch iteration of an earlier Vulkan engine,
 archived under
 [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
 the lessons learned that shaped it. Its build history is in
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.4.x) and
+[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.5.x),
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) (0.4.x), and
 [`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
 (through 0.3.5).
