@@ -113,6 +113,13 @@ pub(crate) struct WindowHandles {
     /// and borders -- `Window(decorations=False)` or a live `set` turns them
     /// off for the framework to draw its own.
     pub(crate) decorations: Rc<Cell<bool>>,
+    /// 0.5.0 M2: whether the window is maximized, and minimized -- before
+    /// `App.run()` opens it, what it opens as.
+    pub(crate) maximized: Rc<Cell<bool>>,
+    pub(crate) minimized: Rc<Cell<bool>>,
+    /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
+    /// open, for `close()` -- `None` before and after.
+    pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
 }
 
 pub struct WindowState {
@@ -177,6 +184,9 @@ impl PyWindow {
                 surface_partial: Rc::new(Cell::new(None)),
                 show_damage: Rc::new(Cell::new(false)),
                 decorations: Rc::new(Cell::new(decorations)),
+                maximized: Rc::new(Cell::new(false)),
+                minimized: Rc::new(Cell::new(false)),
+                waker: Rc::new(RefCell::new(None)),
             },
         })))
     }

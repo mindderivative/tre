@@ -302,6 +302,23 @@ class Window:
     def off(self, event: str) -> None:
         """M94: removes the window's listener for `event`, if any."""
         ...
+    def minimize(self) -> None:
+        """(0.5.0) Minimizes the window -- or, before `App.run()`, opens it
+        minimized."""
+        ...
+    def maximize(self) -> None:
+        """(0.5.0) Maximizes the window -- or opens it maximized."""
+        ...
+    def restore(self) -> None:
+        """(0.5.0) Restores a minimized or maximized window to its normal
+        size; before `App.run()`, undoes `minimize()`/`maximize()`."""
+        ...
+    def close(self) -> None:
+        """(0.5.0) Closes the window as if the user had: `close_requested`
+        fires first, and a listener that cancels it keeps the window open.
+        It happens on the loop's next turn, not during the call; a window
+        that isn't open has nothing to close."""
+        ...
     def set(
         self,
         *,

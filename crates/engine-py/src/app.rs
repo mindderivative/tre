@@ -517,6 +517,11 @@ impl App {
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
                 *setup.handles.os_window.borrow_mut() = Some(window.clone());
+                // 0.5.0 M2: `winit` can open a window maximized, but not
+                // minimized -- a `minimize()` before `App.run()` lands here.
+                if setup.handles.minimized.get() {
+                    window.set_minimized(true);
+                }
                 let gpu = match GpuState::new(
                     window,
                     setup.handles.width.get(),
@@ -1231,6 +1236,7 @@ impl App {
                             max_frames,
                             options: WindowOptions {
                                 decorations: setup.handles.decorations.get(),
+                                maximized: setup.handles.maximized.get(),
                             },
                         },
                         token: index as u64,
@@ -1246,6 +1252,8 @@ impl App {
                     for session in setup.handles.terminals.borrow().values() {
                         session.set_waker(waker.clone());
                     }
+                    // 0.5.0 M2: for `window.close()`.
+                    *setup.handles.waker.borrow_mut() = Some(waker.clone());
                 }
             },
         );
@@ -1257,6 +1265,7 @@ impl App {
         // M94: no window is open any more.
         for setup in setups_for_cleanup.iter() {
             *setup.handles.os_window.borrow_mut() = None;
+            *setup.handles.waker.borrow_mut() = None;
             setup.handles.surface_partial.set(None);
         }
 

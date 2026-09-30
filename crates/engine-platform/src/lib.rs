@@ -273,11 +273,16 @@ pub struct WindowOptions {
     /// leaves all of it to the app, which draws its own; on Windows the
     /// window keeps its shadow either way.
     pub decorations: bool,
+    /// Whether the window opens maximized.
+    pub maximized: bool,
 }
 
 impl Default for WindowOptions {
     fn default() -> Self {
-        Self { decorations: true }
+        Self {
+            decorations: true,
+            maximized: false,
+        }
     }
 }
 
@@ -317,6 +322,10 @@ enum PlatformEvent {
     /// window is told, as the OS tells each window on macOS and Windows.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     ThemeChanged(bool),
+    /// 0.5.0 M2 (issue #28): the app asked to close a window
+    /// (`EventLoopWaker::close_window`) -- handled exactly as the user
+    /// closing it, `CloseRequested` first, which the app may refuse.
+    CloseWindow(WindowId),
 }
 
 impl From<accesskit_winit::Event> for PlatformEvent {
@@ -367,6 +376,15 @@ impl EventLoopWaker {
     /// after the loop itself has started or stopped.
     pub fn wake(&self) {
         let _ = self.proxy.send_event(PlatformEvent::Wake);
+    }
+
+    /// 0.5.0 M2 (issue #28): asks the loop to close window `id` as if the
+    /// user had -- `on_lifecycle` hears `CloseRequested` first and may keep
+    /// it open. Handled on the loop's next turn, so a caller already inside
+    /// one of the loop's callbacks isn't re-entered. A no-op for a window
+    /// already closed, or once the loop has exited.
+    pub fn close_window(&self, id: WindowId) {
+        let _ = self.proxy.send_event(PlatformEvent::CloseWindow(id));
     }
 }
 
@@ -628,6 +646,7 @@ where
                         request.config.height,
                     ))
                     .with_decorations(options.decorations)
+                    .with_maximized(options.maximized)
                     .with_visible(false);
                 // 0.5.0 M2: Windows drops an undecorated window's shadow
                 // unless asked to keep it; a decorated one has it anyway.
@@ -738,6 +757,19 @@ where
                 for (&id, win) in &self.windows {
                     (self.on_input)(id, InputEvent::ThemeChanged { dark });
                     win.window.request_redraw();
+                }
+            }
+            // 0.5.0 M2: the app's own close -- the same path as
+            // `WindowEvent::CloseRequested` below.
+            PlatformEvent::CloseWindow(id) => {
+                if self.windows.contains_key(&id)
+                    && (self.on_lifecycle)(id, WindowLifecycle::CloseRequested)
+                {
+                    (self.on_lifecycle)(id, WindowLifecycle::Closed);
+                    self.windows.remove(&id);
+                    if self.windows.is_empty() {
+                        event_loop.exit();
+                    }
                 }
             }
         }

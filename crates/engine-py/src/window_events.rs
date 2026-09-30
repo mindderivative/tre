@@ -428,6 +428,54 @@ impl PyWindow {
         Ok(())
     }
 
+    /// 0.5.0 M2 (issue #28): minimizes the window -- once `App.run()` opens
+    /// it, if it isn't open yet.
+    fn minimize(&self) {
+        match self.handles.os_window.borrow().as_ref() {
+            Some(window) => window.set_minimized(true),
+            None => self.handles.minimized.set(true),
+        }
+    }
+
+    /// 0.5.0 M2: maximizes the window -- or opens it maximized.
+    fn maximize(&self) {
+        match self.handles.os_window.borrow().as_ref() {
+            Some(window) => window.set_maximized(true),
+            None => self.handles.maximized.set(true),
+        }
+    }
+
+    /// 0.5.0 M2: restores a minimized or maximized window to its normal
+    /// size -- or, before `App.run()`, undoes `minimize()`/`maximize()`.
+    fn restore(&self) {
+        match self.handles.os_window.borrow().as_ref() {
+            Some(window) => {
+                if window.is_minimized() == Some(true) {
+                    window.set_minimized(false);
+                }
+                if window.is_maximized() {
+                    window.set_maximized(false);
+                }
+            }
+            None => {
+                self.handles.minimized.set(false);
+                self.handles.maximized.set(false);
+            }
+        }
+    }
+
+    /// 0.5.0 M2: closes the window as if the user had: `close_requested`
+    /// fires first, and a listener that cancels it keeps the window open.
+    /// It happens on the loop's next turn, not during this call. A window
+    /// that isn't open has nothing to close.
+    fn close(&self) {
+        let window = self.handles.os_window.borrow();
+        if let (Some(window), Some(waker)) = (window.as_ref(), self.handles.waker.borrow().as_ref())
+        {
+            waker.close_window(window.id());
+        }
+    }
+
     /// Sets window properties: `title`, (0.4.0 M5) `partial_redraw`,
     /// (0.4.1 M8) `show_damage`, and (0.5.0 M2) `decorations`; `width`,
     /// `height`, and `scale_factor` are read-only.
