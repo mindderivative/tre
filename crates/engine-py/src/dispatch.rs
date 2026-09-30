@@ -449,7 +449,9 @@ pub(crate) fn border_direction(
     position: peniko::kurbo::Point,
 ) -> Option<winit::window::ResizeDirection> {
     let border = window.resize_border.get();
+    // On macOS an undecorated window keeps the OS's own resizing (M4).
     if border <= 0.0
+        || engine_platform::titlebar::OVERLAY_TITLEBAR
         || window.decorations.get()
         || window.maximized.get()
         || window.fullscreen.get()
@@ -560,13 +562,18 @@ fn window_drag(
     io.window
         .last_drag_press
         .set((!double).then_some((now, position)));
-    match io.window.os_window.borrow().as_ref() {
-        Some(window) if double => window.set_maximized(!window.is_maximized()),
-        Some(window) => {
+    // 0.5.0 M4: what the double-click does is the user's setting on macOS.
+    use engine_platform::titlebar::TitleBarDoubleClick as Action;
+    let action = double.then(engine_platform::titlebar::title_bar_double_click);
+    match (io.window.os_window.borrow().as_ref(), action) {
+        (Some(window), Some(Action::Maximize)) => window.set_maximized(!window.is_maximized()),
+        (Some(window), Some(Action::Minimize)) => window.set_minimized(true),
+        (Some(window), None) => {
             let _ = window.drag_window();
         }
-        None if double => io.window.maximized.set(!io.window.maximized.get()),
-        None => {}
+        (None, Some(Action::Maximize)) => io.window.maximized.set(!io.window.maximized.get()),
+        (None, Some(Action::Minimize)) => io.window.minimized.set(true),
+        (_, Some(Action::Nothing)) | (None, None) => {}
     }
     end_press(ctx, io, target, position, py);
 }

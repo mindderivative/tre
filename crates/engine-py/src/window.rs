@@ -123,6 +123,10 @@ pub(crate) struct WindowHandles {
     /// 0.5.0 M2: whether the window is fullscreen (borderless on its
     /// monitor) -- before `App.run()`, whether it opens so.
     pub(crate) fullscreen: Rc<Cell<bool>>,
+    /// 0.5.0 M4: the OS's window controls' area over the content,
+    /// `(height, width)` in logical pixels, as last reported -- non-zero
+    /// only for macOS's overlay title bar.
+    pub(crate) titlebar_inset: Rc<Cell<(f64, f64)>>,
     /// 0.5.0 M2: the smallest inner size the user can resize to, in
     /// logical pixels; `(0.0, 0.0)` for none.
     pub(crate) min_size: Rc<Cell<(f64, f64)>>,
@@ -216,6 +220,7 @@ impl PyWindow {
                 minimized: Rc::new(Cell::new(false)),
                 active: Rc::new(Cell::new(false)),
                 fullscreen: Rc::new(Cell::new(false)),
+                titlebar_inset: Rc::new(Cell::new((0.0, 0.0))),
                 min_size: Rc::new(Cell::new((0.0, 0.0))),
                 icon: Rc::new(RefCell::new(None)),
                 press_cancelled: Rc::new(Cell::new(false)),

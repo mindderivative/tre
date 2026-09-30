@@ -193,6 +193,9 @@ pub(crate) enum WindowEventType {
     Maximized,
     /// 0.5.0 M2: the window gained or lost the OS's focus.
     Active,
+    /// 0.5.0 M4: the area the OS's window controls take over the content
+    /// changed (macOS's overlay title bar; 0 in fullscreen).
+    TitlebarInset,
     /// M99: while a panel drag is in progress, the zone under the pointer
     /// changed.
     DockTarget,
@@ -201,7 +204,7 @@ pub(crate) enum WindowEventType {
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 9] = [
+    const ALL: [WindowEventType; 10] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -209,6 +212,7 @@ impl WindowEventType {
         Self::Closed,
         Self::Maximized,
         Self::Active,
+        Self::TitlebarInset,
         Self::DockTarget,
         Self::DockDrop,
     ];
@@ -222,6 +226,7 @@ impl WindowEventType {
             Self::Closed => "closed",
             Self::Maximized => "maximized",
             Self::Active => "active",
+            Self::TitlebarInset => "titlebar_inset",
             Self::DockTarget => "dock_target",
             Self::DockDrop => "dock_drop",
         }
@@ -625,6 +630,23 @@ pub(crate) fn update_window_state(
     deliver_window(listeners, py, event_type, |e| match event_type {
         WindowEventType::Maximized => e.maximized = Some(value),
         _ => e.active = Some(value),
+    });
+}
+
+/// 0.5.0 M4: records the window's new titlebar inset and, when it changed,
+/// fires `titlebar_inset` carrying it -- as `update_window_state` does for
+/// the boolean states.
+pub(crate) fn update_titlebar_inset(
+    listeners: &WindowListenerMap,
+    py: Python<'_>,
+    cell: &std::cell::Cell<(f64, f64)>,
+    value: (f64, f64),
+) {
+    if cell.replace(value) == value {
+        return;
+    }
+    deliver_window(listeners, py, WindowEventType::TitlebarInset, |e| {
+        e.titlebar_inset = Some(value)
     });
 }
 

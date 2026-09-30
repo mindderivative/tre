@@ -79,6 +79,7 @@
 //! update_if_active`, which already gates on activation state.
 
 pub mod appearance;
+pub mod titlebar;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -740,6 +741,20 @@ where
                 let attrs = {
                     use winit::platform::windows::WindowAttributesExtWindows;
                     attrs.with_undecorated_shadow(true)
+                };
+                // 0.5.0 M4: macOS can't resize an undecorated window, so it
+                // stays decorated, with its title bar a transparent overlay
+                // on full-size content (see `titlebar`).
+                #[cfg(target_os = "macos")]
+                let attrs = if options.decorations {
+                    attrs
+                } else {
+                    use winit::platform::macos::WindowAttributesExtMacOS;
+                    attrs
+                        .with_decorations(true)
+                        .with_titlebar_transparent(true)
+                        .with_fullsize_content_view(true)
+                        .with_title_hidden(true)
                 };
                 let window = event_loop
                     .create_window(attrs)

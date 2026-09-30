@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 22] = [
+const SIMULATED_EVENTS: [&str; 23] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -63,6 +63,7 @@ const SIMULATED_EVENTS: [&str; 22] = [
     "change",
     "maximized",
     "active",
+    "titlebar_inset",
 ];
 
 /// `simulate`'s keyword fields, consumed one by one so anything left over
@@ -252,6 +253,30 @@ fn parse_icon(value: &Bound<'_, PyAny>) -> PyResult<(Vec<u8>, u32, u32)> {
         )));
     }
     Ok((rgba, width, height))
+}
+
+/// 0.5.0 M4: whether the OS draws its window controls over the content --
+/// macOS's traffic lights on an undecorated window, hidden in fullscreen --
+/// so the framework leaves room for them rather than drawing its own.
+pub(crate) fn native_controls(handles: &crate::window::WindowHandles) -> bool {
+    engine_platform::titlebar::OVERLAY_TITLEBAR
+        && !handles.decorations.get()
+        && !handles.fullscreen.get()
+}
+
+/// 0.5.0 M4: re-reads the open window's titlebar inset, firing
+/// `titlebar_inset` if it changed.
+pub(crate) fn refresh_titlebar_inset(handles: &crate::window::WindowHandles, py: Python<'_>) {
+    let inset = match handles.os_window.borrow().as_deref() {
+        Some(window) => engine_platform::titlebar::titlebar_inset(window),
+        None => return,
+    };
+    listeners::update_titlebar_inset(
+        &handles.window_listeners,
+        py,
+        &handles.titlebar_inset,
+        inset,
+    );
 }
 
 /// 0.5.0 M2: grows the open window to its minimum size if it's smaller --
@@ -606,7 +631,7 @@ impl PyWindow {
                         });
                     }
                     "width" | "height" | "scale_factor" | "maximized" | "minimized" | "active"
-                    | "platform" => {
+                    | "platform" | "titlebar_inset" | "native_controls" => {
                         return Err(PyValueError::new_err(format!(
                             "window property `{name}` is read-only -- settable: {SETTABLE}"
                         )));
@@ -633,7 +658,7 @@ impl PyWindow {
         }
         if let Some(on) = decorations {
             if let Some(window) = self.handles.os_window.borrow().as_ref() {
-                window.set_decorations(on);
+                engine_platform::titlebar::set_decorations(window, on);
             }
             self.handles.decorations.set(on);
         }
@@ -783,14 +808,35 @@ impl PyWindow {
                     .into_any()
                     .unbind()
             }
+            // On macOS `winit` keeps an undecorated window decorated, under
+            // an overlay title bar, so the setting answers there.
             "decorations" => self
                 .handles
                 .os_window
                 .borrow()
                 .as_ref()
+                .filter(|_| !engine_platform::titlebar::OVERLAY_TITLEBAR)
                 .map_or(self.handles.decorations.get(), |window| {
                     window.is_decorated()
                 })
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            // 0.5.0 M4: the open window's own answer, else the last known.
+            "titlebar_inset" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_deref()
+                    .map_or(
+                        self.handles.titlebar_inset.get(),
+                        engine_platform::titlebar::titlebar_inset,
+                    )
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
+            "native_controls" => native_controls(&self.handles)
                 .into_pyobject(py)?
                 .to_owned()
                 .into_any()
@@ -832,7 +878,8 @@ impl PyWindow {
                     "unknown window property {name:?} -- valid: width, height, title, \
                      scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
-                     min_height, platform, resize_border, system_menu"
+                     min_height, platform, resize_border, system_menu, titlebar_inset, \
+                     native_controls"
                 )));
             }
         })
@@ -1169,6 +1216,22 @@ impl PyWindow {
                     cell,
                     value,
                     event_type,
+                );
+            }
+            // 0.5.0 M4: what the live window reports when its title bar's
+            // controls take a different area -- a macOS window entering or
+            // leaving fullscreen, say.
+            "titlebar_inset" => {
+                let height = f.f64("height")?;
+                let height = f.required("height", height)?;
+                let width = f.f64("width")?;
+                let width = f.required("width", width)?;
+                f.done()?;
+                listeners::update_titlebar_inset(
+                    &self.handles.window_listeners,
+                    py,
+                    &self.handles.titlebar_inset,
+                    (height, width),
                 );
             }
             "scale_factor" => {

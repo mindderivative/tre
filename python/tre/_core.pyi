@@ -103,6 +103,9 @@ class Event:
     """(0.5.0) `maximized`: whether the window is now maximized."""
     active: bool | None
     """(0.5.0) `active`: whether the window now has the OS's focus."""
+    titlebar_inset: tuple[float, float] | None
+    """(0.5.0) `titlebar_inset`: the new `(height, width)` the OS's window
+    controls take over the content."""
     scale_factor: float | None
     """`scale_factor`: the window's new scale factor."""
     related_target: Node | None
@@ -303,7 +306,9 @@ class Window:
         with `event.cancel()`), `closed`, (M99) the docking drag's
         `dock_target`/`dock_drop`, or (0.5.0) `maximized` and `active`,
         fired when the window is maximized or restored and when it gains
-        or loses focus -- replacing any earlier one.
+        or loses focus, and `titlebar_inset`, fired when the area the OS's
+        window controls take over the content changes (macOS) --
+        replacing any earlier one.
         Raises `ValueError` for an unknown event.
         """
         ...
@@ -387,8 +392,11 @@ class Window:
             "active",
             "fullscreen",
             "system_menu",
+            "native_controls",
         ],
     ) -> bool: ...
+    @overload
+    def get(self, name: Literal["titlebar_inset"]) -> tuple[float, float]: ...
     @overload
     def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
     @overload
@@ -409,7 +417,11 @@ class Window:
         own answer, or before `App.run()` what it opens as -- `fullscreen`,
         `min_width`, `min_height`, `resize_border`, and `platform`: `"wayland"`, `"x11"`,
         `"windows"`, or `"macos"` (on Linux, the open window's own answer;
-        before, the backend `winit` would pick)."""
+        before, the backend `winit` would pick) -- and `titlebar_inset`:
+        `(height, width)`, the top-left area the OS's window controls take
+        over the content, non-zero only for an undecorated macOS window
+        outside fullscreen, and `native_controls`: whether those controls
+        are shown (so the framework hides its own)."""
         ...
     def show_layer(
         self,
@@ -474,7 +486,8 @@ class Window:
         `color_scheme` (`dark`), `scale_factor` (`scale_factor`),
         `close_requested`, `closed`, and (0.5.0) `maximized` (`maximized`)
         and `active` (`active`), which set the window's state and fire only
-        when it changes, as the live window does. Unknown events or fields raise
+        when it changes, as the live window does, and `titlebar_inset`
+        (`height`, `width`), likewise. Unknown events or fields raise
         `ValueError`.
         """
         ...

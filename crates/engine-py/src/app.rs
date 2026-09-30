@@ -1112,6 +1112,22 @@ impl App {
                             if let Some(minimized) = window.is_minimized() {
                                 runtime.handles.minimized.set(minimized);
                             }
+                            // 0.5.0 M4: fullscreen entered or left by the
+                            // user (macOS's green button) arrives as a
+                            // resize too. On macOS the overlay title bar is
+                            // re-applied after it -- setting it is a no-op
+                            // when it's already on -- and changing either
+                            // moves the traffic lights.
+                            runtime
+                                .handles
+                                .fullscreen
+                                .set(window.fullscreen().is_some());
+                            if engine_platform::titlebar::OVERLAY_TITLEBAR
+                                && !runtime.handles.decorations.get()
+                            {
+                                engine_platform::titlebar::set_decorations(&window, false);
+                            }
+                            crate::window_events::refresh_titlebar_inset(&runtime.handles, py);
                         }
                         // 0.5.0 M2: e.g. leaving fullscreen to a size below
                         // the minimum, which Wayland allows.
