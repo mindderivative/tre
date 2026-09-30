@@ -107,8 +107,9 @@ jobs:
       - name: Install pinned toolchain (rust-toolchain.toml)
         run: rustup show
 
-      - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v4
+      - name: Restore cargo registry and build artifacts
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -180,6 +181,23 @@ jobs:
             timeout 120 python "$example"
           done
 
+      # Saved as its own step, not actions/cache's post-job hook, so it can
+      # time out: on 0.4.2's release PR the Windows job's upload hung for
+      # over 8 minutes after every test had passed. A timeout or failure
+      # here only skips saving the cache; it never fails the job. As
+      # before, it saves only on an exact-key miss and a successful job.
+      - name: Save cargo registry and build artifacts
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
   # §14 step 7's own trigger (see file header comment) -- minimal,
   # compile-focused, not the full Linux job's breadth (no Python/maturin,
   # no clippy/fmt, no frame-time benchmark: those stay Linux-only checks,
@@ -190,8 +208,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install pinned toolchain (rust-toolchain.toml)
         run: rustup show
-      - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v4
+      - name: Restore cargo registry and build artifacts
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -205,6 +224,22 @@ jobs:
       - name: Test workspace (informational -- see file header comment)
         continue-on-error: true
         run: cargo test --workspace
+      # Saved as its own step, not actions/cache's post-job hook, so it can
+      # time out: on 0.4.2's release PR the Windows job's upload hung for
+      # over 8 minutes after every test had passed. A timeout or failure
+      # here only skips saving the cache; it never fails the job. As
+      # before, it saves only on an exact-key miss and a successful job.
+      - name: Save cargo registry and build artifacts
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   test-macos:
     runs-on: macos-latest
@@ -212,8 +247,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install pinned toolchain (rust-toolchain.toml)
         run: rustup show
-      - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v4
+      - name: Restore cargo registry and build artifacts
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -227,3 +263,19 @@ jobs:
       - name: Test workspace (informational -- see file header comment)
         continue-on-error: true
         run: cargo test --workspace
+      # Saved as its own step, not actions/cache's post-job hook, so it can
+      # time out: on 0.4.2's release PR the Windows job's upload hung for
+      # over 8 minutes after every test had passed. A timeout or failure
+      # here only skips saving the cache; it never fails the job. As
+      # before, it saves only on an exact-key miss and a successful job.
+      - name: Save cargo registry and build artifacts
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
