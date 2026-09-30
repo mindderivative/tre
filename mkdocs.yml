@@ -73,6 +73,7 @@ nav:
   - Rust Crates: api/rust.md
   - Architecture: architecture.md
   - Migrating:
+      - To 0.4.x: migrating-0.4.md
       - To 0.3.5: migrating-0.3.5.md
       - To 0.3.3: migrating-0.3.3.md
   - Design:

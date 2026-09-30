@@ -1,5 +1,11 @@
 # Migrating to 0.3.3
 
+!!! note "Historical"
+    This page describes the 0.3.2 → 0.3.3 upgrade. Everything it maps
+    *to* — the `add_*` widget factories, `foreground`, declarative views and
+    bindings — was removed or renamed in 0.3.5; see
+    [Migrating to 0.3.5](migrating-0.3.5.md).
+
 `tre` 0.3.3 renames properties so that one concept has one name across
 the Python API (`Window.add_*`, `Node`) and declarative views. It's a
 breaking release: code and view files written for 0.3.2 need the
@@ -23,7 +29,9 @@ widget types, like class names, rather than being option values.
 
 ## Migrating view files
 
-`tools/migrate_views_0_3_3.py` in the `tre` repository rewrites YAML
+`tools/migrate_views_0_3_3.py` (in the `tre` repository up to
+[`v0.3.4`](https://github.com/mindderivative/tre/tree/v0.3.4/tools); removed
+in 0.3.5 with the declarative layer) rewrites YAML
 views, stylesheets, and themes in place, keeping comments and
 formatting:
 

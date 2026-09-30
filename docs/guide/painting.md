@@ -125,6 +125,17 @@ is hit as its whole box unless its painter narrows that with
 `set_hit_test_circle` or `set_hit_test_path` — so a click on a chart's point
 can land on that point alone.
 
+## Redrawing
+
+A window redraws only what changed each frame (0.4.0): `tre` compares the
+frame with the last one and repaints the changed areas, or the whole window
+when most of it changed. Nothing in your code has to say what changed.
+`window.set(partial_redraw=False)` redraws the whole window every frame
+instead, and `window.get("partial_redraw_active")` says whether the open
+window really redraws partially (`None` before `App.run()` opens it).
+`window.set(show_damage=True)` (0.4.1) tints each frame's redrawn areas, for
+debugging. See [Window](../api/python/window.md).
+
 ## What `tre` leaves to you
 
 The colors `tre` draws for you all have properties: a text input's

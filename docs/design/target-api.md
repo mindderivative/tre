@@ -1,11 +1,11 @@
 # Target API (M93)
 
-!!! warning "Approved design — being implemented"
-    This page specifies where `tre` is heading under the approved
-    building-block program (M93–M103). Nothing here exists yet except
-    where marked **(exists)**. Revision 2 incorporates Tesserae's review
-    (items 1–15, each agreed by the project owner) and was approved on
-    2026-09-25; M94–M96 implement it.
+!!! note "Historical design (M93, approved 2026-09-25)"
+    This is the specification the 0.3.5 building-block program
+    (M93–M103) implemented, with Tesserae's review folded in. The current
+    API is the [Python API reference](../api/python/index.md); where the
+    two differ, the reference is right. Its migration table is kept in
+    step with `tre/_removed.py` by `tests/test_removed.py`.
 
 ## Purpose
 
@@ -102,7 +102,8 @@ Removed: `View`, `Component`, `Theme`, `Signal`, `Computed`, `Effect`,
 ## Node kinds
 
 Created with `window.create(kind, **props)` (R9). `window.root` is the
-window's root `box`.
+window's root node (its `kind` reads `"container"`); it takes `box`'s layout
+and paint properties.
 
 | Kind | Required properties | What it is |
 | --- | --- | --- |
@@ -270,11 +271,11 @@ and events still bubble from it.
 | `x`, `y` | pointer and wheel events, local to `current` |
 | `window_x`, `window_y` | pointer and wheel events |
 | `button` | pointer events (`"primary"`, `"secondary"`, `"middle"`, `"back"`, `"forward"`) |
-| `delta_x`, `delta_y` | `wheel`, `scroll` — pixels (20 per wheel line), positive scrolling right and down |
+| `delta_x`, `delta_y` | `wheel` — pixels (20 per wheel line), positive scrolling right and down |
 | `key`, `repeat` | `key_down`, `key_up`: snake_case names for named keys (`"enter"`, `"arrow_left"`, `"f5"`, …), the produced character for character keys (`"a"`, `"A"` with Shift); `repeat` for auto-repeat |
 | `shift`, `ctrl`, `alt`, `meta` | pointer and key events |
 | `text` | `input` |
-| `old_value`, `new_value` | `change` |
+| `old_value`, `new_value` | `change` (the text); `scroll` (the offset, 0.4.2) |
 | `action`, `value` | `a11y_action` (`value` for `"set_value"`) |
 | `related_target` | `focus`, `unfocus`: the node losing focus (for `focus`) or gaining it (for `unfocus`); `None` when focus comes from, or goes to, outside the window. Lets a composite tell focus moving between its own children from focus leaving it (added 2026-09-25 at Tesserae's request) |
 | `focus_visible` | `focus`: `True` when focus arrived by keyboard or an assistive technology, or programmatically after keyboard input; `False` after a pointer press — the browsers' `:focus-visible` heuristic, so the framework shows its focus indicator only for keyboard focus (added 2026-09-25) |
@@ -375,8 +376,9 @@ frame is exactly the target path.
 
 ## Painter (canvas)
 
-`fill_rect`, `fill_circle`, `stroke_path` **(exist)**; `fill_path`,
-`draw_text` (new); `set_hit_test_circle`, `set_hit_test_path` **(exist)**.
+`fill_rect`, `fill_circle`, `stroke_path`, `set_hit_test_circle`,
+`set_hit_test_path`. (`fill_path` and `draw_text` were proposed here and not
+built: text belongs in `text` nodes, filled shapes in `path` nodes.)
 Same color rule (R4). `color` stays the parameter name here because a
 painter call has no node to carry a `fill`.
 

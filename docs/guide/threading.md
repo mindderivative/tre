@@ -46,6 +46,8 @@ then hand over the finished data. Decoding an image on a worker and showing
 it on the loop:
 
 ```python
+from PIL import Image  # Pillow
+
 def load_thumbnail(path, node):
     img = Image.open(path).convert("RGBA")          # on the worker
     rgba, w, h = img.tobytes(), img.width, img.height

@@ -9,7 +9,7 @@ build-backend = "maturin"
 [project]
 name = "tesserae-engine"
 version = "0.4.2"
-description = "tre: a GPU-rendered retained-mode UI engine for Python, written in Rust -- nodes, flexbox layout, paint, animation, input, text, and accessibility, rendered with vello."
+description = "tre: a GPU-rendered retained-mode UI engine for Python, written in Rust -- nodes, flexbox and grid layout, paint, animation, input, text, and accessibility, rendered with vello."
 authors = [{ name = "Phil Hodgins", email = "philip.a.hodgins@gmail.com" }]
 requires-python = ">=3.9"
 license = "MIT"

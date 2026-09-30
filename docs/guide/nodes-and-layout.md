@@ -2,7 +2,7 @@
 
 Everything on screen is a node in a window's tree. You create nodes, attach
 them under one another, and set their layout properties; `tre` lays the tree
-out with flexbox ([taffy](https://github.com/DioxusLabs/taffy)) whenever it
+out with flexbox or CSS Grid ([taffy](https://github.com/DioxusLabs/taffy)) whenever it
 changes, and paints it every frame.
 
 ## Windows and the app
@@ -86,16 +86,22 @@ time with `padding_top`, `margin_left`, and so on. A `margin` of `"auto"`
 takes up the free space on that side, which pushes a node to the far end of
 its row.
 
+`min_width`, `max_width`, `min_height`, and `max_height` bound a size, and
+`aspect_ratio` fixes width over height. `flex_wrap="wrap"` lets children
+flow onto more lines, and `align_content` spaces those lines. The
+[property reference](../api/python/properties.md) lists every layout
+property and its values.
+
 ## Grid layout
 
 `display="grid"` lays a node's children out in rows and columns instead of
-one line, so their edges line up across rows -- a settings form of labels and
+one line, so their edges line up across rows — a settings form of labels and
 fields, a gallery of equal cells, a dashboard of tiles. The columns and rows
 are track lists: pixels, a percentage, `"auto"`, a share of the free space
 (`"1fr"`), `"minmax(min, max)"`, and `"repeat(n, tracks)"`:
 
 ```python
-form = window.create("box", display="grid",
+form = window.create("box", display="grid", width="100%",
                      grid_template_columns="auto 1fr", row_gap=8, column_gap=12)
 for label, field in rows:
     form.add_child(label)   # column 1
@@ -104,7 +110,8 @@ for label, field in rows:
 
 Children fill the cells in order, a row at a time (`grid_auto_flow="column"`
 fills columns instead). A child can be placed with `grid_column` and
-`grid_row`: a line number (`2`, or `-1` for the last), a span (`"span 2"`), or
+`grid_row`: a start line (`2`; negative lines count from the end, so `-2`
+is the last column's), a span (`"span 2"`), or
 both ends (`"1 / 3"`). A gallery whose cells wrap to fit the width:
 
 ```python
@@ -211,6 +218,9 @@ next one out. Keys the focused node uses itself don't scroll: a node with a
 `key_down` listener between the focused node and the view keeps every key, and
 a text input keeps all but Page Up and Page Down. With nothing focused, keys
 scroll nothing. Keyboard scrolls jump rather than ease.
+
+Keys, `scroll_into_view`, and the `scroll` event below apply to
+`"scroll_view"` nodes; a `"virtual_list"` scrolls by wheel only.
 
 ### Revealing a node
 

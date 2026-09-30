@@ -5,18 +5,14 @@ dependency layering — the Python API (`engine-py`) is a thin boundary
 over the rest, never the other way around. Full API docs for the Rust
 side are generated with `rustdoc`, not this site. See
 [Architecture](../architecture.md) for the design principles behind this
-layering.
-
-```bash
-cargo doc --workspace --no-deps --open
-```
+layering; [below](#building-the-docs-locally) is how to build them.
 
 ## Crate layout
 
 | Crate | Role |
 | --- | --- |
-| [`engine-core`](https://github.com/mindderivative/tre/tree/main/crates/engine-core) | Pure-Rust node tree, the `Animated<T>` animation core, and the generic `AppHandler`/`InputEvent` interfaces the other crates build on. No `pyo3` and no `winit`: it runs, and is tested, with no window or GPU. |
-| [`engine-render`](https://github.com/mindderivative/tre/tree/main/crates/engine-render) | Vello scene building, GPU rendering, and `parley` text shaping, including the process-global font registry (`register_font`). Depends on `engine-core` (walks `Node`/`PaintProperties` for painting); no `winit`/`engine-platform` dependency. |
+| [`engine-core`](https://github.com/mindderivative/tre/tree/main/crates/engine-core) | Pure-Rust node tree, the `Animated<T>` animation core, `taffy` layout (flexbox and grid), input dispatch (`InputEvent` → `DispatchOutcome`), focus, scrolling, and layers. No `pyo3` and no `winit`: it runs, and is tested, with no window or GPU. |
+| [`engine-render`](https://github.com/mindderivative/tre/tree/main/crates/engine-render) | `vello_gpu` scene building and GPU rendering (`wgpu`) into a persistent per-window target, with partial redraw driven by a `DamageTracker`, plus `parley` text shaping, including the process-global font registry (`register_font`). Depends on `engine-core` (walks `Node`/`PaintProperties` for painting); no `winit`/`engine-platform` dependency. |
 | [`engine-platform`](https://github.com/mindderivative/tre/tree/main/crates/engine-platform) | The `winit` event loop and `ApplicationHandler`, the `accesskit_winit` adapter, translation of `winit` input into `engine-core`'s `InputEvent`, and `EventLoopWaker` (a `Send` handle that wakes an idle loop from any thread). |
 | [`engine-py`](https://github.com/mindderivative/tre/tree/main/crates/engine-py) | PyO3 bindings — the only crate depending on `pyo3`, and the only stability contract for framework users. It opens the windows and runs the per-frame loop (`App.run`). Everything under [Python API Reference](python/index.md) lives here. |
 

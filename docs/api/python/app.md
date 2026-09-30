@@ -39,7 +39,7 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 ```
 
 - `max_frames`, when given, is a **per-window** budget, not a whole-app
-  one — useful for headless/CI runs with no real display loop end.
+  one — useful for headless/CI runs that must end on their own.
 - Raises `RuntimeError` if called with zero registered windows.
 - Delivers real input — pointer, wheel, keyboard, text and input-method
   composition, window events, and screen-reader requests — through the

@@ -10,14 +10,15 @@ in the repository root.
 engine-py        PyO3 classes, the per-frame loop, listeners, callbacks
    │
    ├── engine-platform   winit event loop, input translation, AccessKit adapter
-   └── engine-render     scene building, text shaping, paths, shadows
+   └── engine-render     scene building, damage tracking, persistent target, text
          │
          └── engine-core  node tree, Animated<T>, layout, dispatch, focus, layers
 ```
 
 `engine-core` depends on none of the others and has no Python, windowing,
 or GPU code, so it's tested on its own. Only `engine-py` imports `pyo3`, and
-its Python surface is the one stability contract. See
+its Python surface is the one stability contract. `engine-platform` and
+`engine-render` both build on `engine-core`. See
 [Rust Crates](api/rust.md) for each crate's role.
 
 ## How a frame is made
@@ -30,8 +31,12 @@ its Python surface is the one stability contract. See
 4. **Layout** runs through `taffy`'s cache — paint-only changes never
    dirty it — and virtual lists build their visible rows.
 5. **Paint** walks the tree into a `vello_gpu` scene, culling what's off
-   screen, and renders it on the GPU. The **AccessKit** tree is built from
-   the same node tree.
+   screen. A damage tracker compares the frame with the last one, and only
+   the changed rects (at most four, or the whole window) are rendered into
+   the window's persistent target, which is then copied to the screen.
+   `window.set(partial_redraw=False)` redraws in full, and
+   `show_damage=True` tints what was redrawn. The **AccessKit** tree is
+   built from the same node tree.
 
 When nothing changed and nothing animates, the loop sleeps until the next
 input or `call_soon`.
@@ -55,5 +60,7 @@ archived under
 [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
 its lessons learned.
 [`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
-records every milestone, including the 0.3.5 program that moved Material
+records the 0.4.x line, and
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
+every earlier milestone, including the 0.3.5 program that moved Material
 Design 3 and the declarative layer out to the framework.

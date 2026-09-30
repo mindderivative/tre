@@ -2,9 +2,9 @@
 
 Each script in
 [`examples/`](https://github.com/mindderivative/tre/tree/main/examples) is
-small, runnable, and self-checking: it drives its building block
-headlessly with `window.simulate` and `window.advance`, asserts what
-should happen, then opens a window for a few seconds. Run one with
+small and runnable. Most are self-checking: they drive their building
+block headlessly with `window.simulate` and `window.advance` and assert
+what should happen before opening a window for a few seconds. Run one with
 `python examples/<name>.py`.
 
 | Script | Shows |

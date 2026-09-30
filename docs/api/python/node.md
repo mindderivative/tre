@@ -42,7 +42,13 @@ at its current, mid-animation value — plus the read-only `kind`, `focused`,
 `layer_placement`, and `layout_*` values; see
 [Nodes and Properties](properties.md#read-only).
 
-**`focus()`** moves keyboard focus to the node, firing `unfocus` and `focus`.
+**`focus()`** moves keyboard focus to the node, firing `unfocus` and `focus`;
+the scroll views around it scroll to show it (0.4.2).
+
+**`scroll_into_view()`** (0.4.2) scrolls every scroll view around the node,
+innermost first, by the least that shows it; a node longer than a view is
+aligned to its start. An assistive technology's `scroll_into_view` request
+does the same, after any `a11y_action` listener.
 
 ## `animate`
 
@@ -58,8 +64,9 @@ node.animate("opacity", 0.0, 300, easing=(0.3, 0.0, 0.8, 0.15),
 The animatable properties are `fill`, `stroke_color`, `stroke_width`,
 `opacity`, `corner_radius`, `shadows`, `translate_x`, `translate_y`,
 `scale`, `rotation_deg`, a scroll view's `scroll_offset`, and a path's
-`data`, `trim_start`, and `trim_end`. Any other name raises `ValueError`,
-as does a `to` of the wrong shape. `easing` is `"linear"` or a cubic bezier
+`data`, `trim_start`, and `trim_end`. Any other name raises `ValueError`;
+a `to` of the wrong shape raises `ValueError`, or `TypeError` for a
+non-number `to` on a numeric property. `easing` is `"linear"` or a cubic bezier
 `(x1, y1, x2, y2)`. `on_complete` is called with no arguments exactly once,
 in the frame the value arrives — or in `window.advance(ms)` in a test — and
 never for an animation replaced or stopped first.

@@ -9,7 +9,8 @@ install a pre-built wheel, or build one yourself from source.
 
 - Python 3.9 or newer (CPython; on Linux also free-threaded `3.14t`/
   `3.15t` builds and PyPy 3.11 — see the supported set below)
-- Linux, macOS (arm64), or Windows
+- Linux (x86_64), macOS (arm64), or Windows (x64); other platforms build
+  from source
 
 ## Option 1: install from PyPI
 
@@ -25,7 +26,7 @@ import tre
 ```
 
 A dependency on it is written the same way, for example
-`dependencies = ["tesserae-engine>=0.3.5.2"]` in a `pyproject.toml`.
+`dependencies = ["tesserae-engine>=0.4.2"]` in a `pyproject.toml`.
 
 !!! warning "Upgrading from a `tre-...` wheel"
     Releases up to `v0.3.5.1` installed a distribution named `tre`. pip
@@ -50,7 +51,7 @@ distribution, plus:
   repaired). The container ships several real CPython interpreters
   plus PyPy, and the build picks up every one it finds
   (`maturin-action`'s own `--find-interpreter`) rather than a
-  hand-maintained list — as of `v0.3.2` that's CPython 3.9–3.15
+  hand-maintained list — as of `v0.4.1` that's CPython 3.9–3.15
   (including the free-threaded `3.14t`/`3.15t` builds) and PyPy 3.11.
 - **macOS** (`arm64`) and **Windows** — one wheel per CPython version
   in an explicit, hand-maintained matrix (currently 3.9–3.14) via
@@ -68,7 +69,7 @@ Download the wheel matching your platform and interpreter from the
 and install it directly:
 
 ```bash
-pip install ./tesserae_engine-0.3.5.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+pip install ./tesserae_engine-0.4.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
 Releases up to `v0.3.5.1` name their files `tre-<version>-...`; they
@@ -82,8 +83,19 @@ install the same `tre` package.
 
 You'll need a Rust toolchain (see
 [`rust-toolchain.toml`](https://github.com/mindderivative/tre/blob/main/rust-toolchain.toml)
-for the exact pinned version — `rustup` picks it up automatically) and
-[`maturin`](https://www.maturin.rs/):
+for the exact pinned version — `rustup` picks it up automatically; the
+minimum supported Rust version is 1.90) and
+[`maturin`](https://www.maturin.rs/). On Linux you also need `pkg-config`
+and the fontconfig, xkbcommon, Wayland, and X11 development packages — on
+Debian or Ubuntu:
+
+```bash
+sudo apt-get install pkg-config libfontconfig1-dev libxkbcommon-dev \
+    libwayland-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
+    libxinerama-dev libudev-dev
+```
+
+Then:
 
 ```bash
 git clone https://github.com/mindderivative/tre.git

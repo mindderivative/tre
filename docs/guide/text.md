@@ -61,7 +61,9 @@ a `font_family` naming it falls back to a bundled face.
 
 A `"text_input"` is editable text with a caret, selection, clipboard, and
 input-method support. It paints no box of its own — put it in a `"box"` for
-a field's background and border:
+a field's background and border. Of the styling properties above it takes
+`font_family`, `font_size`, and `font_weight`; the rest are for text nodes
+only:
 
 ```python
 field_box = window.create("box", width=240, height=40, padding=8,

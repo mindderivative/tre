@@ -18,10 +18,16 @@ and portable-wheel build notes.
 
 ```bash
 cargo test --workspace --release
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --check
+cargo clippy --workspace --all-targets --release -- -D warnings
+cargo fmt --all --check
+cargo +1.90 check --workspace --all-targets   # MSRV
 python -m pytest tests/
+mypy --strict python/tre
+mkdocs build --strict
 ```
+
+Building on Linux needs a few system packages; see
+[Installation](installation.md#option-3-build-from-source).
 
 Every real engine capability has its own headless, GPU-backed pixel test
 under `crates/engine-render/tests/`, proving it actually paints what it
@@ -46,10 +52,10 @@ mkdocs build   # static site in site/
 
 This project holds itself to one discipline end to end for every real
 change: investigate → plan → implement → test → document → commit. See
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
-for the complete phase-by-phase history this discipline has produced, and
-[`ARCHITECTURE.md`](architecture.md) for the design principles that
-shape it.
+[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.4.x) and
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md) for the
+milestone-by-milestone history this discipline has produced, and
+[Architecture](architecture.md) for the design principles that shape it.
 
 Commit messages match the existing history's style (see `git log`); real,
 empirically-verified findings are preferred over assumptions — a claim

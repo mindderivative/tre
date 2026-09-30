@@ -3,7 +3,8 @@
 Owns one node tree and the OS window it's painted into. Add windows to an
 [`App`](app.md), then call `App.run()`.
 
-**`Window(width=480, height=200, title="tre v2")`**
+**`Window(width=480, height=200, title="tre v2")`** — raises `ValueError`
+for a zero width or height.
 
 ```python
 window = Window(width=640, height=400, title="Inbox")

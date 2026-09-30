@@ -27,7 +27,7 @@ listing the valid ones.
 | `input` | Committed text arrives for the focused text field | yes |
 | `focus`, `unfocus` | A node gains or loses keyboard focus | yes |
 | `change` | A text field's text was changed by the user | no |
-| `scroll` | A scroll view's offset changed, by any cause: wheel, keys, `scroll_into_view`, focus, or `set` (0.4.2) | no |
+| `scroll` | A scroll view's offset changed, by any cause: wheel, keys, `scroll_into_view`, focus, `set`, or an animation, once a frame (0.4.2) | no |
 | `dismiss` | An outside press or Escape asked a [layer](layers.md) to close | no |
 | `a11y_action` | An assistive technology requested `increment`, `decrement`, `expand`, `collapse`, `scroll_into_view`, or `set_value` (its activate and focus requests arrive as `click` and `focus`) | yes |
 
@@ -71,8 +71,9 @@ don't count as keyboard input for this. This is the heuristic browsers use for
 Raw input is delivered before what it caused, so a click delivers
 `pointer_down`, then `pointer_up`, then `click`.
 
-`Text` nodes and icons are never the target of pointer events: a press on a
-button's label lands on the button.
+`text` nodes are never the target of pointer events: a press on a button's
+label lands on the button. Set `hit_testable=False` on an icon (a `path`) for
+the same effect.
 
 ### Pointer capture
 
@@ -188,7 +189,7 @@ window.simulate("resize", width=800, height=600)
 | `close_requested`, `closed` | — |
 
 Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
-window-space `x`/`y` without a node. Any event also takes `shift`, `ctrl`,
-`alt`, and `meta`. A simulated key press edits text and moves focus exactly
+window-space `x`/`y` without a node. Pointer, wheel, click, and key events also
+take `shift`, `ctrl`, `alt`, and `meta`. A simulated key press edits text and moves focus exactly
 as a real one does — Ctrl+C/X/V/A included — and a focused terminal takes
 every key, as it does live. An unknown event or field raises `ValueError`.

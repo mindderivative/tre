@@ -161,7 +161,13 @@ The same pieces build the rest of a widget set:
 - **A slider** captures the pointer on `pointer_down` so a drag keeps
   tracking off the track, steps on `arrow_left`/`arrow_right` in `key_down`,
   and answers `increment`, `decrement`, and `set_value` in `a11y_action` —
-  `examples/slider.py` is one.
+  `examples/slider.py` is one. A `key_down` listener keeps every key for
+  itself: while the slider, or anything inside a node with such a listener,
+  is focused, the arrows, Page Up/Down, Home, and End no longer scroll the
+  scroll view around it, even keys the listener ignores. The switch above
+  takes Space and Enter as `click` instead, so those keys still scroll the
+  page around it. See
+  [Keyboard scrolling](nodes-and-layout.md#keyboard-scrolling).
 - **A button's ripple** is a round box inside a `clip_children` button,
   scaled up and faded out from the press point, destroying itself from its
   `on_complete` — `examples/ripple.py`.

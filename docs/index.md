@@ -9,7 +9,7 @@ it, such as Tesserae, turns the blocks into buttons, dialogs, and design
 systems. You write Python; the engine underneath uses:
 
 - [`vello_gpu`](https://github.com/linebender/vello) for GPU rendering
-- [`taffy`](https://github.com/DioxusLabs/taffy) for flexbox layout
+- [`taffy`](https://github.com/DioxusLabs/taffy) for flexbox and CSS Grid layout
 - [`parley`](https://github.com/linebender/parley) for text shaping
 - [`AccessKit`](https://github.com/AccessKit/accesskit) for accessibility
 - [`winit`](https://github.com/rust-windowing/winit) for windows and input
@@ -32,14 +32,16 @@ app.run()
 ## The building blocks
 
 - **[Nodes and layout](guide/nodes-and-layout.md)** — boxes, text, text
-  inputs, images, paths, canvases, scroll views, virtual lists, and
-  terminals, laid out with flexbox or placed absolutely.
+  inputs, images, paths, canvases, scroll views (scrolled by wheel, keys,
+  and focus, with a `scroll` event), virtual lists, and terminals, laid out
+  with flexbox or CSS Grid or placed absolutely.
 - **[Painting](guide/painting.md)** — fills, strokes, per-corner radii,
-  layered shadows, group opacity, transforms, and SVG paths.
+  layered shadows, group opacity, transforms, and SVG paths, redrawing
+  only what changed each frame.
 - **[Animation](guide/animation.md)** — any paint or transform property,
   eased on a cubic-bezier curve, retargetable mid-flight, with path morphing.
 - **[Events and input](guide/events-and-input.md)** — bubbling listeners,
-  pointer capture, keyboard focus, text editing, and the clipboard.
+  pointer capture, the mouse's back and forward buttons, keyboard focus, text editing, and the clipboard.
 - **[Text](guide/text.md)** — shaped text, measurement, custom fonts, text
   inputs, and a terminal emulator.
 - **[Accessibility](guide/accessibility.md)** — roles, names, states, and
@@ -70,6 +72,8 @@ complete switch.
 - **[Getting Started](getting-started.md)** — a first window, step by step.
 - **[Python API Reference](api/python/index.md)** — every class, method,
   property, and event.
+- **[Upgrading to 0.4.x](migrating-0.4.md)** — from 0.3.5: no renames, a
+  few behavior changes.
 - **[Migrating to 0.3.5](migrating-0.3.5.md)** — from 0.3.4: what moved to
   the framework and what was renamed.
 - **[Architecture](architecture.md)** — the crates and how a frame is made.
@@ -77,5 +81,7 @@ complete switch.
 `tre` is a second, from-scratch iteration of an earlier Vulkan engine,
 archived under
 [`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
-the lessons learned that shaped it. Its full build history is in
-[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md).
+the lessons learned that shaped it. Its build history is in
+[`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md) (0.4.x) and
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
+(through 0.3.5).

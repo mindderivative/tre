@@ -2,7 +2,7 @@
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust — the building blocks of a desktop UI.**
 
-Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made `tre` a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.0` line (partial redraw, on upstream `vello_gpu`) is tracked in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
+Status: living design reference, rewritten at M102 (0.3.5) to describe the engine as it is after the M93–M101 program made `tre` a minimal building-block engine. Section numbers are stable: code comments cite them (`§5`, `§11.7`, ...), so a section that no longer applies keeps its number and says where its subject went. The design as it stood before 0.3.5 — Material Design 3 theming and components (§7), the declarative YAML layer (§16), the app shell — is in this file's git history at `v0.3.4`, and every step of the 0.3 line's build is in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md); the `0.4.x` line (partial redraw on upstream `vello_gpu` in 0.4.0; the mouse's side buttons in 0.4.1; CSS Grid and scroll-view keys, reveal, and the `scroll` event in 0.4.2) is tracked in [`BUILD_TRACKER.md`](BUILD_TRACKER.md). Update this document as decisions change; don't let it drift from the code.
 
 ---
 
@@ -34,6 +34,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 | Node lifetime | Attached nodes live while attached; detached ones while a handle points into them; `destroy()` frees now (M96, issue #10) | A forgotten `destroy()` never leaks, and a removed screen can be reattached intact |
 | Layout dirty-scoping | Taffy's own incremental cache; no hand-rolled dirty flags for layout | Paint state shares no fields with `taffy::Style`, so paint-only changes can't dirty layout |
 | Redraw | A per-tree dirty flag; the loop sleeps in `ControlFlow::Wait` when nothing animates or changed (M29) | No idle CPU or GPU use |
+| Partial redraw | On by default: a kept per-window target, a compared (not instrumented) damage tracker, at most four rects or a full redraw; `window.set(partial_redraw=False)` opts out (0.4.0, §6) | Idle already cost nothing; a small change in a large window shouldn't cost a full repaint |
 | Frame budget | 16.6 ms (60 Hz) target, 8.3 ms stretch, enforced by `frame_budget.rs` | A stated-but-unmeasured budget becomes fiction |
 | Animation completion | Queue-drain: `tick()` pushes finished `CompletionHandle`s; `engine-py` drains them after the tick (§5) | `tick()` stays reentrancy-free |
 | `animate()` dispatch | One string-keyed method, not per-property methods (§8) | Keeps the FFI surface independent of how many properties exist |
@@ -48,7 +49,7 @@ Resolved architectural questions, in one place. Add a row when a question is set
 | Multiple windows | One `Tree` per OS window (§11.1) | No change to the node model; cross-window node moves are an accepted gap |
 | Docking | Fixed five zones; `tre` docks, drags, and reports; the framework draws handles and highlights (§11.4) | The mechanism is hard to get right; the look is design |
 | Virtualization | `virtual_list` kind that builds its own visible rows from `materialize(index)` (§11.7) | 100k real nodes would blow the frame budget |
-| Versioning | 0.3.x ended at `0.3.5`, with fixes as `0.3.5.x`; `0.4.0` is partial redraw, on upstream `vello_gpu` (issue #4) | The user's policy |
+| Versioning | 0.3.x ended at `0.3.5`, with fixes as `0.3.5.x`; the `0.4.x` line began with `0.4.0`, partial redraw on upstream `vello_gpu` (issue #4); `0.4.1` and `0.4.2` are feature releases on it | The user's policy |
 | Renderer source | `vello_gpu` from a pinned upstream Git commit, with `vello_common` and `glifo` from the same commit (0.4.0 M1) | Upstream renamed `vello_hybrid` to `vello_gpu` and added the no-clear and rect-clear render partial redraw needs; it isn't published yet, and a pin makes every bump deliberate |
 
 ---
@@ -70,12 +71,14 @@ Resolved architectural questions, in one place. Add a row when a question is set
 |---|---|---|
 | Windowing, input, IME | `winit` | Event loop (owns the main thread), windows, keyboard and pointer input |
 | GPU | `wgpu` | Device and surface management |
-| 2D rendering | `vello_gpu` at a pinned upstream commit (`wgpu` and `text` features); `vello_hybrid` before 0.4.0 | CPU preprocess, GPU raster of paths, images, and blurred shadows |
+| 2D rendering | `vello_gpu` at a pinned upstream commit (`wgpu`, `wgpu_default`, and `text` features); `vello_hybrid` before 0.4.0 | CPU preprocess, GPU raster of paths, images, and blurred shadows |
 | Geometry, color | `kurbo`, `peniko` | `BezPath`, `Affine`, `Color` — Vello's vocabulary |
 | Text | `parley` (with `glifo` for glyph drawing) | Shaping, line breaking, BiDi, font fallback |
-| Layout | `taffy` | Flexbox; text leaf sizes come from Parley |
+| Layout | `taffy` | Flexbox and CSS Grid (0.4.2); text leaf sizes come from Parley |
 | Accessibility | `accesskit`, `accesskit_winit` | The platform accessibility tree (UIA, NSAccessibility, AT-SPI) |
 | Clipboard | `arboard` (text only) | No GTK dependency on Linux |
+| OS appearance (Linux) | `zbus` (blocking API) | Reads and watches the XDG settings portal for light and dark |
+| Hashing | `foldhash` | Damage fingerprints: fast, fixed-seed |
 | Terminal | `portable-pty`, `vt100` | Spawn a shell on a pseudo-terminal; parse its VT/ANSI stream into a cell grid |
 | Python bindings | `pyo3` | The FFI |
 | Packaging | `maturin` | Builds the wheel |
@@ -187,11 +190,12 @@ Rust field names predate the 0.3.5 property names; `engine-py` maps `fill` → `
 flowchart TD
     EV[winit event or LoopHandle wake] --> IN[Input dispatch: hit test, focus, listeners]
     IN --> Q[Drain call_soon queue]
-    Q --> TICK[Central tick + completion drain]
+    Q --> TICK[Central tick + scroll events + completion drain]
     TICK --> LAYOUT[taffy layout; virtual lists build their visible rows]
-    LAYOUT --> PAINT[Paint walk: build the vello Scene]
+    LAYOUT --> DAMAGE[WindowRenderer.prepare: images, cache eviction, damage]
+    DAMAGE --> PAINT[Paint walk: build the vello Scene, whole or inside the damage rects]
     PAINT --> A11Y[AccessKit TreeUpdate from the same tree]
-    PAINT --> RENDER[vello_gpu render into the persistent target]
+    PAINT --> RENDER[vello_gpu render into the persistent target; nothing when no damage]
     RENDER --> PRESENT[copy to the swapchain image + present]
 ```
 
@@ -261,10 +265,10 @@ plus the animation-completion registry and the window's own listeners. `Window` 
 
 - **What a node says is what the framework sets**: `role`, `label`, `value` (text or number) with `value_min`/`value_max`/`value_step`, `checked`, `selected`, `expanded`, `disabled`, `level`, `live`, `a11y_hidden`. A text input's value is its text; text inputs and terminals are `textbox` from creation. `tre` infers nothing else — it can't know what a box means.
 - **Actions follow from role and state**: focusable nodes offer Focus; button-like roles offer Click; a slider or value range offers Increment/Decrement/SetValue; `expanded` offers Expand/Collapse.
-- **Requests route through input dispatch**, not a side channel: Click arrives as `click`, Focus as a focus move (with `focus_visible=True`), and the rest as the `a11y_action` event.
-- **Keyboard focus** is `Tree`'s: `focusable` and `tab_index` define the order, Tab and Shift+Tab move through it (scoped to the layer holding focus, §11.3), and Enter or Space on a focused node that isn't a text input or terminal fire `click`. Component-specific keys (arrows in a slider) are the framework's, through `key_down`.
+- **Requests route through input dispatch**, not a side channel: Click arrives as `click`, Focus as a focus move (with `focus_visible=True`), and the rest as the `a11y_action` event; `scroll_into_view` also scrolls the node into view after its listeners run (0.4.2, §11.7a).
+- **Keyboard focus** is `Tree`'s: `focusable` and `tab_index` define the order, Tab and Shift+Tab move through it (scoped to the layer holding focus, §11.3), and Enter or Space on a focused node that isn't a text input or terminal fire `click`. Component-specific keys (arrows in a slider) are the framework's, through `key_down`. Otherwise the arrows, Page Up/Down, and Home/End scroll the nearest scroll view around the focused node, and a newly focused node is scrolled into view (0.4.2, §11.7a).
 
-`accesskit` has made breaking changes between versions; pin it exactly and check the pinned source when upgrading.
+`accesskit` has made breaking changes between versions; pin it to one minor version (`Cargo.lock` holds the exact one) and check the pinned source when upgrading.
 
 ---
 
@@ -331,16 +335,20 @@ No special mechanism: canvases (or path nodes) for drawing, transforms for pan a
 ```
 tre/
 ├── Cargo.toml                 # workspace
+├── pyproject.toml, mkdocs.yml, rust-toolchain.toml
+├── .github/workflows/         # ci, docs, wheels (release and PyPI)
 ├── crates/
 │   ├── engine-core/           # Tree, Animated<T>, layout, dispatch, focus, layers, docking model, AccessKit builder
-│   ├── engine-render/         # scene building, text shaping, paths, shadows, font registry; pixel tests in tests/
+│   ├── engine-render/         # WindowRenderer (persistent target, damage tracker), paint walk, text shaping, paths, shadows, image and geometry caches, font registry; pixel tests in tests/
 │   ├── engine-platform/       # winit loop, input translation, accesskit_winit, EventLoopWaker, appearance
-│   └── engine-py/             # PyO3 classes, per-frame loop, listeners, terminal sessions
+│   └── engine-py/             # PyO3 classes, per-frame loop, listeners, property and grid parsing, terminal sessions
 ├── python/tre/                # __init__.py, _core.pyi (type stubs), _removed.py, py.typed
 ├── tests/                     # pytest suite (headless, through simulate and advance)
 ├── examples/                  # one runnable script per building block, plus the showcase
 ├── docs/                      # MkDocs site
 ├── tools/                     # build-tracker artifact generator
+├── planning/archive/          # earlier per-phase PLAN/LOG files
+├── BUILD_TRACKER*.md, PLAN.md, LOG.md
 └── archive/                   # the first TRE engine and its lessons learned
 ```
 
@@ -350,7 +358,7 @@ tre/
 
 | Tool | Notes |
 |---|---|
-| Rust (`rustup`, stable) | Check the Linebender crates' MSRV when bumping them |
+| Rust 1.90+ (`rustup`) | The MSRV is `rust-version` in `Cargo.toml`, checked by CI's `msrv` job; `rust-toolchain.toml` pins the development toolchain. Raise the MSRV with any dependency bump that raises the floor |
 | Python 3.9+ | With `maturin` |
 | Linux | `libxkbcommon`, Wayland or X11 headers, a Vulkan driver |
 | macOS | Xcode command-line tools |
@@ -377,7 +385,7 @@ python examples/switch.py
 
 ## 14. Build Order
 
-Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md) (the 0.3 line) and [`BUILD_TRACKER.md`](BUILD_TRACKER.md) (`0.4.0`).
+Historical. The original fifteen-step de-risking order (a static rect through `vello_hybrid`, then animation, layout, text, Python, accessibility, shadows, ...) was followed through M1–M27; see [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Later work is planned milestone by milestone in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md) (the 0.3 line) and [`BUILD_TRACKER.md`](BUILD_TRACKER.md) (the `0.4.x` line).
 
 ---
 
@@ -386,8 +394,8 @@ Historical. The original fifteen-step de-risking order (a static rect through `v
 | Risk | Detail | Mitigation |
 |---|---|---|
 | Vello churn | `vello_gpu` is pre-1.0 and unreleased; upstream renamed it from `vello_hybrid` and reworks it often | Pin one upstream commit; confine Vello calls to `engine-render`; pixel tests for every capability |
-| Partial redraw | Every frame still repaints fully | Idle loop sleeps (§6); `vello_gpu` has the no-clear and rect-clear render it needs, which the `0.4.0` line adopts (`BUILD_TRACKER.md`, M3–M5) |
-| `accesskit` churn | Breaking changes between minor versions | Pin exactly; verify against the pinned source |
+| Partial redraw correctness | A missed paint input leaves stale pixels | The tracker compares fingerprints rather than hooking mutations; state structs are destructured without `..`, so a new field can't be missed; GPU pixel tests check partial frames against full ones |
+| `accesskit` churn | Breaking changes between minor versions | Pin one minor version; verify against the pinned source |
 | Wheel packaging | A repaired wheel vendors system libraries | Test the built wheel end to end (§13) |
 | Terminal portability | `portable-pty`'s Windows backend isn't exercised | The terminal kind is POSIX-verified; Windows is untested |
 | Framework drift | Tesserae depends on `tre`'s API and behavior | `_removed.py` and the migration page for every breaking release; Tesserae's CI pins `tre` |

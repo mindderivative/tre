@@ -91,7 +91,9 @@ the value arrives; an animation replaced by another, or stopped, never calls it.
 
 Animatable: `fill`, `stroke_color`, `stroke_width`, `opacity`, `corner_radius`
 (a number or a 4-tuple), `shadows` (lists of different lengths fade the extra
-shadows in or out), and a path's `data`, `trim_start`, and `trim_end`. Colors
+shadows in or out), the transform parts `translate_x`, `translate_y`, `scale`,
+and `rotation_deg`, a scroll view's `scroll_offset`, and a path's `data`,
+`trim_start`, and `trim_end`. Colors
 interpolate component-wise in sRGB.
 
 **`get(name)`** returns the value on screen, mid-animation included;
