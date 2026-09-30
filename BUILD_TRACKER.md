@@ -2,7 +2,7 @@
 
 Updated after every milestone/phase/stage/step completion, kept in sync with `ARCHITECTURE.md`. Status legend: ✅ done · 🚧 in progress · ⬜ not started.
 
-**Artifact:** generate with `python3 tools/generate_tracker_artifact.py --project "tre 0.5" --out tools/build-tracker-0.5.0.generated.html` (after committing the tracker, so the stamp names the commit) and publish to the 0.5.0 tracker page. The [0.4 line's page](https://claude.ai/artifact/PTt1sBpABbM2XxTrL7xdFb) stays the record of `v0.4.0`–`v0.4.4`.
+**Artifact:** generate with `python3 tools/generate_tracker_artifact.py --project "tre 0.5" --out tools/build-tracker-0.5.0.generated.html` (after committing the tracker, so the stamp names the commit) and publish to [the 0.5.0 tracker page](https://claude.ai/artifact/2mB3wxNEdhEW5mi699USrB). The [0.4 line's page](https://claude.ai/artifact/PTt1sBpABbM2XxTrL7xdFb) stays the record of `v0.4.0`–`v0.4.4`.
 
 **This tracker is the `0.5.0` line** -- custom windowing ([issue #28](https://github.com/mindderivative/tre/issues/28)): undecorated windows whose title bar and borders the framework draws, with `tre` doing the dragging, resizing, and window controls -- and its milestones restart at 1. Earlier history is archived: `v0.4.0`–`v0.4.4` (M1–M23) in [`BUILD_TRACKER_ARCHIVE_0.4.md`](BUILD_TRACKER_ARCHIVE_0.4.md), `v0.1.0`–`v0.3.5.1` in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md), and M1–M49 of that line in [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Fixes to the released `0.4.4` ship as `0.4.x` patches from `main`, recorded in the 0.4 archive; fold any into it when 0.5.0 merges.
 
