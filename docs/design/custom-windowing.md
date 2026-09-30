@@ -11,8 +11,10 @@
     drag region, resize border, `pointer_cancel`, double-click to maximize,
     and window menu ([#38](https://github.com/mindderivative/tre/issues/38));
     M4's macOS overlay title bar, `titlebar_inset`, `native_controls`, and
-    double-click setting ([#39](https://github.com/mindderivative/tre/issues/39)).
-    M5–M6 finish it.
+    double-click setting ([#39](https://github.com/mindderivative/tre/issues/39));
+    M5's example, [guide](../guide/custom-title-bars.md), and upgrade notes
+    ([#40](https://github.com/mindderivative/tre/issues/40)), with the
+    manual checks still to do. M6 releases it.
 
 ## The goal
 
