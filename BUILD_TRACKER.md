@@ -35,12 +35,12 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M19 — Stub Drift Checked in CI | `██████████` 100% | ✅ Complete (2026-09-30) — the stub matches what PyO3 builds, and CI runs `mypy --strict` and `stubtest` |
 | M20 — Release `0.4.3` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.3` released on GitHub and PyPI, closing issue #27; Tesserae moved onto it with nothing broken |
 | M21 — Scroll Chaining | `██████████` 100% | ✅ Complete (2026-09-30) — a wheel or key passes a view that can't move its way to the next one out, as in a browser |
-| M22 — A Windows CI Cache That Saves | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M22 — A Windows CI Cache That Saves | `█████░░░░░` 50% | 🚧 In Progress — measured: CI's cache grows with each `Cargo.lock` change; a dependencies-only cache is smallest to save and fastest to use |
 | M23 — Release `0.4.4` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M22 Step 1 -- measure the Windows CI build with no cache, the registry only, and everything cached.
+**Up next:** M22 Step 2 -- cache the dependencies only, keyed exactly, in all three CI jobs.
 
 **Known gaps:**
 - None open on this line.
@@ -293,10 +293,10 @@ User: "Start phase 3".
 
 ## Milestone 22 — A Windows CI Cache That Saves
 
-**Status: ⬜ Proposed.** User (2026-09-30): "scope 1 and 2 as 0.4.4". On 0.4.3's release PR the Windows job's cache save ran exactly its 5-minute limit (PR #26's timeout, working as meant: the job passed instead of hanging) and likely saved nothing. Measured while scoping (2026-09-30): the Windows cache is 3.3 GB against Linux's 2.5 GB (saved in 27 s) and macOS's 1.2 GB; one Windows save did finish, on `main` at 05:46, and restoring it takes about 2 minutes, after which the build takes 1 -- so a cached Windows build is worth keeping, and the save is only needed after a `Cargo.lock` change. The repository's caches total about 8.8 GB against GitHub's 10 GB limit, past which old ones are evicted. Windows's key differs from Linux's and macOS's for the same `Cargo.lock`, likely its checkout's line endings -- harmless, since keys are per OS. Plan: measure, then choose.
+**Status: 🚧 In Progress.** User: "yes, push the measure branch and start M22". Step 1 done (2026-09-30). Scoped (2026-09-30): "scope 1 and 2 as 0.4.4". On 0.4.3's release PR the Windows job's cache save ran exactly its 5-minute limit (PR #26's timeout, working as meant: the job passed instead of hanging) and likely saved nothing. Measured while scoping (2026-09-30): the Windows cache is 3.3 GB against Linux's 2.5 GB (saved in 27 s) and macOS's 1.2 GB; one Windows save did finish, on `main` at 05:46, and restoring it takes about 2 minutes, after which the build takes 1 -- so a cached Windows build is worth keeping, and the save is only needed after a `Cargo.lock` change. The repository's caches total about 8.8 GB against GitHub's 10 GB limit, past which old ones are evicted. Windows's key differs from Linux's and macOS's for the same `Cargo.lock`, likely its checkout's line endings -- harmless, since keys are per OS. Plan: measure, then choose.
 
-### Phase 1 — Measure and Fix ⬜
-- Step 1: measure a Windows build with no cache, with only the registry cached, and with everything cached, and a full cache's upload time — ⬜
+### Phase 1 — Measure and Fix 🚧
+- Step 1: measure a Windows build with no cache, with only the registry cached, and with everything cached, and a full cache's upload time — ✅ (2026-09-30: a temporary branch `ci-cache-measure` ran one workflow on `windows-latest` that built cold, sized, and saved three cache shapes, then restored each in a fresh job and built warm; a cold build took about 3m35s; the registry alone, 123 MB, saved in 8 s and restored in 22 s but left a 3m02s build; the registry plus the dependencies' build output -- the workspace's own crates and incremental state cleaned out, as `Swatinem/rust-cache` does -- 452 MB, saved in 12 s, restored in 27 s, and built in 47 s, about 1m14s in all; everything, 1.18 GB, saved in 31 s, restored in 59 s, and built in 57 s; the finding that explains the timeout: a fresh full cache is 1.18 GB, but CI's is 3.3 GB (Linux's 2.5 GB), because `restore-keys` loads the previous `Cargo.lock`'s whole build output into a new key and the next save uploads it plus the new build, so the cache grows with every lock change until a save runs out of time; the branch and its three caches were deleted after)
 - Step 2: apply the cheapest shape that saves inside a limit -- cache less on Windows (the registry, or the dependencies' build output without the workspace's own), or a longer limit -- and keep the total under GitHub's 10 GB — ⬜
 
 ---
