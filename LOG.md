@@ -24,3 +24,7 @@ ease to the real end); `create` sets `reported` to its offset. 5 pytest
 cases; property reference, guide, migration section, ARCHITECTURE §11.7a.
 cargo 377, pytest 499 + 1 skipped. PR #26 merged into `main` and `main`
 merged into 0.4.3. Next: M17 (release), held for more fixes.
+
+**Scoped (2026-09-30).** User: "Scope 1, 2, and 3 for 0.4.3". M17
+Shift+wheel horizontal, M18 core scroll tests, M19 stub drift in CI; the
+release is now M20, after them if nothing else joins. Next: M17.

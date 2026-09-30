@@ -30,11 +30,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M14 — Keyboard Scrolling Leaves Shortcuts Alone | `██████████` 100% | ✅ Complete (2026-09-30) — keys with Ctrl, Alt, or Meta held are shortcuts and no longer scroll; Shift still does |
 | M15 — `scroll_offset` Clamped When Set | `██████████` 100% | ✅ Complete (2026-09-30) — `set` and `animate` clamp `scroll_offset` to the view's range at once, with one `scroll` event; a created offset is the event's baseline |
 | M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
-| M17 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — on hold until more fixes join 0.4.3 |
+| M17 — Shift+Wheel Scrolls Horizontal Views | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M18 — Unit Tests for the Scroll Core | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M19 — Stub Drift Checked in CI | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M20 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — after M17–M19, if nothing else joins 0.4.3 |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** nothing scoped -- 0.4.3's release (M17) is held until more fixes join it.
+**Up next:** M17 Step 1 -- Shift+wheel scrolls a horizontal scroll view.
 
 **Known gaps:**
 - None open on this line.
@@ -235,7 +238,36 @@ User: "Start phase 3".
 
 ---
 
-## Milestone 17 — Release `0.4.3`
+## Milestone 17 — Shift+Wheel Scrolls Horizontal Views
+
+**Status: ⬜ Proposed.** User (2026-09-30): "Scope 1, 2, and 3 for 0.4.3. Then we will look at releasing if there is nothing else after those." Found while recommending (checked 2026-09-30): a horizontal scroll view scrolls only on a wheel's horizontal part, which most mice don't have -- a plain wheel and Shift+wheel both left it at 0 -- where browsers, GTK, and Qt turn Shift+wheel horizontal. Core's `InputEvent::Scroll` carries no modifiers; `engine-py` tracks them (M14's rule lives there too). Plan: with Shift held, a wheel with no horizontal part is delivered to core's dispatch as horizontal, so the nearest horizontal scroll view scrolls; a wheel that already has a horizontal part (macOS turns Shift+wheel horizontal itself) is left alone; a terminal's scrollback still reads the vertical part; `wheel` listeners get the delta as delivered.
+
+### Phase 1 — Shift+Wheel ⬜
+- Step 1: the mapping in `engine-py`'s input path; pytest for Shift+wheel on a horizontal view, a vertical view under Shift, an already-horizontal wheel, and a terminal — ⬜
+- Step 2: the guide's Scrolling section, the events reference, and the 0.4.3 migration section — ⬜
+
+---
+
+## Milestone 18 — Unit Tests for the Scroll Core
+
+**Status: ⬜ Proposed.** User (2026-09-30): "Scope 1, 2, and 3". The scroll API added in M12 and M15 -- `scroll_view_for_key`, `scroll_by_key`, `scroll_into_view`, `take_scroll_changes`, `max_scroll` -- is tested only through Python; `cargo test` has stayed at 377 since. Plan: `engine-core` unit tests in `tree/tests.rs`, beside the existing scroll view tests, with no Python or GPU.
+
+### Phase 1 — Tests ⬜
+- Step 1: `scroll_view_for_key` (each key's axis, nearest first, Home/End either axis, none found), `scroll_by_key` (40 px, a viewport, the ends, clamping, the dirty flag), `scroll_into_view` (least movement, a box longer than its view, nested views, nothing when visible), `take_scroll_changes` (reported once, then quiet), and `max_scroll` (content that fits, no content, horizontal) — ⬜
+
+---
+
+## Milestone 19 — Stub Drift Checked in CI
+
+**Status: ⬜ Proposed.** User (2026-09-30): "Scope 1, 2, and 3". The docs audit (M13) found the stub's `Node.get(property=)` against the runtime's `name` -- `mypy` accepted a call that raised. Found while scoping: CI runs neither `mypy --strict` nor `stubtest`, though the README and the contributing guide list `mypy --strict` as a check. `stubtest` reports 21 differences today, all structural. Plan: make the stub match what PyO3 builds, then check both in CI.
+
+### Phase 1 — Stub and CI ⬜
+- Step 1: the stub declares `Window`'s constructor as `__new__`, marks the PyO3 classes `@final`, makes `Node.__eq__`'s argument positional-only, and declares `__all__`; an allowlist names only what exists in the stub alone (the `Color` alias); `stubtest` clean locally — ⬜
+- Step 2: CI's Linux job installs `mypy` and runs `mypy --strict python/tre` and `stubtest` against the built extension — ⬜
+
+---
+
+## Milestone 20 — Release `0.4.3`
 
 **Status: ⬜ Proposed.** On hold -- user (2026-09-30): "we will hold off on the release until we have some other fixes".
 
