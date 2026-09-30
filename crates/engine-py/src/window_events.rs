@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 20] = [
+const SIMULATED_EVENTS: [&str; 22] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -61,6 +61,8 @@ const SIMULATED_EVENTS: [&str; 20] = [
     "close_requested",
     "closed",
     "change",
+    "maximized",
+    "active",
 ];
 
 /// `simulate`'s keyword fields, consumed one by one so anything left over
@@ -572,6 +574,39 @@ impl PyWindow {
             // changed -- the setting, and a surface that allows it; `None`
             // until `App.run()` opens the window.
             // 0.5.0 M2: the open window's own answer, else the setting.
+            // 0.5.0 M2: the open window's own answer, else the last known
+            // state -- or, before `App.run()`, what it opens as.
+            "maximized" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_ref()
+                    .map_or(self.handles.maximized.get(), |w| w.is_maximized())
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()
+                    .unbind()
+            }
+            "minimized" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_ref()
+                    .and_then(|w| w.is_minimized())
+                    .unwrap_or(self.handles.minimized.get())
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()
+                    .unbind()
+            }
+            "active" => {
+                let window = self.handles.os_window.borrow();
+                window
+                    .as_ref()
+                    .map_or(self.handles.active.get(), |w| w.has_focus())
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()
+                    .unbind()
+            }
             "decorations" => self
                 .handles
                 .os_window
@@ -620,7 +655,7 @@ impl PyWindow {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
                      scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
-                     decorations"
+                     decorations, maximized, minimized, active"
                 )));
             }
         })
@@ -936,6 +971,26 @@ impl PyWindow {
                     py,
                     WindowEventType::ColorScheme,
                     |e| e.dark = Some(dark),
+                );
+            }
+            // 0.5.0 M2: what the live window reports when it's maximized or
+            // restored, or gains or loses focus -- the state changes, and
+            // the event fires if it changed.
+            "maximized" | "active" => {
+                let value = f.bool(event)?;
+                let value = f.required(event, value)?;
+                f.done()?;
+                let (cell, event_type) = if event == "maximized" {
+                    (&self.handles.maximized, WindowEventType::Maximized)
+                } else {
+                    (&self.handles.active, WindowEventType::Active)
+                };
+                listeners::update_window_state(
+                    &self.handles.window_listeners,
+                    py,
+                    cell,
+                    value,
+                    event_type,
                 );
             }
             "scale_factor" => {

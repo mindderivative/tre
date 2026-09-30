@@ -102,3 +102,72 @@ def test_close_fires_close_requested_first_and_can_be_cancelled():
         "the first close() is cancelled and the second closes the window"
     )
 
+
+
+# --- Step 3: state and its events ------------------------------------------------
+
+
+def test_a_window_starts_unmaximized_unminimized_and_inactive():
+    window = Window()
+    assert (window.get("maximized"), window.get("minimized"), window.get("active")) == (
+        False, False, False,
+    )
+
+
+def test_before_the_window_opens_controls_set_how_it_opens():
+    window = Window()
+    window.maximize()
+    window.minimize()
+    assert (window.get("maximized"), window.get("minimized")) == (True, True)
+    window.restore()
+    assert (window.get("maximized"), window.get("minimized")) == (False, False)
+
+
+def test_simulated_state_fires_its_event_only_when_it_changes():
+    window = Window()
+    heard = []
+    window.on("maximized", lambda e: heard.append(("maximized", e.maximized, e.type)))
+    window.on("active", lambda e: heard.append(("active", e.active, e.type)))
+    window.simulate("maximized", maximized=True)
+    window.simulate("maximized", maximized=True)  # no change: no event
+    window.simulate("active", active=True)
+    window.simulate("maximized", maximized=False)
+    window.simulate("active", active=False)
+    assert heard == [
+        ("maximized", True, "maximized"),
+        ("active", True, "active"),
+        ("maximized", False, "maximized"),
+        ("active", False, "active"),
+    ]
+    assert (window.get("maximized"), window.get("active")) == (False, False)
+
+
+def test_simulating_state_needs_its_value():
+    with pytest.raises(ValueError, match="needs `maximized`"):
+        Window().simulate("maximized")
+    with pytest.raises(ValueError, match="`active` must be a bool"):
+        Window().simulate("active", active="yes")
+
+
+def test_a_live_maximize_and_restore_fire_maximized():
+    log = run_live("""
+        from tre import App, Window
+        w = Window(width=300, height=200, decorations=False)
+        box = w.create("box", width=20, height=20)
+        w.root.add_child(box)
+        log = []
+        w.on("maximized", lambda e: log.append(("event", e.maximized)))
+        def restore():
+            log.append(("get", w.get("maximized")))
+            w.restore()
+            box.animate("opacity", 0.9, 400, on_complete=lambda: w.close())
+        def maximize():
+            w.maximize()
+            box.animate("opacity", 0.2, 400, on_complete=restore)
+        box.animate("opacity", 0.5, 100, on_complete=maximize)
+        app = App()
+        app.add_window(w)
+        app.run(max_frames=10_000_000)
+        print(log if log else "NO_DISPLAY")
+    """)
+    assert log == "[('event', True), ('get', True), ('event', False)]"

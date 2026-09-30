@@ -184,6 +184,10 @@ pub(crate) enum WindowEventType {
     ScaleFactor,
     CloseRequested,
     Closed,
+    /// 0.5.0 M2 (issue #28): the window was maximized or restored.
+    Maximized,
+    /// 0.5.0 M2: the window gained or lost the OS's focus.
+    Active,
     /// M99: while a panel drag is in progress, the zone under the pointer
     /// changed.
     DockTarget,
@@ -192,12 +196,14 @@ pub(crate) enum WindowEventType {
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 7] = [
+    const ALL: [WindowEventType; 9] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
         Self::CloseRequested,
         Self::Closed,
+        Self::Maximized,
+        Self::Active,
         Self::DockTarget,
         Self::DockDrop,
     ];
@@ -209,6 +215,8 @@ impl WindowEventType {
             Self::ScaleFactor => "scale_factor",
             Self::CloseRequested => "close_requested",
             Self::Closed => "closed",
+            Self::Maximized => "maximized",
+            Self::Active => "active",
             Self::DockTarget => "dock_target",
             Self::DockDrop => "dock_drop",
         }
@@ -593,6 +601,26 @@ pub(crate) fn deliver(
             break;
         }
     }
+}
+
+/// 0.5.0 M2 (issue #28): records a window state's new `value` in `cell`
+/// and, when it changed, fires `event_type` -- `maximized` or `active` --
+/// carrying it. The live window and `simulate` both report through here, so
+/// both fire only on a change.
+pub(crate) fn update_window_state(
+    listeners: &WindowListenerMap,
+    py: Python<'_>,
+    cell: &std::cell::Cell<bool>,
+    value: bool,
+    event_type: WindowEventType,
+) {
+    if cell.replace(value) == value {
+        return;
+    }
+    deliver_window(listeners, py, event_type, |e| match event_type {
+        WindowEventType::Maximized => e.maximized = Some(value),
+        _ => e.active = Some(value),
+    });
 }
 
 /// Runs a window's listener for `event_type`, if it has one. `fill` sets

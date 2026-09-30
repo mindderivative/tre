@@ -1003,6 +1003,11 @@ where
                 );
                 win.request_redraw();
             }
+            // 0.5.0 M2 (issue #28): the window gained or lost focus.
+            WindowEvent::Focused(focused) => {
+                on_input(window_id, InputEvent::Focused { focused });
+                win.request_redraw();
+            }
             // M32 Phase 2 (§4, §5): the real gap this phase closes --
             // "nothing resizes any node's box when its window resizes."
             // `winit`'s own `PhysicalSize<u32>` fields are handed

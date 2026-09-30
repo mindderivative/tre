@@ -117,6 +117,9 @@ pub(crate) struct WindowHandles {
     /// `App.run()` opens it, what it opens as.
     pub(crate) maximized: Rc<Cell<bool>>,
     pub(crate) minimized: Rc<Cell<bool>>,
+    /// 0.5.0 M2: whether the window has the OS's focus, as last reported
+    /// (`WindowEvent::Focused`) -- `false` until it's first focused.
+    pub(crate) active: Rc<Cell<bool>>,
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
@@ -186,6 +189,7 @@ impl PyWindow {
                 decorations: Rc::new(Cell::new(decorations)),
                 maximized: Rc::new(Cell::new(false)),
                 minimized: Rc::new(Cell::new(false)),
+                active: Rc::new(Cell::new(false)),
                 waker: Rc::new(RefCell::new(None)),
             },
         })))

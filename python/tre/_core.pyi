@@ -99,6 +99,10 @@ class Event:
     height: float | None
     dark: bool | None
     """`color_scheme`: whether the OS switched to dark mode."""
+    maximized: bool | None
+    """(0.5.0) `maximized`: whether the window is now maximized."""
+    active: bool | None
+    """(0.5.0) `active`: whether the window now has the OS's focus."""
     scale_factor: float | None
     """`scale_factor`: the window's new scale factor."""
     related_target: Node | None
@@ -294,8 +298,10 @@ class Window:
     def on(self, event: str, handler: Callable[..., object]) -> None:
         """M94: registers `handler` for a window event -- `resize`,
         `color_scheme`, `scale_factor`, `close_requested` (cancellable
-        with `event.cancel()`), `closed`, or (M99) the docking drag's
-        `dock_target`/`dock_drop` -- replacing any earlier one.
+        with `event.cancel()`), `closed`, (M99) the docking drag's
+        `dock_target`/`dock_drop`, or (0.5.0) `maximized` and `active`,
+        fired when the window is maximized or restored and when it gains
+        or loses focus -- replacing any earlier one.
         Raises `ValueError` for an unknown event.
         """
         ...
@@ -348,7 +354,10 @@ class Window:
     @overload
     def get(self, name: Literal["dark"]) -> bool | None: ...
     @overload
-    def get(self, name: Literal["show_damage", "decorations"]) -> bool: ...
+    def get(
+        self,
+        name: Literal["show_damage", "decorations", "maximized", "minimized", "active"],
+    ) -> bool: ...
     @overload
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, `scale_factor` (`1.0`
@@ -360,7 +369,9 @@ class Window:
         `partial_redraw_active`: whether the open window really redraws
         only what changed -- the setting, and a surface that allows it --
         `None` until `App.run()` opens the window -- (0.4.1)
-        `show_damage`, or (0.5.0) `decorations`."""
+        `show_damage`, or (0.5.0) `decorations`, `maximized`, `minimized`,
+        and `active` (whether the window has focus) -- the open window's
+        own answer, or before `App.run()` what it opens as."""
         ...
     def show_layer(
         self,
@@ -423,7 +434,9 @@ class Window:
         `scroll_into_view`, `set_value`), and `value`. `shift`/`ctrl`/`alt`/`meta` hold
         modifiers. Window events: `resize` (`width`, `height`),
         `color_scheme` (`dark`), `scale_factor` (`scale_factor`),
-        `close_requested`, `closed`. Unknown events or fields raise
+        `close_requested`, `closed`, and (0.5.0) `maximized` (`maximized`)
+        and `active` (`active`), which set the window's state and fire only
+        when it changes, as the live window does. Unknown events or fields raise
         `ValueError`.
         """
         ...

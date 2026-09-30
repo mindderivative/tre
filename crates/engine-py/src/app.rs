@@ -1018,6 +1018,16 @@ impl App {
                             |e| e.dark = Some(dark),
                         );
                     }
+                    // 0.5.0 M2 (issue #28): the window gained or lost focus.
+                    InputEvent::Focused { focused } => {
+                        listeners::update_window_state(
+                            &runtime.handles.window_listeners,
+                            py,
+                            &runtime.handles.active,
+                            focused,
+                            WindowEventType::Active,
+                        );
+                    }
                     // M32 Phase 2 (§4, §5): the real, winit-driven
                     // window resize -- `Tree::dispatch` (called just
                     // above, unconditionally, for every real
@@ -1070,6 +1080,22 @@ impl App {
                                 e.height = Some(f64::from(height));
                             },
                         );
+                        // 0.5.0 M2: `winit` sends no maximize event -- a
+                        // maximize or restore arrives as a resize, so the
+                        // state is checked after each one.
+                        let window = runtime.handles.os_window.borrow().clone();
+                        if let Some(window) = window {
+                            listeners::update_window_state(
+                                &runtime.handles.window_listeners,
+                                py,
+                                &runtime.handles.maximized,
+                                window.is_maximized(),
+                                WindowEventType::Maximized,
+                            );
+                            if let Some(minimized) = window.is_minimized() {
+                                runtime.handles.minimized.set(minimized);
+                            }
+                        }
                     }
                     InputEvent::ScaleFactorChanged { scale_factor } => {
                         listeners::deliver_window(
