@@ -34,10 +34,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M18 — Unit Tests for the Scroll Core | `██████████` 100% | ✅ Complete (2026-09-30) — 9 `engine-core` tests cover the scroll API and M17's wheel rule without Python |
 | M19 — Stub Drift Checked in CI | `██████████` 100% | ✅ Complete (2026-09-30) — the stub matches what PyO3 builds, and CI runs `mypy --strict` and `stubtest` |
 | M20 — Release `0.4.3` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.3` released on GitHub and PyPI, closing issue #27; Tesserae moved onto it with nothing broken |
+| M21 — Scroll Chaining | `██████████` 100% | ✅ Complete (2026-09-30) — a wheel or key passes a view that can't move its way to the next one out, as in a browser |
+| M22 — A Windows CI Cache That Saves | `██████████` 100% | ✅ Complete (2026-09-30) — CI caches the dependencies only, keyed exactly: about 450 MB on Windows, saved in seconds, and no longer growing |
+| M23 — Release `0.4.4` | `░░░░░░░░░░` 0% | ⬜ Proposed |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** nothing scoped -- the 0.4.3 line is complete; open: issue #28 (custom windowing, for 0.5.0), the Windows CI cache timing out, and Tesserae's scroll-chaining suggestion, each waiting for the user.
+**Up next:** M23 -- release `0.4.4`; its PR is the first CI run of M22's trimmed cache.
 
 **Known gaps:**
 - None open on this line.
@@ -274,6 +277,46 @@ User: "Start phase 3".
 ### Phase 1 — Release ✅
 - Step 1: PR to `main`, CI green, merge, tag `v0.4.3`, release, PyPI — ✅ (2026-09-30: `main` was already in `0.4.3` (PR #26 merged earlier), so no merge into it; PR #29, CI green on Linux, macOS, Windows, and `msrv` -- `mypy --strict` and `stubtest` passing on their first CI run, and the cargo cache saved in every job for the first time since PR #26, though Windows's save ran exactly its 5-minute limit, so it likely timed out and saved nothing; merged as `2a5e7ef`, its tree identical to the tested branch; annotated tag `v0.4.3` ("Tesserae Engine 0.4.3"); the wheels run passed every job and the `pypi` deployment was approved; `tesserae-engine==0.4.3` installed from PyPI in a fresh venv reports 0.4.3 -- a bare `grid_auto_rows=96`, Shift+wheel scrolling a horizontal view 60, and 5000 clamped to 800; issue #27 wasn't linked by the PR's "Closes #27" (GitHub listed no closing issues), so it was closed by hand with a comment naming the fix)
 - Step 2: Tesserae moves to `0.4.3` — ✅ (2026-09-30: reported by its session, its M79: the release's 24 assets and PyPI's 22 wheels plus sdist checked, #27 closed; its floor `>=0.4.3` and its CI's and release workflow's checkout at `v0.4.3` (committed locally there, `40e2ab1`); 2624 passed unchanged, then 2630 with new tests -- a two-way-bound `scroll_offset` set past the end reading back as the end with one `scroll` writing it back, and Page Down with Ctrl, Alt, or Meta not scrolling but with Shift scrolling; all five examples clean; it dropped its own bare-number conversion for track lists (#27), its grid tests unchanged; Shift+wheel's `delta_x` touched nothing, its scroll view being vertical only; no tre bugs; its observation, not a bug: a vertical scroll view inside another keeps a vertical wheel even when it can't move -- its content fits, or it's at its end -- where browsers chain the wheel to the view outside; it offered to file that as a feature, and pinned today's behaviour in a test)
+
+---
+
+## Milestone 21 — Scroll Chaining
+
+**Status: ✅ Complete (2026-09-30).** User: "yes, keys should chain too, start M21". Scoped (2026-09-30): "scope 1 and 2 as 0.4.4" -- Tesserae's 0.4.3 observation: a scroll view keeps a wheel along its own axis even when it can't move -- its content fits, or it's already at that end -- so a vertical view inside a vertical page stops the wheel there and the page doesn't scroll. Browsers chain: a wheel a box can't use goes on to the box outside it. M17 made a view pass a wheel with no part along its axis; this makes it pass one it can't move by, either. Plan: in core's wheel walk, a scroll view or virtual list passes the wheel on when it can't move in the wheel's direction -- nothing to scroll, or at that end; a view that can move at all takes the whole wheel, clamped, as now (no splitting one wheel across two views). Keys (Step 2) follow the same rule -- the user agreed (2026-09-30), browsers chain keyboard scrolling too -- so Page Down at the end of an inner list moves the page. Tesserae has a test pinning today's behaviour.
+
+### Phase 1 — Chaining ✅
+- Step 1: the wheel: core tests and pytest for content that fits, each end, a view mid-way, a virtual list at its end, and nesting — ✅ (2026-09-30: new `Tree::can_scroll(id, delta)` says whether a scroll view or virtual list can move in a direction -- something to scroll, and not at that end -- and core's wheel walk keeps the wheel only at a view that can, M17's no-part-along-the-axis case included (a zero delta can't move anything); a view that can move takes the whole wheel, clamped; 1 core test -- an inner view mid-way, back at its top with the page at its top too, at its end passing to the page, and with content that fits -- and 3 pytest cases -- an inner view mid-way, clamped, then passing at its end; one with nothing to scroll; a virtual list at its end; cargo 387, pytest 507 + 1 skipped)
+- Step 2: keys: `scroll_view_for_key` picks the nearest view that can move in the key's direction; tests — ✅ (2026-09-30: each key now has a direction -- Down, Right, Page Down, and End toward the end, the rest toward the start -- and `scroll_view_for_key` returns the nearest view on its axis that `can_scroll` that way, or `None`; so at the top, Up, Page Up, and Home find nothing, and End at a carousel's end goes to the page; M18's two `scroll_view_for_key` tests rewritten for the rule -- the top, mid-way, a horizontal view, and a 400-wide carousel before and at its end -- and 1 new pytest case: Page Down fills an inner view, then scrolls the page; Home returns the inner view, then the page; cargo 387, pytest 508 + 1 skipped)
+- Step 3: the guide's Scrolling section, ARCHITECTURE.md §11.7a, and a 0.4.4 migration section — ✅ (2026-09-30: the layout guide's wheel paragraph and Keyboard scrolling section describe chaining, with the inner-list and Page Down cases; `docs/migrating-0.4.md` gains a 0.4.4 section; ARCHITECTURE.md §11.7a names `Tree::can_scroll` for the wheel and the keys; mkdocs strict clean)
+
+---
+
+## Milestone 22 — A Windows CI Cache That Saves
+
+**Status: ✅ Complete (2026-09-30).** User: "yes, push the measure branch and start M22". Scoped (2026-09-30): "scope 1 and 2 as 0.4.4". On 0.4.3's release PR the Windows job's cache save ran exactly its 5-minute limit (PR #26's timeout, working as meant: the job passed instead of hanging) and likely saved nothing. Measured while scoping (2026-09-30): the Windows cache is 3.3 GB against Linux's 2.5 GB (saved in 27 s) and macOS's 1.2 GB; one Windows save did finish, on `main` at 05:46, and restoring it takes about 2 minutes, after which the build takes 1 -- so a cached Windows build is worth keeping, and the save is only needed after a `Cargo.lock` change. The repository's caches total about 8.8 GB against GitHub's 10 GB limit, past which old ones are evicted. Windows's key differs from Linux's and macOS's for the same `Cargo.lock`, likely its checkout's line endings -- harmless, since keys are per OS. Plan: measure, then choose.
+
+### Phase 1 — Measure and Fix ✅
+- Step 1: measure a Windows build with no cache, with only the registry cached, and with everything cached, and a full cache's upload time — ✅ (2026-09-30: a temporary branch `ci-cache-measure` ran one workflow on `windows-latest` that built cold, sized, and saved three cache shapes, then restored each in a fresh job and built warm; a cold build took about 3m35s; the registry alone, 123 MB, saved in 8 s and restored in 22 s but left a 3m02s build; the registry plus the dependencies' build output -- the workspace's own crates and incremental state cleaned out, as `Swatinem/rust-cache` does -- 452 MB, saved in 12 s, restored in 27 s, and built in 47 s, about 1m14s in all; everything, 1.18 GB, saved in 31 s, restored in 59 s, and built in 57 s; the finding that explains the timeout: a fresh full cache is 1.18 GB, but CI's is 3.3 GB (Linux's 2.5 GB), because `restore-keys` loads the previous `Cargo.lock`'s whole build output into a new key and the next save uploads it plus the new build, so the cache grows with every lock change until a save runs out of time; the branch and its three caches were deleted after)
+- Step 2: apply the cheapest shape that saves inside a limit -- cache less on Windows (the registry, or the dependencies' build output without the workspace's own), or a longer limit -- and keep the total under GitHub's 10 GB — ✅ (2026-09-30, `2521191`: the dependencies-only shape, the fastest in all (about 1m14s against 3m35s cold) and quick to save, in all three CI jobs, since Linux's 2.5 GB cache grew the same way: a new "Trim the cache to the dependencies" step before each save cleans the four workspace crates in both profiles, the incremental state, and `target/maturin` (`cargo clean -p` checked to exit 0 on a target with nothing to remove), and each restore is keyed exactly, with no `restore-keys`, so a new `Cargo.lock` builds cold once instead of carrying the last lock's output forward; the 5-minute save limit stays as a backstop; its first CI run is 0.4.4's release PR, whose `Cargo.lock` change forces a cold build and a save; the old 3.3 GB and 2.5 GB caches on `main` are left for GitHub to evict unused, or to delete once the new ones exist; `2521191` was committed before this record by a `;`-chained command whose tracker edit had failed, so the record follows it)
+
+---
+
+## Milestone 23 — Release `0.4.4`
+
+**Status: ⬜ Proposed.**
+
+### Phase 1 — Release ⬜
+- Step 1: PR to `main`, CI green, merge, tag `v0.4.4`, release, PyPI — ⬜
+- Step 2: Tesserae moves to `0.4.4` — ⬜
+
+---
+
+## Branch: `0.4.4` — Scaffold
+
+**Status: ✅ Scaffolded (2026-09-30).**
+
+- Branch `0.4.4` created off `main` at `176a7f0` (`v0.4.3` plus its release records) — ✅
+- `Cargo.toml` and `pyproject.toml` bumped to `0.4.4`; `Cargo.lock` updated via `cargo metadata` — ✅
 
 ---
 

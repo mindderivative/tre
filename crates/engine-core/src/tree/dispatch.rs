@@ -390,16 +390,19 @@ impl Tree {
                     let mut current = Some(hit);
                     while let Some(id) = current {
                         let node = &self.nodes[id];
-                        // 0.4.3 M17: a list or view the wheel has no part
-                        // along passes it on to the next one out -- a
-                        // plain wheel over a carousel scrolls the page
-                        // around it, as keys do (`scroll_view_for_key`).
+                        // 0.4.3 M17, 0.4.4 M21: a list or view the wheel
+                        // can't move -- no part along its axis, nothing to
+                        // scroll, or already at that end -- passes it on to
+                        // the next one out (`can_scroll`): a plain wheel over
+                        // a carousel scrolls the page around it, and so does
+                        // one over an inner list at its end, as in a
+                        // browser. One that can move takes the whole wheel.
                         if matches!(node.kind, NodeKind::VirtualList(_)) {
                             let delta_y = match delta {
                                 ScrollDelta::Lines(_, y) => y * 20.0,
                                 ScrollDelta::Pixels(_, y) => y,
                             };
-                            if delta_y != 0.0 {
+                            if self.can_scroll(id, delta_y) {
                                 self.scroll_virtual_list_by(id, delta_y);
                                 break;
                             }
@@ -428,7 +431,7 @@ impl Tree {
                                     }
                                 }
                             };
-                            if delta_along != 0.0 {
+                            if self.can_scroll(id, delta_along) {
                                 self.scroll_scroll_view_by(id, delta_along);
                                 break;
                             }

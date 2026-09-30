@@ -116,8 +116,6 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
 
       - name: Build workspace
         run: cargo build --workspace --all-targets
@@ -190,6 +188,19 @@ jobs:
             timeout 120 python "$example"
           done
 
+      # 0.4.4 M22: the cache holds the dependencies only -- the workspace's
+      # own crates rebuild in under a minute, and a trimmed cache (452 MB on
+      # Windows) saves in seconds, where the whole build folder had grown
+      # past 3 GB. It's keyed exactly, with no restore-keys: a new
+      # Cargo.lock builds cold once rather than carrying the last lock's
+      # output into the next save, which is how it grew.
+      - name: Trim the cache to the dependencies
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          cargo clean -p engine-core -p engine-render -p engine-platform -p engine-py
+          cargo clean --release -p engine-core -p engine-render -p engine-platform -p engine-py
+          rm -rf target/debug/incremental target/release/incremental target/maturin
       # Saved as its own step, not actions/cache's post-job hook, so it can
       # time out: on 0.4.2's release PR the Windows job's upload hung for
       # over 8 minutes after every test had passed. A timeout or failure
@@ -226,13 +237,24 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
       - name: Build workspace
         run: cargo build --workspace --all-targets
       - name: Test workspace (informational -- see file header comment)
         continue-on-error: true
         run: cargo test --workspace
+      # 0.4.4 M22: the cache holds the dependencies only -- the workspace's
+      # own crates rebuild in under a minute, and a trimmed cache (452 MB on
+      # Windows) saves in seconds, where the whole build folder had grown
+      # past 3 GB. It's keyed exactly, with no restore-keys: a new
+      # Cargo.lock builds cold once rather than carrying the last lock's
+      # output into the next save, which is how it grew.
+      - name: Trim the cache to the dependencies
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          cargo clean -p engine-core -p engine-render -p engine-platform -p engine-py
+          cargo clean --release -p engine-core -p engine-render -p engine-platform -p engine-py
+          rm -rf target/debug/incremental target/release/incremental target/maturin
       # Saved as its own step, not actions/cache's post-job hook, so it can
       # time out: on 0.4.2's release PR the Windows job's upload hung for
       # over 8 minutes after every test had passed. A timeout or failure
@@ -265,13 +287,24 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
       - name: Build workspace
         run: cargo build --workspace --all-targets
       - name: Test workspace (informational -- see file header comment)
         continue-on-error: true
         run: cargo test --workspace
+      # 0.4.4 M22: the cache holds the dependencies only -- the workspace's
+      # own crates rebuild in under a minute, and a trimmed cache (452 MB on
+      # Windows) saves in seconds, where the whole build folder had grown
+      # past 3 GB. It's keyed exactly, with no restore-keys: a new
+      # Cargo.lock builds cold once rather than carrying the last lock's
+      # output into the next save, which is how it grew.
+      - name: Trim the cache to the dependencies
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          cargo clean -p engine-core -p engine-render -p engine-platform -p engine-py
+          cargo clean --release -p engine-core -p engine-render -p engine-platform -p engine-py
+          rm -rf target/debug/incremental target/release/incremental target/maturin
       # Saved as its own step, not actions/cache's post-job hook, so it can
       # time out: on 0.4.2's release PR the Windows job's upload hung for
       # over 8 minutes after every test had passed. A timeout or failure

@@ -505,15 +505,26 @@ impl Tree {
     /// key's axis: Up/Down and Page Up/Down for a vertical one, Left/Right
     /// for a horizontal one, Home/End for either. So arrows in a carousel
     /// inside a page still move the page up and down.
+    ///
+    /// 0.4.4 M21: and that can move the key's way (`can_scroll`) -- Down,
+    /// Right, Page Down, and End toward the end, the rest toward the start
+    /// -- so a key at an inner view's end moves the view outside it, as
+    /// the wheel does and as in a browser. `None` when nothing can.
     pub fn scroll_view_for_key(&self, from: NodeId, key: Key) -> Option<NodeId> {
-        let wants_horizontal = match key {
-            Key::ArrowUp | Key::ArrowDown | Key::PageUp | Key::PageDown => Some(false),
-            Key::ArrowLeft | Key::ArrowRight => Some(true),
-            Key::Home | Key::End => None,
+        let (wants_horizontal, toward) = match key {
+            Key::ArrowUp | Key::PageUp => (Some(false), -1.0),
+            Key::ArrowDown | Key::PageDown => (Some(false), 1.0),
+            Key::ArrowLeft => (Some(true), -1.0),
+            Key::ArrowRight => (Some(true), 1.0),
+            Key::Home => (None, -1.0),
+            Key::End => (None, 1.0),
             _ => return None,
         };
         self.ancestors(from).find(|&id| match &self.nodes[id].kind {
-            NodeKind::ScrollView(state) => wants_horizontal.is_none_or(|h| h == state.horizontal),
+            NodeKind::ScrollView(state) => {
+                wants_horizontal.is_none_or(|h| h == state.horizontal)
+                    && self.can_scroll(id, toward)
+            }
             _ => false,
         })
     }
@@ -631,6 +642,32 @@ impl Tree {
             (inner.height, outer.height)
         };
         Some((f64::from(content) - f64::from(viewport)).max(0.0))
+    }
+
+    /// 0.4.4 M21: whether scroll view or virtual list `id` can move by
+    /// `delta` along its own axis -- positive toward the end -- at all:
+    /// something to scroll, and not already at that end. What scroll
+    /// chaining asks of each view on the way out: one that can't passes the
+    /// wheel, or the key, to the next. `false` for any other node, or a
+    /// `delta` of zero.
+    pub fn can_scroll(&self, id: NodeId, delta: f64) -> bool {
+        let (current, max) = match self.nodes.get(id).map(|n| &n.kind) {
+            Some(NodeKind::ScrollView(state)) => {
+                let Some(max) = self.max_scroll(id) else {
+                    return false;
+                };
+                (state.scroll.current, max)
+            }
+            Some(NodeKind::VirtualList(state)) => {
+                let viewport = f64::from(self.layout(id).size.height);
+                (
+                    state.scroll_offset.current,
+                    (state.total_extent() - viewport).max(0.0),
+                )
+            }
+            _ => return false,
+        };
+        (delta > 0.0 && current < max) || (delta < 0.0 && current > 0.0)
     }
 
     /// 0.4.2 M12 (issue #24): every scroll view whose offset has changed

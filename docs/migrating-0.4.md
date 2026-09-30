@@ -69,3 +69,13 @@ that changed it, in case your code or tests relied on the old one.
   virtual list that doesn't scroll in the wheel's direction goes on to the
   next one out: a plain wheel over a horizontal carousel now scrolls the
   page around it, where it used to scroll nothing.
+
+## 0.4.4
+
+- **Scrolling chains.** A wheel or a scroll key over a scroll view (or a
+  wheel over a virtual list) that can't move in its direction — already at
+  that end, or with nothing to scroll — goes on to the view outside it, as
+  in a browser. A wheel over an inner list at its end now scrolls the page
+  around it, where it used to stop at the list; Page Down at an inner
+  view's end moves the page. A view that can move still takes the whole
+  wheel or key.

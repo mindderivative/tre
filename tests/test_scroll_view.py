@@ -414,3 +414,75 @@ def test_wheel_listeners_hear_shift_wheel_as_horizontal():
     view.on("wheel", lambda e: heard.append((e.delta_x, e.delta_y, e.shift)))
     window.simulate("wheel", node=view, delta_y=60.0, shift=True)
     assert heard == [(60.0, 0.0, True)]
+
+
+# --- 0.4.4 M21: scroll chaining ---------------------------------------------------
+
+
+def page_with_inner(window, inner_kind="scroll_view", content=200):
+    """A vertical page (300x200 over 1000) holding, at its top, a 300x100
+    inner scroll view over `content`, or a virtual list of 20px rows."""
+    page = window.create("scroll_view", width=300, height=200)
+    column = window.create("box", width=300, height=1000, flex_direction="vertical")
+    if inner_kind == "scroll_view":
+        inner = window.create("scroll_view", width=300, height=100)
+        inner.add_child(window.create("box", width=300, height=content))
+    else:
+        inner = window.create(
+            "virtual_list", item_count=content // 20, item_extent=20, width=300, height=100,
+            materialize=lambda i: window.create("box", height=20),
+        )
+    column.add_child(inner)
+    page.add_child(column)
+    window.root.add_child(page)
+    return page, inner
+
+
+def test_an_inner_view_at_its_end_passes_the_wheel_to_the_page():
+    window = Window(width=800, height=600)
+    page, inner = page_with_inner(window)  # 100 of travel inside
+    window.simulate("wheel", node=inner, delta_y=60.0)
+    assert (offset(page), offset(inner)) == (0.0, 60.0), "mid-way: the inner view"
+    window.simulate("wheel", node=inner, delta_y=60.0)
+    assert (offset(page), offset(inner)) == (0.0, 100.0), "the whole wheel, clamped"
+    window.simulate("wheel", node=inner, delta_y=60.0)
+    assert (offset(page), offset(inner)) == (60.0, 100.0), "at its end: the page"
+
+
+def test_an_inner_view_with_nothing_to_scroll_passes_the_wheel():
+    window = Window(width=800, height=600)
+    page, inner = page_with_inner(window, content=50)
+    window.simulate("wheel", node=inner, delta_y=60.0)
+    assert (offset(page), offset(inner)) == (60.0, 0.0)
+
+
+def test_a_virtual_list_at_its_end_passes_the_wheel():
+    window = Window(width=800, height=600)
+    page, rows = page_with_inner(window, inner_kind="virtual_list")  # 200 of rows
+    window.simulate("wheel", node=rows, delta_y=500.0)
+    assert offset(page) == 0.0, "the list scrolls to its end first"
+    window.simulate("wheel", node=rows, delta_y=60.0)
+    assert offset(page) == 60.0
+
+
+def test_keys_chain_past_an_inner_view_at_its_end():
+    window = Window(width=800, height=600)
+    page = window.create("scroll_view", width=300, height=200)
+    column = window.create("box", width=300, height=1000, flex_direction="vertical")
+    inner = window.create("scroll_view", width=300, height=100)
+    inner_content = window.create("box", width=300, height=200, flex_direction="vertical")
+    item = window.create("box", width=50, height=20, focusable=True)
+    inner_content.add_child(item)
+    inner.add_child(inner_content)
+    column.add_child(inner)
+    page.add_child(column)
+    window.root.add_child(page)
+    item.focus()
+    window.simulate("key_down", key="page_down")
+    assert (offset(page), offset(inner)) == (0.0, 100.0), "the inner view first"
+    window.simulate("key_down", key="page_down")
+    assert (offset(page), offset(inner)) == (200.0, 100.0), "at its end: the page"
+    window.simulate("key_down", key="home")
+    assert (offset(page), offset(inner)) == (200.0, 0.0), "Home: the nearest that can"
+    window.simulate("key_down", key="home")
+    assert (offset(page), offset(inner)) == (0.0, 0.0), "then the page"
