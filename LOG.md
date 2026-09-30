@@ -1,4 +1,4 @@
-# LOG — Branch `0.4.3`: Milestones 14–16
+# LOG — Branch `0.4.3`: Milestones 14–17
 
 ## Status
 
@@ -12,3 +12,8 @@ baseline, found while scoping. Next: M14.
 Alt, or Meta held alone; Shift still scrolls. 10 pytest cases; guide,
 events guide, 0.4.3 migration section, ARCHITECTURE §11.7a. cargo 377,
 pytest 491 + 1 skipped. Release held for more fixes (user). Next: M15.
+
+**M16 complete (2026-09-30).** Issue #27 (from Tesserae's M74): a bare
+number is a one-track list for the four track-list properties. 3 pytest
+cases; property reference, grid guide, 0.4.3 migration section. cargo
+377, pytest 494 + 1 skipped. Release is now M17, still held. Next: M15.

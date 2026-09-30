@@ -98,7 +98,8 @@ property and its values.
 one line, so their edges line up across rows — a settings form of labels and
 fields, a gallery of equal cells, a dashboard of tiles. The columns and rows
 are track lists: pixels, a percentage, `"auto"`, a share of the free space
-(`"1fr"`), `"minmax(min, max)"`, and `"repeat(n, tracks)"`:
+(`"1fr"`), `"minmax(min, max)"`, and `"repeat(n, tracks)"`, as a string or a list;
+a bare number is one track of that many pixels (`grid_auto_rows=96`):
 
 ```python
 form = window.create("box", display="grid", width="100%",

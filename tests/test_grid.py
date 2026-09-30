@@ -70,6 +70,20 @@ def test_a_track_list_can_be_a_list() -> None:
     assert g.get("grid_template_columns") == "120 1fr repeat(2, 40)"
 
 
+def test_a_bare_number_is_a_one_track_list() -> None:
+    # 0.4.3 (issue #27): as if `[n]`, reading back like `grid_column=2`.
+    w = window()
+    g = grid(w, grid_template_columns=100, grid_auto_rows=30)
+    assert g.get("grid_template_columns") == "100"
+    assert g.get("grid_auto_rows") == "30"
+    a, b = cells(w, g, 2)
+    assert a.get("layout_width") == 100.0
+    assert b.get("layout_y") - a.get("layout_y") == 30.0, "each row is a 30px auto row"
+
+    g.set(grid_auto_columns=12.5, grid_template_rows=40.0)
+    assert (g.get("grid_auto_columns"), g.get("grid_template_rows")) == ("12.5", "40")
+
+
 def test_columns_split_the_width_as_their_tracks_say() -> None:
     w = window()
     g = grid(w, grid_template_columns="100 1fr")
@@ -116,6 +130,8 @@ def test_an_explicit_line_places_a_child() -> None:
         ({"grid_template_columns": "1em"}, "isn't a track size"),
         ({"grid_template_columns": "minmax(1fr, 2fr)"}, "can't be in `fr`"),
         ({"grid_template_columns": [10, True]}, "track list"),
+        ({"grid_auto_rows": True}, "track list"),
+        ({"grid_auto_rows": -5}, "track list"),
         ({"grid_auto_rows": "repeat(2, 1fr)"}, "isn't a track size"),
         ({"grid_column": 0}, "isn't a line"),
         ({"grid_row": "span 0"}, "at least 1"),

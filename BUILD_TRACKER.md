@@ -29,7 +29,8 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M13 — Release `0.4.2` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.2` released on GitHub and PyPI, closing issues #23 and #24; Tesserae moved onto it, its scroll view now following tre's keys, reveal, and `scroll` event |
 | M14 — Keyboard Scrolling Leaves Shortcuts Alone | `██████████` 100% | ✅ Complete (2026-09-30) — keys with Ctrl, Alt, or Meta held are shortcuts and no longer scroll; Shift still does |
 | M15 — `scroll_offset` Clamped When Set | `░░░░░░░░░░` 0% | ⬜ Proposed |
-| M16 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — on hold until more fixes join 0.4.3 |
+| M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
+| M17 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — on hold until more fixes join 0.4.3 |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
@@ -224,7 +225,16 @@ User: "Start phase 3".
 
 ---
 
-## Milestone 16 — Release `0.4.3`
+## Milestone 16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27))
+
+**Status: ✅ Complete (2026-09-30).** User: "Check your issues" -- the one open issue, #27, filed from Tesserae's M74 (the grid properties in its view styles): the four track-list properties took a string or a list, but a bare number raised `ValueError`, although `grid_column=2` takes one; in YAML the common case is written `grid_auto_rows: 96`.
+
+### Phase 1 — The Fix ✅
+- Step 1: a number (int or float, not a bool) is a one-track list, as if `[n]`, reading back as its text; tests; the property reference, the grid guide, and the 0.4.3 migration section — ✅ (2026-09-30: `node_layout.rs`'s `track_list` takes a bare number through the same `non_negative` check list items use, so a bool or a negative number is still refused, and the error names the new form; 3 new pytest cases -- a bare number read back and laid out as a 100px column and 30px auto rows, a float, and a bool and a negative number refused; cargo 377, pytest 494 + 1 skipped)
+
+---
+
+## Milestone 17 — Release `0.4.3`
 
 **Status: ⬜ Proposed.** On hold -- user (2026-09-30): "we will hold off on the release until we have some other fixes".
 

@@ -51,3 +51,6 @@ that changed it, in case your code or tests relied on the old one.
   with Ctrl, Alt, or Meta held no longer scrolls the scroll view around the
   focused node, so it's free for a shortcut such as Ctrl+Page Down. Shift
   still scrolls.
+- **A bare number is a one-track list.** `grid_auto_rows=96` (and the other
+  three track-list properties) now means `[96]`, reading back as `"96"`,
+  where it used to raise `ValueError`.
