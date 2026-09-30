@@ -81,6 +81,62 @@ On Windows an undecorated window keeps its shadow. On macOS, where `winit`
 can't let the user resize an undecorated window, `decorations=False` will
 keep the native title bar's controls over the content (0.5.0 M4).
 
+### Title bar and borders
+
+An undecorated window has no title bar to move it by and no border to resize
+it by (0.5.0). The framework marks its own; the OS does the moving and
+resizing.
+
+```python
+window = Window(width=800, height=600, decorations=False)
+window.set(resize_border=6, min_width=320, min_height=200)
+bar = window.create("box", height=36, window_region="drag")
+close = window.create("box", width=36, height=36, focusable=True)
+close.on("click", lambda: window.close())
+bar.add_child(close)                              # a button in the bar stays a button
+bar.on("pointer_cancel", lambda: bar.set(opacity=1.0))
+```
+
+**The drag region.** A primary press on a node with `window_region="drag"`,
+or on a node inside it that isn't interactive, moves the window. A node is
+interactive when it's `focusable`, a text field or terminal, has a `click`
+listener, or holds the pointer capture; only the nodes from the one pressed
+up to the drag region are checked. `window_region="none"` turns dragging off
+for a node and what's inside it, and `"drag"` on a node inside a button turns
+it back on (a draggable icon, say). The press still delivers `pointer_down`
+first, then — because the OS takes the pointer for the move — `pointer_cancel`
+to the pressed node: no `pointer_up` or `click` follows, and any capture is
+released.
+
+**Double-click** on the drag region toggles maximize. The two presses must
+fall within the system's double-click time (Windows, macOS; 500 ms elsewhere)
+and 4 px of each other.
+
+**The window menu.** A secondary press on the drag region opens the OS's
+window menu (Restore, Move, Size, Minimize, Maximize, Close) where supported
+— Windows, and Wayland compositors that offer one — and ends the press with
+`pointer_cancel`, so no `secondary_click` follows. On Windows, Alt+Space on
+an undecorated window opens it too. `window.set(system_menu=False)` turns
+both off, for a framework that shows its own menu: the secondary press is
+then an ordinary one.
+
+**The resize border.** `set(resize_border=N)` makes a press within `N`
+logical pixels of an edge resize the window from that edge, or from a corner
+where two edges meet. Over the border the pointer shows the matching resize
+cursor. A press there never reaches a node, and nor does its release. The
+border is off for a decorated window (the OS has one), while maximized or
+fullscreen, and at `0`, the default.
+
+| Property | Set | Get |
+| --- | --- | --- |
+| `resize_border` | Border width in logical pixels, a number `>= 0` | The setting |
+| `system_menu` | Whether a secondary press on the drag region (and Alt+Space on Windows) opens the OS's window menu; `True` by default | The setting |
+
+In fullscreen the drag region and the border do nothing: their presses are
+ordinary ones, delivered to the nodes as usual. The move, resize, and menu are the OS's and need a real
+display; `simulate` exercises everything else — the rule, `pointer_cancel`,
+double-click timing (with `advance`), and the border — without one.
+
 ## Window events and properties
 
 **`on(event, handler)`** and **`off(event)`** listen to the window itself —

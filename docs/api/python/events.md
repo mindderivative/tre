@@ -20,6 +20,7 @@ listing the valid ones.
 | --- | --- | --- |
 | `pointer_enter`, `pointer_leave` | The pointer enters or leaves the node's **subtree** — not when it moves between the node and its own descendants, and `pointer_leave` also fires when the pointer leaves the window | no |
 | `pointer_down`, `pointer_move`, `pointer_up` | A button is pressed, the pointer moves, a button is released | yes |
+| `pointer_cancel` | A press was taken by the OS — to move the window from a drag region, toggle maximize, or show the window menu — so no `pointer_up` or click follows, and any pointer capture is released (0.5.0) | yes |
 | `click` | Primary press and release on the same node, or keyboard activation | yes |
 | `secondary_click` | Secondary press and release on the same node | yes |
 | `wheel` | A wheel or trackpad scroll | yes |
@@ -125,7 +126,9 @@ instead of only what changed ([Window](window.md)). `window.get(name)` reads
 `width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`,
 `partial_redraw_active`, or `show_damage`, and (0.5.0) `decorations`,
 `fullscreen`, `min_width`, `min_height`, `maximized`, `minimized`, `active`,
-and `platform` — see [Window controls and state](window.md#window-controls-and-state).
+`platform`, `resize_border`, and `system_menu` — see
+[Window controls and state](window.md#window-controls-and-state) and
+[Title bar and borders](window.md#title-bar-and-borders).
 `root` is the window's root node.
 
 `dark` is the OS's appearance right now, so an app that follows it can start

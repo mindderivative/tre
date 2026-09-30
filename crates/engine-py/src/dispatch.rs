@@ -530,8 +530,13 @@ fn window_drag(
     let InputEvent::PointerPressed { position, button } = *event else {
         return;
     };
+    // A fullscreen window has no frame to move, maximize, or show a menu
+    // for: its drag region's presses are ordinary ones.
     let menu = button == PointerButton::Secondary && io.window.system_menu.get();
-    if (button != PointerButton::Primary && !menu) || !starts_window_drag(ctx, target) {
+    if (button != PointerButton::Primary && !menu)
+        || io.window.fullscreen.get()
+        || !starts_window_drag(ctx, target)
+    {
         return;
     }
     // A secondary press opens the OS's window menu there, as on a native

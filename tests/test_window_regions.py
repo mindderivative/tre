@@ -304,3 +304,20 @@ def test_a_secondary_press_on_a_button_in_the_bar_is_ordinary():
         inner.on(event, lambda event=event: heard.append(event))
     secondary_press(window, inner)
     assert heard == ["secondary_click"]
+
+
+# --- Step 6: fullscreen --------------------------------------------------------------
+
+
+def test_in_fullscreen_the_drag_region_is_ordinary():
+    window = Window(width=400, height=300)
+    window.set(fullscreen=True)
+    bar, _ = title_bar(window)
+    heard = []
+    for event in ("pointer_cancel", "click", "secondary_click"):
+        bar.on(event, lambda event=event: heard.append(event))
+    window.advance(0)
+    double_press(window, bar, gap_ms=100)
+    secondary_press(window, bar, x=200, y=20)
+    assert heard == ["click", "click", "secondary_click"]
+    assert window.get("maximized") is False, "no double-click maximize either"

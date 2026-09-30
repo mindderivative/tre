@@ -7,8 +7,10 @@
     [additions](#additions-from-the-review). Each question below ends with
     its **Decided** line. Built so far: M2's undecorated windows,
     controls, state and events, fullscreen, minimum size, icon, and
-    platform ([#37](https://github.com/mindderivative/tre/issues/37)); M3–M5
-    build the rest.
+    platform ([#37](https://github.com/mindderivative/tre/issues/37)); M3's
+    drag region, resize border, `pointer_cancel`, double-click to maximize,
+    and window menu ([#38](https://github.com/mindderivative/tre/issues/38)).
+    M4–M5 build the rest.
 
 ## The goal
 
@@ -195,6 +197,12 @@ Windows shows Restore, Move, Size, Minimize, Maximize, Close.
 **Decided:** yes, with an opt-out, `window.set(system_menu=False)`, for a
 framework that shows its own menu on the title bar. On Windows, Alt+Space
 opens it too, since an undecorated window loses that.
+
+**As built (M3):** the menu is requested on every platform, not only
+Windows. `winit` documents `show_window_menu` as Windows-only, but its
+Wayland backend implements it (xdg-shell's `show_window_menu`), so KDE and
+GNOME show their own; elsewhere the call does nothing. The press ends with
+`pointer_cancel` wherever the menu is requested.
 
 **Q5. macOS.** An undecorated macOS window can't be resized.
 
