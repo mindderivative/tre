@@ -54,3 +54,9 @@ that changed it, in case your code or tests relied on the old one.
 - **A bare number is a one-track list.** `grid_auto_rows=96` (and the other
   three track-list properties) now means `[96]`, reading back as `"96"`,
   where it used to raise `ValueError`.
+- **`scroll_offset` is clamped when it's set.** `set(scroll_offset=...)` past
+  the end reads back as the end at once and fires one `scroll` event, where
+  it used to read back as set until the next layout clamped it and fired a
+  second. `animate` to a point past the end eases to the real end. A view
+  created with `scroll_offset` fires nothing on its first frame, and its
+  first `scroll` event's `old_value` is that offset, not 0.

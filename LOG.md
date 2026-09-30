@@ -17,3 +17,10 @@ pytest 491 + 1 skipped. Release held for more fixes (user). Next: M15.
 number is a one-track list for the four track-list properties. 3 pytest
 cases; property reference, grid guide, 0.4.3 migration section. cargo
 377, pytest 494 + 1 skipped. Release is now M17, still held. Next: M15.
+
+**M15 complete (2026-09-30).** `Tree::max_scroll`; `Node.set` and
+`animate` clamp `scroll_offset` at once (one `scroll` event; animations
+ease to the real end); `create` sets `reported` to its offset. 5 pytest
+cases; property reference, guide, migration section, ARCHITECTURE §11.7a.
+cargo 377, pytest 499 + 1 skipped. PR #26 merged into `main` and `main`
+merged into 0.4.3. Next: M17 (release), held for more fixes.

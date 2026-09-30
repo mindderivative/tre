@@ -209,6 +209,10 @@ animates — how a carousel eases to a snap point:
 view.animate("scroll_offset", 400, 300, easing=(0.2, 0.0, 0.0, 1.0))
 ```
 
+An offset past the end is the end: `set` and `animate` clamp it to how far
+the content reaches past the view (0.4.3), so it reads back right at once
+and an animation eases all the way there.
+
 ### Keyboard scrolling
 
 Keys scroll the nearest scroll view around the focused node (0.4.2): the arrow

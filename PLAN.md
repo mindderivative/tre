@@ -6,7 +6,7 @@
 User (2026-09-30): "yes, push it and scope both as 0.4.3" -- Tesserae's two
 observations on 0.4.2.
 
-## M14 — Keyboard scrolling leaves shortcuts alone
+## M14 — Keyboard scrolling leaves shortcuts alone — done
 
 With Ctrl, Alt, or Meta held, `keyboard_scroll` (engine-py `dispatch.rs`)
 doesn't scroll; Shift still does, as in a browser. `listeners::modifiers()`
@@ -14,7 +14,7 @@ has all four; core's `KeyPressed` only Shift.
 1. The rule and pytest cases (each modifier, plain, Shift).
 2. Guide, events guide, 0.4.3 section in `docs/migrating-0.4.md`.
 
-## M15 — `scroll_offset` clamped when set
+## M15 — `scroll_offset` clamped when set — done
 
 Today `set(scroll_offset=5000)` reads back 5000 until layout clamps it (to
 900 in a 1000/100 view), firing `scroll` twice: (0, 5000) then (5000, 900).

@@ -164,7 +164,7 @@ Plus the colors on [Paint, Paths, and Animation](paint.md#text-inputs-scroll-vie
 | Property | Value |
 | --- | --- |
 | `orientation` | `"vertical"` or `"horizontal"` |
-| `scroll_offset` | Pixels scrolled (animatable, so a carousel can ease to a snap point) |
+| `scroll_offset` | Pixels scrolled (animatable, so a carousel can ease to a snap point). `set` and `animate` clamp it to the view's range at once — past the end reads back as the end (0.4.3); an offset given to `create`, before the content is attached, is clamped at the first layout |
 
 ## Virtual list
 
