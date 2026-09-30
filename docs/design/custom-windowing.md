@@ -1,11 +1,11 @@
 # Custom windowing (0.5.0)
 
-!!! warning "Proposal — awaiting decisions"
+!!! note "Decided (2026-09-30) — being built"
     This is 0.5.0's M1 design for [issue #28](https://github.com/mindderivative/tre/issues/28),
-    written for the project owner and for Tesserae to review. Nothing here
-    exists yet. The [open questions](#open-questions) each carry a
-    recommendation; once they're decided, this page records the answers and
-    M2–M5 follow it.
+    reviewed by Tesserae and decided by the project owner: every
+    recommendation accepted, with Tesserae's refinements, and five
+    [additions](#additions-from-the-review). Each question below ends with
+    its **Decided** line. Nothing here exists yet; M2–M5 build it.
 
 ## The goal
 
@@ -54,7 +54,7 @@ What `tre` has today: windows are made in one place (`engine-platform`'s
 `cursor` property with every resize shape; nothing handles window focus;
 and there's no double-click detection.
 
-## Proposed API
+## The API
 
 ### An undecorated window
 
@@ -132,9 +132,10 @@ The framework's title-bar buttons are ordinary nodes with roles
 (`"button"`, a label), as now. The OS still reads the window's `title`.
 Nothing changes for AccessKit.
 
-## Open questions
+## Decisions
 
-Each has a recommendation, marked **(recommended)**.
+Each question lists the options offered, the recommendation marked
+**(recommended)**, and ends with what was decided.
 
 **Q1. Buttons and fields inside the title bar.** A press on the close
 button or a search field must not drag the window.
@@ -146,6 +147,15 @@ button or a search field must not drag the window.
 - Explicit, as Electron does: everything inside a drag region drags unless
   marked `window_region="none"`.
 
+**Decided:** automatic, with Tesserae's tighter rule. A node is interactive
+if it's focusable, has a `click` listener, or holds the pointer capture;
+hover listeners and `pointer_down` alone don't count, so a tooltip's anchor
+and a context menu's secondary-press listener still drag. Only the nodes
+from the one pressed up to the drag region are checked, never above it (a
+root listening for the mouse's side buttons doesn't count).
+`window_region="none"` turns dragging off for a node, and `"drag"` on a
+child turns it back on.
+
 **Q2. How the resize edges are marked.**
 
 - **(recommended)** A window property, `resize_border`, as above: one
@@ -154,12 +164,22 @@ button or a search field must not drag the window.
   `window_region="resize_n"` and so on — more control (different widths, a
   gap for a corner widget), more work for every framework.
 
+**Decided:** `resize_border`. A press taken for resizing never reaches the
+nodes under it, so a splitter or scrollbar at the edge doesn't also start
+its own drag. The border lies inside the content, and the docs say so, so
+the framework can inset its content by that much.
+
 **Q3. Double-clicking the title bar maximizes.** Windows, GNOME, and KDE
 do this by default; macOS follows a system setting.
 
 - **(recommended)** `tre` does it: a second primary press on a drag region
   within 500 ms toggles maximize.
 - The framework does it, timing presses itself and calling `maximize()`.
+
+**Decided:** `tre` does it, counting only presses the Q1 rule would drag
+with, and timing them with the system's double-click time where the
+platform gives one (Windows, macOS), 500 ms elsewhere. On macOS it follows
+the user's title-bar double-click setting.
 
 **Q4. The Windows title-bar menu.** Right-clicking a native title bar on
 Windows shows Restore, Move, Size, Minimize, Maximize, Close.
@@ -168,6 +188,10 @@ Windows shows Restore, Move, Size, Minimize, Maximize, Close.
   (`show_window_menu`), and does nothing elsewhere; `pointer_down` still
   reaches the framework's listeners, so it can show its own instead.
 - Leave it to the framework.
+
+**Decided:** yes, with an opt-out, `window.set(system_menu=False)`, for a
+framework that shows its own menu on the title bar. On Windows, Alt+Space
+opens it too, since an undecorated window loses that.
 
 **Q5. macOS.** An undecorated macOS window can't be resized.
 
@@ -180,12 +204,20 @@ Windows shows Restore, Move, Size, Minimize, Maximize, Close.
 - Truly borderless on macOS too: the same look everywhere, but no resizing
   and no traffic lights.
 
+**Decided:** the transparent title bar, plus: `window.get("native_controls")`
+says whether the traffic lights are shown, rather than leaving it to be
+read from a non-zero inset; a window event fires when `titlebar_inset`
+changes (fullscreen hides the traffic lights, making it 0); and
+`window_region="drag"` works in a bar taller than the native strip.
+
 **Q6. `window.close()`.**
 
 - **(recommended)** It fires `close_requested` first, like the user closing
   the window, so an app's "save changes?" check still runs; the window
   closes unless a listener cancels.
 - It closes at once.
+
+**Decided:** it fires `close_requested` first.
 
 **Q7. The state events.**
 
@@ -194,12 +226,39 @@ Windows shows Restore, Move, Size, Minimize, Maximize, Close.
 - One `state` event carrying `maximized`, `minimized`, and `active`
   together.
 
+**Decided:** two events, `maximized` and `active`. No minimized event:
+nothing needs one.
+
+## Additions from the review
+
+Tesserae's review found five things a real title bar needs; all were
+accepted.
+
+1. **`pointer_cancel`.** `winit` swallows the button release after
+   `drag_window()` or `drag_resize_window()` on some platforms, which would
+   leave a framework's pressed state or pointer capture stuck. When `tre`
+   starts a move or resize, it sends `pointer_cancel` to the pressed node
+   and releases any capture.
+2. **Fullscreen.** `window.set(fullscreen=True)` and
+   `get("fullscreen")`. In fullscreen the drag region and resize border do
+   nothing, and the macOS inset is 0.
+3. **A window icon.** `window.set(icon=(rgba, width, height))`, for the
+   taskbar and window switcher. `winit` sets it on Windows and X11;
+   Wayland and macOS take the icon from the app's desktop file or bundle.
+4. **A minimum size.** `window.set(min_width=..., min_height=...)`, so
+   resizing can't crush the title bar's buttons.
+5. **The platform.** `window.get("platform")`: `"wayland"`, `"x11"`,
+   `"windows"`, or `"macos"`, since snapping and shadows differ.
+
 ## Milestones
 
-Once these are decided (M1 Step 2):
+As decided:
 
-- **M2** — `decorations`, the window controls, and the state and events.
-- **M3** — `window_region`, `resize_border`, cursors, and Q3/Q4 if kept.
-- **M4** — macOS, as Q5 decides.
+- **M2** — `decorations`, the window controls, the state and its events,
+  fullscreen, the icon, the minimum size, and the platform.
+- **M3** — `window_region`, `resize_border`, cursors, `pointer_cancel`,
+  double-click to maximize, and the Windows menu with its opt-out.
+- **M4** — macOS's transparent title bar, `titlebar_inset`,
+  `native_controls`, and the inset event.
 - **M5** — `examples/custom_titlebar.py`, a guide page, and manual checks on
   KDE Wayland and X11 (macOS and Windows by CI only).
