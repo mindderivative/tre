@@ -40,3 +40,9 @@ Next: M18.
 `scroll_view_for_key`, `scroll_by_key`, `scroll_into_view`,
 `take_scroll_changes`, and M17's wheel rule (shown to fail without it).
 cargo 386, pytest 504 + 1 skipped. Next: M19.
+
+**M19 complete (2026-09-30).** Stub: `__all__`, `@final` on the six PyO3
+classes, `Window.__new__`, positional-only `Node.__eq__`;
+`tools/stubtest_allowlist.txt` (`Color`). CI's Linux job runs `mypy
+--strict` and `stubtest`; contributing guide and README list stubtest.
+stubtest 21 -> 0. Next: M20, the release, if nothing else joins.

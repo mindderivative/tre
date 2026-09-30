@@ -81,6 +81,7 @@ cargo fmt --all --check
 pytest tests/
 mkdocs build --strict
 mypy --strict python/tre
+python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
 cargo +1.90 check --workspace --all-targets   # MSRV
 ```
 

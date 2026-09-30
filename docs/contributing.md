@@ -23,8 +23,12 @@ cargo fmt --all --check
 cargo +1.90 check --workspace --all-targets   # MSRV
 python -m pytest tests/
 mypy --strict python/tre
+python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
 mkdocs build --strict
 ```
+
+`stubtest` compares the type stub with the built extension, so run it after
+`maturin develop`; CI runs it and `mypy --strict` on Linux.
 
 Building on Linux needs a few system packages; see
 [Installation](installation.md#option-3-build-from-source).

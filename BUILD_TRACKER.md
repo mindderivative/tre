@@ -32,12 +32,12 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
 | M17 — Shift+Wheel Scrolls Horizontal Views | `██████████` 100% | ✅ Complete (2026-09-30) — Shift+wheel scrolls horizontal views, and a wheel passes views it can't move to the next one out |
 | M18 — Unit Tests for the Scroll Core | `██████████` 100% | ✅ Complete (2026-09-30) — 9 `engine-core` tests cover the scroll API and M17's wheel rule without Python |
-| M19 — Stub Drift Checked in CI | `█████░░░░░` 50% | 🚧 In Progress — the stub matches what PyO3 builds; `stubtest` clean |
+| M19 — Stub Drift Checked in CI | `██████████` 100% | ✅ Complete (2026-09-30) — the stub matches what PyO3 builds, and CI runs `mypy --strict` and `stubtest` |
 | M20 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — after M17–M19, if nothing else joins 0.4.3 |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M19 Step 2 -- CI runs `mypy --strict` and `stubtest`.
+**Up next:** M20 -- release `0.4.3`, if nothing else joins it.
 
 **Known gaps:**
 - None open on this line.
@@ -259,11 +259,11 @@ User: "Start phase 3".
 
 ## Milestone 19 — Stub Drift Checked in CI
 
-**Status: 🚧 In Progress.** User: "yes, start M19". Step 1 done (2026-09-30). Scoped (2026-09-30): "Scope 1, 2, and 3". The docs audit (M13) found the stub's `Node.get(property=)` against the runtime's `name` -- `mypy` accepted a call that raised. Found while scoping: CI runs neither `mypy --strict` nor `stubtest`, though the README and the contributing guide list `mypy --strict` as a check. `stubtest` reports 21 differences today, all structural. Plan: make the stub match what PyO3 builds, then check both in CI.
+**Status: ✅ Complete (2026-09-30).** User: "yes, start M19". Scoped (2026-09-30): "Scope 1, 2, and 3". The docs audit (M13) found the stub's `Node.get(property=)` against the runtime's `name` -- `mypy` accepted a call that raised. Found while scoping: CI runs neither `mypy --strict` nor `stubtest`, though the README and the contributing guide list `mypy --strict` as a check. `stubtest` reports 21 differences today, all structural. Plan: make the stub match what PyO3 builds, then check both in CI.
 
-### Phase 1 — Stub and CI 🚧
+### Phase 1 — Stub and CI ✅
 - Step 1: the stub declares `Window`'s constructor as `__new__`, marks the PyO3 classes `@final`, makes `Node.__eq__`'s argument positional-only, and declares `__all__`; an allowlist names only what exists in the stub alone (the `Color` alias); `stubtest` clean locally — ✅ (2026-09-30: `_core.pyi` declares `__all__` as the runtime's seven names, marks `App`, `Window`, `Node`, `Painter`, `Event`, and `LoopHandle` `@final` (which `stubtest` counts as PEP 800's `@disjoint_base` too, and asks for alone), declares `Window`'s constructor as `__new__` as PyO3 builds it, and makes `Node.__eq__`'s argument positional-only; new `tools/stubtest_allowlist.txt` names only `tre._core.Color`, a type alias for checkers; `stubtest` 21 differences to 0, `mypy --strict` clean on the package and an example, pytest 504 + 1 skipped)
-- Step 2: CI's Linux job installs `mypy` and runs `mypy --strict python/tre` and `stubtest` against the built extension — ⬜
+- Step 2: CI's Linux job installs `mypy` and runs `mypy --strict python/tre` and `stubtest` against the built extension — ✅ (2026-09-30: `ci.yml`'s Linux job installs `mypy>=2.3,<3` beside maturin and pytest, and after the import smoke test runs `mypy --strict python/tre` and `stubtest` with `tools/stubtest_allowlist.txt`; the contributing guide and the README list the `stubtest` command, run after `maturin develop`; both pass locally; their first CI run is 0.4.3's release PR)
 
 ---
 
