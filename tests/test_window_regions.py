@@ -263,17 +263,18 @@ def secondary_press(window, node, **fields):
     window.simulate("pointer_up", node=node, button="secondary", **fields)
 
 
-def test_system_menu_is_on_by_default_and_validated():
+def test_system_menu_is_off_by_default_and_validated():
     window = Window()
-    assert window.get("system_menu") is True
-    window.set(system_menu=False)
     assert window.get("system_menu") is False
+    window.set(system_menu=True)
+    assert window.get("system_menu") is True
     with pytest.raises(ValueError, match="`system_menu` must be a bool"):
         window.set(system_menu="off")
 
 
-def test_a_secondary_press_on_the_drag_region_opens_the_window_menu():
+def test_opted_in_a_secondary_press_on_the_drag_region_opens_the_window_menu():
     window = Window(width=400, height=300)
+    window.set(system_menu=True)
     bar, _ = title_bar(window)
     heard = []
     for event in ("pointer_down", "pointer_cancel", "secondary_click"):
@@ -284,9 +285,8 @@ def test_a_secondary_press_on_the_drag_region_opens_the_window_menu():
     )
 
 
-def test_with_system_menu_off_a_secondary_press_is_the_frameworks():
+def test_by_default_a_secondary_press_is_the_frameworks():
     window = Window(width=400, height=300)
-    window.set(system_menu=False)
     bar, _ = title_bar(window)
     heard = []
     for event in ("pointer_down", "pointer_cancel", "secondary_click"):
@@ -297,6 +297,7 @@ def test_with_system_menu_off_a_secondary_press_is_the_frameworks():
 
 def test_a_secondary_press_on_a_button_in_the_bar_is_ordinary():
     window = Window(width=400, height=300)
+    window.set(system_menu=True)
     _, inner = title_bar(window)
     inner.set(focusable=True)
     heard = []
@@ -311,7 +312,7 @@ def test_a_secondary_press_on_a_button_in_the_bar_is_ordinary():
 
 def test_in_fullscreen_the_drag_region_is_ordinary():
     window = Window(width=400, height=300)
-    window.set(fullscreen=True)
+    window.set(fullscreen=True, system_menu=True)
     bar, _ = title_bar(window)
     heard = []
     for event in ("pointer_cancel", "click", "secondary_click"):

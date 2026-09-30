@@ -362,8 +362,9 @@ class Window:
         pointer shows a resize cursor; off while maximized or fullscreen,
         0 (the default) for none. `system_menu`: whether a secondary press
         on a `window_region="drag"` node (and, on Windows, Alt+Space on an
-        undecorated window) opens the OS's window menu -- on by default, off
-        for a framework that shows its own."""
+        undecorated window) opens the OS's window menu -- off by default,
+        an opt-in on every platform for a framework that doesn't show its
+        own."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...

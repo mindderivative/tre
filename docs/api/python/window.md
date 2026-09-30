@@ -112,13 +112,14 @@ released.
 fall within the system's double-click time (Windows, macOS; 500 ms elsewhere)
 and 4 px of each other.
 
-**The window menu.** A secondary press on the drag region opens the OS's
-window menu (Restore, Move, Size, Minimize, Maximize, Close) where supported
-— Windows, and Wayland compositors that offer one — and ends the press with
-`pointer_cancel`, so no `secondary_click` follows. On Windows, Alt+Space on
-an undecorated window opens it too. `window.set(system_menu=False)` turns
-both off, for a framework that shows its own menu: the secondary press is
-then an ordinary one.
+**The window menu** is opt-in: `window.set(system_menu=True)`, on any
+platform. Then a secondary press on the drag region opens the OS's window
+menu (Restore, Move, Size, Minimize, Maximize, Close) where the platform has
+one — Windows, and Wayland compositors that offer one; elsewhere nothing
+opens — and ends the press with `pointer_cancel`, so no `secondary_click`
+follows. On Windows, Alt+Space on an undecorated window opens it too. Off,
+the default, a secondary press on the drag region is an ordinary one, for
+the framework's own menu.
 
 **The resize border.** `set(resize_border=N)` makes a press within `N`
 logical pixels of an edge resize the window from that edge, or from a corner
@@ -130,7 +131,7 @@ fullscreen, and at `0`, the default.
 | Property | Set | Get |
 | --- | --- | --- |
 | `resize_border` | Border width in logical pixels, a number `>= 0` | The setting |
-| `system_menu` | Whether a secondary press on the drag region (and Alt+Space on Windows) opens the OS's window menu; `True` by default | The setting |
+| `system_menu` | Whether a secondary press on the drag region (and Alt+Space on Windows) opens the OS's window menu; `False` by default | The setting |
 
 In fullscreen the drag region and the border do nothing: their presses are
 ordinary ones, delivered to the nodes as usual. The move, resize, and menu are the OS's and need a real

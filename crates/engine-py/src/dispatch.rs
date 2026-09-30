@@ -540,9 +540,9 @@ fn window_drag(
         return;
     }
     // A secondary press opens the OS's window menu there, as on a native
-    // title bar -- after its `pointer_down` listeners, which can show their
-    // own instead if `system_menu` is off. `winit` shows it on Windows and
-    // Wayland and ignores it elsewhere.
+    // title bar -- after its `pointer_down` listeners -- when the framework
+    // opted in with `system_menu` (off by default). `winit` shows it on
+    // Windows and Wayland and ignores it elsewhere.
     if menu {
         if let Some(window) = io.window.os_window.borrow().as_ref() {
             window.show_window_menu(winit::dpi::PhysicalPosition::new(position.x, position.y));

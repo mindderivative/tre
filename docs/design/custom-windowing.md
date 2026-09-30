@@ -198,11 +198,12 @@ Windows shows Restore, Move, Size, Minimize, Maximize, Close.
 framework that shows its own menu on the title bar. On Windows, Alt+Space
 opens it too, since an undecorated window loses that.
 
-**As built (M3):** the menu is requested on every platform, not only
-Windows. `winit` documents `show_window_menu` as Windows-only, but its
-Wayland backend implements it (xdg-shell's `show_window_menu`), so KDE and
-GNOME show their own; elsewhere the call does nothing. The press ends with
-`pointer_cancel` wherever the menu is requested.
+**Revised after M3 (2026-09-30):** off by default, and an opt-in,
+`window.set(system_menu=True)`, on every platform rather than Windows only.
+`winit` documents `show_window_menu` as Windows-only, but its Wayland backend
+implements it (xdg-shell's `show_window_menu`), so KDE and GNOME show their
+own; elsewhere the call does nothing. The press ends with `pointer_cancel`
+wherever the menu is requested.
 
 **Q5. macOS.** An undecorated macOS window can't be resized.
 
