@@ -16,7 +16,7 @@ move takes the whole wheel, clamped.
    that can move in the key's direction.
 3. Guide, ARCHITECTURE §11.7a, 0.4.4 migration section.
 
-## M22 — A Windows CI cache that saves
+## M22 — A Windows CI cache that saves — done
 
 Windows cache 3.3 GB; its save hit the 5-minute limit on 0.4.3's PR. Restore
 ~2 min, cached build ~1 min. Repo caches ~8.8 GB of GitHub's 10 GB.
