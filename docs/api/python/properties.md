@@ -73,8 +73,8 @@ As a flex child, any node:
 | Property | Value |
 | --- | --- |
 | `display` | `"flex"` (the default) or `"grid"` |
-| `grid_template_columns`, `grid_template_rows` | A track list, as a string or a list: pixels, a percentage, `"auto"`, `"1fr"`, `"min_content"`, `"max_content"`, `"minmax(min, max)"`, `"fit_content(limit)"`, and `"repeat(n, tracks)"` with `n` a count, `"auto_fill"`, or `"auto_fit"` -- e.g. `"200 1fr auto"`, `[120, "1fr"]` |
-| `grid_auto_columns`, `grid_auto_rows` | The size of tracks made for children placed past the template: a track list without `repeat` |
+| `grid_template_columns`, `grid_template_rows` | A track list, as a string or a list: pixels, a percentage, `"auto"`, `"1fr"`, `"min_content"`, `"max_content"`, `"minmax(min, max)"`, `"fit_content(limit)"`, and `"repeat(n, tracks)"` with `n` a count, `"auto_fill"`, or `"auto_fit"` -- e.g. `"200 1fr auto"`, `[120, "1fr"]`, or a bare number, one track of that many pixels (`96`, 0.4.3) |
+| `grid_auto_columns`, `grid_auto_rows` | The size of tracks made for children placed past the template: a track list without `repeat`, or a bare number (`grid_auto_rows=96`, 0.4.3) |
 | `grid_auto_flow` | `"row"` (the default), `"column"`, `"row dense"` (or `"dense"`), or `"column dense"` |
 | `row_gap`, `column_gap` | Between rows or columns: a number or a percentage; `gap` sets both |
 | `justify_items` | `align_items`' values, across each child's cell |
@@ -164,7 +164,7 @@ Plus the colors on [Paint, Paths, and Animation](paint.md#text-inputs-scroll-vie
 | Property | Value |
 | --- | --- |
 | `orientation` | `"vertical"` or `"horizontal"` |
-| `scroll_offset` | Pixels scrolled (animatable, so a carousel can ease to a snap point) |
+| `scroll_offset` | Pixels scrolled (animatable, so a carousel can ease to a snap point). `set` and `animate` clamp it to the view's range at once — past the end reads back as the end (0.4.3); an offset given to `create`, before the content is attached, is clamped at the first layout |
 
 ## Virtual list
 

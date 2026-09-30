@@ -273,9 +273,15 @@ fn sides_to_py<T: Copy + PartialEq>(
 /// A track list as text: a string as it is, or a list whose numbers are
 /// pixels and whose strings are tracks or `repeat(...)` groups.
 fn track_list(value: &Bound<'_, PyAny>, name: &str) -> PyResult<String> {
-    let expected = "a track list like \"200 1fr auto\" or [200, \"1fr\", \"auto\"]";
+    let expected = "a track list like \"200 1fr auto\", [200, \"1fr\", \"auto\"], or 96";
     if let Ok(text) = value.extract::<String>() {
         return Ok(text);
+    }
+    // 0.4.3 (issue #27): a bare number is a one-track list, as if `[n]` --
+    // `grid_auto_rows=96`, the common case -- reading back as `"96"`, as
+    // `grid_column`'s numbers do. A bool isn't one.
+    if !value.is_instance_of::<pyo3::types::PyBool>() && value.extract::<f64>().is_ok() {
+        return non_negative(value, name, expected).map(|v| v.to_string());
     }
     let items: Vec<Bound<'_, PyAny>> = value
         .try_iter()

@@ -139,7 +139,7 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `x`, `y` | pointer and wheel events — local to `current` |
 | `window_x`, `window_y` | pointer and wheel events — in the window |
 | `button` | pointer events and pointer clicks — `"primary"`, `"secondary"`, `"middle"`, or the mouse's side buttons `"back"` and `"forward"` (0.4.1; they make no `click`) |
-| `delta_x`, `delta_y` | `wheel` — pixels, positive scrolling right and down |
+| `delta_x`, `delta_y` | `wheel` — pixels, positive scrolling right and down; with Shift held, a wheel with no horizontal part arrives as `delta_x` (0.4.3) |
 | `key`, `repeat` | `key_down`, `key_up` |
 | `shift`, `ctrl`, `alt`, `meta` | pointer, wheel, key, and click events |
 | `text` | `input` |

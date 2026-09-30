@@ -162,14 +162,23 @@ jobs:
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
           echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
 
-      - name: Install maturin + pytest
-        run: pip install "maturin>=1.7,<2.0" pytest
+      - name: Install maturin, pytest, and mypy
+        run: pip install "maturin>=1.7,<2.0" pytest "mypy>=2.3,<3"
 
       - name: Build and install the tre extension (maturin develop)
         run: maturin develop
 
       - name: Import smoke test
         run: python -c "import tre; print(tre.App, tre.Node)"
+
+      # 0.4.3 M19: the stub against itself, then against the built
+      # extension -- the docs audit found `Node.get(property=)` in the stub
+      # where the runtime takes `name`, which `mypy` alone accepted.
+      - name: Type-check the package (mypy --strict)
+        run: mypy --strict python/tre
+
+      - name: Check the stub against the extension (stubtest)
+        run: python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
 
       - name: Python FFI test suite
         run: python -m pytest tests/ -v

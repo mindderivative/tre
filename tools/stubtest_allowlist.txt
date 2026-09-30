@@ -1,0 +1,6 @@
+# Names in python/tre/_core.pyi that `stubtest` can't find at runtime, on
+# purpose. Run: python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
+# (0.4.3 M19; CI runs it after building the extension).
+
+# A type alias for RGBA8 tuples: it names a type for checkers only.
+tre._core.Color

@@ -108,7 +108,9 @@ def test_a_real_shell_responds_to_typed_input():
     # A wheel resyncs the grid synchronously, no frame needed. A huge
     # scroll clamps to the top of history, revealing the first line typed
     # and pushing the most recent one out of view.
-    window.simulate("wheel", node=term, delta_y=-400.0)  # up: a negative wheel delta_y
+    # Shift held: 0.4.3 M17 turns Shift+wheel horizontal for scroll views,
+    # but a terminal's scrollback still reads the wheel as it came.
+    window.simulate("wheel", node=term, delta_y=-400.0, shift=True)  # up: a negative delta_y
     scrolled_text = term.get("text")
     assert "HELLO_FROM_TERMINAL" in scrolled_text, (
         f"a scroll must reveal previously-scrolled-off history, got {scrolled_text!r}"

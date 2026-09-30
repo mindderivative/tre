@@ -27,17 +27,24 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `██████████` 100% | ✅ Complete (2026-09-29) — `display="grid"`, track lists, placements, auto tracks and flow, row/column gaps, and item alignment, read back as set |
 | M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `██████████` 100% | ✅ Complete (2026-09-29) — Page Up/Down keys, keyboard scrolling, `scroll_into_view` with focus reveal, and the `scroll` event |
 | M13 — Release `0.4.2` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.2` released on GitHub and PyPI, closing issues #23 and #24; Tesserae moved onto it, its scroll view now following tre's keys, reveal, and `scroll` event |
+| M14 — Keyboard Scrolling Leaves Shortcuts Alone | `██████████` 100% | ✅ Complete (2026-09-30) — keys with Ctrl, Alt, or Meta held are shortcuts and no longer scroll; Shift still does |
+| M15 — `scroll_offset` Clamped When Set | `██████████` 100% | ✅ Complete (2026-09-30) — `set` and `animate` clamp `scroll_offset` to the view's range at once, with one `scroll` event; a created offset is the event's baseline |
+| M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
+| M17 — Shift+Wheel Scrolls Horizontal Views | `██████████` 100% | ✅ Complete (2026-09-30) — Shift+wheel scrolls horizontal views, and a wheel passes views it can't move to the next one out |
+| M18 — Unit Tests for the Scroll Core | `██████████` 100% | ✅ Complete (2026-09-30) — 9 `engine-core` tests cover the scroll API and M17's wheel rule without Python |
+| M19 — Stub Drift Checked in CI | `██████████` 100% | ✅ Complete (2026-09-30) — the stub matches what PyO3 builds, and CI runs `mypy --strict` and `stubtest` |
+| M20 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — after M17–M19, if nothing else joins 0.4.3 |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** nothing scoped -- the 0.4.2 line is complete; the next milestone waits for the user.
+**Up next:** M20 -- release `0.4.3`, if nothing else joins it.
 
 **Known gaps:**
 - None open on this line.
 
 **Fixed gaps:**
 - ~~Every frame repaints the whole window: `vello_hybrid` 0.2.0's public `Renderer::render` always clears the target and takes no scissor, and `tre` renders straight into the swapchain image, which keeps no previous frame. The idle loop sleeps when nothing changes (0.3.x, M29), so the cost is paid only while something animates -- but then it's the full window, however small the change. This line exists to close it.~~ Fixed in M5 (2026-09-28): each window renders only inside its damage rects, into a target that keeps its frame, and nothing when nothing changed.
-- ~~CI's cargo-cache upload can hang with no timeout: on 0.4.2's release PR the Windows job's tests had passed, but `actions/cache`'s post-job save hung for over 8 minutes and the run had to be cancelled and re-run -- a step's `timeout-minutes` doesn't reach an action's post-job hook.~~ Fixed (2026-09-30, user: "yes, add the timeout to the cache step"), on local branch `ci-cache-timeout`, not yet run on CI: in `ci.yml`'s Linux, Windows, and macOS jobs the cache is restored with `actions/cache/restore` and saved at the end by its own `actions/cache/save` step, `timeout-minutes: 5` and `continue-on-error: true`, so a stuck upload skips the save instead of holding the job; it still saves only on an exact-key miss and a successful job.
+- ~~CI's cargo-cache upload can hang with no timeout: on 0.4.2's release PR the Windows job's tests had passed, but `actions/cache`'s post-job save hung for over 8 minutes and the run had to be cancelled and re-run -- a step's `timeout-minutes` doesn't reach an action's post-job hook.~~ Fixed (2026-09-30, user: "yes, add the timeout to the cache step"), merged to `main` as PR #26 (`f92fb05`, 2026-09-30, user: "yes, merge PR #26"), its CI green on all four jobs -- though every save step was skipped on an exact cache hit, so the timed save first runs when `Cargo.lock` next changes: in `ci.yml`'s Linux, Windows, and macOS jobs the cache is restored with `actions/cache/restore` and saved at the end by its own `actions/cache/save` step, `timeout-minutes: 5` and `continue-on-error: true`, so a stuck upload skips the save instead of holding the job; it still saves only on an exact-key miss and a successful job.
 
 ---
 
@@ -198,6 +205,84 @@ User: "Start phase 3".
 - Step 2: the project named Tesserae Engine throughout the documentation — ✅ (2026-09-29, user: "Change the project name in the docs to Tesserae Engine"; the MkDocs site name and page titles, and every prose mention of the project in the README, ARCHITECTURE.md, and the docs site, now say Tesserae Engine, with "imported as `tre`" at the first mention on the entry pages; what names code keeps `tre` -- `import tre`, the `tre` package and `tre._core`, the repository and its URLs, the crates, PyPI's unrelated `tre` project, and the default window title `"tre v2"`; the `docs/design/` pages, dated records of the 0.3.x design, and the type stub are unchanged; mkdocs strict clean)
 - Step 3: PR to `main`, CI green, merge, tag `v0.4.2`, release, PyPI — ✅ (2026-09-30, user: "yes, push and start the release": `main` hadn't moved, so no merge into `0.4.2`; PR #25, CI green on Linux, macOS, Windows, and `msrv` -- the Windows job's tests passed but its post-job cargo-cache upload hung for over 8 minutes, so the run was cancelled and the Windows job re-run, which passed; merged as `2fcc381`, its tree identical to the tested `1180f06`; annotated tag `v0.4.2` ("Tesserae Engine 0.4.2"); the wheels run passed every job and the user approved the `pypi` deployment; `tesserae-engine==0.4.2` installed from PyPI in a fresh venv reports 0.4.2 and has grid layout and `scroll_into_view`; issues #23 and #24 closed by the merge; the docs site redeployed under the new name)
 - Step 4: Tesserae moves to `0.4.2` — ✅ (2026-09-30: reported by its session: the release's 24 assets and PyPI's 22 wheels plus sdist checked; its floor now `>=0.4.2` and its CI's and release workflow's checkout at `v0.4.2` (committed locally there); 2563 passed and 1 failed straight after the move, all five examples clean, then 2565 passed and 0 failed -- the failure was behaviour change 2: its own M71 scroll view had supplied keys, focus reveal, and `scroll_into_view` itself, and tre's reveal now ran before its focus listener, so its two-way `scroll_offset` binding missed the change; probing also showed its `key_down` listener on the scroll view kept every key from tre, per the key rule; fixed on its side by dropping its own keys and reveals and following the `scroll` event, with a new test pinning tre's key rule; no tre bugs; its observations, not bugs: the keys scroll with modifiers held too (Ctrl+Page Down included), and a `scroll_offset` set past the end reads back as set until layout clamps it, then fires a second `scroll` with the clamped value; grid isn't used in Tesserae yet, its M74)
+
+---
+
+## Milestone 14 — Keyboard Scrolling Leaves Shortcuts Alone
+
+**Status: ✅ Complete (2026-09-30).** User: "yes, start M14, we will hold off on the release until we have some other fixes". Scoped (2026-09-30): "yes, push it and scope both as 0.4.3" -- the first of Tesserae's two 0.4.2 observations: arrows, Page Up/Down, and Home/End scroll the nearest scroll view even with Ctrl, Alt, or Meta held, so Ctrl+Page Down (a tab switch in browsers) or Alt+Left (back) also scrolls. Plan: with Ctrl, Alt, or Meta held, `engine-py`'s `keyboard_scroll` leaves the key alone; Shift still scrolls, as it does in a browser. The rule lives in `engine-py`, which already tracks every modifier (`listeners::modifiers()`); core's `KeyPressed` carries only Shift.
+
+### Phase 1 — Modifiers ✅
+- Step 1: no keyboard scroll while Ctrl, Alt, or Meta is held; Shift unchanged; pytest cases for each modifier, plain keys, and Shift — ✅ (2026-09-30: `keyboard_scroll` returns early when `listeners::modifiers()` has Ctrl, Alt, or Meta; `simulate` holds its modifiers for the whole dispatch through `with_modifiers`, so the tests take the live path; 10 new pytest cases -- each of the three modifiers with the arrow, Page Down, and End keys scrolling nothing, then the same key unmodified scrolling, and Shift+Page Down scrolling a viewport; cargo 377, pytest 491 + 1 skipped)
+- Step 2: the guide's Keyboard scrolling section, the events guide, and a 0.4.3 section in `docs/migrating-0.4.md` — ✅ (2026-09-30: the rule in the layout guide's Keyboard scrolling section and the events guide's focus section; `docs/migrating-0.4.md` gains a 0.4.3 section and its intro now covers all of 0.4.x; ARCHITECTURE.md §11.7a names the rule and where the modifiers come from; mkdocs strict clean)
+
+---
+
+## Milestone 15 — `scroll_offset` Clamped When Set
+
+**Status: ✅ Complete (2026-09-30).** User: "yes, merge PR #26 and start M15". Scoped (2026-09-30): "scope both as 0.4.3" -- Tesserae's second observation: `set(scroll_offset=...)` past the end reads back as set until the next layout clamps it, which then fires a second `scroll` event with the clamped value. Found while scoping (checked 2026-09-30): an offset given to `create` never becomes the `scroll` event's baseline -- `reported` starts at 0 -- so the first event's `old_value` is 0 instead of that offset. Plan: `Node.set`'s and `animate`'s `scroll_offset` run layout, then clamp to the view's range, so the read-back is right at once and one `scroll` event fires with the clamped value, and an animation eases to the real end rather than stalling there; `create` keeps today's rule (clamped at the first layout), so an offset given before the content is attached still survives adding it; a view's initial offset is its reported baseline.
+
+### Phase 1 — Clamping ✅
+- Step 1: `set` and `animate` clamp `scroll_offset` against a fresh layout; one `scroll` event; pytest for past the end, below the content, a shrinking content box, and an animation's target — ✅ (2026-09-30: new `Tree::max_scroll` gives a view's range from the last layout, and layout's own clamp now uses it; `Node.set` with `scroll_offset` runs layout before reporting, so the value reads back clamped at once and one `scroll` fires; `animate` lays out and clamps its target, so an animation past the end eases to the real end instead of stalling there; `create` unchanged; 4 new pytest cases -- 5000 in a 900-pixel range reads back 900 with the one event (0, 900), a value inside the range kept, shrinking content clamping 800 to 400 with one event, and a linear animation to 5000 at 450 halfway and 900 at the end; cargo 377, pytest 498 + 1 skipped)
+- Step 2: the create-time offset is the `scroll` event's baseline; a pytest that the first event's `old_value` is that offset — ✅ (2026-09-30: `Window.create` sets a new scroll view's `reported` to its offset once its props are applied, so a view created at 500 fires nothing on its first frame, where it used to fire (0, 500), and its first move reports (500, 600), not (0, 600); 1 new pytest case; cargo 377, pytest 499 + 1 skipped)
+- Step 3: the property reference, the guide, and the 0.4.3 migration section — ✅ (2026-09-30: the property reference's `scroll_offset` row says `set` and `animate` clamp at once and `create` at the first layout; the layout guide's Scrolling section says an offset past the end is the end; the 0.4.3 migration section lists the clamp, the one event, the eased animation, and the created baseline; ARCHITECTURE.md §11.7a names `Tree::max_scroll` and where each path clamps; mkdocs strict clean)
+
+---
+
+## Milestone 16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27))
+
+**Status: ✅ Complete (2026-09-30).** User: "Check your issues" -- the one open issue, #27, filed from Tesserae's M74 (the grid properties in its view styles): the four track-list properties took a string or a list, but a bare number raised `ValueError`, although `grid_column=2` takes one; in YAML the common case is written `grid_auto_rows: 96`.
+
+### Phase 1 — The Fix ✅
+- Step 1: a number (int or float, not a bool) is a one-track list, as if `[n]`, reading back as its text; tests; the property reference, the grid guide, and the 0.4.3 migration section — ✅ (2026-09-30: `node_layout.rs`'s `track_list` takes a bare number through the same `non_negative` check list items use, so a bool or a negative number is still refused, and the error names the new form; 3 new pytest cases -- a bare number read back and laid out as a 100px column and 30px auto rows, a float, and a bool and a negative number refused; cargo 377, pytest 494 + 1 skipped)
+
+---
+
+## Milestone 17 — Shift+Wheel Scrolls Horizontal Views
+
+**Status: ✅ Complete (2026-09-30).** User: "yes, start  M17". Scoped (2026-09-30): "Scope 1, 2, and 3 for 0.4.3. Then we will look at releasing if there is nothing else after those." Found while recommending (checked 2026-09-30): a horizontal scroll view scrolls only on a wheel's horizontal part, which most mice don't have -- a plain wheel and Shift+wheel both left it at 0 -- where browsers, GTK, and Qt turn Shift+wheel horizontal. Core's `InputEvent::Scroll` carries no modifiers; `engine-py` tracks them (M14's rule lives there too). Plan: with Shift held, a wheel with no horizontal part is delivered to core's dispatch as horizontal, so the nearest horizontal scroll view scrolls; a wheel that already has a horizontal part (macOS turns Shift+wheel horizontal itself) is left alone; a terminal's scrollback still reads the vertical part; `wheel` listeners get the delta as delivered.
+
+### Phase 1 — Shift+Wheel ✅
+- Step 1: the mapping in `engine-py`'s input path; pytest for Shift+wheel on a horizontal view, a vertical view under Shift, an already-horizontal wheel, and a terminal — ✅ (2026-09-30: `engine-py`'s new `shift_wheel` turns a wheel with Shift held and no horizontal part horizontal before core's dispatch and the listeners, leaving a wheel with a horizontal part alone, and the terminal's scrollback path reads the wheel as it came; found while building it (probed 2026-09-30): core's wheel walk stopped at the first scroll view under the pointer even when the wheel had no part along its axis, so a plain wheel over a horizontal carousel inside a vertical page scrolled neither, and Shift+wheel would have failed the same way nested -- `Tree::dispatch` now passes a scroll view or virtual list the wheel can't move on to the next one out, as `scroll_view_for_key` does for keys; 5 new pytest cases -- Shift+wheel on a horizontal view, a plain wheel over a carousel scrolling its page, Shift+wheel over the carousel scrolling it and below it scrolling nothing, a wheel already horizontal left alone, and a `wheel` listener hearing (60, 0) with Shift -- and the terminal test's scrollback wheel now holds Shift; cargo 377, pytest 504 + 1 skipped)
+- Step 2: the guide's Scrolling section, the events reference, and the 0.4.3 migration section — ✅ (2026-09-30: the layout guide says the wheel scrolls the nearest view along its direction, with the carousel case and Shift+wheel; the events guide and the events reference's `delta_x` row say Shift+wheel arrives as `delta_x`; the 0.4.3 migration section lists Shift+wheel and the wheel passing views it can't move; ARCHITECTURE.md §11.7a gains the wheel's rule and where Shift is applied; mkdocs strict clean)
+
+---
+
+## Milestone 18 — Unit Tests for the Scroll Core
+
+**Status: ✅ Complete (2026-09-30).** User: "yes, start M18". Scoped (2026-09-30): "Scope 1, 2, and 3". The scroll API added in M12 and M15 -- `scroll_view_for_key`, `scroll_by_key`, `scroll_into_view`, `take_scroll_changes`, `max_scroll` -- is tested only through Python; `cargo test` has stayed at 377 since. Plan: `engine-core` unit tests in `tree/tests.rs`, beside the existing scroll view tests, with no Python or GPU.
+
+### Phase 1 — Tests ✅
+- Step 1: `scroll_view_for_key` (each key's axis, nearest first, Home/End either axis, none found), `scroll_by_key` (40 px, a viewport, the ends, clamping, the dirty flag), `scroll_into_view` (least movement, a box longer than its view, nested views, nothing when visible), `take_scroll_changes` (reported once, then quiet), and `max_scroll` (content that fits, no content, horizontal) — ✅ (2026-09-30: 9 tests in `tree/tests.rs` with two small helpers, `offset_of` and `view_over_boxes`: `max_scroll` along each axis, for content that fits, and `None` without content or for a plain node; `scroll_view_for_key` for every key on each axis, on a focused view itself, and past a carousel for the page around it; `scroll_by_key`'s line, page, and ends, clamping, and the dirty flag set only when something moved; `scroll_into_view`'s least movement, nothing when visible, and a long box aligned to its start; `take_scroll_changes` once per move and quiet without scroll views; and M17's rule, a vertical wheel over a carousel scrolling its page and a horizontal one the carousel, checked to fail with M17's core change reversed; cargo 386, pytest 504 + 1 skipped)
+
+---
+
+## Milestone 19 — Stub Drift Checked in CI
+
+**Status: ✅ Complete (2026-09-30).** User: "yes, start M19". Scoped (2026-09-30): "Scope 1, 2, and 3". The docs audit (M13) found the stub's `Node.get(property=)` against the runtime's `name` -- `mypy` accepted a call that raised. Found while scoping: CI runs neither `mypy --strict` nor `stubtest`, though the README and the contributing guide list `mypy --strict` as a check. `stubtest` reports 21 differences today, all structural. Plan: make the stub match what PyO3 builds, then check both in CI.
+
+### Phase 1 — Stub and CI ✅
+- Step 1: the stub declares `Window`'s constructor as `__new__`, marks the PyO3 classes `@final`, makes `Node.__eq__`'s argument positional-only, and declares `__all__`; an allowlist names only what exists in the stub alone (the `Color` alias); `stubtest` clean locally — ✅ (2026-09-30: `_core.pyi` declares `__all__` as the runtime's seven names, marks `App`, `Window`, `Node`, `Painter`, `Event`, and `LoopHandle` `@final` (which `stubtest` counts as PEP 800's `@disjoint_base` too, and asks for alone), declares `Window`'s constructor as `__new__` as PyO3 builds it, and makes `Node.__eq__`'s argument positional-only; new `tools/stubtest_allowlist.txt` names only `tre._core.Color`, a type alias for checkers; `stubtest` 21 differences to 0, `mypy --strict` clean on the package and an example, pytest 504 + 1 skipped)
+- Step 2: CI's Linux job installs `mypy` and runs `mypy --strict python/tre` and `stubtest` against the built extension — ✅ (2026-09-30: `ci.yml`'s Linux job installs `mypy>=2.3,<3` beside maturin and pytest, and after the import smoke test runs `mypy --strict python/tre` and `stubtest` with `tools/stubtest_allowlist.txt`; the contributing guide and the README list the `stubtest` command, run after `maturin develop`; both pass locally; their first CI run is 0.4.3's release PR)
+
+---
+
+## Milestone 20 — Release `0.4.3`
+
+**Status: ⬜ Proposed.** On hold -- user (2026-09-30): "we will hold off on the release until we have some other fixes".
+
+### Phase 1 — Release ⬜
+- Step 1: PR to `main`, CI green, merge, tag `v0.4.3`, release, PyPI — ⬜
+- Step 2: Tesserae moves to `0.4.3` — ⬜
+
+---
+
+## Branch: `0.4.3` — Scaffold
+
+**Status: ✅ Scaffolded (2026-09-30).**
+
+- Branch `0.4.3` created off `main` at `6b7c70f` (`v0.4.2` plus its release records) — ✅
+- `Cargo.toml` and `pyproject.toml` bumped to `0.4.3`; `Cargo.lock` updated via `cargo metadata` — ✅
 
 ---
 

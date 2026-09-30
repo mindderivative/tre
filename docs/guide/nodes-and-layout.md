@@ -98,7 +98,8 @@ property and its values.
 one line, so their edges line up across rows — a settings form of labels and
 fields, a gallery of equal cells, a dashboard of tiles. The columns and rows
 are track lists: pixels, a percentage, `"auto"`, a share of the free space
-(`"1fr"`), `"minmax(min, max)"`, and `"repeat(n, tracks)"`:
+(`"1fr"`), `"minmax(min, max)"`, and `"repeat(n, tracks)"`, as a string or a list;
+a bare number is one track of that many pixels (`grid_auto_rows=96`):
 
 ```python
 form = window.create("box", display="grid", width="100%",
@@ -201,12 +202,19 @@ for name in names:
 view.add_child(content)
 ```
 
-The mouse wheel scrolls it, and so does setting `scroll_offset`, which also
+The mouse wheel scrolls it — the nearest scroll view under the pointer that
+scrolls along the wheel's direction, so a plain wheel over a horizontal
+carousel scrolls the page around it, and Shift+wheel scrolls a horizontal
+view (0.4.3). So does setting `scroll_offset`, which also
 animates — how a carousel eases to a snap point:
 
 ```python
 view.animate("scroll_offset", 400, 300, easing=(0.2, 0.0, 0.0, 1.0))
 ```
+
+An offset past the end is the end: `set` and `animate` clamp it to how far
+the content reaches past the view (0.4.3), so it reads back right at once
+and an animation eases all the way there.
 
 ### Keyboard scrolling
 
@@ -217,7 +225,9 @@ horizontal one; a view that doesn't scroll along a key's axis passes it to the
 next one out. Keys the focused node uses itself don't scroll: a node with a
 `key_down` listener between the focused node and the view keeps every key, and
 a text input keeps all but Page Up and Page Down. With nothing focused, keys
-scroll nothing. Keyboard scrolls jump rather than ease.
+scroll nothing. A key pressed with Ctrl, Alt, or Meta held is a shortcut, not a
+scroll (0.4.3) — Ctrl+Page Down or Alt+Left stays yours — while Shift still
+scrolls. Keyboard scrolls jump rather than ease.
 
 Keys, `scroll_into_view`, and the `scroll` event below apply to
 `"scroll_view"` nodes; a `"virtual_list"` scrolls by wheel only.

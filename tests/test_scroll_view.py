@@ -160,6 +160,27 @@ def test_keys_scroll_nothing_without_focus():
     assert offset(view) == 0.0
 
 
+# 0.4.3 M14: a key with Ctrl, Alt, or Meta held is a shortcut, not a scroll.
+@pytest.mark.parametrize("modifier", ["ctrl", "alt", "meta"])
+@pytest.mark.parametrize("key", ["arrow_down", "page_down", "end"])
+def test_a_shortcut_modifier_keeps_keys_from_scrolling(modifier, key):
+    window = Window(width=800, height=600)
+    view, _, item = scroller(window)
+    item.focus()
+    window.simulate("key_down", key=key, **{modifier: True})
+    assert offset(view) == 0.0
+    window.simulate("key_down", key=key)  # released: the same key scrolls
+    assert offset(view) > 0.0
+
+
+def test_shift_still_scrolls():
+    window = Window(width=800, height=600)
+    view, _, item = scroller(window)
+    item.focus()
+    window.simulate("key_down", key="page_down", shift=True)
+    assert offset(view) == 100.0
+
+
 # --- 0.4.2 M12 (issue #24): scroll_into_view and revealing focus -------------------
 
 
@@ -280,3 +301,116 @@ def test_scroll_is_quiet_when_nothing_moves_and_does_not_bubble():
     window.simulate("key_down", key="page_down")
     assert seen == [(0.0, 100.0)]
     assert root_heard == [], "scroll stays on the scroll view"
+
+
+# --- 0.4.3 M15: scroll_offset clamped when it's set -------------------------------
+
+
+def test_setting_past_the_end_clamps_at_once_with_one_event():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window)  # 1000 of content in a 100 view: 900 of travel
+    seen = listen(view)
+    view.set(scroll_offset=5000.0)
+    assert offset(view) == 900.0, "reads back clamped, before any frame"
+    window.advance(16)
+    assert seen == [(0.0, 900.0)], "one event, with the clamped value"
+
+
+def test_setting_inside_the_range_is_kept():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window)
+    view.set(scroll_offset=300.0)
+    assert offset(view) == 300.0
+
+
+def test_shrinking_content_clamps_the_offset():
+    window = Window(width=800, height=600)
+    view, content, _ = scroller(window)
+    view.set(scroll_offset=800.0)
+    seen = listen(view)
+    content.set(height=500)
+    window.advance(16)
+    assert offset(view) == 400.0
+    assert seen == [(800.0, 400.0)]
+
+
+def test_an_animation_past_the_end_eases_to_the_end():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window)
+    window.advance(0)
+    view.animate("scroll_offset", 5000.0, 100, easing="linear")
+    window.advance(50)
+    assert offset(view) == 450.0, "halfway to 900, not clamped from halfway to 5000"
+    window.advance(50)
+    assert offset(view) == 900.0
+
+
+def test_a_create_time_offset_is_the_first_events_old_value():
+    window = Window(width=800, height=600)
+    view = window.create("scroll_view", width=200, height=100, scroll_offset=500)
+    view.add_child(window.create("box", width=200, height=1000))
+    window.root.add_child(view)
+    seen = listen(view)
+    window.advance(16)
+    assert offset(view) == 500.0 and seen == [], "created there: nothing moved"
+    view.set(scroll_offset=600.0)
+    assert seen == [(500.0, 600.0)]
+
+
+# --- 0.4.3 M17: Shift+wheel, and a wheel passing views it can't move ------------
+
+
+def page_with_carousel(window):
+    """A vertical page (300x200 over 1000) holding a horizontal carousel
+    (300x80 over 1200) at its top."""
+    page = window.create("scroll_view", width=300, height=200)
+    column = window.create("box", width=300, height=1000, flex_direction="vertical")
+    carousel = window.create("scroll_view", width=300, height=80, orientation="horizontal")
+    carousel.add_child(window.create("box", width=1200, height=80))
+    column.add_child(carousel)
+    page.add_child(column)
+    window.root.add_child(page)
+    return page, column, carousel
+
+
+def test_shift_wheel_scrolls_a_horizontal_view():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window, orientation="horizontal")
+    window.simulate("wheel", node=view, delta_y=60.0)
+    assert offset(view) == 0.0, "a plain wheel has no horizontal part"
+    window.simulate("wheel", node=view, delta_y=60.0, shift=True)
+    assert offset(view) == 60.0
+
+
+def test_a_plain_wheel_over_a_carousel_scrolls_the_page():
+    window = Window(width=800, height=600)
+    page, _, carousel = page_with_carousel(window)
+    window.simulate("wheel", node=carousel, delta_y=60.0)
+    assert (offset(page), offset(carousel)) == (60.0, 0.0)
+
+
+def test_shift_wheel_over_a_carousel_scrolls_the_carousel():
+    window = Window(width=800, height=600)
+    page, column, carousel = page_with_carousel(window)
+    window.simulate("wheel", node=carousel, delta_y=60.0, shift=True)
+    assert (offset(page), offset(carousel)) == (0.0, 60.0)
+    window.simulate("wheel", node=column, x=10, y=150, delta_y=60.0, shift=True)
+    assert offset(page) == 0.0, "below the carousel, nothing scrolls sideways"
+
+
+def test_a_wheel_already_horizontal_is_left_alone():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window, orientation="horizontal")
+    window.simulate("wheel", node=view, delta_x=50.0, shift=True)
+    assert offset(view) == 50.0
+    window.simulate("wheel", node=view, delta_x=20.0, delta_y=90.0, shift=True)
+    assert offset(view) == 70.0, "its horizontal part, not the vertical"
+
+
+def test_wheel_listeners_hear_shift_wheel_as_horizontal():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window, orientation="horizontal")
+    heard = []
+    view.on("wheel", lambda e: heard.append((e.delta_x, e.delta_y, e.shift)))
+    window.simulate("wheel", node=view, delta_y=60.0, shift=True)
+    assert heard == [(60.0, 0.0, True)]

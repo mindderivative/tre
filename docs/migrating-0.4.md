@@ -1,6 +1,6 @@
 # Upgrading to 0.4.x
 
-No name was removed or renamed in 0.4.0–0.4.2: code written for 0.3.5 runs
+No name was removed or renamed in 0.4.x: code written for 0.3.5 runs
 unchanged. A few behaviors changed, and each is listed here with the release
 that changed it, in case your code or tests relied on the old one.
 
@@ -44,3 +44,28 @@ that changed it, in case your code or tests relied on the old one.
 - **New:** `node.scroll_into_view()`, the `scroll` event, CSS Grid layout
   (`display="grid"`), and the Page Up and Page Down keys, which a terminal
   receives as `\x1b[5~` and `\x1b[6~`.
+
+## 0.4.3
+
+- **Shortcuts don't scroll.** An arrow, Page Up/Down, Home, or End pressed
+  with Ctrl, Alt, or Meta held no longer scrolls the scroll view around the
+  focused node, so it's free for a shortcut such as Ctrl+Page Down. Shift
+  still scrolls.
+- **A bare number is a one-track list.** `grid_auto_rows=96` (and the other
+  three track-list properties) now means `[96]`, reading back as `"96"`,
+  where it used to raise `ValueError`.
+- **`scroll_offset` is clamped when it's set.** `set(scroll_offset=...)` past
+  the end reads back as the end at once and fires one `scroll` event, where
+  it used to read back as set until the next layout clamped it and fired a
+  second. `animate` to a point past the end eases to the real end. A view
+  created with `scroll_offset` fires nothing on its first frame, and its
+  first `scroll` event's `old_value` is that offset, not 0.
+- **Shift+wheel scrolls sideways.** With Shift held, a wheel with no
+  horizontal part scrolls a horizontal scroll view, and a `wheel` listener
+  hears it as `delta_x`. A wheel that already has a horizontal part (macOS
+  turns Shift+wheel itself) is unchanged, and a terminal's scrollback still
+  follows the wheel.
+- **A wheel passes views it can't move.** A wheel over a scroll view or
+  virtual list that doesn't scroll in the wheel's direction goes on to the
+  next one out: a plain wheel over a horizontal carousel now scrolls the
+  page around it, where it used to scroll nothing.

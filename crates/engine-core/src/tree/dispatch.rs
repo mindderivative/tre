@@ -390,13 +390,19 @@ impl Tree {
                     let mut current = Some(hit);
                     while let Some(id) = current {
                         let node = &self.nodes[id];
+                        // 0.4.3 M17: a list or view the wheel has no part
+                        // along passes it on to the next one out -- a
+                        // plain wheel over a carousel scrolls the page
+                        // around it, as keys do (`scroll_view_for_key`).
                         if matches!(node.kind, NodeKind::VirtualList(_)) {
                             let delta_y = match delta {
                                 ScrollDelta::Lines(_, y) => y * 20.0,
                                 ScrollDelta::Pixels(_, y) => y,
                             };
-                            self.scroll_virtual_list_by(id, delta_y);
-                            break;
+                            if delta_y != 0.0 {
+                                self.scroll_virtual_list_by(id, delta_y);
+                                break;
+                            }
                         }
                         // M36 Phase 1 (§5, §7, §11.7): the identical
                         // real "walk up to the nearest scrollable
@@ -422,10 +428,12 @@ impl Tree {
                                     }
                                 }
                             };
-                            self.scroll_scroll_view_by(id, delta_along);
-                            break;
+                            if delta_along != 0.0 {
+                                self.scroll_scroll_view_by(id, delta_along);
+                                break;
+                            }
                         }
-                        current = node.parent;
+                        current = self.nodes[id].parent;
                     }
                 }
                 DispatchOutcome::None

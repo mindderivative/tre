@@ -29,11 +29,14 @@ take what their own docs say.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Any, Literal, overload
+from typing import Any, Literal, final, overload
+
+__all__ = ["App", "Window", "Node", "Painter", "Event", "LoopHandle", "register_font"]
 
 Color = tuple[int, int, int, int]
 """An `(r, g, b, a)` byte tuple, 0-255 per channel, straight alpha."""
 
+@final
 class Event:
     """What a `node.on(...)` or `window.on(...)` listener receives when it
     declares one parameter -- never constructed directly. A field is
@@ -121,6 +124,7 @@ class Event:
         `ValueError` for any other event."""
         ...
 
+@final
 class Node:
     """A handle to one real node in a `Window`'s tree.
     Never constructed directly -- always returned by a `Window`
@@ -216,7 +220,7 @@ class Node:
     def release_pointer(self) -> None:
         """M94: ends this node's pointer capture, if it holds it."""
         ...
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self, other: object, /) -> bool:
         """M94: equal when both handles name the same node."""
         ...
     def __hash__(self) -> int: ...
@@ -254,12 +258,13 @@ class Node:
         freed node raises `ValueError`."""
         ...
 
+@final
 class Window:
     """One real OS window and the node tree painted into it. Add one or
     more to an `App`, then call `App.run()`.
     """
 
-    def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None:
+    def __new__(cls, width: int = 480, height: int = 200, title: str = "tre v2") -> Window:
         """Raises `ValueError` for a zero width or height."""
         ...
     def create(self, kind: str, **props: Any) -> Node:
@@ -445,6 +450,7 @@ class Window:
         """
         ...
 
+@final
 class App:
     """Collects one or more `Window`s and drives them all together in
     one blocking call.
@@ -471,6 +477,7 @@ class App:
         """
         ...
 
+@final
 class LoopHandle:
     """M87: a thread-safe handle to an `App`'s event loop, from
     `App.thread_handle()`. The one `tre` object a background thread
@@ -492,6 +499,7 @@ class LoopHandle:
         """
         ...
 
+@final
 class Painter:
     """The drawing surface a canvas's `draw` callback receives -- never
     constructed directly. M100 renamed it from `CanvasContext`.

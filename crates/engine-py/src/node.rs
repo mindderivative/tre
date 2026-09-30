@@ -144,10 +144,19 @@ impl Node {
         duration_ms: u64,
         easing: Option<Bound<'_, PyAny>>,
         on_complete: Option<Py<PyAny>>,
+        py: Python<'_>,
     ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
         let now = crate::clock::now(&self.tree);
         let curve = parse_easing(easing.as_ref())?;
+        // 0.4.3 M15: a scroll view eases to the real end, not past it --
+        // layout would clamp it there each frame, stalling the curve.
+        let scroll_max = if property == "scroll_offset" {
+            self.layout_box(py);
+            self.tree.borrow().max_scroll(self.id)
+        } else {
+            None
+        };
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
@@ -235,6 +244,7 @@ impl Node {
             // M96: a scroll view's offset, eased -- how a carousel snaps.
             "scroll_offset" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;
+                let value = scroll_max.map_or(value, |max| value.min(max));
                 let NodeKind::ScrollView(state) = &mut node.kind else {
                     return Err(pyo3::exceptions::PyValueError::new_err(
                         "node property `scroll_offset` applies only to a scroll_view node",

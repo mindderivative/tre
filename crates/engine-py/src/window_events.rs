@@ -387,6 +387,17 @@ impl PyWindow {
             self.handles.terminals.borrow_mut().insert(id, session);
         }
         node.apply(changes);
+        // 0.4.3 M15: a scroll view starts where `create` put it, so that's
+        // what its first `scroll` event's `old_value` says, not 0.
+        if let Some(NodeKind::ScrollView(state)) = self
+            .handles
+            .tree
+            .borrow_mut()
+            .get_mut(id)
+            .map(|n| &mut n.kind)
+        {
+            state.reported = state.scroll.current;
+        }
         if draws {
             node_callbacks::redraw(&node.tree, &node.handlers, id, py)?;
         }

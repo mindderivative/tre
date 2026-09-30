@@ -41,7 +41,8 @@ landed on the same node (`secondary_click` for the secondary button). The
 middle button and the mouse's side buttons (`event.button` is `"back"` or
 `"forward"`, 0.4.1) make no click; watch `pointer_down` for them. A wheel or
 trackpad scroll arrives as `wheel`, with `delta_x`/`delta_y` in pixels,
-positive right and down; it bubbles.
+positive right and down; it bubbles. With Shift held, a wheel with no
+horizontal part arrives as `delta_x`, so it scrolls sideways (0.4.3).
 `event.x`/`event.y` are local to `event.current`; `window_x`/`window_y` are
 in the window. Text nodes are never the target, so a press on a button's
 label lands on the button. `hit_testable=False` makes any node transparent to
@@ -73,7 +74,7 @@ The focused node gets `key_down`/`key_up`, which bubble; when nothing is
 focused, the root gets them. Enter and Space on a focused node fire `click` —
 except in a text input or terminal, which take every key — so a focusable box
 is already a keyboard button. Keys the focused node doesn't use scroll the
-nearest scroll view around it (0.4.2) — see
+nearest scroll view around it (0.4.2), unless Ctrl, Alt, or Meta is held (0.4.3) — see
 [Keyboard scrolling](nodes-and-layout.md#keyboard-scrolling).
 
 `focus` and `unfocus` bubble too, and carry `related_target`, the node on the
