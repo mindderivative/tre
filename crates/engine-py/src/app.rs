@@ -842,6 +842,7 @@ impl App {
                         dock: &runtime.handles.dock,
                         listeners: &runtime.handles.window_listeners,
                         terminals: &runtime.handles.terminals,
+                        window: &runtime.handles,
                     },
                     runtime.handles.root,
                     &event,

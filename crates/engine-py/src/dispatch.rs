@@ -365,6 +365,9 @@ pub(crate) struct WindowIo<'a> {
     pub(crate) dock: &'a SharedDockState,
     pub(crate) listeners: &'a WindowListenerMap,
     pub(crate) terminals: &'a SharedTerminals,
+    /// 0.5.0 M3: the window itself -- its OS window, for moving and
+    /// resizing it from a press, and its state.
+    pub(crate) window: &'a crate::window::WindowHandles,
 }
 
 /// A window's terminal sessions, by node.
@@ -398,7 +401,20 @@ pub(crate) fn process_input(
         ctx.tree
             .borrow_mut()
             .dispatch(root, delivered.clone(), crate::clock::now(ctx.tree));
-    listeners::route_input(ctx, target, delivered, py);
+    // 0.5.0 M3: a cancelled press's release reaches no listener; a new
+    // press starts afresh.
+    let swallowed = match delivered {
+        InputEvent::PointerPressed { .. } => {
+            io.window.press_cancelled.set(false);
+            false
+        }
+        InputEvent::PointerReleased { .. } => io.window.press_cancelled.replace(false),
+        _ => false,
+    };
+    if !swallowed {
+        listeners::route_input(ctx, target, delivered, py);
+    }
+    window_drag(ctx, io, delivered, target, py);
     // M96: layers an outside press or Escape asked to dismiss.
     let dismissed = ctx.tree.borrow_mut().take_dismissals();
     for layer in dismissed {
@@ -417,6 +433,84 @@ pub(crate) fn process_input(
     keyboard_scroll(ctx, event);
     listeners::fire_scroll_changes(ctx, py);
     outcome
+}
+
+/// 0.5.0 M3 (issue #28): a primary press on a drag region -- a framework's
+/// own title bar (`window_region`) -- moves the window. Runs after the
+/// press reached its listeners, so one that took the pointer capture counts
+/// as interactive. The move is `winit`'s `drag_window()`, which must follow
+/// the press at once; the press then ends with `pointer_cancel` rather than
+/// a `click`, since the platform may never deliver its release. Without an
+/// open window (`simulate`) there's nothing to move, but the press still
+/// ends the same way, so the decision is testable.
+fn window_drag(
+    ctx: &NodeContext<'_>,
+    io: &WindowIo<'_>,
+    event: &InputEvent,
+    target: Option<NodeId>,
+    py: Python<'_>,
+) {
+    let InputEvent::PointerPressed {
+        position,
+        button: PointerButton::Primary,
+    } = *event
+    else {
+        return;
+    };
+    if !starts_window_drag(ctx, target) {
+        return;
+    }
+    if let Some(window) = io.window.os_window.borrow().as_ref() {
+        let _ = window.drag_window();
+    }
+    let pressed = ctx.tree.borrow_mut().cancel_press();
+    io.window.press_cancelled.set(true);
+    if let Some(node) = pressed.or(target) {
+        listeners::deliver(
+            ctx,
+            py,
+            EventType::PointerCancel,
+            node,
+            Some(position),
+            |e| {
+                listeners::stamp_modifiers(e);
+            },
+        );
+    }
+}
+
+/// 0.5.0 M3: the custom-windowing design's Q1 rule. Walking up from the
+/// pressed node: a `window_region="drag"` node moves the window, a
+/// `"none"` one doesn't, and so doesn't an interactive one met first --
+/// focusable, a text input or terminal, with a `click` listener, or holding
+/// the pointer capture. Hover and `pointer_down` listeners don't count, so a
+/// tooltip's anchor or a context menu's target in a title bar still drags,
+/// and nothing above the drag region is looked at.
+fn starts_window_drag(ctx: &NodeContext<'_>, target: Option<NodeId>) -> bool {
+    let Some(target) = target else {
+        return false;
+    };
+    let tree = ctx.tree.borrow();
+    let handlers = ctx.handlers.borrow();
+    let capture = tree.pointer_capture();
+    for id in tree.ancestors(target) {
+        let Some(node) = tree.get(id) else {
+            return false;
+        };
+        match node.window_region {
+            engine_core::WindowRegion::Drag => return true,
+            engine_core::WindowRegion::NoDrag => return false,
+            engine_core::WindowRegion::Default => {}
+        }
+        let interactive = node.access.focusable == Some(true)
+            || matches!(node.kind, NodeKind::TextField(_) | NodeKind::Terminal(_))
+            || handlers.contains_key(&(id, HandlerKey::Listener(EventType::Click)))
+            || capture == Some(id);
+        if interactive {
+            return false;
+        }
+    }
+    false
 }
 
 /// 0.4.3 M17: with Shift held, a wheel that has no horizontal part scrolls

@@ -40,6 +40,7 @@ pub use node::{
     NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
     SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, TerminalCell, TerminalPalette,
     TerminalState, TextAlign, TextFieldState, TextOptions, TextState, VirtualListState,
+    WindowRegion,
 };
 pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};

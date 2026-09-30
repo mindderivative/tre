@@ -928,6 +928,7 @@ impl PyWindow {
             dock: &self.handles.dock,
             listeners: &self.handles.window_listeners,
             terminals: &self.handles.terminals,
+            window: &self.handles,
         };
         let mut f = Fields::new(event, fields)?;
         let need_node = |f: &Fields<'_>| -> PyResult<NodeId> {

@@ -106,10 +106,13 @@ pub(crate) enum EventType {
     Dismiss,
     /// 0.4.2 M12 (issue #24): a scroll view's offset changed.
     Scroll,
+    /// 0.5.0 M3 (issue #28): the press was taken to move or resize the
+    /// window -- no `pointer_up` or `click` will follow it.
+    PointerCancel,
 }
 
 impl EventType {
-    const ALL: [EventType; 17] = [
+    const ALL: [EventType; 18] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -127,6 +130,7 @@ impl EventType {
         Self::A11yAction,
         Self::Dismiss,
         Self::Scroll,
+        Self::PointerCancel,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -148,6 +152,7 @@ impl EventType {
             Self::A11yAction => "a11y_action",
             Self::Dismiss => "dismiss",
             Self::Scroll => "scroll",
+            Self::PointerCancel => "pointer_cancel",
         }
     }
 

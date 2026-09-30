@@ -128,6 +128,10 @@ pub(crate) struct WindowHandles {
     pub(crate) min_size: Rc<Cell<(f64, f64)>>,
     /// 0.5.0 M2: the window's icon, RGBA8 with its width and height.
     pub(crate) icon: Rc<RefCell<Option<IconPixels>>>,
+    /// 0.5.0 M3: a press was taken to move or resize the window
+    /// (`pointer_cancel`), so its release, if the platform delivers one at
+    /// all, reaches no listener. The next press clears it.
+    pub(crate) press_cancelled: Rc<Cell<bool>>,
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
@@ -204,6 +208,7 @@ impl PyWindow {
                 fullscreen: Rc::new(Cell::new(false)),
                 min_size: Rc::new(Cell::new((0.0, 0.0))),
                 icon: Rc::new(RefCell::new(None)),
+                press_cancelled: Rc::new(Cell::new(false)),
                 waker: Rc::new(RefCell::new(None)),
             },
         })))

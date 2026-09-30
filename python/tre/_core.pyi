@@ -207,7 +207,9 @@ class Node:
         `pointer_down`, `pointer_move`, `pointer_up`, `click`,
         `secondary_click`, `wheel`, `key_down`, `key_up`, `input`,
         `focus`, `unfocus`, `change`, `a11y_action`, `dismiss` (a layer
-        asked to close), `scroll`. All but `pointer_enter`/`pointer_leave`/
+        asked to close), `scroll`, and (0.5.0) `pointer_cancel` -- the press
+        was taken to move or resize the window, and no `pointer_up` or
+        `click` will follow it. All but `pointer_enter`/`pointer_leave`/
         `change`/`dismiss`/`scroll` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
