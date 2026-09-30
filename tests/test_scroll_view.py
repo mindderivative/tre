@@ -343,3 +343,15 @@ def test_an_animation_past_the_end_eases_to_the_end():
     assert offset(view) == 450.0, "halfway to 900, not clamped from halfway to 5000"
     window.advance(50)
     assert offset(view) == 900.0
+
+
+def test_a_create_time_offset_is_the_first_events_old_value():
+    window = Window(width=800, height=600)
+    view = window.create("scroll_view", width=200, height=100, scroll_offset=500)
+    view.add_child(window.create("box", width=200, height=1000))
+    window.root.add_child(view)
+    seen = listen(view)
+    window.advance(16)
+    assert offset(view) == 500.0 and seen == [], "created there: nothing moved"
+    view.set(scroll_offset=600.0)
+    assert seen == [(500.0, 600.0)]
