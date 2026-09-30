@@ -613,6 +613,26 @@ impl Tree {
         moved
     }
 
+    /// 0.4.3 M15: how far scroll view `view` can scroll along its axis --
+    /// its content (first child) past its viewport, `0.0` if it fits --
+    /// by the last layout; `None` for a node that isn't a scroll view or has
+    /// no content yet. The one range every clamp uses: layout's own, and
+    /// `animate`'s target.
+    pub fn max_scroll(&self, view: NodeId) -> Option<f64> {
+        let node = self.nodes.get(view)?;
+        let NodeKind::ScrollView(state) = &node.kind else {
+            return None;
+        };
+        let &child = node.children.first()?;
+        let (outer, inner) = (self.layout(view).size, self.layout(child).size);
+        let (content, viewport) = if state.horizontal {
+            (inner.width, outer.width)
+        } else {
+            (inner.height, outer.height)
+        };
+        Some((f64::from(content) - f64::from(viewport)).max(0.0))
+    }
+
     /// 0.4.2 M12 (issue #24): every scroll view whose offset has changed
     /// since this was last asked -- `(view, old, new)` -- by comparison, so
     /// no cause is missed: the wheel, keys, `scroll_into_view`, focus,

@@ -28,13 +28,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `██████████` 100% | ✅ Complete (2026-09-29) — Page Up/Down keys, keyboard scrolling, `scroll_into_view` with focus reveal, and the `scroll` event |
 | M13 — Release `0.4.2` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.2` released on GitHub and PyPI, closing issues #23 and #24; Tesserae moved onto it, its scroll view now following tre's keys, reveal, and `scroll` event |
 | M14 — Keyboard Scrolling Leaves Shortcuts Alone | `██████████` 100% | ✅ Complete (2026-09-30) — keys with Ctrl, Alt, or Meta held are shortcuts and no longer scroll; Shift still does |
-| M15 — `scroll_offset` Clamped When Set | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M15 — `scroll_offset` Clamped When Set | `███░░░░░░░` 33% | 🚧 In Progress — `set` and `animate` clamp to the view's range at once |
 | M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
 | M17 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — on hold until more fixes join 0.4.3 |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M15 Step 1 -- `set` and `animate` clamp `scroll_offset` against a fresh layout.
+**Up next:** M15 Step 2 -- the create-time offset is the `scroll` event's baseline.
 
 **Known gaps:**
 - None open on this line.
@@ -217,10 +217,10 @@ User: "Start phase 3".
 
 ## Milestone 15 — `scroll_offset` Clamped When Set
 
-**Status: ⬜ Proposed.** User (2026-09-30): "scope both as 0.4.3" -- Tesserae's second observation: `set(scroll_offset=...)` past the end reads back as set until the next layout clamps it, which then fires a second `scroll` event with the clamped value. Found while scoping (checked 2026-09-30): an offset given to `create` never becomes the `scroll` event's baseline -- `reported` starts at 0 -- so the first event's `old_value` is 0 instead of that offset. Plan: `Node.set`'s and `animate`'s `scroll_offset` run layout, then clamp to the view's range, so the read-back is right at once and one `scroll` event fires with the clamped value, and an animation eases to the real end rather than stalling there; `create` keeps today's rule (clamped at the first layout), so an offset given before the content is attached still survives adding it; a view's initial offset is its reported baseline.
+**Status: 🚧 In Progress.** User: "yes, merge PR #26 and start M15". Step 1 done (2026-09-30). Scoped (2026-09-30): "scope both as 0.4.3" -- Tesserae's second observation: `set(scroll_offset=...)` past the end reads back as set until the next layout clamps it, which then fires a second `scroll` event with the clamped value. Found while scoping (checked 2026-09-30): an offset given to `create` never becomes the `scroll` event's baseline -- `reported` starts at 0 -- so the first event's `old_value` is 0 instead of that offset. Plan: `Node.set`'s and `animate`'s `scroll_offset` run layout, then clamp to the view's range, so the read-back is right at once and one `scroll` event fires with the clamped value, and an animation eases to the real end rather than stalling there; `create` keeps today's rule (clamped at the first layout), so an offset given before the content is attached still survives adding it; a view's initial offset is its reported baseline.
 
-### Phase 1 — Clamping ⬜
-- Step 1: `set` and `animate` clamp `scroll_offset` against a fresh layout; one `scroll` event; pytest for past the end, below the content, a shrinking content box, and an animation's target — ⬜
+### Phase 1 — Clamping 🚧
+- Step 1: `set` and `animate` clamp `scroll_offset` against a fresh layout; one `scroll` event; pytest for past the end, below the content, a shrinking content box, and an animation's target — ✅ (2026-09-30: new `Tree::max_scroll` gives a view's range from the last layout, and layout's own clamp now uses it; `Node.set` with `scroll_offset` runs layout before reporting, so the value reads back clamped at once and one `scroll` fires; `animate` lays out and clamps its target, so an animation past the end eases to the real end instead of stalling there; `create` unchanged; 4 new pytest cases -- 5000 in a 900-pixel range reads back 900 with the one event (0, 900), a value inside the range kept, shrinking content clamping 800 to 400 with one event, and a linear animation to 5000 at 450 halfway and 900 at the end; cargo 377, pytest 498 + 1 skipped)
 - Step 2: the create-time offset is the `scroll` event's baseline; a pytest that the first event's `old_value` is that offset — ⬜
 - Step 3: the property reference, the guide, and the 0.4.3 migration section — ⬜
 

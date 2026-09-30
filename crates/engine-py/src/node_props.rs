@@ -742,6 +742,12 @@ impl Node {
         if redraw {
             crate::node_callbacks::redraw(&self.tree, &self.handlers, self.id, py)?;
         }
+        // 0.4.3 M15: a new offset is clamped to the view's range before it's
+        // reported -- layout does the clamping -- so it reads back right at
+        // once and fires one `scroll`, not a second when the frame lays out.
+        if props.is_some_and(|p| p.contains("scroll_offset").unwrap_or(false)) {
+            self.layout_box(py);
+        }
         self.fire_scroll_changes(py);
         Ok(())
     }

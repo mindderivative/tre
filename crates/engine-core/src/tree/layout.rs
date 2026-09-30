@@ -76,26 +76,14 @@ impl Tree {
             .map(|(id, _)| id)
             .collect();
         for view in views {
-            let Some(&child) = self.nodes[view].children.first() else {
+            let Some(max_scroll) = self.max_scroll(view) else {
                 continue;
             };
-
-            let outer = self.layout(view);
-            let viewport_w = f64::from(outer.size.width);
-            let viewport_h = f64::from(outer.size.height);
-            let child_layout = self.layout(child);
-            let content_w = f64::from(child_layout.size.width);
-            let content_h = f64::from(child_layout.size.height);
-
+            let child = self.nodes[view].children[0];
             let NodeKind::ScrollView(state) = &self.nodes[view].kind else {
                 unreachable!("checked by the filter above")
             };
             let horizontal = state.horizontal;
-            let max_scroll = if horizontal {
-                (content_w - viewport_w).max(0.0)
-            } else {
-                (content_h - viewport_h).max(0.0)
-            };
             // Real, honest re-clamp on every real layout pass, the
             // identical "content may have shrunk since last frame"
             // discipline pyCopper's own `_clamped_scroll` already

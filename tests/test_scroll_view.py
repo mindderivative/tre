@@ -301,3 +301,45 @@ def test_scroll_is_quiet_when_nothing_moves_and_does_not_bubble():
     window.simulate("key_down", key="page_down")
     assert seen == [(0.0, 100.0)]
     assert root_heard == [], "scroll stays on the scroll view"
+
+
+# --- 0.4.3 M15: scroll_offset clamped when it's set -------------------------------
+
+
+def test_setting_past_the_end_clamps_at_once_with_one_event():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window)  # 1000 of content in a 100 view: 900 of travel
+    seen = listen(view)
+    view.set(scroll_offset=5000.0)
+    assert offset(view) == 900.0, "reads back clamped, before any frame"
+    window.advance(16)
+    assert seen == [(0.0, 900.0)], "one event, with the clamped value"
+
+
+def test_setting_inside_the_range_is_kept():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window)
+    view.set(scroll_offset=300.0)
+    assert offset(view) == 300.0
+
+
+def test_shrinking_content_clamps_the_offset():
+    window = Window(width=800, height=600)
+    view, content, _ = scroller(window)
+    view.set(scroll_offset=800.0)
+    seen = listen(view)
+    content.set(height=500)
+    window.advance(16)
+    assert offset(view) == 400.0
+    assert seen == [(800.0, 400.0)]
+
+
+def test_an_animation_past_the_end_eases_to_the_end():
+    window = Window(width=800, height=600)
+    view, _, _ = scroller(window)
+    window.advance(0)
+    view.animate("scroll_offset", 5000.0, 100, easing="linear")
+    window.advance(50)
+    assert offset(view) == 450.0, "halfway to 900, not clamped from halfway to 5000"
+    window.advance(50)
+    assert offset(view) == 900.0
