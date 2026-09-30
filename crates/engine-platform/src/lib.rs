@@ -260,6 +260,25 @@ pub struct WindowConfig {
     /// (LESSONS_LEARNED.md, the "gracefully exit 0" lesson from finding
     /// #261). `None` runs until the user closes the window.
     pub max_frames: Option<u32>,
+    /// 0.5.0 M2 (issue #28): how the window is made beyond its title and
+    /// size.
+    pub options: WindowOptions,
+}
+
+/// 0.5.0 M2 (issue #28): a window's creation settings beyond its title and
+/// size. `Default` is an ordinary decorated window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WindowOptions {
+    /// Whether the OS draws the window's title bar and borders. `false`
+    /// leaves all of it to the app, which draws its own; on Windows the
+    /// window keeps its shadow either way.
+    pub decorations: bool,
+}
+
+impl Default for WindowOptions {
+    fn default() -> Self {
+        Self { decorations: true }
+    }
 }
 
 /// One window-open request, tagged with a caller-assigned `token` so
@@ -601,13 +620,22 @@ where
                 // accesskit_winit's own hard requirement: the adapter
                 // must be created before the window is ever shown,
                 // which means creating the window invisible first.
+                let options = &request.config.options;
                 let attrs = WindowAttributes::default()
                     .with_title(request.config.title.clone())
                     .with_inner_size(winit::dpi::LogicalSize::new(
                         request.config.width,
                         request.config.height,
                     ))
+                    .with_decorations(options.decorations)
                     .with_visible(false);
+                // 0.5.0 M2: Windows drops an undecorated window's shadow
+                // unless asked to keep it; a decorated one has it anyway.
+                #[cfg(target_os = "windows")]
+                let attrs = {
+                    use winit::platform::windows::WindowAttributesExtWindows;
+                    attrs.with_undecorated_shadow(true)
+                };
                 let window = event_loop
                     .create_window(attrs)
                     .expect("failed to create window");

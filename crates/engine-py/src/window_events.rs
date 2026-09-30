@@ -225,6 +225,9 @@ impl PyWindow {
     }
 }
 
+/// 0.5.0 M2: the window properties `set` takes, for its error messages.
+const SETTABLE: &str = "title, partial_redraw, show_damage, decorations";
+
 #[pymethods]
 impl PyWindow {
     /// The window's root node -- the box its content lives in.
@@ -425,14 +428,15 @@ impl PyWindow {
         Ok(())
     }
 
-    /// Sets window properties: `title`, (0.4.0 M5) `partial_redraw`, and
-    /// (0.4.1 M8) `show_damage`; `width`, `height`, and `scale_factor` are
-    /// read-only.
+    /// Sets window properties: `title`, (0.4.0 M5) `partial_redraw`,
+    /// (0.4.1 M8) `show_damage`, and (0.5.0 M2) `decorations`; `width`,
+    /// `height`, and `scale_factor` are read-only.
     #[pyo3(signature = (**props))]
     fn set(&mut self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let mut title = None;
         let mut partial_redraw = None;
         let mut show_damage = None;
+        let mut decorations = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -452,16 +456,19 @@ impl PyWindow {
                             PyValueError::new_err("window property `show_damage` must be a bool")
                         })?);
                     }
+                    "decorations" => {
+                        decorations = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `decorations` must be a bool")
+                        })?);
+                    }
                     "width" | "height" | "scale_factor" => {
                         return Err(PyValueError::new_err(format!(
-                            "window property `{name}` is read-only -- settable: title, \
-                             partial_redraw, show_damage"
+                            "window property `{name}` is read-only -- settable: {SETTABLE}"
                         )));
                     }
                     _ => {
                         return Err(PyValueError::new_err(format!(
-                            "unknown window property {name:?} -- settable: title, \
-                             partial_redraw, show_damage"
+                            "unknown window property {name:?} -- settable: {SETTABLE}"
                         )));
                     }
                 }
@@ -478,6 +485,12 @@ impl PyWindow {
         }
         if let Some(on) = show_damage {
             self.handles.show_damage.set(on);
+        }
+        if let Some(on) = decorations {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                window.set_decorations(on);
+            }
+            self.handles.decorations.set(on);
         }
         Ok(())
     }
@@ -510,6 +523,19 @@ impl PyWindow {
             // 0.4.0 M6: whether the open window really redraws only what
             // changed -- the setting, and a surface that allows it; `None`
             // until `App.run()` opens the window.
+            // 0.5.0 M2: the open window's own answer, else the setting.
+            "decorations" => self
+                .handles
+                .os_window
+                .borrow()
+                .as_ref()
+                .map_or(self.handles.decorations.get(), |window| {
+                    window.is_decorated()
+                })
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "show_damage" => self
                 .handles
                 .show_damage
@@ -545,7 +571,8 @@ impl PyWindow {
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
-                     scale_factor, dark, partial_redraw, partial_redraw_active, show_damage"
+                     scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
+                     decorations"
                 )));
             }
         })

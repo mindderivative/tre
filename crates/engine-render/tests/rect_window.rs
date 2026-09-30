@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use engine_core::{MotionCurve, NodeId, NodeKind, PaintProperties, TextAlign, TextState, Tree};
-use engine_platform::{WindowConfig, run_windowed};
+use engine_platform::{WindowConfig, WindowOptions, run_windowed};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexDirection, Size, Style, length};
@@ -376,6 +376,7 @@ fn main() {
             // proves the pipeline runs, it doesn't need a human to close
             // the window for that to be demonstrated.
             max_frames: Some(60),
+            options: WindowOptions::default(),
         },
         move |window, frame| {
             let mut gpu_ref = gpu.borrow_mut();

@@ -24,7 +24,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
-use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
+use engine_platform::{
+    WindowConfig, WindowLifecycle, WindowOptions, WindowRequest, run_windowed_multi,
+};
 use engine_render::{TextPlacement, TextRenderer, WindowRenderer};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
@@ -1227,6 +1229,9 @@ impl App {
                             width: setup.handles.width.get(),
                             height: setup.handles.height.get(),
                             max_frames,
+                            options: WindowOptions {
+                                decorations: setup.handles.decorations.get(),
+                            },
                         },
                         token: index as u64,
                     });

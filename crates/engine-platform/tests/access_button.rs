@@ -34,7 +34,7 @@ use std::thread;
 use std::time::Duration;
 
 use engine_core::{AccessNodeData, Action, NodeKind, PaintProperties, Role, Tree};
-use engine_platform::{WindowConfig, run_windowed};
+use engine_platform::{WindowConfig, WindowOptions, run_windowed};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
 
@@ -74,6 +74,7 @@ fn main() {
             width: 160,
             height: 80,
             max_frames: Some(30),
+            options: WindowOptions::default(),
         },
         move |_window, frame| {
             if frame == 0 {

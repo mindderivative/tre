@@ -264,8 +264,12 @@ class Window:
     more to an `App`, then call `App.run()`.
     """
 
-    def __new__(cls, width: int = 480, height: int = 200, title: str = "tre v2") -> Window:
-        """Raises `ValueError` for a zero width or height."""
+    def __new__(
+        cls, width: int = 480, height: int = 200, title: str = "tre v2", decorations: bool = True
+    ) -> Window:
+        """Raises `ValueError` for a zero width or height. (0.5.0)
+        `decorations=False` opens the window without the OS's title bar and
+        borders, for the framework to draw its own."""
         ...
     def create(self, kind: str, **props: Any) -> Node:
         """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
@@ -299,7 +303,12 @@ class Window:
         """M94: removes the window's listener for `event`, if any."""
         ...
     def set(
-        self, *, title: str = ..., partial_redraw: bool = ..., show_damage: bool = ...
+        self,
+        *,
+        title: str = ...,
+        partial_redraw: bool = ...,
+        show_damage: bool = ...,
+        decorations: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -308,7 +317,8 @@ class Window:
         warning logged, whatever this says. (0.4.1) `show_damage`: `True`
         tints what each presented frame redrew -- its damage rects in
         magenta, a full redraw outlined in orange -- over the image, never
-        the kept frame; off by default."""
+        the kept frame; off by default. (0.5.0) `decorations`: whether the
+        OS draws the title bar and borders, live on an open window."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -321,7 +331,7 @@ class Window:
     @overload
     def get(self, name: Literal["dark"]) -> bool | None: ...
     @overload
-    def get(self, name: Literal["show_damage"]) -> bool: ...
+    def get(self, name: Literal["show_damage", "decorations"]) -> bool: ...
     @overload
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, `scale_factor` (`1.0`
@@ -332,8 +342,8 @@ class Window:
         once the window is open -- `partial_redraw`, or (0.4.0)
         `partial_redraw_active`: whether the open window really redraws
         only what changed -- the setting, and a surface that allows it --
-        `None` until `App.run()` opens the window -- or (0.4.1)
-        `show_damage`."""
+        `None` until `App.run()` opens the window -- (0.4.1)
+        `show_damage`, or (0.5.0) `decorations`."""
         ...
     def show_layer(
         self,

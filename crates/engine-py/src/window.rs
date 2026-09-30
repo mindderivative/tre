@@ -109,6 +109,10 @@ pub(crate) struct WindowHandles {
     /// 0.4.1 M8: `window.set(show_damage=True)` -- each presented frame
     /// shows what it redrew. Read every frame, like `partial_redraw`.
     pub(crate) show_damage: Rc<Cell<bool>>,
+    /// 0.5.0 M2 (issue #28): whether the OS draws the window's title bar
+    /// and borders -- `Window(decorations=False)` or a live `set` turns them
+    /// off for the framework to draw its own.
+    pub(crate) decorations: Rc<Cell<bool>>,
 }
 
 pub struct WindowState {
@@ -122,8 +126,8 @@ pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window:
 #[pymethods]
 impl PyWindow {
     #[new]
-    #[pyo3(signature = (width=480, height=200, title="tre v2"))]
-    fn new(width: u32, height: u32, title: &str) -> PyResult<Self> {
+    #[pyo3(signature = (width=480, height=200, title="tre v2", decorations=true))]
+    fn new(width: u32, height: u32, title: &str, decorations: bool) -> PyResult<Self> {
         // 0.4.0 review: a GPU surface can't be zero-sized.
         if width == 0 || height == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -172,6 +176,7 @@ impl PyWindow {
                 partial_redraw: Rc::new(Cell::new(true)),
                 surface_partial: Rc::new(Cell::new(None)),
                 show_damage: Rc::new(Cell::new(false)),
+                decorations: Rc::new(Cell::new(decorations)),
             },
         })))
     }

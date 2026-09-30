@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
+use engine_platform::{WindowConfig, WindowOptions, WindowRequest, run_windowed_multi};
 use winit::window::WindowId;
 
 fn main() {
@@ -62,6 +62,7 @@ fn main() {
                     width: 200,
                     height: 150,
                     max_frames: Some(5),
+                    options: WindowOptions::default(),
                 },
                 token: 0,
             });
@@ -71,6 +72,7 @@ fn main() {
                     width: 250,
                     height: 180,
                     max_frames: Some(5),
+                    options: WindowOptions::default(),
                 },
                 token: 1,
             });
