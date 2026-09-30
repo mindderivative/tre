@@ -16,7 +16,7 @@ Tesserae: the tre/framework split, drag/resize regions as a node property
 platform limits (macOS can't resize undecorated; Windows shadow), and open
 questions. Then decisions, and M2–M5 revised.
 
-## M2 — Undecorated windows and controls
+## M2 — Undecorated windows and controls — done (#32, #37)
 ## M3 — Drag and resize regions
 ## M4 — macOS transparent title bar
 ## M5 — Example, docs, manual checks
