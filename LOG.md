@@ -35,3 +35,8 @@ can't move on (found: a carousel in a page swallowed a plain wheel). 5
 pytest cases plus Shift on the terminal scrollback wheel; guide, events,
 migration, ARCHITECTURE §11.7a. cargo 377, pytest 504 + 1 skipped.
 Next: M18.
+
+**M18 complete (2026-09-30).** 9 engine-core tests for `max_scroll`,
+`scroll_view_for_key`, `scroll_by_key`, `scroll_into_view`,
+`take_scroll_changes`, and M17's wheel rule (shown to fail without it).
+cargo 386, pytest 504 + 1 skipped. Next: M19.

@@ -31,13 +31,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M15 — `scroll_offset` Clamped When Set | `██████████` 100% | ✅ Complete (2026-09-30) — `set` and `animate` clamp `scroll_offset` to the view's range at once, with one `scroll` event; a created offset is the event's baseline |
 | M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
 | M17 — Shift+Wheel Scrolls Horizontal Views | `██████████` 100% | ✅ Complete (2026-09-30) — Shift+wheel scrolls horizontal views, and a wheel passes views it can't move to the next one out |
-| M18 — Unit Tests for the Scroll Core | `░░░░░░░░░░` 0% | ⬜ Proposed |
+| M18 — Unit Tests for the Scroll Core | `██████████` 100% | ✅ Complete (2026-09-30) — 9 `engine-core` tests cover the scroll API and M17's wheel rule without Python |
 | M19 — Stub Drift Checked in CI | `░░░░░░░░░░` 0% | ⬜ Proposed |
 | M20 — Release `0.4.3` | `░░░░░░░░░░` 0% | ⬜ Proposed — after M17–M19, if nothing else joins 0.4.3 |
 
 **Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
-**Up next:** M18 Step 1 -- `engine-core` unit tests for the scroll core.
+**Up next:** M19 Step 1 -- the stub matches what PyO3 builds, `stubtest` clean.
 
 **Known gaps:**
 - None open on this line.
@@ -250,10 +250,10 @@ User: "Start phase 3".
 
 ## Milestone 18 — Unit Tests for the Scroll Core
 
-**Status: ⬜ Proposed.** User (2026-09-30): "Scope 1, 2, and 3". The scroll API added in M12 and M15 -- `scroll_view_for_key`, `scroll_by_key`, `scroll_into_view`, `take_scroll_changes`, `max_scroll` -- is tested only through Python; `cargo test` has stayed at 377 since. Plan: `engine-core` unit tests in `tree/tests.rs`, beside the existing scroll view tests, with no Python or GPU.
+**Status: ✅ Complete (2026-09-30).** User: "yes, start M18". Scoped (2026-09-30): "Scope 1, 2, and 3". The scroll API added in M12 and M15 -- `scroll_view_for_key`, `scroll_by_key`, `scroll_into_view`, `take_scroll_changes`, `max_scroll` -- is tested only through Python; `cargo test` has stayed at 377 since. Plan: `engine-core` unit tests in `tree/tests.rs`, beside the existing scroll view tests, with no Python or GPU.
 
-### Phase 1 — Tests ⬜
-- Step 1: `scroll_view_for_key` (each key's axis, nearest first, Home/End either axis, none found), `scroll_by_key` (40 px, a viewport, the ends, clamping, the dirty flag), `scroll_into_view` (least movement, a box longer than its view, nested views, nothing when visible), `take_scroll_changes` (reported once, then quiet), and `max_scroll` (content that fits, no content, horizontal) — ⬜
+### Phase 1 — Tests ✅
+- Step 1: `scroll_view_for_key` (each key's axis, nearest first, Home/End either axis, none found), `scroll_by_key` (40 px, a viewport, the ends, clamping, the dirty flag), `scroll_into_view` (least movement, a box longer than its view, nested views, nothing when visible), `take_scroll_changes` (reported once, then quiet), and `max_scroll` (content that fits, no content, horizontal) — ✅ (2026-09-30: 9 tests in `tree/tests.rs` with two small helpers, `offset_of` and `view_over_boxes`: `max_scroll` along each axis, for content that fits, and `None` without content or for a plain node; `scroll_view_for_key` for every key on each axis, on a focused view itself, and past a carousel for the page around it; `scroll_by_key`'s line, page, and ends, clamping, and the dirty flag set only when something moved; `scroll_into_view`'s least movement, nothing when visible, and a long box aligned to its start; `take_scroll_changes` once per move and quiet without scroll views; and M17's rule, a vertical wheel over a carousel scrolling its page and a horizontal one the carousel, checked to fail with M17's core change reversed; cargo 386, pytest 504 + 1 skipped)
 
 ---
 

@@ -5645,3 +5645,305 @@ fn hit_test_after_a_real_scroll_resolves_a_real_grandchild_at_its_own_post_scrol
     );
     let _ = content;
 }
+
+// --- 0.4.3 M18: the scroll core added in 0.4.2 M12 and 0.4.3 M15 -----------
+
+fn offset_of(tree: &Tree, view: NodeId) -> f64 {
+    let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+        panic!("expected a ScrollView");
+    };
+    state.scroll.current
+}
+
+/// A vertical 100x100 view over a 100x400 column holding a box of each
+/// height in `heights`, top to bottom, laid out.
+fn view_over_boxes(heights: &[f32]) -> (Tree, NodeId, Vec<NodeId>) {
+    let mut tree = Tree::new();
+    let view = tree.insert(
+        NodeKind::ScrollView(ScrollViewState::new(false)),
+        Style {
+            size: Size {
+                width: length(100.0),
+                height: length(100.0),
+            },
+            ..Default::default()
+        },
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+    );
+    let content = tree.insert(
+        NodeKind::Rect,
+        Style {
+            size: Size {
+                width: length(100.0),
+                height: length(400.0),
+            },
+            flex_direction: FlexDirection::Column,
+            ..Default::default()
+        },
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+    );
+    tree.add_child(view, content);
+    let boxes = heights
+        .iter()
+        .map(|&h| {
+            let (k, s, p) = leaf(100.0, h);
+            let id = tree.insert(k, s, p);
+            tree.add_child(content, id);
+            id
+        })
+        .collect();
+    tree.compute_layout(
+        view,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    (tree, view, boxes)
+}
+
+#[test]
+fn max_scroll_is_the_content_past_the_viewport_along_the_views_axis() {
+    let (tree, view, _) = scrollable_view(false);
+    assert_eq!(
+        tree.max_scroll(view),
+        Some(300.0),
+        "400 of content, 100 of view"
+    );
+    let (tree, view, _) = scrollable_view(true);
+    assert_eq!(
+        tree.max_scroll(view),
+        Some(300.0),
+        "measured across, not down"
+    );
+}
+
+#[test]
+fn max_scroll_is_zero_when_content_fits_and_none_without_content() {
+    let mut tree = Tree::new();
+    let empty = tree.insert(
+        NodeKind::ScrollView(ScrollViewState::new(false)),
+        Style::default(),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+    );
+    assert_eq!(tree.max_scroll(empty), None, "no content yet");
+    let (k, s, p) = leaf(10.0, 10.0);
+    let plain = tree.insert(k, s, p);
+    assert_eq!(tree.max_scroll(plain), None, "not a scroll view");
+
+    let mut tree = Tree::new();
+    let view = tree.insert(
+        NodeKind::ScrollView(ScrollViewState::new(false)),
+        Style {
+            size: Size {
+                width: length(100.0),
+                height: length(500.0),
+            },
+            ..Default::default()
+        },
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+    );
+    let (k, s, p) = leaf(100.0, 200.0);
+    let content = tree.insert(k, s, p);
+    tree.add_child(view, content);
+    tree.compute_layout(
+        view,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(500.0),
+        },
+    );
+    assert_eq!(
+        tree.max_scroll(view),
+        Some(0.0),
+        "content that fits has no travel"
+    );
+}
+
+#[test]
+fn scroll_view_for_key_finds_the_nearest_view_along_the_keys_axis() {
+    let (tree, view, content) = scrollable_view(false);
+    for key in [
+        Key::ArrowUp,
+        Key::ArrowDown,
+        Key::PageUp,
+        Key::PageDown,
+        Key::Home,
+        Key::End,
+    ] {
+        assert_eq!(
+            tree.scroll_view_for_key(content, key),
+            Some(view),
+            "{key:?}"
+        );
+    }
+    for key in [Key::ArrowLeft, Key::ArrowRight] {
+        assert_eq!(
+            tree.scroll_view_for_key(content, key),
+            None,
+            "{key:?} is across"
+        );
+    }
+    let (tree, view, content) = scrollable_view(true);
+    for key in [Key::ArrowLeft, Key::ArrowRight, Key::Home, Key::End] {
+        assert_eq!(
+            tree.scroll_view_for_key(content, key),
+            Some(view),
+            "{key:?}"
+        );
+    }
+    assert_eq!(tree.scroll_view_for_key(content, Key::PageDown), None);
+    assert_eq!(
+        tree.scroll_view_for_key(view, Key::ArrowRight),
+        Some(view),
+        "itself"
+    );
+}
+
+#[test]
+fn scroll_view_for_key_passes_a_carousel_for_the_page_around_it() {
+    let (mut tree, page, boxes) = view_over_boxes(&[50.0]);
+    let carousel = tree.insert(
+        NodeKind::ScrollView(ScrollViewState::new(true)),
+        Style::default(),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+    );
+    let (k, s, p) = leaf(10.0, 10.0);
+    let item = tree.insert(k, s, p);
+    tree.add_child(carousel, item);
+    tree.add_child(boxes[0], carousel);
+    assert_eq!(
+        tree.scroll_view_for_key(item, Key::ArrowRight),
+        Some(carousel)
+    );
+    assert_eq!(tree.scroll_view_for_key(item, Key::ArrowDown), Some(page));
+    assert_eq!(
+        tree.scroll_view_for_key(item, Key::End),
+        Some(carousel),
+        "nearest"
+    );
+}
+
+#[test]
+fn scroll_by_key_moves_a_line_a_page_or_to_an_end_clamped() {
+    let (mut tree, view, _) = scrollable_view(false);
+    tree.take_dirty();
+    assert!(tree.scroll_by_key(view, Key::ArrowDown));
+    assert_eq!(offset_of(&tree, view), KEY_SCROLL_LINE);
+    assert!(tree.take_dirty(), "a key scroll repaints");
+    assert!(tree.scroll_by_key(view, Key::PageDown));
+    assert_eq!(
+        offset_of(&tree, view),
+        KEY_SCROLL_LINE + 100.0,
+        "one viewport"
+    );
+    assert!(tree.scroll_by_key(view, Key::End));
+    assert_eq!(offset_of(&tree, view), 300.0);
+    assert!(
+        !tree.scroll_by_key(view, Key::PageDown),
+        "clamped at the end"
+    );
+    assert_eq!(offset_of(&tree, view), 300.0);
+    assert!(tree.scroll_by_key(view, Key::Home));
+    assert_eq!(offset_of(&tree, view), 0.0);
+    tree.take_dirty();
+    assert!(
+        !tree.scroll_by_key(view, Key::ArrowUp),
+        "already at the top"
+    );
+    assert!(!tree.take_dirty(), "nothing moved, nothing to repaint");
+}
+
+#[test]
+fn scroll_into_view_moves_the_least_that_shows_the_node() {
+    // Boxes at 0..20, 20..250 (a spacer), and 250..270.
+    let (mut tree, view, boxes) = view_over_boxes(&[20.0, 230.0, 20.0]);
+    assert!(!tree.scroll_into_view(boxes[0]), "already visible");
+    assert_eq!(offset_of(&tree, view), 0.0);
+    assert!(tree.scroll_into_view(boxes[2]));
+    assert_eq!(
+        offset_of(&tree, view),
+        170.0,
+        "its bottom at the view's bottom"
+    );
+}
+
+#[test]
+fn scroll_into_view_aligns_a_node_longer_than_its_view_to_its_start() {
+    // A 150-tall box at 250, in a 100-tall view.
+    let (mut tree, view, boxes) = view_over_boxes(&[250.0, 150.0]);
+    assert!(tree.scroll_into_view(boxes[1]));
+    assert_eq!(offset_of(&tree, view), 250.0);
+}
+
+#[test]
+fn take_scroll_changes_reports_each_move_once() {
+    let (mut tree, view, _) = scrollable_view(false);
+    assert!(tree.take_scroll_changes().is_empty(), "nothing moved yet");
+    tree.scroll_by_key(view, Key::ArrowDown);
+    tree.scroll_by_key(view, Key::ArrowDown);
+    assert_eq!(
+        tree.take_scroll_changes(),
+        vec![(view, 0.0, 2.0 * KEY_SCROLL_LINE)]
+    );
+    assert!(
+        tree.take_scroll_changes().is_empty(),
+        "reported, then quiet"
+    );
+    tree.scroll_by_key(view, Key::Home);
+    assert_eq!(
+        tree.take_scroll_changes(),
+        vec![(view, 2.0 * KEY_SCROLL_LINE, 0.0)]
+    );
+
+    let mut tree = Tree::new();
+    let (k, s, p) = leaf(10.0, 10.0);
+    tree.insert(k, s, p);
+    assert!(
+        tree.take_scroll_changes().is_empty(),
+        "no scroll views at all"
+    );
+}
+
+#[test]
+fn a_wheel_over_a_carousel_it_cannot_move_scrolls_the_page_around_it() {
+    // 0.4.3 M17: a 100x50 horizontal carousel (over 400) at the top of the
+    // page; a vertical wheel there has no part along the carousel's axis.
+    let (mut tree, page, boxes) = view_over_boxes(&[50.0]);
+    let carousel = tree.insert(
+        NodeKind::ScrollView(ScrollViewState::new(true)),
+        Style {
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        },
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+    );
+    let (k, s, p) = leaf(400.0, 50.0);
+    let strip = tree.insert(k, s, p);
+    tree.add_child(carousel, strip);
+    tree.add_child(boxes[0], carousel);
+    tree.compute_layout(
+        page,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    let wheel = |x: f64, y: f64| InputEvent::Scroll {
+        delta: ScrollDelta::Lines(x, y),
+        position: Point::new(50.0, 25.0),
+    };
+    tree.dispatch(page, wheel(0.0, -2.0), Instant::now());
+    assert_eq!(
+        (offset_of(&tree, page), offset_of(&tree, carousel)),
+        (40.0, 0.0)
+    );
+    tree.dispatch(page, wheel(-2.0, 0.0), Instant::now());
+    assert_eq!(
+        (offset_of(&tree, page), offset_of(&tree, carousel)),
+        (40.0, 40.0)
+    );
+}
