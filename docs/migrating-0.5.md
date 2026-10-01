@@ -36,3 +36,11 @@ it is listed first in case your app relied on the old one.
 
 See [Window](api/python/window.md#window-controls-and-state) for the
 reference and `examples/custom_titlebar.py` for all of it in one window.
+
+## 0.5.0.1
+
+- **A real click in a text field no longer panics.** A mouse press in a text
+  field or a terminal, and a drag to select in either, ended the app with
+  `RefCell already borrowed`. It did in 0.4.4 and 0.5.0 alike, and only on a
+  real window: `window.simulate` never reached the code, so no headless test
+  saw it. Nothing in your code needs to change.
