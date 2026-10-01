@@ -4,10 +4,12 @@
 object and the `shader` property; the design, and what is still to come, is
 [WGSL shaders](../../design/wgsl.md).
 
-!!! note "Not drawn yet"
-    In this milestone a shader is created, checked, and stored on a node, but
-    the renderer does not draw it yet. Everything below is the API that
-    drawing will use.
+!!! note "What draws today"
+    A `mode="fill"` shader with no `inputs` is drawn: it paints the node's
+    box, clipped to its rounded corners, *behind* the node's own paint (a
+    `fill` with some transparency tints it, a border draws over it). A shader
+    in `mode="effect"`, or with `inputs`, is created, checked and stored, but
+    not drawn yet; its node paints as if it had none.
 
 ```python
 import tre
@@ -62,6 +64,15 @@ caret under the column.
 Wrong types (`uniforms={"a": "x"}`, `True`, a tuple of 5) raise `TypeError` or
 `ValueError`; a name tre provides (`Pixel`, `frame`, `u`, `content`, …) used in
 your source is reported with the list of names tre provides.
+
+## What it costs
+
+A shader node costs one texture the size of its box and one render pass, run
+only when something changed: the shader's source or uniforms, or the node's
+size. An idle shader costs nothing per frame. Only visible, on-screen nodes
+run: a hidden node, a fully transparent one, or one scrolled out of view runs
+no pass. A node wider or taller than 8192 pixels, or a shader the GPU refuses,
+is logged once and paints as if it had no shader; it never stops the window.
 
 ## The `shader` property
 

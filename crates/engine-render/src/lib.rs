@@ -28,6 +28,7 @@ mod geometry_cache;
 mod gpu_watch;
 mod image_cache;
 mod persistent_target;
+mod shader_pass;
 mod text;
 mod walk;
 mod window_renderer;
@@ -46,6 +47,7 @@ pub use geometry_cache::GeometryCache;
 pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
+pub use shader_pass::{ShaderPasses, ShaderTextures};
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 pub use window_renderer::WindowRenderer;
 
@@ -150,7 +152,17 @@ pub fn build_tree_scene(
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
 ) -> Scene {
-    build_scene(tree, root, width, height, None, resources, text, geometry)
+    build_scene(
+        tree,
+        root,
+        width,
+        height,
+        None,
+        &ShaderTextures::none(),
+        resources,
+        text,
+        geometry,
+    )
 }
 
 /// 0.4.0 M5: `build_tree_scene` for a partial redraw -- only what paints
@@ -175,9 +187,30 @@ pub fn build_tree_scene_in(
         width,
         height,
         Some(rects),
+        &ShaderTextures::none(),
         resources,
         text,
         geometry,
+    )
+}
+
+/// 0.5.1 (#67): `build_tree_scene` (`rects: None`) or `build_tree_scene_in`
+/// for a frame whose fill shaders ran: a node in `shaders` paints its box
+/// from its shader's texture, behind its own paint.
+#[allow(clippy::too_many_arguments)]
+pub fn build_tree_scene_shaded(
+    tree: &Tree,
+    root: NodeId,
+    width: u16,
+    height: u16,
+    rects: Option<&[Rect]>,
+    shaders: &ShaderTextures,
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
+) -> Scene {
+    build_scene(
+        tree, root, width, height, rects, shaders, resources, text, geometry,
     )
 }
 
@@ -188,6 +221,7 @@ fn build_scene(
     width: u16,
     height: u16,
     rects: Option<&[Rect]>,
+    shaders: &ShaderTextures,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
@@ -211,6 +245,7 @@ fn build_scene(
     let mut painter = Painter {
         tree,
         rects,
+        shaders,
         scene: &mut scene,
         resources,
         text,
@@ -331,6 +366,8 @@ struct Painter<'a> {
     tree: &'a Tree,
     /// A partial redraw's damage rects; `None` paints everything.
     rects: Option<&'a [Rect]>,
+    /// 0.5.1 (#67): the nodes whose fill shader ran this frame.
+    shaders: &'a ShaderTextures,
     scene: &'a mut Scene,
     resources: &'a mut Resources,
     text: &'a mut TextRenderer,
@@ -375,6 +412,18 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
                 .push_layer(None, None, Some(opacity as f32), None, None);
         }
         if draw_self {
+            if let Some(size) = self.shaders.size_of(v.id) {
+                paint_shader_fill(
+                    node,
+                    v.id,
+                    v.w,
+                    v.h,
+                    v.composed,
+                    size,
+                    self.scene,
+                    self.geometry,
+                );
+            }
             draw_own(
                 self.tree,
                 v.id,
@@ -457,6 +506,59 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
         if layered {
             self.scene.pop_layer();
         }
+    }
+}
+
+/// 0.5.1 (#67): a node's fill shader, drawn as an external texture over its
+/// box -- clipped to the rounded corners, as an image is -- before the node's
+/// own paint, which draws over it. `size` is the shader texture's size,
+/// which the box's rounds up to.
+#[allow(clippy::too_many_arguments)]
+fn paint_shader_fill(
+    node: &engine_core::Node,
+    id: NodeId,
+    w: f64,
+    h: f64,
+    composed: Affine,
+    size: (u32, u32),
+    scene: &mut Scene,
+    geometry: &mut GeometryCache,
+) {
+    scene.set_transform(composed);
+    let rounded =
+        node.paint.corner_radius.current > 0.0 || node.paint.corner_radii_override.is_some();
+    if rounded {
+        scene.push_layer(
+            Some(box_path(node, id, w, h, geometry)),
+            None,
+            None,
+            None,
+            None,
+        );
+    }
+    let region = vello_common::geometry::RectU16 {
+        x0: 0,
+        y0: 0,
+        x1: size.0 as u16,
+        y1: size.1 as u16,
+    };
+    let transform = Affine::scale_non_uniform(w / f64::from(size.0), h / f64::from(size.1));
+    scene.set_paint(vello_common::paint::Image {
+        image: vello_common::paint::ImageSource::external_texture(
+            shader_pass::texture_id_for(id),
+            region,
+            true,
+        ),
+        sampler: peniko::ImageSampler {
+            quality: peniko::ImageQuality::Medium,
+            ..Default::default()
+        },
+    });
+    scene.set_paint_transform(transform);
+    scene.fill_rect(&Rect::new(0.0, 0.0, w, h));
+    scene.reset_paint_transform();
+    if rounded {
+        scene.pop_layer();
     }
 }
 
@@ -1059,6 +1161,8 @@ pub struct FrameRenderer {
     // caller's own tree has real `Image` nodes and calls
     // `sync_image_textures`.
     images: image_cache::ImageTextureCache,
+    // 0.5.1 (#67): the fill-shader passes and their textures.
+    shaders: shader_pass::ShaderPasses,
 }
 
 impl FrameRenderer {
@@ -1068,6 +1172,7 @@ impl FrameRenderer {
             renderer,
             resources,
             images: image_cache::ImageTextureCache::new(),
+            shaders: shader_pass::ShaderPasses::new(),
         }
     }
 
@@ -1174,6 +1279,44 @@ impl FrameRenderer {
     /// then stays empty, exactly this crate's pre-M22 behavior.
     pub fn sync_image_textures(&mut self, tree: &Tree, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.images.sync(tree, device, queue);
+    }
+
+    /// 0.5.1 (#67): records this frame's fill-shader passes into `encoder`
+    /// (before the scene's render) and returns which nodes' textures the
+    /// scene may draw. `time` is the window's clock, in seconds.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_shader_passes(
+        &mut self,
+        tree: &Tree,
+        root: NodeId,
+        width: u16,
+        height: u16,
+        time: f32,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> ShaderTextures {
+        self.shaders.run(
+            tree,
+            root,
+            width,
+            height,
+            time,
+            device,
+            queue,
+            encoder,
+            self.images.bindings_mut(),
+        )
+    }
+
+    /// A frame that draws nothing: no shader pass ran.
+    pub fn skip_shader_passes(&mut self) {
+        self.shaders.skipped();
+    }
+
+    /// How many shader passes the last `run_shader_passes` recorded.
+    pub fn shader_pass_count(&self) -> usize {
+        self.shaders.last_pass_count()
     }
 
     /// The same `Resources` `render` uses internally, exposed for

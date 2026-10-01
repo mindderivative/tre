@@ -251,7 +251,8 @@ fn prelude(mode: ShaderMode, uniforms: &[(String, UniformKind)], inputs: &[Strin
     );
     s.push_str(
         "@fragment\nfn tre_fragment(in: VertexOutput) -> @location(0) vec4<f32> {\n    \
-         return shade(Pixel(in.uv, in.uv * frame.size));\n}\n",
+         let c = shade(Pixel(in.uv, in.uv * frame.size));\n    \
+         return vec4<f32>(c.rgb * c.a, c.a);\n}\n",
     );
     s.push_str("// ---- the app's source ----\n");
     s
@@ -297,7 +298,7 @@ fn positioned(
         if !wgsl.contains("shade") {
             return ShaderError::plain(SHADE_WANTED);
         }
-        if message.contains("shade") || message.contains("convert") {
+        if !message.contains("redefinition") {
             return ShaderError::plain(format!(
                 "`shade` has the wrong signature: {SHADE_WANTED} ({message})"
             ));

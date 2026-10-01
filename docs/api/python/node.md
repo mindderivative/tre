@@ -31,7 +31,7 @@ thumb.set(role="slider", label="Volume", value=0.4, value_min=0.0,
 | `tab_index` | `int` — positive values come first in Tab order, ascending; then `0` in tree order; negative leaves the node out of Tab order but focusable by click and `focus()` |
 | `cursor` | the pointer shape over the node, inherited by descendants: `"default"`, `"pointer"`, `"text"`, `"grab"`, `"grabbing"`, `"move"`, `"not_allowed"`, `"wait"`, `"progress"`, `"crosshair"`, `"help"`, `"col_resize"`, `"row_resize"`, `"ew_resize"`, `"ns_resize"`, `"nesw_resize"`, `"nwse_resize"`, `"copy"`, `"cell"`, `"context_menu"`, `"zoom_in"`, `"zoom_out"`, `"all_scroll"`, or `None` |
 | `hit_testable` | `bool` — whether the node can be the target of pointer events |
-| `shader` | a [`Shader`](shader.md) or `None` (0.5.1) — WGSL that paints the node; not drawn yet |
+| `shader` | a [`Shader`](shader.md) or `None` (0.5.1) — WGSL that paints the node; a fill shader draws today |
 | `window_region` | `"drag"`, `"none"`, or `None` (0.5.0) — `"drag"` makes the node a title bar that moves the window; `"none"` keeps a node inside one from dragging. See [Title bar and borders](window.md#title-bar-and-borders) |
 
 The actions assistive technology is offered follow from role and state:

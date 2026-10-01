@@ -197,7 +197,7 @@ for 0.5.1:
 - **M2** — the `Shader` object and the node property: validation with positioned
   errors, the module assembler, uniforms, `node.set(shader=...)`, the type stub.
   CPU only, so it is testable headless.
-- **M3** — the GPU pass for fill shaders: the pass graph's first version, the
+- **M3** (landed locally, #67) — the GPU pass for fill shaders: the pass graph's first version, the
   per-node texture and pipeline caches, binding as an external texture, culling,
   and pixel tests.
 - **M4** — texture inputs: naming an image or video node, binding it, dependency

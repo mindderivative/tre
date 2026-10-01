@@ -78,6 +78,11 @@ impl ImageTextureCache {
         &self.bindings
     }
 
+    /// 0.5.1 (#67): shader textures bind into the same map images do.
+    pub(crate) fn bindings_mut(&mut self) -> &mut TextureBindings {
+        &mut self.bindings
+    }
+
     /// Ensures every real `Image` node in `tree` has a real, uploaded
     /// GPU texture bound under its own deterministic `TextureId` --
     /// call once per frame, before `FrameRenderer::render`, so every

@@ -88,4 +88,6 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   stages. This stage adds the object and the property: a shader is checked when
   it is created, raising `tre.ShaderError` (a `ValueError`) with the line and
   column in your source, and every node kind accepts, stores, and reads back
-  `shader`. Nothing is drawn yet. See [Shader](api/python/shader.md).
+  `shader`. A `mode="fill"` shader draws its node's box behind the node's own
+  paint; effects and inputs are still to come. See
+  [Shader](api/python/shader.md).

@@ -1,0 +1,344 @@
+//! 0.5.1 (#67): fill shaders through the app's own frame sequence
+//! (`WindowRenderer`): a node with a `mode="fill"` shader paints its box from
+//! the app's `shade`, clipped to its rounded corners; a pass runs only when
+//! something changed, and only for a node that is drawn.
+
+mod support;
+
+use engine_core::{
+    Animated, NodeId, NodeKind, PaintProperties, Shader, ShaderMode, Tree, UniformValue,
+};
+use engine_render::{Damage, WindowRenderer};
+use peniko::Color;
+use std::sync::Arc;
+use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
+
+const W: u16 = 120;
+const H: u16 = 100;
+const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+const BACKGROUND: [u8; 4] = [0x11, 0x11, 0x11, 0xFF];
+
+const TINT: &str =
+    "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.tint.rgb, u.tint.a);\n}\n";
+const UV: &str =
+    "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(p.uv.x, p.uv.y, 0.0, 1.0);\n}\n";
+
+fn tint(r: f32, g: f32, b: f32, a: f32) -> Arc<Shader> {
+    Shader::new(
+        TINT.to_owned(),
+        vec![("tint".to_owned(), UniformValue::Vec4([r, g, b, a]))],
+        vec![],
+        ShaderMode::Fill,
+        false,
+    )
+    .expect("a valid shader")
+}
+
+struct Gpu {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+struct Scene {
+    gpu: Gpu,
+    renderer: WindowRenderer,
+    surface: wgpu::Texture,
+    surface_view: wgpu::TextureView,
+    tree: Tree,
+    root: NodeId,
+}
+
+impl Scene {
+    fn new() -> Self {
+        let (device, queue) = pollster::block_on(support::device("shader fill test device"));
+        let surface = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("stand-in swapchain image"),
+            size: wgpu::Extent3d {
+                width: u32::from(W),
+                height: u32::from(H),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let surface_view = surface.create_view(&wgpu::TextureViewDescriptor::default());
+        let renderer = WindowRenderer::new(&device, FORMAT, u32::from(W), u32::from(H), true);
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(f32::from(W)),
+                    height: length(f32::from(H)),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0x11, 0x11, 0x11, 0xFF), 0.0, 1.0),
+        );
+        Self {
+            gpu: Gpu { device, queue },
+            renderer,
+            surface,
+            surface_view,
+            tree,
+            root,
+        }
+    }
+
+    /// A transparent box at (x, y), w x h, with `shader`.
+    fn node(&mut self, x: f32, y: f32, w: f32, h: f32, shader: Arc<Shader>) -> NodeId {
+        let id = self.tree.insert(
+            NodeKind::Rect,
+            Style {
+                position: Position::Absolute,
+                inset: TaffyRect {
+                    left: length(x),
+                    top: length(y),
+                    right: auto(),
+                    bottom: auto(),
+                },
+                size: Size {
+                    width: length(w),
+                    height: length(h),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        self.tree.add_child(self.root, id);
+        self.tree.get_mut(id).unwrap().shader = Some(shader);
+        id
+    }
+
+    /// One frame, as the app runs it; returns the damage.
+    fn frame(&mut self) -> Damage {
+        self.tree.compute_layout(
+            self.root,
+            Size {
+                width: AvailableSpace::Definite(f32::from(W)),
+                height: AvailableSpace::Definite(f32::from(H)),
+            },
+        );
+        let Gpu { device, queue } = &self.gpu;
+        let damage = self
+            .renderer
+            .prepare(&self.tree, self.root, W, H, true, device, queue);
+        let mut encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        self.renderer.draw(
+            &self.tree,
+            self.root,
+            W,
+            H,
+            &damage,
+            device,
+            queue,
+            &mut encoder,
+            &self.surface,
+            &self.surface_view,
+        );
+        queue.submit([encoder.finish()]);
+        damage
+    }
+
+    fn at(&self, x: u32, y: u32) -> [u8; 4] {
+        let data = support::read_texture(&self.gpu.device, &self.gpu.queue, &self.surface);
+        let row = (u32::from(W) * 4).next_multiple_of(256);
+        let i = (y * row + x * 4) as usize;
+        [data[i], data[i + 1], data[i + 2], data[i + 3]]
+    }
+
+    fn passes(&self) -> usize {
+        self.renderer.shader_pass_count()
+    }
+}
+
+fn near(got: [u8; 4], want: [u8; 4], slack: i32) -> bool {
+    got.iter()
+        .zip(want)
+        .all(|(g, w)| (i32::from(*g) - i32::from(w)).abs() <= slack)
+}
+
+#[test]
+fn a_fill_shader_paints_its_box_and_nothing_else() {
+    let mut s = Scene::new();
+    s.node(20.0, 20.0, 40.0, 40.0, tint(1.0, 0.0, 0.0, 1.0));
+    s.frame();
+    assert_eq!(s.passes(), 1);
+    assert!(
+        near(s.at(40, 40), [255, 0, 0, 255], 1),
+        "{:?}",
+        s.at(40, 40)
+    );
+    assert_eq!(s.at(10, 10), BACKGROUND, "outside the box");
+    assert_eq!(s.at(70, 40), BACKGROUND, "right of the box");
+}
+
+#[test]
+fn the_shader_sees_uv_from_the_top_left() {
+    let mut s = Scene::new();
+    let shader = Shader::new(UV.to_owned(), vec![], vec![], ShaderMode::Fill, false).unwrap();
+    s.node(0.0, 0.0, 100.0, 100.0, shader);
+    s.frame();
+    let (left, right) = (s.at(2, 50), s.at(97, 50));
+    let (top, bottom) = (s.at(50, 2), s.at(50, 97));
+    assert!(
+        left[0] < 15 && right[0] > 240,
+        "u grows to the right: {left:?} {right:?}"
+    );
+    assert!(
+        top[1] < 15 && bottom[1] > 240,
+        "v grows downward: {top:?} {bottom:?}"
+    );
+}
+
+#[test]
+fn a_translucent_result_blends_over_what_is_behind() {
+    let mut s = Scene::new();
+    // Straight alpha: half-transparent white over #111.
+    s.node(20.0, 20.0, 40.0, 40.0, tint(1.0, 1.0, 1.0, 0.5));
+    s.frame();
+    let want = [(255 + 17) / 2, (255 + 17) / 2, (255 + 17) / 2, 255];
+    assert!(
+        near(
+            s.at(40, 40),
+            [want[0] as u8, want[1] as u8, want[2] as u8, 255],
+            3
+        ),
+        "{:?}",
+        s.at(40, 40)
+    );
+}
+
+#[test]
+fn a_new_uniform_value_redraws_and_an_idle_frame_runs_no_pass() {
+    let mut s = Scene::new();
+    let shader = tint(1.0, 0.0, 0.0, 1.0);
+    s.node(20.0, 20.0, 40.0, 40.0, shader.clone());
+    s.frame();
+    assert_eq!(s.passes(), 1);
+    assert_eq!(s.frame(), Damage::None, "nothing changed");
+    assert_eq!(s.passes(), 0, "an idle frame runs no pass");
+
+    shader
+        .set_uniforms(vec![(
+            "tint".to_owned(),
+            UniformValue::Vec4([0.0, 0.0, 1.0, 1.0]),
+        )])
+        .unwrap();
+    assert!(matches!(s.frame(), Damage::Rects(_)), "the node is damaged");
+    assert_eq!(s.passes(), 1);
+    assert!(
+        near(s.at(40, 40), [0, 0, 255, 255], 1),
+        "{:?}",
+        s.at(40, 40)
+    );
+    assert_eq!(s.at(10, 10), BACKGROUND);
+}
+
+#[test]
+fn the_shader_is_clipped_to_the_rounded_box() {
+    let mut s = Scene::new();
+    let id = s.node(20.0, 20.0, 60.0, 60.0, tint(0.0, 1.0, 0.0, 1.0));
+    s.tree.get_mut(id).unwrap().paint.corner_radius = Animated::new(30.0);
+    s.frame();
+    assert!(
+        near(s.at(50, 50), [0, 255, 0, 255], 1),
+        "the centre is shaded"
+    );
+    assert_eq!(
+        s.at(21, 21),
+        BACKGROUND,
+        "the corner is cut off by the rounding"
+    );
+}
+
+#[test]
+fn a_size_change_reallocates_the_texture_and_repaints() {
+    let mut s = Scene::new();
+    let id = s.node(10.0, 10.0, 30.0, 30.0, tint(1.0, 0.0, 0.0, 1.0));
+    s.frame();
+    assert_eq!(s.at(60, 25), BACKGROUND);
+    let mut style = s.tree.get(id).unwrap().layout_style.clone();
+    style.size.width = length(80.0);
+    s.tree.set_layout_style(id, style);
+    s.frame();
+    assert_eq!(s.passes(), 1, "the new size runs the pass again");
+    assert!(
+        near(s.at(60, 25), [255, 0, 0, 255], 1),
+        "{:?}",
+        s.at(60, 25)
+    );
+}
+
+#[test]
+fn a_hidden_node_and_an_off_screen_node_run_no_pass() {
+    let mut s = Scene::new();
+    let hidden = s.node(10.0, 10.0, 30.0, 30.0, tint(1.0, 0.0, 0.0, 1.0));
+    s.tree.get_mut(hidden).unwrap().visible = false;
+    s.node(500.0, 500.0, 30.0, 30.0, tint(0.0, 0.0, 1.0, 1.0));
+    s.frame();
+    assert_eq!(s.passes(), 0, "neither is drawn, so neither runs");
+    assert_eq!(s.at(20, 20), BACKGROUND);
+
+    s.tree.get_mut(hidden).unwrap().visible = true;
+    s.frame();
+    assert_eq!(s.passes(), 1, "shown, it runs");
+    assert!(near(s.at(20, 20), [255, 0, 0, 255], 1));
+}
+
+#[test]
+fn clearing_the_shader_paints_the_box_as_before() {
+    let mut s = Scene::new();
+    let id = s.node(20.0, 20.0, 40.0, 40.0, tint(1.0, 0.0, 0.0, 1.0));
+    s.frame();
+    s.tree.get_mut(id).unwrap().shader = None;
+    s.frame();
+    assert_eq!(s.at(40, 40), BACKGROUND);
+    assert_eq!(s.passes(), 0);
+}
+
+#[test]
+fn a_shader_and_the_nodes_own_fill_draw_together_fill_on_top() {
+    let mut s = Scene::new();
+    let id = s.node(20.0, 20.0, 40.0, 40.0, tint(1.0, 0.0, 0.0, 1.0));
+    // A half-transparent white fill tints the shader beneath it.
+    s.tree.get_mut(id).unwrap().paint.background =
+        Animated::new(Color::from_rgba8(255, 255, 255, 128));
+    s.frame();
+    let got = s.at(40, 40);
+    assert!(got[0] > 250 && (120..140).contains(&got[1]), "{got:?}");
+}
+
+#[test]
+fn a_node_too_large_for_a_texture_paints_without_its_shader() {
+    let mut s = Scene::new();
+    // Wider than any texture can be: logged once, painted as if it had none.
+    let id = s.node(0.0, 0.0, 9000.0, 30.0, tint(1.0, 0.0, 0.0, 1.0));
+    s.frame();
+    assert_eq!(s.passes(), 0);
+    assert_eq!(s.at(40, 10), BACKGROUND);
+    // The frame loop is unharmed: a normal shader node still draws.
+    s.tree.remove(id);
+    s.node(20.0, 20.0, 40.0, 40.0, tint(1.0, 0.0, 0.0, 1.0));
+    s.frame();
+    assert!(near(s.at(40, 40), [255, 0, 0, 255], 1));
+}
+
+#[test]
+fn removing_a_shader_node_frees_it_and_the_frame_still_draws() {
+    let mut s = Scene::new();
+    let a = s.node(10.0, 10.0, 30.0, 30.0, tint(1.0, 0.0, 0.0, 1.0));
+    s.node(60.0, 10.0, 30.0, 30.0, tint(0.0, 0.0, 1.0, 1.0));
+    s.frame();
+    s.tree.remove(a);
+    s.frame();
+    assert_eq!(s.at(20, 20), BACKGROUND);
+    assert!(near(s.at(70, 20), [0, 0, 255, 255], 1));
+}

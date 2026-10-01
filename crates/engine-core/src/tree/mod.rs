@@ -654,6 +654,12 @@ impl Tree {
         })
     }
 
+    /// 0.5.1 (#67): whether any node has a shader -- the renderer's cheap
+    /// check before it plans shader passes.
+    pub fn has_shaders(&self) -> bool {
+        self.nodes.values().any(|node| node.shader.is_some())
+    }
+
     /// M15 Phase 2 (§8, §10): real keyboard-driven `TextField` editing
     /// -- the `Tree`'s own real mutator (a real keystroke is
     /// mechanical, not app-defined meaning, so `engine-core` is the one
