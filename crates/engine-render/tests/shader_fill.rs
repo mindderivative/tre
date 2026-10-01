@@ -342,3 +342,190 @@ fn removing_a_shader_node_frees_it_and_the_frame_still_draws() {
     assert_eq!(s.at(20, 20), BACKGROUND);
     assert!(near(s.at(70, 20), [0, 0, 255, 255], 1));
 }
+
+// --- 0.5.1 (#68): inputs --------------------------------------------------------
+
+fn solid(rgba: [u8; 4]) -> peniko::ImageData {
+    let mut bytes = Vec::new();
+    for _ in 0..4 {
+        bytes.extend_from_slice(&rgba);
+    }
+    peniko::ImageData {
+        data: peniko::Blob::from(bytes),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width: 2,
+        height: 2,
+    }
+}
+
+impl Scene {
+    /// An image node (a 2x2 solid colour) at (x, y), w x h.
+    fn image(&mut self, x: f32, y: f32, w: f32, h: f32, rgba: [u8; 4]) -> NodeId {
+        let id = self.node(x, y, w, h, tint(0.0, 0.0, 0.0, 0.0));
+        let node = self.tree.get_mut(id).unwrap();
+        node.shader = None;
+        node.kind = NodeKind::Image(engine_core::ImageState::new(solid(rgba)));
+        id
+    }
+}
+
+fn with_inputs(wgsl: &str, inputs: Vec<(&str, NodeId)>) -> Arc<Shader> {
+    Shader::new(
+        wgsl.to_owned(),
+        vec![],
+        inputs
+            .into_iter()
+            .map(|(n, id)| (n.to_owned(), id))
+            .collect(),
+        ShaderMode::Fill,
+        false,
+    )
+    .expect("a valid shader")
+}
+
+const INVERT: &str = "fn shade(p: Pixel) -> vec4<f32> {\n    let c = input_photo(p.uv);\n    return vec4<f32>(1.0 - c.rgb, c.a);\n}\n";
+
+#[test]
+fn a_shader_samples_an_image_node_and_follows_its_frames() {
+    let mut s = Scene::new();
+    let photo = s.image(0.0, 0.0, 20.0, 20.0, [255, 0, 0, 255]);
+    s.node(
+        40.0,
+        40.0,
+        40.0,
+        40.0,
+        with_inputs(INVERT, vec![("photo", photo)]),
+    );
+    s.frame();
+    assert_eq!(s.passes(), 1);
+    assert!(
+        near(s.at(60, 60), [0, 255, 255, 255], 2),
+        "red inverts to cyan: {:?}",
+        s.at(60, 60)
+    );
+    assert!(
+        near(s.at(10, 10), [255, 0, 0, 255], 1),
+        "the image itself still draws"
+    );
+
+    assert_eq!(s.frame(), Damage::None, "idle");
+    assert_eq!(s.passes(), 0);
+
+    // A new frame of the image (what `push_frame` does).
+    match &mut s.tree.get_mut(photo).unwrap().kind {
+        NodeKind::Image(state) => state.image = solid([0, 0, 255, 255]),
+        _ => unreachable!(),
+    }
+    let damage = s.frame();
+    assert!(matches!(damage, Damage::Rects(_)), "{damage:?}");
+    assert_eq!(s.passes(), 1, "a new frame reruns the shader");
+    assert!(
+        near(s.at(60, 60), [255, 255, 0, 255], 2),
+        "blue inverts to yellow: {:?}",
+        s.at(60, 60)
+    );
+}
+
+const SWAP_RB: &str = "fn shade(p: Pixel) -> vec4<f32> {\n    let c = input_up(p.uv);\n    return vec4<f32>(c.b, c.g, c.r, c.a);\n}\n";
+
+#[test]
+fn a_shader_reads_another_shader_which_runs_first_even_off_screen() {
+    let mut s = Scene::new();
+    let upstream = tint(1.0, 0.0, 0.0, 1.0);
+    // Off-screen: nothing draws it, but it is needed.
+    let up = s.node(500.0, 500.0, 20.0, 20.0, upstream.clone());
+    s.node(
+        40.0,
+        40.0,
+        40.0,
+        40.0,
+        with_inputs(SWAP_RB, vec![("up", up)]),
+    );
+    s.frame();
+    assert_eq!(s.passes(), 2, "the dependency, then the shader");
+    assert!(
+        near(s.at(60, 60), [0, 0, 255, 255], 2),
+        "{:?}",
+        s.at(60, 60)
+    );
+
+    upstream
+        .set_uniforms(vec![(
+            "tint".to_owned(),
+            UniformValue::Vec4([0.0, 1.0, 0.0, 1.0]),
+        )])
+        .unwrap();
+    let damage = s.frame();
+    assert!(
+        matches!(damage, Damage::Rects(_)),
+        "a change upstream repaints: {damage:?}"
+    );
+    assert_eq!(s.passes(), 2);
+    assert!(
+        near(s.at(60, 60), [0, 255, 0, 255], 2),
+        "{:?}",
+        s.at(60, 60)
+    );
+}
+
+#[test]
+fn an_image_node_can_sample_its_own_pixels() {
+    let mut s = Scene::new();
+    let photo = s.image(20.0, 20.0, 40.0, 40.0, [255, 0, 0, 255]);
+    let shader = with_inputs(INVERT, vec![("photo", photo)]);
+    assert!(
+        !s.tree.shader_cycle(photo, &shader),
+        "an image input is its pixels, not a cycle"
+    );
+    s.tree.get_mut(photo).unwrap().shader = Some(shader);
+    s.frame();
+    // The shader paints behind the image, which covers it: the image wins.
+    assert!(
+        near(s.at(40, 40), [255, 0, 0, 255], 1),
+        "{:?}",
+        s.at(40, 40)
+    );
+    assert_eq!(s.passes(), 1);
+}
+
+#[test]
+fn a_shader_cycle_is_found_and_drawing_one_does_not_hang() {
+    let mut s = Scene::new();
+    let a = s.node(10.0, 10.0, 30.0, 30.0, tint(1.0, 0.0, 0.0, 1.0));
+    let b = s.node(60.0, 10.0, 30.0, 30.0, tint(0.0, 1.0, 0.0, 1.0));
+    let src = "fn shade(p: Pixel) -> vec4<f32> {\n    return input_x(p.uv);\n}\n";
+    let a_reads_b = with_inputs(src, vec![("x", b)]);
+    let b_reads_a = with_inputs(src, vec![("x", a)]);
+    assert!(!s.tree.shader_cycle(a, &a_reads_b));
+    s.tree.get_mut(a).unwrap().shader = Some(a_reads_b);
+    assert!(
+        s.tree.shader_cycle(b, &b_reads_a),
+        "b reading a, which reads b"
+    );
+    assert!(
+        s.tree.shader_cycle(a, &with_inputs(src, vec![("x", a)])),
+        "itself"
+    );
+    // Forced in anyway, the frame still draws: neither node gets its shader.
+    s.tree.get_mut(b).unwrap().shader = Some(b_reads_a);
+    s.frame();
+    assert_eq!(s.at(20, 20), BACKGROUND);
+    assert_eq!(s.at(70, 20), BACKGROUND);
+}
+
+#[test]
+fn a_node_that_is_not_an_image_and_has_no_shader_is_no_input() {
+    let mut s = Scene::new();
+    let plain = s.node(10.0, 10.0, 30.0, 30.0, tint(1.0, 0.0, 0.0, 1.0));
+    s.tree.get_mut(plain).unwrap().shader = None;
+    s.node(
+        60.0,
+        10.0,
+        30.0,
+        30.0,
+        with_inputs(INVERT, vec![("photo", plain)]),
+    );
+    s.frame();
+    assert_eq!(s.at(70, 20), BACKGROUND, "painted as if it had no shader");
+}

@@ -640,7 +640,8 @@ class Shader:
 
     `uniforms` maps names to a number or a tuple of 2 to 4 numbers (an
     `f32` or a `vec2`/`vec3`/`vec4`). `inputs` maps names to `Node`s of one
-    window, read in the shader as `input_<name>(uv)`. `mode` is `"fill"`
+    window, read in the shader as `input_<name>(uv)`: an image or video node is
+    its pixels, any other node must have a shader, whose output is read. `mode` is `"fill"`
     (paints the node's box behind its content) or `"effect"` (transforms the
     node's own rendered content, read as `content(uv)`). `animated=True`
     redraws every frame. Shaders are shared: give one `Shader` to several

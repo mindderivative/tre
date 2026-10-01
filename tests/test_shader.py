@@ -6,6 +6,13 @@ import pytest
 
 from tre import Shader, ShaderError, Window
 
+PIXELS = {"rgba": bytes([255, 0, 0, 255] * 4), "pixel_width": 2, "pixel_height": 2}
+
+
+def image(window):
+    return window.create("image", width=10, height=10, **PIXELS)
+
+
 GOOD = "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(p.uv, 0.0, 1.0);\n}\n"
 
 
@@ -99,12 +106,12 @@ def test_set_replaces_uniforms_atomically():
 def test_inputs_are_nodes_of_one_window():
     source = "fn shade(p: Pixel) -> vec4<f32> {\n    return input_photo(p.uv);\n}\n"
     window = Window()
-    photo = window.create("box", width=10, height=10)
+    photo = image(window)
     shader = Shader(source, inputs={"photo": photo})
     assert shader.inputs["photo"] == photo
     with pytest.raises(TypeError, match="must be a Node"):
         Shader(source, inputs={"photo": 3})
-    other = Window().create("box", width=10, height=10)
+    other = image(Window())
     with pytest.raises(ValueError, match="one Window"):
         Shader(source, inputs={"photo": photo, "other": other})
     photo.destroy()
@@ -165,7 +172,7 @@ def test_a_bad_shader_value_changes_nothing():
 def test_inputs_must_be_in_the_nodes_own_window():
     source = "fn shade(p: Pixel) -> vec4<f32> {\n    return input_photo(p.uv);\n}\n"
     window, other = Window(), Window()
-    photo = window.create("box", width=10, height=10)
+    photo = image(window)
     shader = Shader(source, inputs={"photo": photo})
     window.create("box", width=10, height=10, shader=shader)
     foreign = other.create("box", width=10, height=10)
@@ -179,3 +186,39 @@ def test_the_property_is_listed_in_the_unknown_property_error():
     node = Window().create("box", width=10, height=10)
     with pytest.raises(ValueError, match="shader"):
         node.set(colour=1)
+
+
+# --- inputs (#68) --------------------------------------------------------------------
+
+READ = "fn shade(p: Pixel) -> vec4<f32> {\n    return input_x(p.uv);\n}\n"
+
+
+def test_an_input_is_an_image_node_or_a_node_with_a_shader():
+    window = Window()
+    img = image(window)
+    plain = window.create("box", width=10, height=10)
+    assert Shader(READ, inputs={"x": img}).inputs["x"] == img
+    with pytest.raises(ValueError, match="image or video node, or a node that has a shader"):
+        Shader(READ, inputs={"x": plain})
+    plain.set(shader=Shader(GOOD))
+    assert Shader(READ, inputs={"x": plain}).inputs["x"] == plain
+
+
+def test_a_shader_that_would_read_itself_is_refused():
+    window = Window()
+    a = window.create("box", width=10, height=10, shader=Shader(GOOD))
+    b = window.create("box", width=10, height=10, shader=Shader(READ, inputs={"x": a}))
+    # a reading b, which reads a.
+    with pytest.raises(ValueError, match="would read itself"):
+        a.set(shader=Shader(READ, inputs={"x": b}))
+    assert a.get("shader").inputs == {}, "nothing changed"
+    # A node reading itself.
+    with pytest.raises(ValueError, match="would read itself"):
+        a.set(shader=Shader(READ, inputs={"x": a}))
+
+
+def test_an_image_node_may_read_its_own_pixels():
+    window = Window()
+    img = image(window)
+    img.set(shader=Shader(READ, inputs={"x": img}))
+    assert img.get("shader").inputs["x"] == img

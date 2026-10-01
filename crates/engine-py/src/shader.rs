@@ -163,6 +163,15 @@ impl Shader {
                     .map_err(|_| PyTypeError::new_err(format!("input `{name}` must be a Node")))?;
                 let state = node.borrow();
                 state.check_alive()?;
+                let usable = state.tree.borrow().get(state.id).is_some_and(|n| {
+                    matches!(n.kind, engine_core::NodeKind::Image(_)) || n.shader.is_some()
+                });
+                if !usable {
+                    return Err(PyValueError::new_err(format!(
+                        "input `{name}` must be an image or video node, or a node that has a \
+                         shader (set one on it first)"
+                    )));
+                }
                 trees.insert(Rc::as_ptr(&state.tree) as usize);
                 ids.push((name.clone(), state.id));
                 handles.push((name, node.clone().unbind()));

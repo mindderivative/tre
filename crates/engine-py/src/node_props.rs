@@ -778,7 +778,18 @@ impl Node {
             let node = tree
                 .get(self.id)
                 .ok_or(crate::error::EngineError::Destroyed)?;
-            parse_all(props, &node.kind, &self.tree)?
+            let changes = parse_all(props, &node.kind, &self.tree)?;
+            for change in &changes {
+                if let Change::Shader(Some(shader)) = change
+                    && tree.shader_cycle(self.id, shader)
+                {
+                    return Err(PyValueError::new_err(
+                        "node property `shader`: the shader would read itself -- through its \
+                         inputs it depends on this node's own shader",
+                    ));
+                }
+            }
+            changes
         };
         let redraw = changes
             .iter()

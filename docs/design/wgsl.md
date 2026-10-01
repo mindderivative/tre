@@ -200,7 +200,7 @@ for 0.5.1:
 - **M3** (landed locally, #67) — the GPU pass for fill shaders: the pass graph's first version, the
   per-node texture and pipeline caches, binding as an external texture, culling,
   and pixel tests.
-- **M4** — texture inputs: naming an image or video node, binding it, dependency
+- **M4** (landed locally, #68) — texture inputs: naming an image or video node, binding it, dependency
   order, damage when an input changes.
 - **M5** — effects: the offscreen render of a node's content, `content(uv)`,
   nesting, and pixel tests (the shining text).

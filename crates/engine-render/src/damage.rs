@@ -274,6 +274,42 @@ fn local_painted(text: &mut TextRenderer, id: NodeId, node: &Node, w: f64, h: f6
     local
 }
 
+/// 0.5.1 (#66, #68): a shader's part in its node's pixels: which shader, in
+/// which mode, whether its uniforms or module changed -- and what its inputs
+/// hold now: an image node's current frame, or another shader's own
+/// fingerprint, so a change anywhere upstream repaints the node.
+fn shader_fingerprint(
+    h: &mut impl Hasher,
+    tree: &Tree,
+    shader: &std::sync::Arc<engine_core::Shader>,
+    depth: usize,
+) {
+    1u8.hash(h);
+    (std::sync::Arc::as_ptr(shader) as usize).hash(h);
+    shader.mode().hash(h);
+    shader.animated().hash(h);
+    shader.versions().hash(h);
+    for (_, input) in shader.inputs() {
+        match tree.get(*input) {
+            None => 0u8.hash(h),
+            Some(node) => match (&node.kind, &node.shader) {
+                (NodeKind::Image(state), _) => {
+                    1u8.hash(h);
+                    state.image.data.id().hash(h);
+                }
+                (_, Some(inner)) if depth < 16 => {
+                    2u8.hash(h);
+                    let size = tree.layout(*input).size;
+                    size.width.to_bits().hash(h);
+                    size.height.to_bits().hash(h);
+                    shader_fingerprint(h, tree, inner, depth + 1);
+                }
+                _ => 3u8.hash(h),
+            },
+        }
+    }
+}
+
 /// Everything about `node` itself that decides its pixels.
 fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
     let Node {
@@ -301,13 +337,7 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
     // module changed since it was last painted.
     match shader {
         None => 0u8.hash(h),
-        Some(shader) => {
-            1u8.hash(h);
-            (std::sync::Arc::as_ptr(shader) as usize).hash(h);
-            shader.mode().hash(h);
-            shader.animated().hash(h);
-            shader.versions().hash(h);
-        }
+        Some(shader) => shader_fingerprint(h, tree, shader, 0),
     }
     paint_fingerprint(h, paint);
     std::mem::discriminant(kind).hash(h);

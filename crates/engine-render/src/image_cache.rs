@@ -78,9 +78,17 @@ impl ImageTextureCache {
         &self.bindings
     }
 
-    /// 0.5.1 (#67): shader textures bind into the same map images do.
-    pub(crate) fn bindings_mut(&mut self) -> &mut TextureBindings {
-        &mut self.bindings
+    /// 0.5.1 (#67, #68): the binding map shader textures join, beside a
+    /// read-only view of the image textures a shader may sample as inputs --
+    /// split so both can be held at once.
+    pub(crate) fn split(&mut self) -> (&mut TextureBindings, ImageInputs<'_>) {
+        (
+            &mut self.bindings,
+            ImageInputs {
+                textures: &self.textures,
+                uploaded: &self.uploaded,
+            },
+        )
     }
 
     /// Ensures every real `Image` node in `tree` has a real, uploaded
@@ -196,6 +204,25 @@ impl ImageTextureCache {
             self.bindings.remove(texture_id_for(id));
             self.uploaded.remove(&id);
         }
+    }
+}
+
+/// 0.5.1 (#68): the uploaded image textures, for a shader that samples an
+/// image or video node.
+pub(crate) struct ImageInputs<'a> {
+    textures: &'a HashMap<NodeId, wgpu::Texture>,
+    uploaded: &'a HashMap<NodeId, u64>,
+}
+
+impl ImageInputs<'_> {
+    /// The node's image texture and its content id (which changes with every
+    /// new frame), if one was uploaded.
+    pub(crate) fn get(&self, id: NodeId) -> Option<(wgpu::TextureView, u64)> {
+        let texture = self.textures.get(&id)?;
+        Some((
+            texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            *self.uploaded.get(&id)?,
+        ))
     }
 }
 

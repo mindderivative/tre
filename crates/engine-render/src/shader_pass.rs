@@ -1,4 +1,4 @@
-//! 0.5.1 (#67): the GPU pass for fill shaders.
+//! 0.5.1 (#67, #68): the GPU pass for fill shaders.
 //!
 //! A node with a `mode="fill"` [`Shader`] paints its box from the app's
 //! `shade` function. Each frame, before the scene is rendered, this module
@@ -10,32 +10,44 @@
 //! The pass list comes from the paint walk (`walk`), so it follows what
 //! painting follows: a hidden, fully transparent, or off-screen node is not
 //! reached, and runs no pass and keeps no new texture (#62). A pass runs only
-//! when its inputs changed -- the shader, its uniforms, the node's size, or
-//! the frame's time for an animated shader -- so an idle shader costs
-//! nothing.
+//! when its inputs changed -- the shader, its uniforms, the node's size, an
+//! input's content, or the frame's time for an animated shader -- so an idle
+//! shader costs nothing.
+//!
+//! Inputs (#68). A shader names nodes it samples. An `image` or `video`
+//! node is its image pixels; any other node is its own shader's output, so a
+//! shader reads another shader. Dependencies run first, in the order the
+//! recursion reaches them, which is also the order the passes are recorded
+//! in; an input shader runs even when its node is off-screen, since it is
+//! needed. A cycle is refused when a shader is set (`Tree::shader_cycle`),
+//! and skipped here regardless.
 //!
 //! A problem only the GPU finds -- the pipeline won't build, the texture is
-//! too large -- is logged once and the node paints as if it had no shader;
-//! it never takes down the frame (#60).
+//! too large, an input has no texture -- is logged once and the node paints
+//! as if it had no shader; it never takes down the frame (#60).
 //!
-//! Effects and inputs are later milestones: a shader with either is skipped
-//! here, and paints as if it had none.
+//! Effects are a later milestone: such a shader is skipped here, and paints
+//! as if it had none.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
-use engine_core::{NodeId, Shader, ShaderMode, Tree, frame_block, node_id_as_u64};
+use engine_core::{NodeId, NodeKind, Shader, ShaderMode, Tree, frame_block, node_id_as_u64};
 use peniko::kurbo::Rect;
 use vello_gpu::{TextureBindings, TextureId};
 
-use crate::image_cache::MAX_IMAGE_DIMENSION;
+use crate::image_cache::{ImageInputs, ImageTextureCache, MAX_IMAGE_DIMENSION};
 use crate::walk;
 
 /// The format shader textures are rendered in: what `image_cache` uses, so
 /// `vello_gpu` samples both alike.
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// How deep a chain of shaders reading shaders may go before it is cut off
+/// (a defence: a cycle is refused earlier).
+const MAX_DEPTH: usize = 16;
 
 /// The `TextureId` a node's shader texture is bound under: the node's id
 /// with the top bit set, so it never meets the same node's image texture.
@@ -76,6 +88,8 @@ struct Key {
     size: (u32, u32),
     /// The time an animated shader ran at, as bits; `0` for one that isn't.
     time: u32,
+    /// Each input's content version, in input order.
+    inputs: Vec<u64>,
 }
 
 /// One node's texture and the buffers its pass writes.
@@ -87,6 +101,9 @@ struct Target {
     frame: wgpu::Buffer,
     uniforms: wgpu::Buffer,
     key: Option<Key>,
+    /// Bumped every time the pass runs: what a shader reading this one sees
+    /// change.
+    generation: u64,
 }
 
 /// A built pipeline for one assembled module.
@@ -95,36 +112,46 @@ struct Pipeline {
     layout: wgpu::BindGroupLayout,
 }
 
-/// One entry of a frame's pass list.
-struct Pass {
-    id: NodeId,
-    shader: Arc<Shader>,
+/// A node's shader texture, current this frame.
+#[derive(Clone)]
+struct Ready {
     size: (u32, u32),
+    view: wgpu::TextureView,
+    version: u64,
 }
 
-/// Whether this milestone's pass draws `shader`: a fill with no inputs.
+/// Whether this milestone's pass draws `shader`: a fill.
 fn drawn_here(shader: &Shader) -> bool {
-    shader.mode() == ShaderMode::Fill && shader.inputs().is_empty()
+    shader.mode() == ShaderMode::Fill
 }
 
-/// The pass list: every visible, drawable shader node, from the paint walk.
+/// The pass list: every visible shader node, from the paint walk.
 struct Collect {
-    passes: Vec<Pass>,
+    nodes: Vec<NodeId>,
 }
 
 impl<'t> walk::Visitor<'t> for Collect {
     fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
-        if let Some(shader) = &v.node.shader
-            && drawn_here(shader)
-        {
-            self.passes.push(Pass {
-                id: v.id,
-                shader: shader.clone(),
-                size: (v.w.ceil() as u32, v.h.ceil() as u32),
-            });
+        if v.node.shader.as_deref().is_some_and(drawn_here) {
+            self.nodes.push(v.id);
         }
         true
     }
+}
+
+/// One frame's working state.
+struct Frame<'a> {
+    tree: &'a Tree,
+    time: f32,
+    device: &'a wgpu::Device,
+    queue: &'a wgpu::Queue,
+    encoder: &'a mut wgpu::CommandEncoder,
+    bindings: &'a mut TextureBindings,
+    images: ImageInputs<'a>,
+    /// Shader nodes already brought up to date this frame.
+    done: HashMap<NodeId, Option<Ready>>,
+    /// Shader nodes being resolved now, to cut a cycle.
+    active: Vec<NodeId>,
 }
 
 /// A window's shader textures, pipelines, and the passes that fill them.
@@ -134,8 +161,10 @@ pub struct ShaderPasses {
     /// Pipelines by assembled source; `None` for a module the GPU refused
     /// (logged once, never retried).
     pipelines: HashMap<Arc<str>, Option<Pipeline>>,
-    /// Nodes whose texture was refused, already logged.
+    /// Nodes whose texture or inputs were refused, already logged.
     refused: HashSet<NodeId>,
+    sampler: Option<wgpu::Sampler>,
+    generation: u64,
     /// How many passes the last `run` recorded, for tests and tracing.
     last_passes: usize,
 }
@@ -155,9 +184,9 @@ impl ShaderPasses {
         self.last_passes
     }
 
-    /// Records this frame's passes into `encoder`, binds their textures in
-    /// `bindings`, and says which nodes' textures are ready to draw. Call
-    /// before the scene is rendered, with the same viewport as the scene.
+    /// Records this frame's passes into `encoder`, binds their textures, and
+    /// says which nodes' textures are ready to draw. Call before the scene
+    /// is rendered, with the same viewport as the scene.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn run(
         &mut self,
@@ -169,20 +198,32 @@ impl ShaderPasses {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
-        bindings: &mut TextureBindings,
+        images: &mut ImageTextureCache,
     ) -> ShaderTextures {
         self.last_passes = 0;
+        let (bindings, image_inputs) = images.split();
         self.evict(tree, bindings);
         let mut ready = ShaderTextures::none();
         if !tree.has_shaders() {
             return ready;
         }
         let visible = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
-        let mut collect = Collect { passes: Vec::new() };
+        let mut collect = Collect { nodes: Vec::new() };
         walk::walk(tree, root, visible, &mut collect);
-        for pass in collect.passes {
-            if let Some(size) = self.run_pass(&pass, time, device, queue, encoder, bindings) {
-                ready.ready.insert(pass.id, size);
+        let mut frame = Frame {
+            tree,
+            time,
+            device,
+            queue,
+            encoder,
+            bindings,
+            images: image_inputs,
+            done: HashMap::new(),
+            active: Vec::new(),
+        };
+        for id in collect.nodes {
+            if let Some(r) = self.ensure(&mut frame, id) {
+                ready.ready.insert(id, r.size);
             }
         }
         ready
@@ -197,7 +238,7 @@ impl ShaderPasses {
             .filter(|id| {
                 !tree
                     .get(**id)
-                    .is_some_and(|n| n.shader.as_ref().is_some_and(|s| drawn_here(s)))
+                    .is_some_and(|n| n.shader.as_deref().is_some_and(drawn_here))
             })
             .copied()
             .collect();
@@ -209,75 +250,131 @@ impl ShaderPasses {
         }
     }
 
-    /// Runs one node's pass if it is stale; the texture's size if it is now
-    /// current, `None` if the GPU refused it.
-    fn run_pass(
-        &mut self,
-        pass: &Pass,
-        time: f32,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        bindings: &mut TextureBindings,
-    ) -> Option<(u32, u32)> {
-        let (w, h) = pass.size;
-        if w == 0 || h == 0 {
+    /// Brings `id`'s shader texture up to date, running its inputs' passes
+    /// first; `None` if it can't be drawn.
+    fn ensure(&mut self, f: &mut Frame<'_>, id: NodeId) -> Option<Ready> {
+        if let Some(done) = f.done.get(&id) {
+            return done.clone();
+        }
+        if f.active.contains(&id) || f.active.len() >= MAX_DEPTH {
             return None;
         }
-        if w > MAX_IMAGE_DIMENSION || h > MAX_IMAGE_DIMENSION {
-            if self.refused.insert(pass.id) {
+        f.active.push(id);
+        let result = self.resolve(f, id);
+        f.active.pop();
+        f.done.insert(id, result.clone());
+        result
+    }
+
+    /// One input's texture: an image node's pixels, or another shader's
+    /// output.
+    fn input(&mut self, f: &mut Frame<'_>, id: NodeId) -> Option<(wgpu::TextureView, u64)> {
+        if matches!(f.tree.get(id)?.kind, NodeKind::Image(_)) {
+            return f.images.get(id);
+        }
+        self.ensure(f, id).map(|r| (r.view, r.version))
+    }
+
+    fn resolve(&mut self, f: &mut Frame<'_>, id: NodeId) -> Option<Ready> {
+        let node = f.tree.get(id)?;
+        let shader = node.shader.clone().filter(|s| drawn_here(s))?;
+        let layout = f.tree.layout(id).size;
+        let size = (layout.width.ceil() as u32, layout.height.ceil() as u32);
+        if size.0 == 0 || size.1 == 0 {
+            return None;
+        }
+        if size.0 > MAX_IMAGE_DIMENSION || size.1 > MAX_IMAGE_DIMENSION {
+            if self.refused.insert(id) {
                 tracing::warn!(
-                    width = w,
-                    height = h,
+                    width = size.0,
+                    height = size.1,
                     max = MAX_IMAGE_DIMENSION,
                     "a shader node is larger than the GPU's textures can be; painted without its shader"
                 );
             }
             return None;
         }
-        self.refused.remove(&pass.id);
-        let source = pass.shader.assembled();
-        let uniform_bytes = pass.shader.uniform_bytes();
+        let mut views = Vec::new();
+        let mut versions = Vec::new();
+        for (name, input) in shader.inputs() {
+            let Some((view, version)) = self.input(f, *input) else {
+                if self.refused.insert(id) {
+                    tracing::warn!(
+                        input = %name,
+                        "a shader's input has no texture (not an image, or a shader that can't be drawn); painted without the shader"
+                    );
+                }
+                return None;
+            };
+            views.push(view);
+            versions.push(version);
+        }
+        self.refused.remove(&id);
+        self.run_pass(f, id, &shader, size, &views, versions)
+    }
+
+    /// Runs one node's pass if it is stale.
+    fn run_pass(
+        &mut self,
+        f: &mut Frame<'_>,
+        id: NodeId,
+        shader: &Arc<Shader>,
+        size: (u32, u32),
+        views: &[wgpu::TextureView],
+        versions: Vec<u64>,
+    ) -> Option<Ready> {
+        let source = shader.assembled();
+        let uniform_bytes = shader.uniform_bytes();
         if !self.pipelines.contains_key(&source) {
-            let built = build_pipeline(device, &source, uniform_bytes.len());
+            let built = build_pipeline(f.device, &source, uniform_bytes.len(), views.len());
             self.pipelines.insert(source.clone(), built);
         }
+        let sampler = self
+            .sampler
+            .get_or_insert_with(|| {
+                f.device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("tre shader input sampler"),
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    ..Default::default()
+                })
+            })
+            .clone();
         let pipeline = self.pipelines.get(&source)?.as_ref()?;
 
         let uniform_len = uniform_bytes.len() as u64;
         let reuse = self
             .targets
-            .get(&pass.id)
-            .is_some_and(|t| t.size == pass.size && t.uniforms.size() == uniform_len);
+            .get(&id)
+            .is_some_and(|t| t.size == size && t.uniforms.size() == uniform_len);
         if !reuse {
-            let target = new_target(device, pass.size, uniform_len);
-            bindings.insert(texture_id_for(pass.id), target.view.clone());
-            self.targets.insert(pass.id, target);
+            let target = new_target(f.device, size, uniform_len);
+            f.bindings.insert(texture_id_for(id), target.view.clone());
+            self.targets.insert(id, target);
         }
-        let target = self.targets.get_mut(&pass.id)?;
+        let target = self.targets.get_mut(&id)?;
 
-        let (values, layout) = pass.shader.versions();
+        let (values, layout) = shader.versions();
         let key = Key {
-            shader: Arc::as_ptr(&pass.shader) as usize,
+            shader: Arc::as_ptr(shader) as usize,
             values,
             layout,
-            size: pass.size,
-            time: if pass.shader.animated() {
-                time.to_bits()
+            size,
+            time: if shader.animated() {
+                f.time.to_bits()
             } else {
                 0
             },
+            inputs: versions,
         };
-        if target.key.as_ref() == Some(&key) {
-            return Some(pass.size);
-        }
-
-        queue.write_buffer(&target.frame, 0, &frame_block((w as f32, h as f32), time));
-        queue.write_buffer(&target.uniforms, 0, &uniform_bytes);
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("tre shader bind group"),
-            layout: &pipeline.layout,
-            entries: &[
+        if target.key.as_ref() != Some(&key) {
+            f.queue.write_buffer(
+                &target.frame,
+                0,
+                &frame_block((size.0 as f32, size.1 as f32), f.time),
+            );
+            f.queue.write_buffer(&target.uniforms, 0, &uniform_bytes);
+            let mut entries = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: target.frame.as_entire_binding(),
@@ -286,32 +383,53 @@ impl ShaderPasses {
                     binding: 1,
                     resource: target.uniforms.as_entire_binding(),
                 },
-            ],
-        });
-        {
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("tre fill shader"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &target.view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
+            ];
+            for (i, view) in views.iter().enumerate() {
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 4 + 2 * i as u32,
+                    resource: wgpu::BindingResource::TextureView(view),
+                });
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 5 + 2 * i as u32,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                });
+            }
+            let group = f.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("tre shader bind group"),
+                layout: &pipeline.layout,
+                entries: &entries,
             });
-            rpass.set_pipeline(&pipeline.pipeline);
-            rpass.set_bind_group(0, &group, &[]);
-            rpass.draw(0..3, 0..1);
+            {
+                let mut rpass = f.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("tre fill shader"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &target.view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                rpass.set_pipeline(&pipeline.pipeline);
+                rpass.set_bind_group(0, &group, &[]);
+                rpass.draw(0..3, 0..1);
+            }
+            self.generation += 1;
+            target.generation = self.generation;
+            target.key = Some(key);
+            self.last_passes += 1;
         }
-        target.key = Some(key);
-        self.last_passes += 1;
-        Some(pass.size)
+        Some(Ready {
+            size,
+            view: target.view.clone(),
+            version: target.generation,
+        })
     }
 }
 
@@ -346,6 +464,7 @@ fn new_target(device: &wgpu::Device, size: (u32, u32), uniform_len: u64) -> Targ
         frame: buffer("tre shader frame", engine_core::FRAME_BLOCK_SIZE as u64),
         uniforms: buffer("tre shader uniforms", uniform_len),
         key: None,
+        generation: 0,
     }
 }
 
@@ -355,13 +474,14 @@ fn build_pipeline(
     device: &wgpu::Device,
     source: &Arc<str>,
     uniform_len: usize,
+    inputs: usize,
 ) -> Option<Pipeline> {
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("tre fill shader"),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
     });
-    let entry = |binding, min| wgpu::BindGroupLayoutEntry {
+    let uniform = |binding, min| wgpu::BindGroupLayoutEntry {
         binding,
         visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Buffer {
@@ -371,12 +491,31 @@ fn build_pipeline(
         },
         count: None,
     };
+    let mut entries = vec![
+        uniform(0, engine_core::FRAME_BLOCK_SIZE as u64),
+        uniform(1, uniform_len as u64),
+    ];
+    for i in 0..inputs as u32 {
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 4 + 2 * i,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 5 + 2 * i,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("tre shader bind group layout"),
-        entries: &[
-            entry(0, engine_core::FRAME_BLOCK_SIZE as u64),
-            entry(1, uniform_len as u64),
-        ],
+        entries: &entries,
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("tre shader pipeline layout"),

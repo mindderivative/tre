@@ -5,11 +5,11 @@ object and the `shader` property; the design, and what is still to come, is
 [WGSL shaders](../../design/wgsl.md).
 
 !!! note "What draws today"
-    A `mode="fill"` shader with no `inputs` is drawn: it paints the node's
+    A `mode="fill"` shader is drawn, with or without `inputs`: it paints the node's
     box, clipped to its rounded corners, *behind* the node's own paint (a
     `fill` with some transparency tints it, a border draws over it). A shader
-    in `mode="effect"`, or with `inputs`, is created, checked and stored, but
-    not drawn yet; its node paints as if it had none.
+    in `mode="effect"` is created, checked and stored, but not drawn yet; its
+    node paints as if it had none.
 
 ```python
 import tre
@@ -38,7 +38,7 @@ opened. The result is straight-alpha RGBA.
 | --- | --- |
 | `wgsl` | the source. It must define `shade`, and no entry points of its own |
 | `uniforms` | `dict[str, float | tuple]` — a number is an `f32`; a tuple of 2, 3 or 4 numbers is a `vec2`, `vec3` or `vec4`. Names must be WGSL identifiers that are not reserved |
-| `inputs` | `dict[str, Node]` — nodes of one window, read as `input_<name>(uv)` |
+| `inputs` | `dict[str, Node]` — nodes of one window, read as `input_<name>(uv)` (see [Inputs](#inputs)) |
 | `mode` | `"fill"` paints the node's box behind its content; `"effect"` transforms the node's own rendered content, read as `content(uv)` |
 | `animated` | `True` redraws the node every frame; otherwise it redraws only when something changes |
 
@@ -64,6 +64,38 @@ caret under the column.
 Wrong types (`uniforms={"a": "x"}`, `True`, a tuple of 5) raise `TypeError` or
 `ValueError`; a name tre provides (`Pixel`, `frame`, `u`, `content`, …) used in
 your source is reported with the list of names tre provides.
+
+## Inputs
+
+`inputs={"photo": node}` lets `shade` call `input_photo(uv)`, which returns
+the input's colour at `uv` (0 to 1, from the top left) as straight-alpha RGBA,
+linearly filtered and clamped at the edges. An input is:
+
+- an **`image` or `video` node**: its image pixels, always, even if that node
+  also has a shader. A shader on an image node can name that node as its own
+  input, to grade or distort its own picture; or
+- **any other node that has a shader**: that shader's output. One shader
+  reads another, and the other runs first, even if its node is off-screen or
+  hidden (it is needed). Set the other node's shader before naming it.
+
+Anything else raises `ValueError` when the shader is created. Setting a shader
+that would end up reading itself, through its inputs, raises
+`ValueError("... would read itself ...")` and changes nothing.
+
+A shader repaints when an input's content changes: a new frame pushed to a
+video node, or a change anywhere upstream.
+
+```python
+photo = window.create("image", rgba=pixels, pixel_width=w, pixel_height=h,
+                      width=200, height=200)
+graded = window.create("box", width=200, height=200, shader=tre.Shader(
+    "fn shade(p: Pixel) -> vec4<f32> {"
+    "    let c = input_photo(p.uv);"
+    "    return vec4<f32>(1.0 - c.rgb, c.a);"
+    "}",
+    inputs={"photo": photo},
+))
+```
 
 ## What it costs
 

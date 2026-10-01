@@ -1305,7 +1305,7 @@ impl FrameRenderer {
             device,
             queue,
             encoder,
-            self.images.bindings_mut(),
+            &mut self.images,
         )
     }
 

@@ -233,7 +233,9 @@ fn prelude(mode: ShaderMode, uniforms: &[(String, UniformKind)], inputs: &[Strin
             "@group(0) @binding({texture}) var input_{name}_texture: texture_2d<f32>;\n\
              @group(0) @binding({sampler}) var input_{name}_sampler: sampler;\n\
              fn input_{name}(uv: vec2<f32>) -> vec4<f32> {{\n    \
-             return textureSampleLevel(input_{name}_texture, input_{name}_sampler, uv, 0.0);\n}}\n"
+             let c = textureSampleLevel(input_{name}_texture, input_{name}_sampler, uv, 0.0);\n    \
+             if (c.a <= 0.0) {{ return vec4<f32>(0.0); }}\n    \
+             return vec4<f32>(c.rgb / c.a, c.a);\n}}\n"
         ));
     }
     s.push_str(
