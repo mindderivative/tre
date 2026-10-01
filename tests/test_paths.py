@@ -79,3 +79,19 @@ def test_animate_accepts_path_data_and_trim() -> None:
     box = w.create("box")
     with pytest.raises(ValueError, match="applies only to a path node"):
         box.animate("trim_end", 0.5)
+
+
+def test_path_data_reads_back_normalized() -> None:
+    """The docs say `get("data")` isn't the string that was set: relative
+    commands become absolute, `H`/`V` become `L`, an arc becomes cubic curves,
+    and coordinates are comma-separated -- so tests compare a read-back with a
+    read-back (paint.md, Paths)."""
+    path = window().create("path", data="m1 1 l2 2 h3 v4 z")
+    assert path.get("data") == "M1,1 L3,3 L6,3 L6,7 Z"
+    path.set(data="M0 0 A 5 5 0 0 1 10 10")
+    assert path.get("data").startswith("M0,0 C")
+    assert "A" not in path.get("data")
+    again = path.get("data")
+    path.set(data=again)
+    assert path.get("data") == again, "a read-back is stable"
+

@@ -164,6 +164,25 @@ window.simulate("maximized", maximized=True)          # as the OS would report i
 window.simulate("titlebar_inset", height=28, width=78)  # as macOS would
 ```
 
+The state events fire only when the state changes, and before `App.run()` opens
+the window the controls change it quietly: `maximize()`, `restore()`, and
+`minimize()` set what `get("maximized")` and `get("minimized")` read at once
+and fire no event, since no window exists for the OS to report on. So a
+simulated report of the state you're already in does nothing:
+
+```python
+window = Window()
+window.on("maximized", lambda e: print("maximized:", e.maximized))
+window.maximize()                                # get("maximized") is True; no event
+window.simulate("maximized", maximized=True)     # no change: no event
+window.simulate("maximized", maximized=False)    # prints "maximized: False"
+window.simulate("maximized", maximized=True)     # prints "maximized: True"
+```
+
+To test a listener, simulate the report on a fresh window, or leave the state
+first as above. To test your button, check `get("maximized")` after the click
+and test the listener separately.
+
 See [Window controls and state](../api/python/window.md#window-controls-and-state),
 [macOS: the overlay title bar](../api/python/window.md#macos-the-overlay-title-bar),
 and [Title bar and borders](../api/python/window.md#title-bar-and-borders) for

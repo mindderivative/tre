@@ -486,9 +486,11 @@ class Window:
         `color_scheme` (`dark`), `scale_factor` (`scale_factor`),
         `close_requested`, `closed`, and (0.5.0) `maximized` (`maximized`)
         and `active` (`active`), which set the window's state and fire only
-        when it changes, as the live window does, and `titlebar_inset`
-        (`height`, `width`), likewise. Unknown events or fields raise
-        `ValueError`.
+        when it changes, as the live window does -- and before `App.run()`,
+        `maximize()`, `restore()`, and `minimize()` change it with no event,
+        so simulating the state you are already in fires nothing -- and
+        `titlebar_inset` (`height`, `width`), likewise. Unknown events or
+        fields raise `ValueError`.
         """
         ...
     # -- size and clipboard ----------------------------------------------

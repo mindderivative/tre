@@ -199,7 +199,7 @@ window.simulate("resize", width=800, height=600)
 | `color_scheme` | `dark` |
 | `scale_factor` | `scale_factor` |
 | `close_requested`, `closed` | — |
-| `maximized` / `active` | `maximized` / `active` — sets the window's state; the event fires only if it changed, as the live window's does |
+| `maximized` / `active` | `maximized` / `active` — sets the window's state; the event fires only if it changed, as the live window's does. Before `App.run()`, `maximize()`/`restore()`/`minimize()` change the state with no event, so simulating the state you're already in fires nothing |
 
 Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
 window-space `x`/`y` without a node. Pointer, wheel, click, and key events also

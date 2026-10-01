@@ -37,6 +37,13 @@ listed in [Nodes and Properties](properties.md).
 
 A Material Symbols SVG drops straight in: pass its `d` and its `viewBox`.
 
+`get("data")` reads the path back **normalized**, not as you wrote it: relative
+commands become absolute, `H` and `V` become `L`, an arc `A` becomes cubic
+curves `C`, and coordinates are comma-separated. `"m1 1 l2 2 h3 v4 z"` reads
+back as `"M1,1 L3,3 L6,3 L6,7 Z"`. The shape is the same. In a test, compare a
+read-back with a read-back (`path.get("data")` before and after), not with the
+string you set.
+
 **Trim** is how progress indicators draw: animate `trim_end` from `0.0` to
 `1.0`, or move both ends together for an indeterminate spinner.
 

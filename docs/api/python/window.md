@@ -253,6 +253,12 @@ window.simulate("key_down", key="c", ctrl=True)     # copy its selection
 Every event and field is in
 [Events and Listeners](events.md#testing-without-a-display).
 
+The `maximized` and `active` events fire only when the state changes, and before
+`App.run()` `maximize()`, `restore()`, and `minimize()` change it without an
+event, so `simulate("maximized", maximized=True)` straight after `maximize()` is
+no change and fires nothing. Simulate the report on a fresh window, or leave the
+state first ([Custom Title Bars](../../guide/custom-title-bars.md#testing-without-a-display)).
+
 **`advance(ms)`** moves this window's time forward by exactly `ms`
 milliseconds, then runs animations, their `on_complete` callbacks, and
 layout at the new time — deterministic time for tests, where `App.run()`
