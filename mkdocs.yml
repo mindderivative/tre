@@ -80,6 +80,7 @@ nav:
       - To 0.3.3: migrating-0.3.3.md
   - Design:
       - Custom windowing (0.5.0): design/custom-windowing.md
+      - WGSL shaders (proposed): design/wgsl.md
       - Target API: design/target-api.md
       - Legacy widget reference: design/legacy-widgets.md
       - Legacy widget behavior: design/legacy-behavior.md
