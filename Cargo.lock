@@ -864,6 +864,7 @@ name = "engine-core"
 version = "0.5.0"
 dependencies = [
  "accesskit",
+ "naga",
  "peniko",
  "slotmap",
  "smallvec",
