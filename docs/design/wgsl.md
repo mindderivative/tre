@@ -1,21 +1,26 @@
-# WGSL shaders (proposed)
+# WGSL shaders (0.5.1)
 
-!!! note "Proposed (2026-09-30) — awaiting the owner's decision"
+!!! note "Decided (2026-09-30) — being scoped"
     This is the design for [issue #43](https://github.com/mindderivative/tre/issues/43),
-    scoped as research first. The survey is on the issue; its conclusions are
-    [below](#what-the-survey-found). Each question ends with a recommended
-    answer and a **Decided** line, left open until the owner decides.
-    Nothing here is built.
+    decided by the project owner: shader support ships in **0.5.1**, and
+    0.5.1 is not pushed until it is complete. Each question below ends with
+    its **Decided** line. The work is tracked in
+    [#54](https://github.com/mindderivative/tre/issues/54). Nothing here is
+    built yet.
 
 ## The goal
 
-Issue #43 asked to migrate the engine's shading pipeline to WGSL: leave
-GLSL and SPIR-V, drop build-time shader compilers, and make it easy to write
-"custom 2D post-processing effects, batch renderers, and material shaders".
+A framework above tre should be able to bring its own WGSL and apply it to
+any node: shining text, a fractal background behind a layout panel, a colour
+grade over a video. The owner's two examples set the scope:
 
-The first two are already true. The third is the real question: what should
-an application, or a framework above tre, be able to do with its own WGSL?
-This page proposes an answer.
+- *"I want shining text"* — the shader needs the text's own rendered pixels as
+  input, and its output is the text.
+- *"Fractal backgrounds on a layout panel"* — the shader paints the panel's
+  box.
+
+Issue #43 itself asked to migrate the shading pipeline to WGSL. That part is
+already true, as the survey shows.
 
 ## What the survey found
 
@@ -29,173 +34,173 @@ This page proposes an answer.
   panic.
 - **There is a seam that doesn't need `vello` to change.** tre keeps one
   `wgpu::Texture` per image node and `vello_gpu` draws it as an external
-  texture. Anything holding the `Device` and `Queue` can write that texture.
+  texture. Anything holding the `Device` and `Queue` can write that texture,
+  and `vello` can render a scene into any texture.
 - **`naga` is already in the build** (30.0.1, through `wgpu`), so WGSL can be
   parsed and validated on the CPU with no new crate.
+- **tre handles no GPU errors today.** It has no device-lost callback, no
+  uncaptured-error handler and no error scopes, though `wgpu` offers all of
+  them ([#65](https://github.com/mindderivative/tre/issues/65)).
 
-## Questions
+## What an app writes
 
-**Q1. What can an app supply?**
+```python
+import tre
 
-- **(recommended)** A fragment shader that paints a node: a new kind,
-  `"shader"`. It covers procedural fills, gradients, noise, animated
-  backgrounds, and material effects.
-- A post-effect over a node's children or the backdrop (blur, grading).
-  This needs the subtree rendered to a texture first, with damage,
-  transforms and clipping all following; `vello`'s own filters can't be
-  extended. It could build on the answer above later, with texture inputs.
-- A custom render or compute pass. Unbounded in scope; no.
-- Replacing `vello`'s own shaders. They belong to a pinned upstream commit;
-  no.
+shine = tre.Shader(SHINE_WGSL, uniforms={"phase": 0.0}, mode="effect", animated=True)
+title.set(shader=shine)                       # shining text: a text node
 
-**Decided:** _pending._
+fractal = tre.Shader(FRACTAL_WGSL, uniforms={"zoom": 1.5}, mode="fill", animated=True)
+panel.set(shader=fractal)                     # a fractal behind a layout panel
+```
 
-**Q2. What is the API?**
+```wgsl
+// mode="effect": the node's rendered pixels come in, the result goes out.
+fn shade(p: Pixel) -> vec4<f32> {
+    let c = content(p.uv);
+    let band = smoothstep(0.0, 0.15, 1.0 - abs(p.uv.x - u.phase) * 4.0);
+    return vec4<f32>(c.rgb + band * c.a * 0.6, c.a);
+}
+```
 
-- **(recommended)** `window.create("shader", wgsl=SOURCE, uniforms={...})`.
-  A leaf that can also take children. It paints its box like any other node
-  (`fill` behind the shader, `stroke_*` and `corner_radius` around it, the
-  shader clipped to the rounded box, as an image is since 0.5.1), so it
-  needs no special cases in layout, hit testing or the accessibility tree.
-- A `shader` property on any box. More flexible, but every kind's paint code
-  would have to handle it.
+The colour convention (straight or premultiplied alpha) and the exact names
+the prelude supplies are settled by the first pixel tests. The shape is fixed
+by the decisions below.
 
-**Decided:** _pending._
+## Decisions
 
-**Q3. What does the shader write?**
+**Q1. What can an app supply?** ([#55](https://github.com/mindderivative/tre/issues/55))
 
-- **(recommended)** One function, with tre writing the rest:
+A fill shader (a node paints its box from the app's fragment function), texture
+inputs (a shader can sample an image or video node), and subtree effects (a
+node's own rendered content is the shader's input). A custom compute or render
+pass, and replacing `vello`'s own shaders, are out.
 
-  ```wgsl
-  fn shade(p: Pixel) -> vec4<f32> {
-      let wave = sin(p.uv.x * 12.0 + frame.time);
-      return vec4<f32>(u.tint.rgb * (0.5 + 0.5 * wave), 1.0);
-  }
-  ```
+**Decided:** all three, in 0.5.1.
 
-  tre supplies the vertex stage (a quad over the node), `struct Pixel { uv:
-  vec2<f32>, px: vec2<f32> }`, a `frame` block (`size`, `time`), and the app's
-  `uniforms` as a generated struct `u`. The app never writes a binding or a
-  vertex shader, so the bind-group layout stays tre's to change.
-- The whole module, vertex stage, bindings and all. Maximum freedom, and the
-  binding layout becomes public API.
+**Q2. What is the API?** ([#56](https://github.com/mindderivative/tre/issues/56))
 
-  The output is straight-alpha RGBA, like an `image`; the colour convention is
-  settled by the first pixel tests.
+**Decided:** a `shader` property on **every** node kind, taking a `tre.Shader`
+object: `node.set(shader=Shader(wgsl, uniforms, inputs, mode, animated))`, and
+`None` clears it. The owner: apply it to *any* node kind, with the shader
+taking the node's properties into account. So the shader sees the node's size,
+corner radius and rendered pixels.
 
-**Decided:** _pending._
+- `mode="fill"` paints the node's box behind its content, clipped to its
+  rounded corners (a fractal behind a panel).
+- `mode="effect"` renders the node's own paint and descendants, passes them to
+  the shader, and draws the result in the node's place (shining text).
 
-**Q4. How do uniforms get in?**
+A `Shader` is validated once when it is created, can be reused across nodes,
+and `Shader.set(uniforms=...)` updates every node using it. A `"shader"` child
+kind is not part of this; it can be added later as a convenience over the
+property.
 
-- **(recommended)** A dict: `uniforms={"tint": (1.0, 0.4, 0.2, 1.0),
-  "amount": 0.5}`. A number is an `f32`, a tuple of two, three or four is a
-  `vec2`, `vec3`, `vec4`. tre generates the struct, with WGSL's layout rules,
-  and the names must be WGSL identifiers. `set(uniforms=...)` replaces them,
-  checked first, atomically, as every `set` is; `get("uniforms")` reads them
-  back. Changing a name or a type rebuilds the pipeline; changing a value
-  only rewrites the buffer.
-- Fixed numbered slots (`u0`..`u7`). Simple, but unreadable shaders.
+**Q3. What does the shader write?** ([#57](https://github.com/mindderivative/tre/issues/57))
 
-Animating a uniform with `node.animate` is a natural follow-up, not part of
-the first release.
+**Decided:** one function, `fn shade(p: Pixel) -> vec4<f32>`. tre supplies the
+vertex stage, `Pixel { uv, px }`, a `frame` block (`size`, `time`), the app's
+uniforms as a generated struct `u`, `content(uv)` for an effect, and one
+sampler per named input. The app never writes a binding or a vertex shader, so
+the bind-group layout stays tre's to change.
 
-**Decided:** _pending._
+**Q4. How do uniforms get in?** ([#58](https://github.com/mindderivative/tre/issues/58))
 
-**Q5. Where does it run relative to the `vello` scene?**
+**Decided:** floats and float vectors. A number is an `f32`; a tuple of two,
+three or four numbers is a `vec2`, `vec3` or `vec4`; a colour is a `vec4`.
+Names must be WGSL identifiers. tre generates the struct with WGSL's layout
+rules. Changing a name or a type rebuilds the pipeline; changing a value only
+rewrites the buffer.
 
-- **(recommended)** Into the node's own texture, before the scene renders.
-  tre records an extra pass per shader node into the frame's command encoder,
-  after `prepare` and before `render_into`. The texture is the node's box
-  size in surface pixels (the renderer has no scale factor), capped at 8192
-  like an image, and `vello` then draws it as an external texture. So z-order,
-  transforms, opacity layers, clipping, borders and partial redraw all work as
-  they do for an image, with no change to `vello`.
-- After the scene, as an overlay. Breaks z-order and clipping.
-- Inside `vello`. There is no hook.
+**Q5. Where does the shader work run?** ([#59](https://github.com/mindderivative/tre/issues/59))
 
-**Decided:** _pending._
+**Decided:** one pass graph. For each visible shader node, in dependency order,
+before the final scene:
 
-**Q6. How are mistakes reported?**
+1. For an effect, or a shader with inputs, render the node's content (its own
+   paint and descendants) into an offscreen texture with `vello`.
+2. Run the shader's pass, writing the node's result texture.
+3. The main scene draws that texture as an external texture in the node's
+   place.
 
-- **(recommended)** Parse and validate with `naga` when `wgsl` is created or
-  set, on the CPU, with no GPU needed, so a headless test catches a bad
-  shader. A mistake raises `ValueError` carrying the line, the column and the
-  offending source line, in the style of the other `set` errors. A problem
-  only the GPU finds is logged once, and the node paints nothing; it never
-  takes down the frame loop (glyph errors are handled the same way today).
-- Validate only at first render. Mistakes then surface late, and only where a
-  GPU exists.
+Transforms, opacity, clipping and partial redraw stay `vello`'s. An effect
+inside an effect, and an input that is itself a shader node, run in
+dependency order. Textures are the node's box size in surface pixels (the
+renderer has no scale factor), capped at 8192 a side as for images.
 
-**Decided:** _pending._
+**Q6. How are mistakes reported?** ([#60](https://github.com/mindderivative/tre/issues/60))
 
-**Q7. When does it redraw?**
+**Decided:** `naga` parses and validates the WGSL when the `Shader` is created
+or set, on the CPU with no GPU, raising `ValueError` with the line, column and
+the source line. A problem only the GPU finds is logged once and the node paints
+as if it had no shader; it never takes down the frame loop.
 
-- **(recommended)** Only when something changed: a uniform, the node's size,
-  or the source. A shader that reads `frame.time` sets `animated=True`, and
-  is then redrawn every frame, keeping the loop awake like any running
-  animation; without it, the loop still sleeps when nothing changes. The
-  damage tracker fingerprints the uniforms, and the time when animated, so
-  partial redraw repaints exactly the shader's box. `time` is the window's
-  clock, so `window.advance()` makes it deterministic in tests.
-- Always redraw. Simple, and it makes an idle window burn a GPU.
+**Q7. When does it redraw?** ([#61](https://github.com/mindderivative/tre/issues/61))
 
-**Decided:** _pending._
+**Decided:** only when something changed: a uniform, the node's size, the
+source, an input texture, or, for an effect, anything in its subtree. A shader
+that reads `frame.time` sets `animated=True` and redraws every frame, keeping
+the loop awake like any animation; otherwise the loop still sleeps. `time` is
+the window's clock, so `window.advance()` makes it deterministic. Partial redraw
+repaints exactly the shader node's box.
 
-**Q8. What does it cost?**
+**Q8. Which shader nodes run?** ([#62](https://github.com/mindderivative/tre/issues/62))
 
-One offscreen pass and one texture per shader node, reused from frame to
-frame and reallocated when the node is resized. Cost grows with the number of
-shader nodes and their areas; that goes in the docs.
+**Decided:** only visible, on-screen ones. A hidden, culled or off-screen shader
+node runs no pass and renders no offscreen content. There is no cap on how many
+shader nodes exist; the pass list comes from the same paint walk as the scene.
+The cost is one pass and one texture per shader node (and an offscreen render
+for an effect), and that goes in the docs.
 
-**Q9. Is it the same on every platform?**
+**Q9. How is it verified on macOS and Windows?** ([#63](https://github.com/mindderivative/tre/issues/63))
 
-- **(recommended)** Yes. WGSL is the one source, and `naga` translates it for
-  the backend: SPIR-V on Vulkan, MSL on Metal, HLSL on DX12. The pass and the
-  uniform layout are the same everywhere. Limits that differ by device (the
-  largest texture, uniform buffer sizes) are checked and reported.
-- Testing: Linux CI runs the GPU pixel tests on a software Vulkan and they
-  block; macOS and Windows run them as informational steps. Real-hardware
-  checks on a Mac and on Windows would go on the milestone, as they did for
-  custom windowing.
+**Decided:** CI only for 0.5.1. Linux runs the GPU pixel tests on a software
+Vulkan and they block; macOS and Windows run them as informational steps. WGSL
+is one source, and `naga` translates it for the backend (SPIR-V on Vulkan, MSL
+on Metal, HLSL on DX12). Real-hardware checks are a held Backlog item, like the
+title-bar checks (#47, #48), and don't block 0.5.1.
 
-**Decided:** _pending._
+**Q10. Whose code is a shader?** ([#64](https://github.com/mindderivative/tre/issues/64))
 
-**Q10. Whose code is it?**
-
-A shader is code that runs on the GPU. `naga` validates it, but doesn't bound
-a loop, so a buggy or hostile shader can hang a GPU.
-
-- **(recommended)** Document it as trusted source, and keep it out of the
-  declarative view formats in the first release: a `"shader"` is created from
-  Python, not read from a YAML or JSON view that might come from elsewhere.
-- Accept it in views too. Convenient, and it makes untrusted-shader hangs a
-  data-file problem.
-
-**Decided:** _pending._
+**Decided:** Python only. A `Shader` is a Python object; the declarative view
+formats can't create one. Where its source comes from, and any checking of the
+data a framework feeds it, is the framework's (Tesserae's) job: tre only
+reports an error at creation time (Q6). Separately, and for **every** node, not
+only shaders, tre should detect and report a hung or lost GPU where `wgpu`
+makes that possible ([#65](https://github.com/mindderivative/tre/issues/65)).
+`wgpu` reports a hang as **Device Lost**, which the OS driver triggers when a
+shader loops or a command buffer runs too long (TDR on Windows, with Linux and
+Metal's own timeouts); a software adapter has no such timeout, so a stall
+watchdog covers it. The shader milestones use this, so a hung shader is
+reported rather than leaving a frozen window.
 
 ## What it does not do
 
-- No texture inputs in the first release: a shader can't yet sample an image,
-  a video frame or a subtree. That is the way to effects (blur a node's
-  children, colour-grade a video) and is the natural second release.
 - No compute shaders, no custom render passes, no changes to `vello`'s own
   shaders.
-- No GLSL or SPIR-V input. `naga` can read both; tre wouldn't offer them.
+- No GLSL or SPIR-V input. `naga` can read both; tre doesn't offer them.
+- No `"shader"` kind in the declarative view formats.
+- No checking of a framework's data beyond the creation-time error.
 
 ## Milestones
 
-If the owner accepts the recommendations, a minor release (0.6.0, since it
-adds a node kind):
+Under the umbrella [#54](https://github.com/mindderivative/tre/issues/54),
+for 0.5.1:
 
 - **M1** — this design, decided.
-- **M2** — the `shader` kind: its data model, `naga` validation with
-  positioned errors, uniforms, and the Python API and type stub. CPU only, so
-  it is testable headless.
-- **M3** — the GPU pass: the generated module, the per-node texture, binding
-  it as an external texture, and pixel tests for fill, uniforms, rounded
-  clipping and size changes.
-- **M4** — animation and partial redraw: `animated`, the damage
-  fingerprint, the loop staying awake, `window.advance()` driving `time`;
-  `examples/shader.py` and a guide page.
-- **M5** — release, with the Tesserae compatibility check and the hardware
-  checks on a Mac and on Windows.
+- **GPU error handling** (#65) — the device-lost and error handlers, so the
+  shader passes can report failures. First, since M3 depends on it.
+- **M2** — the `Shader` object and the node property: validation with positioned
+  errors, the module assembler, uniforms, `node.set(shader=...)`, the type stub.
+  CPU only, so it is testable headless.
+- **M3** — the GPU pass for fill shaders: the pass graph's first version, the
+  per-node texture and pipeline caches, binding as an external texture, culling,
+  and pixel tests.
+- **M4** — texture inputs: naming an image or video node, binding it, dependency
+  order, damage when an input changes.
+- **M5** — effects: the offscreen render of a node's content, `content(uv)`,
+  nesting, and pixel tests (the shining text).
+- **M6** — animation and redraw, `animated`, the window clock, the loop staying
+  awake; examples (shining text, a fractal panel) and a guide page.
+- **M7** — verification: CI on all three systems, the Tesserae compatibility run,
+  and the held hardware-checks item.
