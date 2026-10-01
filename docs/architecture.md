@@ -43,6 +43,12 @@ its Python surface is the one stability contract. `engine-platform` and
 When nothing changed and nothing animates, the loop sleeps until the next
 input or `call_soon`.
 
+Each turn the loop also polls the GPU device. A GPU error becomes a
+`gpu_error` event instead of a panic, and a lost GPU fires `gpu_lost` and ends
+the run; while GPU work is still running the loop wakes about every 100 ms to
+poll, so a hang in the last frame is still seen
+([GPU health](api/python/window.md#gpu-health)).
+
 ## Design principles
 
 - **Rust owns every frame; Python owns intent.** Python never runs during

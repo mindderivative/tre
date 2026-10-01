@@ -106,6 +106,14 @@ class Event:
     titlebar_inset: tuple[float, float] | None
     """(0.5.0) `titlebar_inset`: the new `(height, width)` the OS's window
     controls take over the content."""
+    reason: str | None
+    """(0.5.1) `gpu_lost`: `"unknown"` for a GPU fault, `"destroyed"` for a
+    destroyed device."""
+    message: str | None
+    """(0.5.1) `gpu_lost`: what the driver reported (empty for a destroyed
+    device); `gpu_error`: the GPU error."""
+    seconds: float | None
+    """(0.5.1) `gpu_stalled`: how long the submitted frame has run."""
     scale_factor: float | None
     """`scale_factor`: the window's new scale factor."""
     related_target: Node | None
@@ -307,8 +315,12 @@ class Window:
         `dock_target`/`dock_drop`, or (0.5.0) `maximized` and `active`,
         fired when the window is maximized or restored and when it gains
         or loses focus, and `titlebar_inset`, fired when the area the OS's
-        window controls take over the content changes (macOS) --
-        replacing any earlier one.
+        window controls take over the content changes (macOS) -- and (0.5.1)
+        `gpu_lost` (`reason`, `message`: the GPU was lost, and the run ends
+        right after), `gpu_error` (`message`: the GPU reported an error,
+        once per distinct message, and the draw was skipped) and
+        `gpu_stalled` (`seconds`: a submitted frame hasn't completed, with
+        `gpu_watchdog` on) -- replacing any earlier one.
         Raises `ValueError` for an unknown event.
         """
         ...
@@ -345,6 +357,7 @@ class Window:
         icon: tuple[bytes, int, int] | None = ...,
         resize_border: float = ...,
         system_menu: bool = ...,
+        gpu_watchdog: float | None = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -369,7 +382,10 @@ class Window:
         on a `window_region="drag"` node (and, on Windows, Alt+Space on an
         undecorated window) opens the OS's window menu -- off by default,
         an opt-in on every platform for a framework that doesn't show its
-        own."""
+        own. `gpu_watchdog`: (0.5.1) seconds, greater than 0, after which a
+        submitted frame that hasn't completed fires `gpu_stalled` -- once, and
+        it only reports, since stuck GPU work can't be cancelled; `None`, the
+        default, is off."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -398,6 +414,8 @@ class Window:
     @overload
     def get(self, name: Literal["titlebar_inset"]) -> tuple[float, float]: ...
     @overload
+    def get(self, name: Literal["gpu_watchdog"]) -> float | None: ...
+    @overload
     def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
     @overload
     def get(self, name: Literal["platform"]) -> str: ...
@@ -421,7 +439,8 @@ class Window:
         `(height, width)`, the top-left area the OS's window controls take
         over the content, non-zero only for an undecorated macOS window
         outside fullscreen, and `native_controls`: whether those controls
-        are shown (so the framework hides its own)."""
+        are shown (so the framework hides its own) -- and `gpu_watchdog`: the
+        stall watchdog's limit in seconds, or `None` when it is off."""
         ...
     def show_layer(
         self,
@@ -489,8 +508,10 @@ class Window:
         when it changes, as the live window does -- and before `App.run()`,
         `maximize()`, `restore()`, and `minimize()` change it with no event,
         so simulating the state you are already in fires nothing -- and
-        `titlebar_inset` (`height`, `width`), likewise. Unknown events or
-        fields raise `ValueError`.
+        `titlebar_inset` (`height`, `width`), likewise -- and (0.5.1)
+        `gpu_lost` (`reason`, `message`), `gpu_error` (`message`) and
+        `gpu_stalled` (`seconds`), which deliver the event to its listener
+        with no GPU involved. Unknown events or fields raise `ValueError`.
         """
         ...
     # -- size and clipboard ----------------------------------------------

@@ -196,6 +196,12 @@ pub(crate) enum WindowEventType {
     /// 0.5.0 M4: the area the OS's window controls take over the content
     /// changed (macOS's overlay title bar; 0 in fullscreen).
     TitlebarInset,
+    /// 0.5.1 (#65): the GPU was lost; the run ends after this.
+    GpuLost,
+    /// 0.5.1 (#65): the GPU reported an error; the draw was skipped.
+    GpuError,
+    /// 0.5.1 (#65): a submitted frame hasn't completed (the opt-in watchdog).
+    GpuStalled,
     /// M99: while a panel drag is in progress, the zone under the pointer
     /// changed.
     DockTarget,
@@ -204,7 +210,7 @@ pub(crate) enum WindowEventType {
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 10] = [
+    const ALL: [WindowEventType; 13] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -213,6 +219,9 @@ impl WindowEventType {
         Self::Maximized,
         Self::Active,
         Self::TitlebarInset,
+        Self::GpuLost,
+        Self::GpuError,
+        Self::GpuStalled,
         Self::DockTarget,
         Self::DockDrop,
     ];
@@ -227,6 +236,9 @@ impl WindowEventType {
             Self::Maximized => "maximized",
             Self::Active => "active",
             Self::TitlebarInset => "titlebar_inset",
+            Self::GpuLost => "gpu_lost",
+            Self::GpuError => "gpu_error",
+            Self::GpuStalled => "gpu_stalled",
             Self::DockTarget => "dock_target",
             Self::DockDrop => "dock_drop",
         }

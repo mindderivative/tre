@@ -140,6 +140,16 @@ pub struct Event {
     /// `(height, width)`.
     #[pyo3(get)]
     pub(crate) titlebar_inset: Option<(f64, f64)>,
+    /// 0.5.1 (#65): `gpu_lost`'s reason, `"unknown"` for a fault or
+    /// `"destroyed"` for a destroyed device.
+    #[pyo3(get)]
+    pub(crate) reason: Option<String>,
+    /// 0.5.1 (#65): `gpu_lost`'s and `gpu_error`'s message.
+    #[pyo3(get)]
+    pub(crate) message: Option<String>,
+    /// 0.5.1 (#65): `gpu_stalled`'s wait so far, in seconds.
+    #[pyo3(get)]
+    pub(crate) seconds: Option<f64>,
     #[pyo3(get)]
     pub(crate) scale_factor: Option<f64>,
     /// `focus`/`unfocus`: the node on the other side of the move -- losing
@@ -239,6 +249,9 @@ impl Event {
             maximized: None,
             active: None,
             titlebar_inset: None,
+            reason: None,
+            message: None,
+            seconds: None,
             scale_factor: None,
             related_target: None,
             focus_visible: None,

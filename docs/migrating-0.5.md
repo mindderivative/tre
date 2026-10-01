@@ -68,4 +68,13 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   glyph color, and a path keeps `stroke_*` as its outline and ignores
   `corner_radius`. An app that set one of these on a kind that ignored it will
   now see it; remove it to go back.
+- **A GPU error no longer panics, and a lost GPU ends the run cleanly.** `wgpu`'s
+  default handler panicked the process on any GPU error (a `PanicException` out
+  of `App.run()`), and a hung or reset GPU left a frozen window with nothing to
+  react to. An error is now logged once and fires a `gpu_error` window event, and
+  the draw is skipped. A lost GPU fires `gpu_lost` and `App.run()` raises
+  `RuntimeError("the GPU was lost: …")`. `window.set(gpu_watchdog=seconds)` opts in
+  to a `gpu_stalled` event for a frame that never finishes. Code that caught
+  `PanicException` to survive a GPU error should listen for `gpu_error` instead.
+  See [GPU health](api/python/window.md#gpu-health).
 

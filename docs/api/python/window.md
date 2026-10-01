@@ -175,11 +175,48 @@ ordinary ones, delivered to the nodes as usual. The move, resize, and menu are t
 display; `simulate` exercises everything else — the rule, `pointer_cancel`,
 double-click timing (with `advance`), and the border — without one.
 
+## GPU health
+
+Since 0.5.1, tre listens to the GPU, and three window events report what it
+says. The device is polled each loop turn, and while GPU work is still running
+an otherwise idle loop wakes about every 100 ms to poll; with the GPU idle it
+costs nothing.
+
+```python
+window.on("gpu_lost", lambda e: log.error("GPU lost (%s): %s", e.reason, e.message))
+window.on("gpu_error", lambda e: log.warning("GPU error: %s", e.message))
+window.set(gpu_watchdog=10)   # opt in to gpu_stalled
+window.on("gpu_stalled", lambda e: log.warning("a frame has run %.0f s", e.seconds))
+```
+
+- **A lost GPU ends the run.** A driver fault, or a hang the driver's own
+  timeout caught (TDR on Windows, with Linux's and Metal's own timeouts),
+  reaches tre as a lost device, and a lost device can't be restored. `gpu_lost`
+  fires with `reason` (`"unknown"` for a fault, `"destroyed"` for a destroyed
+  device) and the driver's `message`; then every window closes — a
+  `close_requested` listener can't keep one open — and `App.run()` raises
+  `RuntimeError("the GPU was lost: …; the run has ended")` instead of
+  panicking or freezing. Nothing is rebuilt.
+- **A GPU error doesn't panic.** `wgpu`'s default handler panics the process on
+  any GPU error; tre replaces it. Each distinct error is logged once and fires
+  `gpu_error` once, the draw that caused it is skipped, and the loop carries on.
+- **The stall watchdog is off.** `window.set(gpu_watchdog=seconds)` turns it
+  on (`None`, the default, turns it off): if a submitted frame hasn't completed
+  after that many seconds, tre logs once and fires `gpu_stalled`. It only
+  reports; stuck GPU work can't be cancelled. It matters most on a software
+  adapter (the one CI uses), which has no driver timeout at all: a shader that
+  never ends there is never reported lost.
+
+`simulate("gpu_lost", reason=, message=)`, `simulate("gpu_error", message=)` and
+`simulate("gpu_stalled", seconds=)` deliver each event to its listener with no GPU,
+for tests.
+
 ## Window events and properties
 
 **`on(event, handler)`** and **`off(event)`** listen to the window itself —
 `resize`, `color_scheme`, `scale_factor`, `close_requested`, `closed`,
-`dock_target`, `dock_drop`, and (0.5.0) `maximized` and `active`; see
+`dock_target`, `dock_drop`, (0.5.0) `maximized`, `active` and `titlebar_inset`,
+and (0.5.1) `gpu_lost`, `gpu_error` and `gpu_stalled`; see
 [Events and Listeners](events.md#window-listeners).
 
 **`set(title=...)`** changes the title, live if the window is open.

@@ -25,6 +25,7 @@
 mod damage;
 mod fonts;
 mod geometry_cache;
+mod gpu_watch;
 mod image_cache;
 mod persistent_target;
 mod text;
@@ -42,6 +43,7 @@ use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 pub use damage::{Damage, DamageTracker, MAX_RECTS};
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
+pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};

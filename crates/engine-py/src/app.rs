@@ -22,12 +22,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{
-    WindowConfig, WindowLifecycle, WindowOptions, WindowRequest, run_windowed_multi,
+    EventLoopWaker, WindowConfig, WindowLifecycle, WindowOptions, WindowRequest, run_windowed_multi,
 };
-use engine_render::{TextPlacement, TextRenderer, WindowRenderer};
+use engine_render::{GpuReport, GpuWatch, TextPlacement, TextRenderer, WindowRenderer};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
@@ -271,6 +273,9 @@ struct GpuState {
     /// damage tracker (M4), with the frame sequence that uses them --
     /// `engine_render::WindowRenderer`, which the pixel tests drive too.
     renderer: WindowRenderer,
+    /// 0.5.1 (#65): this device's health: its lost and error handlers, and
+    /// the stall watchdog. Installed the moment the device exists.
+    watch: GpuWatch,
 }
 
 impl GpuState {
@@ -300,6 +305,9 @@ impl GpuState {
             ..Default::default()
         }))
         .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
+        // 0.5.1 (#65): replaces wgpu's default handler, which panics on any
+        // GPU error, and learns of a lost device.
+        let watch = GpuWatch::install(&device);
 
         // 0.4.0 review: a window larger than the GPU's textures can be
         // renders at the largest size it can, not a panic in `configure`.
@@ -334,6 +342,7 @@ impl GpuState {
             device,
             queue,
             renderer,
+            watch,
         })
     }
 
@@ -500,6 +509,93 @@ fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
     }
 }
 
+/// 0.5.1 (#65): turns what the GPU reported into window events, on the
+/// loop's own thread with the GIL, and returns why the device was lost, if it
+/// was.
+fn deliver_gpu_reports(
+    handles: &WindowHandles,
+    reports: Vec<GpuReport>,
+    py: Python<'_>,
+) -> Option<String> {
+    let mut lost = None;
+    for report in reports {
+        match report {
+            GpuReport::Lost { destroyed, message } => {
+                let reason = if destroyed { "destroyed" } else { "unknown" };
+                lost = Some(if message.is_empty() {
+                    format!("the device was {reason}")
+                } else {
+                    message.clone()
+                });
+                listeners::deliver_window(
+                    &handles.window_listeners,
+                    py,
+                    WindowEventType::GpuLost,
+                    |e| {
+                        e.reason = Some(reason.to_string());
+                        e.message = Some(message);
+                    },
+                );
+            }
+            GpuReport::Error { message } => {
+                listeners::deliver_window(
+                    &handles.window_listeners,
+                    py,
+                    WindowEventType::GpuError,
+                    |e| e.message = Some(message),
+                );
+            }
+            GpuReport::Stalled { seconds } => {
+                listeners::deliver_window(
+                    &handles.window_listeners,
+                    py,
+                    WindowEventType::GpuStalled,
+                    |e| e.seconds = Some(seconds),
+                );
+            }
+        }
+    }
+    lost
+}
+
+/// 0.5.1 (#65): while any GPU work is in flight, wakes an otherwise idle
+/// loop about every 100 ms so the device gets polled -- a hang in the last
+/// submitted frame would otherwise never be noticed, since nothing else runs
+/// in a sleeping loop. It costs nothing while the GPU is idle.
+struct GpuWake {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl GpuWake {
+    fn start(waker: EventLoopWaker) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("tre-gpu-wake".into())
+            .spawn(move || {
+                while !flag.load(Ordering::Relaxed) {
+                    std::thread::park_timeout(Duration::from_millis(100));
+                    if engine_render::any_in_flight() {
+                        waker.wake();
+                    }
+                }
+            })
+            .ok();
+        Self { stop, thread }
+    }
+}
+
+impl Drop for GpuWake {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            thread.thread().unpark();
+            let _ = thread.join();
+        }
+    }
+}
+
 struct WindowRuntime {
     /// 0.4.0 M6: the window's shared handles (`WindowHandles`).
     handles: WindowHandles,
@@ -643,6 +739,10 @@ impl App {
         // has stopped.
         let startup_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
         let startup_error_for_created = startup_error.clone();
+        let startup_error_for_frame = startup_error.clone();
+        let startup_error_for_lifecycle = startup_error.clone();
+        let gpu_wake: Rc<RefCell<Option<GpuWake>>> = Rc::new(RefCell::new(None));
+        let gpu_wake_for_setup = gpu_wake.clone();
         let result = run_windowed_multi(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
@@ -693,6 +793,33 @@ impl App {
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return false;
                 };
+
+                // 0.5.1 (#65): what the GPU says about itself, before any of
+                // this frame's work touches it. `_lose_gpu` is a test hook.
+                if runtime.handles.lose_gpu.take() {
+                    runtime.gpu.device.destroy();
+                }
+                runtime
+                    .gpu
+                    .watch
+                    .set_watchdog(runtime.handles.gpu_watchdog.get());
+                let reports = runtime.gpu.watch.poll(&runtime.gpu.device);
+                if let Some(why) = deliver_gpu_reports(&runtime.handles, reports, py) {
+                    // A lost GPU ends the run: every window is closed (a
+                    // `close_requested` listener can't keep one open) and
+                    // `App.run()` raises this.
+                    *startup_error_for_frame.borrow_mut() =
+                        Some(format!("the GPU was lost: {why}; the run has ended"));
+                    for (id, other) in runtimes.iter() {
+                        if let Some(waker) = other.handles.waker.borrow().as_ref() {
+                            waker.close_window(*id);
+                        }
+                    }
+                    return false;
+                }
+                if runtime.gpu.watch.is_lost() {
+                    return false;
+                }
 
                 let now = crate::clock::now(&runtime.handles.tree);
                 let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
@@ -891,6 +1018,7 @@ impl App {
                     );
                 }
                 runtime.gpu.queue.submit([encoder.finish()]);
+                runtime.gpu.watch.submitted(&runtime.gpu.queue);
                 // 0.4.1 M8: what this frame redrew, over the image but never
                 // the kept frame; its own submit, after the frame's.
                 if runtime.handles.show_damage.get() {
@@ -903,6 +1031,8 @@ impl App {
                         &gpu.queue,
                         &view,
                     );
+                    // The overlay submits its own work.
+                    gpu.watch.submitted(&gpu.queue);
                 }
                 runtime.gpu.queue.present(output);
                 if reconfigure {
@@ -1254,12 +1384,17 @@ impl App {
                     return true;
                 };
                 match lifecycle {
-                    WindowLifecycle::CloseRequested => !listeners::deliver_window(
-                        &runtime.handles.window_listeners,
-                        py,
-                        WindowEventType::CloseRequested,
-                        |_| {},
-                    ),
+                    // 0.5.1 (#65): once the GPU is lost the run is ending, and a
+                    // listener can't keep a window open.
+                    WindowLifecycle::CloseRequested => {
+                        startup_error_for_lifecycle.borrow().is_some()
+                            || !listeners::deliver_window(
+                                &runtime.handles.window_listeners,
+                                py,
+                                WindowEventType::CloseRequested,
+                                |_| {},
+                            )
+                    }
                     WindowLifecycle::Closed => {
                         listeners::deliver_window(
                             &runtime.handles.window_listeners,
@@ -1276,6 +1411,7 @@ impl App {
                 // M87: from here on, `LoopHandle.call_soon` wakes this
                 // run's loop -- including one idle in `ControlFlow::Wait`.
                 calls_for_setup.set_waker(Some(waker.clone()));
+                *gpu_wake_for_setup.borrow_mut() = Some(GpuWake::start(waker.clone()));
                 for (index, setup) in setups_for_setup.iter().enumerate() {
                     opener.open_window(WindowRequest {
                         config: WindowConfig {
@@ -1315,6 +1451,7 @@ impl App {
         // queues, waiting for a later `run()`'s first frame, rather than
         // waking a proxy with no loop behind it.
         self.calls.set_waker(None);
+        gpu_wake.borrow_mut().take(); // stops and joins the wake thread
         // M94: no window is open any more.
         for setup in setups_for_cleanup.iter() {
             *setup.handles.os_window.borrow_mut() = None;

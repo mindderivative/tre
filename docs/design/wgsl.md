@@ -172,10 +172,11 @@ makes that possible ([#65](https://github.com/mindderivative/tre/issues/65)).
 shader loops or a command buffer runs too long (TDR on Windows, with Linux and
 Metal's own timeouts); a software adapter has no such timeout, so a stall
 watchdog covers it. The callbacks only run when the device is polled, so tre
-polls it each loop turn; and a lost device can't be restored, so recovery
-rebuilds the adapter, device and everything built on them. The shader
-milestones use this, so a hung shader is reported rather than leaving a
-frozen window.
+polls it each loop turn; and a lost device can't be restored, so tre reports
+the loss and ends the run rather than rebuilding (the owner's decision on
+#65). A GPU error no longer panics, and a stall watchdog is off by default.
+The shader milestones use this, so a hung shader is reported rather than
+leaving a frozen window.
 
 ## What it does not do
 
