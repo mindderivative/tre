@@ -171,8 +171,11 @@ makes that possible ([#65](https://github.com/mindderivative/tre/issues/65)).
 `wgpu` reports a hang as **Device Lost**, which the OS driver triggers when a
 shader loops or a command buffer runs too long (TDR on Windows, with Linux and
 Metal's own timeouts); a software adapter has no such timeout, so a stall
-watchdog covers it. The shader milestones use this, so a hung shader is
-reported rather than leaving a frozen window.
+watchdog covers it. The callbacks only run when the device is polled, so tre
+polls it each loop turn; and a lost device can't be restored, so recovery
+rebuilds the adapter, device and everything built on them. The shader
+milestones use this, so a hung shader is reported rather than leaving a
+frozen window.
 
 ## What it does not do
 
