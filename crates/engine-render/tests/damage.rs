@@ -591,3 +591,53 @@ fn damage_walk_cost_beside_a_large_terminal_and_canvas() {
         "damage walk beside a 200x60 terminal and 2000 canvas commands: {per_frame:?} a frame"
     );
 }
+
+// --- 0.5.1 (#66): a node's shader is part of what it paints ---------------------
+
+const SHADE: &str = "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.amount);\n}\n";
+
+fn shader(amount: f32) -> std::sync::Arc<engine_core::Shader> {
+    engine_core::Shader::new(
+        SHADE.to_owned(),
+        vec![("amount".to_owned(), engine_core::UniformValue::F32(amount))],
+        vec![],
+        engine_core::ShaderMode::Fill,
+        false,
+    )
+    .expect("a valid shader")
+}
+
+#[test]
+fn setting_changing_and_clearing_a_shader_damages_the_node() {
+    let mut s = Scene::new();
+    let node = s.rect(40.0, 40.0, 60.0, 60.0);
+    s.settle();
+    let area = Rect::new(40.0, 40.0, 100.0, 100.0);
+
+    let shader = shader(0.5);
+    s.tree.get_mut(node).unwrap().shader = Some(shader.clone());
+    let damage = s.frame();
+    assert!(covers(&damage, area), "setting a shader: {damage:?}");
+    assert!(within(&damage, area, 4.0), "and only there: {damage:?}");
+    assert_eq!(s.frame(), Damage::None, "then it is settled");
+
+    shader
+        .set_uniforms(vec![(
+            "amount".to_owned(),
+            engine_core::UniformValue::F32(0.9),
+        )])
+        .unwrap();
+    let damage = s.frame();
+    assert!(covers(&damage, area), "a new uniform value: {damage:?}");
+    assert_eq!(s.frame(), Damage::None);
+
+    s.tree.get_mut(node).unwrap().shader = Some(self::shader(0.9));
+    assert!(
+        covers(&s.frame(), area),
+        "a different shader with equal values"
+    );
+
+    s.tree.get_mut(node).unwrap().shader = None;
+    assert!(covers(&s.frame(), area), "clearing it");
+    assert_eq!(s.frame(), Damage::None);
+}

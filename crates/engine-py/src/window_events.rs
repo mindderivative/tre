@@ -476,7 +476,7 @@ impl PyWindow {
                 )));
             }
         };
-        let changes = parse_all(Some(&props), &node_kind)?;
+        let changes = parse_all(Some(&props), &node_kind, &self.handles.tree)?;
         let draws = matches!(node_kind, NodeKind::Canvas(_));
         let session = match session {
             Some((shell, cols, rows, scrollback)) => Some(

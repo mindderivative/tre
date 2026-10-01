@@ -116,3 +116,66 @@ def test_equality_is_identity():
     a, b = Shader(GOOD), Shader(GOOD)
     assert a == a and a != b
     assert len({a, b, a}) == 2
+
+
+# --- the node property -------------------------------------------------------------
+
+
+def test_every_node_kind_takes_a_shader():
+    window = Window()
+    shader = Shader(GOOD)
+    kinds = ["box", "text", "text_input", "image", "path", "canvas", "scroll_view"]
+    for kind in kinds:
+        try:
+            node = window.create(kind, width=20, height=20)
+        except ValueError:
+            continue  # a kind that needs arguments is covered below
+        assert node.get("shader") is None
+        node.set(shader=shader)
+        assert node.get("shader") == shader, kind
+        node.set(shader=None)
+        assert node.get("shader") is None, kind
+
+
+def test_shader_is_a_create_property_and_is_shared():
+    window = Window()
+    shader = Shader(
+        "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.amount);\n}\n",
+        uniforms={"amount": 0.5},
+    )
+    a = window.create("box", width=10, height=10, shader=shader)
+    b = window.create("box", width=10, height=10, shader=shader)
+    assert a.get("shader") == b.get("shader") == shader
+    a.get("shader").set(uniforms={"amount": 1.0})
+    assert shader.uniforms == {"amount": 1.0}
+    assert b.get("shader").uniforms == {"amount": 1.0}
+
+
+def test_a_bad_shader_value_changes_nothing():
+    window = Window()
+    node = window.create("box", width=10, height=10)
+    shader = Shader(GOOD)
+    node.set(shader=shader)
+    with pytest.raises(ValueError, match="a tre.Shader or None"):
+        node.set(shader="void main() {}", opacity=0.5)
+    assert node.get("shader") == shader
+    assert node.get("opacity") == 1.0, "atomic: the valid half wasn't applied"
+
+
+def test_inputs_must_be_in_the_nodes_own_window():
+    source = "fn shade(p: Pixel) -> vec4<f32> {\n    return input_photo(p.uv);\n}\n"
+    window, other = Window(), Window()
+    photo = window.create("box", width=10, height=10)
+    shader = Shader(source, inputs={"photo": photo})
+    window.create("box", width=10, height=10, shader=shader)
+    foreign = other.create("box", width=10, height=10)
+    with pytest.raises(ValueError, match="different Window"):
+        foreign.set(shader=shader)
+    assert foreign.get("shader") is None
+    assert window.create("box", shader=shader).get("shader").inputs["photo"] == photo
+
+
+def test_the_property_is_listed_in_the_unknown_property_error():
+    node = Window().create("box", width=10, height=10)
+    with pytest.raises(ValueError, match="shader"):
+        node.set(colour=1)

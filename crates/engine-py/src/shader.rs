@@ -2,6 +2,7 @@
 //! and `tre.ShaderError`, the `ValueError` a mistake raises. The checking is
 //! `engine_core::Shader`; this is the Python skin on it. Nothing here draws.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -98,6 +99,31 @@ pub struct Shader {
     /// The `Node` handles given as inputs, so `inputs` hands back the same
     /// objects.
     inputs: Vec<(String, Py<Node>)>,
+}
+
+impl Shader {
+    /// A Python object for an already-built core shader (as `node.get("shader")`
+    /// returns): equal to the one that was set, as equality is by identity of
+    /// the core shader. `handle` makes a `Node` for an input.
+    pub(crate) fn wrap(
+        py: Python<'_>,
+        core: Arc<engine_core::Shader>,
+        handle: impl Fn(NodeId) -> Node,
+    ) -> Self {
+        let inputs = core
+            .inputs()
+            .iter()
+            .filter_map(|(name, id)| Py::new(py, handle(*id)).ok().map(|n| (name.clone(), n)))
+            .collect();
+        Self { core, inputs }
+    }
+
+    /// Whether every input node lives in `tree`.
+    pub(crate) fn inputs_in(&self, py: Python<'_>, tree: &Rc<RefCell<engine_core::Tree>>) -> bool {
+        self.inputs
+            .iter()
+            .all(|(_, node)| Rc::ptr_eq(&node.borrow(py).tree, tree))
+    }
 }
 
 #[pymethods]

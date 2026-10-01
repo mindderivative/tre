@@ -254,6 +254,7 @@ impl Tree {
             hit_testable: true,
             cursor: None,
             window_region: crate::node::WindowRegion::Default,
+            shader: None,
             visible: true,
             z_index: 0,
         });

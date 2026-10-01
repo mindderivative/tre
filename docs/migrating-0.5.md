@@ -84,4 +84,8 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   to a `gpu_stalled` event for a frame that never finishes. Code that caught
   `PanicException` to survive a GPU error should listen for `gpu_error` instead.
   See [GPU health](api/python/window.md#gpu-health).
-
+- **`tre.Shader` and `node.set(shader=...)`.** WGSL shaders arrive in 0.5.1 in
+  stages. This stage adds the object and the property: a shader is checked when
+  it is created, raising `tre.ShaderError` (a `ValueError`) with the line and
+  column in your source, and every node kind accepts, stores, and reads back
+  `shader`. Nothing is drawn yet. See [Shader](api/python/shader.md).

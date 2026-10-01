@@ -293,9 +293,22 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
         cursor: _,
         // 0.5.0 M3: which presses move the window; paints nothing.
         window_region: _,
+        shader,
     } = node;
     visible.hash(h);
     z_index.hash(h);
+    // 0.5.1 (#66): which shader, in which mode, and whether its uniforms or
+    // module changed since it was last painted.
+    match shader {
+        None => 0u8.hash(h),
+        Some(shader) => {
+            1u8.hash(h);
+            (std::sync::Arc::as_ptr(shader) as usize).hash(h);
+            shader.mode().hash(h);
+            shader.animated().hash(h);
+            shader.versions().hash(h);
+        }
+    }
     paint_fingerprint(h, paint);
     std::mem::discriminant(kind).hash(h);
     // 0.5.1 (#44, #53): a node that draws its own content draws it inside its

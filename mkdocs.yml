@@ -71,6 +71,7 @@ nav:
       - Layers: api/python/layers.md
       - Paint, Paths, and Animation: api/python/paint.md
       - Painter: api/python/painter.md
+      - Shader (0.5.1): api/python/shader.md
   - Rust Crates: api/rust.md
   - Architecture: architecture.md
   - Migrating:
