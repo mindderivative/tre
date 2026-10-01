@@ -14,10 +14,12 @@ exits; `App.run()` returns quietly where no display is reachable.
 See docs/guide/nodes-and-layout.md.
 """
 
+import math
+
 from tre import App, Window
 
 SURFACE = (0xFE, 0xF7, 0xFF, 0xFF)
-FIELD = (0xF3, 0xED, 0xF7, 0xFF)
+OUTLINE = (0x79, 0x74, 0x7E, 0xFF)
 TILE = (0x67, 0x50, 0xA4, 0xFF)
 
 window = Window(width=480, height=360, title="tre -- grid")
@@ -28,8 +30,13 @@ form = window.create("box", display="grid", width="100%",
                      align_items="center")
 fields = []
 for label in ("Name", "Email address", "City"):
-    form.add_child(window.create("text", text=label, font_size=14, height=20))
-    field = window.create("text_input", text="", height=28, fill=FIELD)
+    # A text node has no size of its own: measured, the `auto` column is as
+    # wide as the longest label.
+    width, height = window.measure_text(label, font_size=14)
+    form.add_child(window.create("text", text=label, font_size=14,
+                                 width=math.ceil(width), height=math.ceil(height)))
+    field = window.create("text_input", text="", height=28, corner_radius=4,
+                          stroke_color=OUTLINE, stroke_width=1)
     form.add_child(field)
     fields.append(field)
 
