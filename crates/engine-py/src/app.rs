@@ -103,11 +103,16 @@ fn text_field_hit_offset(
     let NodeKind::TextField(state) = &node.kind else {
         return None;
     };
-    let width = tree.layout(hit).size.width;
+    // The placement the field is painted at (`engine-render`'s `draw_own`):
+    // inside its padding, and shifted by how far a multiline field has
+    // scrolled. A click is resolved against what is painted, so it must use
+    // the same one; before, it used the node's corner and ignored the scroll.
+    let layout = tree.layout(hit);
+    let pad = layout.padding;
     let at = TextPlacement {
-        x: 0.0,
-        y: 0.0,
-        max_width: width,
+        x: f64::from(pad.left) - state.horizontal_scroll_offset.current,
+        y: f64::from(pad.top) - state.scroll_offset.current,
+        max_width: (layout.size.width - pad.left - pad.right).max(0.0),
         color: peniko::Color::TRANSPARENT,
     };
     Some(text_renderer.hit_test_position(state, at, local_point))
@@ -129,7 +134,13 @@ fn terminal_hit_cell(
     let tree_ref = tree.borrow();
     match tree_ref.get(hit).map(|n| &n.kind) {
         Some(NodeKind::Terminal(state)) => {
-            Some(text_renderer.terminal_hit_cell(state, local_point))
+            // The cell grid starts inside the node's padding.
+            let pad = tree_ref.layout(hit).padding;
+            let inside = Point::new(
+                local_point.x - f64::from(pad.left),
+                local_point.y - f64::from(pad.top),
+            );
+            Some(text_renderer.terminal_hit_cell(state, inside))
         }
         _ => None,
     }
@@ -1491,17 +1502,30 @@ mod tests {
     /// 200x60 terminal under it; a real pointer press on either runs
     /// `text_pointer_input`, which needs the tree *not* borrowed while it
     /// writes. `simulate` never reaches it, so only a real window did.
-    fn field_and_terminal() -> (
+    type Scene = (
         std::rc::Rc<std::cell::RefCell<Tree>>,
         engine_core::NodeId,
         engine_core::NodeId,
         engine_core::NodeId,
-    ) {
+    );
+
+    fn field_and_terminal() -> Scene {
+        field_and_terminal_padded(0.0, 0.0)
+    }
+
+    /// The same, with `padding` left and top on the field and the terminal.
+    fn field_and_terminal_padded(pad_left: f32, pad_top: f32) -> Scene {
         let mut tree = Tree::new();
         let sized = |w: f32, h: f32| Style {
             size: Size {
                 width: length(w),
                 height: length(h),
+            },
+            padding: taffy::geometry::Rect {
+                left: length(pad_left),
+                top: length(pad_top),
+                right: length(0.0),
+                bottom: length(0.0),
             },
             ..Default::default()
         };
@@ -1510,7 +1534,11 @@ mod tests {
             NodeKind::Container,
             Style {
                 flex_direction: taffy::FlexDirection::Column,
-                ..sized(300.0, 200.0)
+                size: Size {
+                    width: length(300.0),
+                    height: length(200.0),
+                },
+                ..Default::default()
             },
             paint(),
         );
@@ -1644,6 +1672,113 @@ mod tests {
         assert_ne!(
             state.selection_start, state.selection_end,
             "the selection grew"
+        );
+    }
+
+    fn state_of_field(
+        tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
+        field: engine_core::NodeId,
+    ) -> usize {
+        let tree = tree.borrow();
+        let Some(NodeKind::TextField(state)) = tree.get(field).map(|n| &n.kind) else {
+            unreachable!()
+        };
+        state.cursor
+    }
+
+    /// 0.5.1 (#53): with `padding`, a click lands on the character under it:
+    /// the same glyph, clicked where it now is, gives the same offset.
+    #[test]
+    fn a_click_in_a_padded_text_input_lands_on_the_character_under_it() {
+        let (plain, root, field, _) = field_and_terminal();
+        let mut drags = (None, None);
+        pointer(press(Point::new(60.0, 10.0)), &plain, root, &mut drags);
+        let expected = state_of_field(&plain, field);
+        assert!(expected > 0, "the click is inside the text");
+
+        let (padded, root, field, _) = field_and_terminal_padded(40.0, 10.0);
+        let mut drags = (None, None);
+        pointer(
+            press(Point::new(60.0 + 40.0, 10.0 + 10.0)),
+            &padded,
+            root,
+            &mut drags,
+        );
+        assert_eq!(state_of_field(&padded, field), expected);
+    }
+
+    /// The same for a terminal: the cell under the pointer, inside the padding.
+    #[test]
+    fn a_click_in_a_padded_terminal_lands_on_the_cell_under_it() {
+        fn cell(
+            tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
+            terminal: engine_core::NodeId,
+        ) -> Option<(u16, u16)> {
+            let tree = tree.borrow();
+            let Some(NodeKind::Terminal(state)) = tree.get(terminal).map(|n| &n.kind) else {
+                unreachable!()
+            };
+            state.selection_start
+        }
+        let (plain, root, _, terminal) = field_and_terminal();
+        let mut drags = (None, None);
+        pointer(press(Point::new(60.0, 50.0)), &plain, root, &mut drags);
+        let expected = cell(&plain, terminal);
+        assert!(expected.is_some());
+
+        let (padded, root, _, terminal) = field_and_terminal_padded(20.0, 10.0);
+        let mut drags = (None, None);
+        pointer(
+            press(Point::new(60.0 + 20.0, 50.0 + 10.0)),
+            &padded,
+            root,
+            &mut drags,
+        );
+        assert_eq!(cell(&padded, terminal), expected);
+    }
+
+    /// Found while doing #53: the hit test ignored a multiline field's scroll,
+    /// so a click in a scrolled field landed on the line it would have under
+    /// an unscrolled one. It must resolve against what is painted.
+    #[test]
+    fn a_click_in_a_scrolled_multiline_field_lands_on_the_line_under_it() {
+        fn click_at_the_top(scroll: f64) -> usize {
+            let mut tree = Tree::new();
+            let content = (0..40)
+                .map(|i| format!("line{i}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut state = engine_core::TextFieldState::new(content, "Roboto", 400.0, 14.0);
+            state.multiline = true;
+            state.scroll_offset.current = scroll;
+            let field = tree.insert(
+                NodeKind::TextField(state),
+                Style {
+                    size: Size {
+                        width: length(200.0),
+                        height: length(100.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
+            );
+            tree.compute_layout(
+                field,
+                Size {
+                    width: AvailableSpace::Definite(200.0),
+                    height: AvailableSpace::Definite(100.0),
+                },
+            );
+            let tree = std::rc::Rc::new(std::cell::RefCell::new(tree));
+            let mut drags = (None, None);
+            pointer(press(Point::new(5.0, 5.0)), &tree, field, &mut drags);
+            state_of_field(&tree, field)
+        }
+        let unscrolled = click_at_the_top(0.0);
+        let scrolled = click_at_the_top(100.0);
+        assert!(
+            scrolled > unscrolled,
+            "scrolled content: line {scrolled} vs {unscrolled}"
         );
     }
 

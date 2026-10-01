@@ -162,6 +162,45 @@ fn a_move_damages_where_the_node_was_and_where_it_is() {
     );
 }
 
+/// 0.5.1 (#44, #53): a padded node draws its own content inside the padding,
+/// so changing the padding moves pixels even when its box is the same size.
+/// Layout reaches paint only as size and position otherwise, so without this a
+/// padding change alone would leave stale pixels.
+#[test]
+fn a_padding_change_damages_a_node_whose_content_it_moves() {
+    let mut s = Scene::new();
+    let canvas = s.add(
+        s.root,
+        NodeKind::Canvas(engine_core::CanvasState::new()),
+        40.0,
+        40.0,
+        60.0,
+        60.0,
+    );
+    s.settle();
+    let mut style = s.tree.get(canvas).unwrap().layout_style.clone();
+    style.padding.left = length(20.0);
+    s.tree.set_layout_style(canvas, style);
+    let damage = s.frame();
+    assert!(
+        covers(&damage, Rect::new(40.0, 40.0, 100.0, 100.0)),
+        "the padded canvas is redrawn: {damage:?}"
+    );
+}
+
+/// An empty box's padding paints nothing and moves no child, so it still
+/// damages nothing.
+#[test]
+fn a_padding_change_on_an_empty_box_damages_nothing() {
+    let mut s = Scene::new();
+    let node = s.rect(40.0, 40.0, 60.0, 60.0);
+    s.settle();
+    let mut style = s.tree.get(node).unwrap().layout_style.clone();
+    style.padding.left = length(20.0);
+    s.tree.set_layout_style(node, style);
+    assert_eq!(s.frame(), Damage::None);
+}
+
 #[test]
 fn a_running_animation_damages_every_frame_until_it_arrives() {
     let mut s = Scene::new();

@@ -50,14 +50,21 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 
 ## 0.5.1
 
-- **`padding` on a text node insets its text.** Layout always reserved the
-  padding, but the text was drawn at the node's corner across its full width,
-  so the padding did nothing visible. The text now starts inside the padding
-  and wraps in the width that's left, and the node's `width` and `height`
-  include it, as for a box. A text node with no padding is drawn exactly as
-  before; one that set `padding` and relied on it being ignored should drop
-  it. A `text_input`, `terminal`, `image`, `path`, and `canvas` still ignore their
-  own padding: put them in a padded box.
+- **`padding` insets a node's own content.** Layout always reserved the
+  padding, but a node drew its content at its own corner across its full width,
+  so the padding did nothing visible. A text node's text, a text input's text
+  and caret, a terminal's cells, an image, a path's view box and a canvas's
+  painter coordinates now all start inside the padding and fit what is left;
+  the node's `width` and `height` include it, as for a box, and its background,
+  border and rounded corners stay on the whole box. A node with no padding is
+  drawn exactly as before; one that set `padding` and relied on it being
+  ignored should drop it. A canvas's painter `(0, 0)` is now its content box's
+  corner, and a custom hit shape (`set_hit_test_circle`, `set_hit_test_path`)
+  is in those coordinates; pointer events' `x` and `y` stay relative to the
+  node's own corner. Clicks land on what is painted: a click in a text input
+  or a terminal with padding hits the character or cell under it, and a click in
+  a scrolled multiline field now hits the line under the pointer, where it
+  used to resolve as if the field had not scrolled.
 - **Every kind paints its own box.** `fill`, `stroke_color`, `stroke_width`,
   and `corner_radius` were accepted on every kind but painted only on a box
   (and a few on a text input, terminal, and path): `set` succeeded, `get` read

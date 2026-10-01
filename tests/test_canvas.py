@@ -148,3 +148,21 @@ def test_window_participates_in_cyclic_gc_when_its_draw_callback_captures_it_bac
     del window
     gc.collect()
     assert holder_ref() is None
+
+
+def test_a_custom_hit_shape_is_in_painter_coordinates_inside_the_padding():
+    """0.5.1 (#53): a canvas's painter coordinates start at its padding, so a
+    circle at painter (10, 10) in a canvas padded 30 left and 20 top is hit at
+    the node's local (40, 30), and the node's own corner misses."""
+    window = Window(width=200, height=200)
+
+    def draw(ctx):
+        ctx.set_hit_test_circle(cx=10, cy=10, radius=5)
+
+    canvas = add(window, "canvas", width=100, height=100,
+                 padding_left=30, padding_top=20, draw=draw)
+    hits = []
+    canvas.on("click", lambda: hits.append("hit"))
+    window.simulate("click", node=canvas, x=40, y=30)
+    window.simulate("click", node=canvas, x=10, y=10)
+    assert hits == ["hit"]

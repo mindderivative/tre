@@ -62,7 +62,8 @@ a `font_family` naming it falls back to a bundled face.
 A `"text_input"` is editable text with a caret, selection, clipboard, and
 input-method support. Its `fill` is the text color, so it paints no background
 of its own — put it in a `"box"` for a field's background (its own
-`stroke_color`, `stroke_width`, and `corner_radius` draw and round a border, 0.5.1).
+`stroke_color`, `stroke_width`, and `corner_radius` draw and round a border, and
+its own `padding` insets its text, 0.5.1).
 Of the styling properties above it takes
 `font_family`, `font_size`, and `font_weight`; the rest are for text nodes
 only:

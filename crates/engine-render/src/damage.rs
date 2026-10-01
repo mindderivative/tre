@@ -298,6 +298,24 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
     z_index.hash(h);
     paint_fingerprint(h, paint);
     std::mem::discriminant(kind).hash(h);
+    // 0.5.1 (#44, #53): a node that draws its own content draws it inside its
+    // padding, so padding is part of its pixels even when its box doesn't
+    // change size. (A box's padding only moves its children, which
+    // fingerprint themselves.)
+    if matches!(
+        kind,
+        NodeKind::Text(_)
+            | NodeKind::TextField(_)
+            | NodeKind::Terminal(_)
+            | NodeKind::Image(_)
+            | NodeKind::Path(_)
+            | NodeKind::Canvas(_)
+    ) {
+        let pad = tree.layout(id).padding;
+        for edge in [pad.left, pad.top, pad.right, pad.bottom] {
+            edge.to_bits().hash(h);
+        }
+    }
     let focused = tree.focused() == Some(id);
     match kind {
         NodeKind::Rect | NodeKind::Container => {}

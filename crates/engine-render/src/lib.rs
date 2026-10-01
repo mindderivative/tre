@@ -501,6 +501,30 @@ fn box_path<'g>(
     }
 }
 
+/// Where a node's own content draws (0.5.1, #53): its box inset by its
+/// computed `padding`, as children are laid out. A text input's text, a
+/// terminal's cells, an image, a path, and a canvas's painter coordinates
+/// all start at `(x, y)` and fit `w` by `h`; the node's own background and
+/// border stay on its whole box. With no padding it is the whole box, so
+/// nothing moves.
+struct ContentBox {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+fn content_box(tree: &Tree, id: NodeId, w: f64, h: f64) -> ContentBox {
+    let pad = tree.layout(id).padding;
+    let (left, top) = (f64::from(pad.left), f64::from(pad.top));
+    ContentBox {
+        x: left,
+        y: top,
+        w: (w - left - f64::from(pad.right)).max(0.0),
+        h: (h - top - f64::from(pad.bottom)).max(0.0),
+    }
+}
+
 /// A node's own border: `stroke_color` and `stroke_width`, drawn entirely
 /// inside its bounds (inset by half the stroke width, since strokes are
 /// centered on the path) and following the same rounded corners as the
@@ -667,10 +691,12 @@ fn draw_own(
             // establishes -- `0.0` for every field that never sets it
             // (every single-line field, and every multiline field
             // whose own longest real line still fits the box).
+            // 0.5.1 (#53): inside the node's padding.
+            let content = content_box(tree, id, w, h);
             let text_at = TextPlacement {
-                x: -state.horizontal_scroll_offset.current,
-                y: -state.scroll_offset.current,
-                max_width: w as f32,
+                x: content.x - state.horizontal_scroll_offset.current,
+                y: content.y - state.scroll_offset.current,
+                max_width: content.w as f32,
                 color: text_color,
             };
             let show_caret = tree.focused() == Some(id);
@@ -696,14 +722,16 @@ fn draw_own(
 
             let cursor_color =
                 with_opacity(peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF), own_alpha);
+            // 0.5.1 (#53): the cell grid starts inside the node's padding.
+            let content = content_box(tree, id, w, h);
             text.draw_terminal(
                 scene,
                 resources,
                 state,
                 TextPlacement {
-                    x: 0.0,
-                    y: 0.0,
-                    max_width: w as f32,
+                    x: content.x,
+                    y: content.y,
+                    max_width: content.w as f32,
                     color: cursor_color,
                 },
                 tree.focused() == Some(id),
@@ -745,6 +773,9 @@ fn draw_own(
         // node's own universal opacity at all).
         NodeKind::Canvas(state) => {
             fill_box(node, id, w, h, geometry, scene, own_alpha);
+            // 0.5.1 (#53): painter coordinates start at the padding.
+            let content = content_box(tree, id, w, h);
+            scene.set_transform(composed * Affine::translate((content.x, content.y)));
             for command in &state.commands {
                 match command {
                     DrawCommand::FillRect {
@@ -773,6 +804,7 @@ fn draw_own(
                     }
                 }
             }
+            scene.set_transform(composed);
             stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M22 Phase 1 (§5): an image is an externally owned GPU texture
@@ -809,8 +841,16 @@ fn draw_own(
             let fits = img_width <= image_cache::MAX_IMAGE_DIMENSION
                 && img_height <= image_cache::MAX_IMAGE_DIMENSION;
             if img_width > 0 && img_height > 0 && fits && node_opacity > 0.0 {
-                let (source_region, transform) =
-                    image_sample_rect(w, h, img_width, img_height, state.content_fit);
+                // 0.5.1 (#53): fitted into the content box (inside the padding).
+                let content = content_box(tree, id, w, h);
+                let (source_region, transform) = image_sample_rect(
+                    content.w,
+                    content.h,
+                    img_width,
+                    img_height,
+                    state.content_fit,
+                );
+                let transform = Affine::translate((content.x, content.y)) * transform;
                 // The texture is an image paint: `transform` maps the
                 // source region's texels to the node box, as the paint
                 // transform, and the fill covers the region's image there.
@@ -848,7 +888,10 @@ fn draw_own(
         // caps and joins, and its width stays in pixels however the view
         // box scales the path.
         NodeKind::Path(state) => {
-            let (fill, stroke) = state.geometry(w, h);
+            // 0.5.1 (#53): the view box fits the content box, inside the padding.
+            let content = content_box(tree, id, w, h);
+            let (fill, stroke) = state.geometry(content.w, content.h);
+            scene.set_transform(composed * Affine::translate((content.x, content.y)));
             let fill_color = node.paint.background.current;
             if fill_color.components[3] > 0.0 {
                 scene.set_paint(with_opacity(fill_color, own_alpha));
@@ -864,6 +907,7 @@ fn draw_own(
                 );
                 scene.stroke_path(&stroke);
             }
+            scene.set_transform(composed);
         }
     }
 }
