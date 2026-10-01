@@ -133,6 +133,125 @@ fn terminal_hit_cell(
     }
 }
 
+/// A real pointer press, move, or release over a text field or a terminal:
+/// click-to-position, drag-to-select, and the end of a drag. Needs the text
+/// renderer's font metrics, which `process_input` doesn't have, so it runs
+/// here, after it. Takes the tree, the root, and the two drag trackers
+/// rather than the whole window runtime, so a test can drive it without a
+/// window.
+fn text_pointer_input(
+    event: &InputEvent,
+    tree: &Rc<RefCell<Tree>>,
+    root: NodeId,
+    text: &mut TextRenderer,
+    text_drag: &mut Option<NodeId>,
+    terminal_drag: &mut Option<NodeId>,
+) {
+    match *event {
+        InputEvent::PointerPressed {
+            position,
+            button: PointerButton::Primary,
+        } => {
+            // M18 Phase 1 (§8, §10, §11.9, §11.10): widened
+            // from `hit_test` to `hit_test_local` -- the
+            // extra local-space point is exactly what a
+            // real click-to-position hit-test needs below.
+            // The hit is taken in its own statement: held in the `if let`'s
+            // scrutinee, the tree's `Ref` would still be alive in its body,
+            // and the `borrow_mut` there panicked (0.4.4, 0.5.0).
+            let hit = tree.borrow().hit_test_local(root, position);
+            if let Some((hit, local_point)) = hit {
+                if let Some(offset) = text_field_hit_offset(tree, text, hit, local_point) {
+                    tree.borrow_mut().set_text_field_cursor(hit, offset);
+                    // M18 Phase 2 (§8, §10): a real press
+                    // on a TextField always ARMS drag
+                    // tracking -- whether it turns into a
+                    // real selection depends entirely on
+                    // whether a genuine PointerMoved to a
+                    // different position follows before
+                    // release (below); a plain click never
+                    // does, so `selection_anchor` stays
+                    // `None` exactly as `set_text_field_
+                    // cursor` already left it.
+                    *text_drag = Some(hit);
+                } else if let Some((row, col)) = terminal_hit_cell(tree, text, hit, local_point) {
+                    // M32 Phase 6 (§4, §5, §8): a real press
+                    // on a `Terminal` -- the identical real
+                    // "collapsed selection, arm drag
+                    // tracking" shape `TextField`'s own
+                    // press handling just above already
+                    // has.
+                    tree.borrow_mut()
+                        .set_terminal_selection_start(hit, row, col);
+                    *terminal_drag = Some(hit);
+                }
+            }
+        }
+        InputEvent::PointerMoved { position } => {
+            // M18 Phase 2 (§8, §10): the real drag-select
+            // half of click-to-position. Lives here, not
+            // inside `Tree::dispatch`'s own existing
+            // `self.dragging`/`update_drag` mechanism
+            // (scrollbar thumbs) -- that mechanism is pure
+            // geometry with zero rendering knowledge, but
+            // this needs the identical real per-glyph
+            // hit-test `PointerPressed` above already uses,
+            // which only `engine-render` can do (§4).
+            //
+            // **Real, stated scope boundary:** a real drag
+            // that leaves the field's own bounds mid-drag
+            // simply stops updating the selection until it
+            // re-enters (`hit_test_local` returning a
+            // different node, or `None`, is a genuine
+            // no-op below) -- it does not clamp to the
+            // field's own nearest edge the way some real
+            // desktop editors do. A further, real,
+            // un-scoped refinement beyond this phase.
+            if let Some(field) = *text_drag {
+                let hit = tree.borrow().hit_test_local(root, position);
+                if let Some((hit, local_point)) = hit
+                    && hit == field
+                    && let Some(offset) = text_field_hit_offset(tree, text, hit, local_point)
+                {
+                    tree.borrow_mut().extend_text_field_selection(hit, offset);
+                }
+            }
+            // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
+            // real `Terminal` sibling -- the identical real
+            // "still over the same node, extend" shape.
+            if let Some(terminal) = *terminal_drag {
+                let hit = tree.borrow().hit_test_local(root, position);
+                if let Some((hit, local_point)) = hit
+                    && hit == terminal
+                    && let Some((row, col)) = terminal_hit_cell(tree, text, hit, local_point)
+                {
+                    tree.borrow_mut().extend_terminal_selection(hit, row, col);
+                }
+            }
+        }
+        InputEvent::PointerReleased {
+            button: PointerButton::Primary,
+            ..
+        } => {
+            // M18 Phase 2 (§8, §10): a real mouse-up always
+            // ends any in-progress text drag, wherever it
+            // happens -- the same "not conditioned on still
+            // hitting the original node" real mouse-up
+            // semantics `Tree::dispatch`'s own `self.
+            // dragging = None` already established for
+            // its own drags (M4 Phase 3).
+            *text_drag = None;
+            // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
+            // real `Terminal` sibling -- the real selection
+            // itself stays visible (`TerminalState.
+            // selection_start`/`end` are untouched here),
+            // only the drag-tracking itself ends.
+            *terminal_drag = None;
+        }
+        _ => {}
+    }
+}
+
 struct GpuState {
     /// 0.4.0 M6: kept to recreate a lost `surface` for `window`.
     instance: wgpu::Instance,
@@ -884,147 +1003,15 @@ impl App {
                 }
                 // Text-field and terminal pointer handling that needs the
                 // text renderer, which `process_input` has no access to.
+                text_pointer_input(
+                    &event,
+                    &runtime.handles.tree,
+                    runtime.handles.root,
+                    runtime.gpu.renderer.text(),
+                    &mut runtime.text_drag,
+                    &mut runtime.terminal_drag,
+                );
                 match event {
-                    InputEvent::PointerPressed {
-                        position,
-                        button: PointerButton::Primary,
-                    } => {
-                        // M18 Phase 1 (§8, §10, §11.9, §11.10): widened
-                        // from `hit_test` to `hit_test_local` -- the
-                        // extra local-space point is exactly what a
-                        // real click-to-position hit-test needs below.
-                        if let Some((hit, local_point)) = runtime
-                            .handles
-                            .tree
-                            .borrow()
-                            .hit_test_local(runtime.handles.root, position)
-                        {
-                            if let Some(offset) = text_field_hit_offset(
-                                &runtime.handles.tree,
-                                runtime.gpu.renderer.text(),
-                                hit,
-                                local_point,
-                            ) {
-                                runtime
-                                    .handles
-                                    .tree
-                                    .borrow_mut()
-                                    .set_text_field_cursor(hit, offset);
-                                // M18 Phase 2 (§8, §10): a real press
-                                // on a TextField always ARMS drag
-                                // tracking -- whether it turns into a
-                                // real selection depends entirely on
-                                // whether a genuine PointerMoved to a
-                                // different position follows before
-                                // release (below); a plain click never
-                                // does, so `selection_anchor` stays
-                                // `None` exactly as `set_text_field_
-                                // cursor` already left it.
-                                runtime.text_drag = Some(hit);
-                            } else if let Some((row, col)) = terminal_hit_cell(
-                                &runtime.handles.tree,
-                                runtime.gpu.renderer.text(),
-                                hit,
-                                local_point,
-                            ) {
-                                // M32 Phase 6 (§4, §5, §8): a real press
-                                // on a `Terminal` -- the identical real
-                                // "collapsed selection, arm drag
-                                // tracking" shape `TextField`'s own
-                                // press handling just above already
-                                // has.
-                                runtime
-                                    .handles
-                                    .tree
-                                    .borrow_mut()
-                                    .set_terminal_selection_start(hit, row, col);
-                                runtime.terminal_drag = Some(hit);
-                            }
-                        }
-                    }
-                    InputEvent::PointerMoved { position } => {
-                        // M18 Phase 2 (§8, §10): the real drag-select
-                        // half of click-to-position. Lives here, not
-                        // inside `Tree::dispatch`'s own existing
-                        // `self.dragging`/`update_drag` mechanism
-                        // (scrollbar thumbs) -- that mechanism is pure
-                        // geometry with zero rendering knowledge, but
-                        // this needs the identical real per-glyph
-                        // hit-test `PointerPressed` above already uses,
-                        // which only `engine-render` can do (§4).
-                        //
-                        // **Real, stated scope boundary:** a real drag
-                        // that leaves the field's own bounds mid-drag
-                        // simply stops updating the selection until it
-                        // re-enters (`hit_test_local` returning a
-                        // different node, or `None`, is a genuine
-                        // no-op below) -- it does not clamp to the
-                        // field's own nearest edge the way some real
-                        // desktop editors do. A further, real,
-                        // un-scoped refinement beyond this phase.
-                        if let Some(field) = runtime.text_drag
-                            && let Some((hit, local_point)) = runtime
-                                .handles
-                                .tree
-                                .borrow()
-                                .hit_test_local(runtime.handles.root, position)
-                            && hit == field
-                            && let Some(offset) = text_field_hit_offset(
-                                &runtime.handles.tree,
-                                runtime.gpu.renderer.text(),
-                                hit,
-                                local_point,
-                            )
-                        {
-                            runtime
-                                .handles
-                                .tree
-                                .borrow_mut()
-                                .extend_text_field_selection(hit, offset);
-                        }
-                        // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
-                        // real `Terminal` sibling -- the identical real
-                        // "still over the same node, extend" shape.
-                        if let Some(terminal) = runtime.terminal_drag
-                            && let Some((hit, local_point)) = runtime
-                                .handles
-                                .tree
-                                .borrow()
-                                .hit_test_local(runtime.handles.root, position)
-                            && hit == terminal
-                            && let Some((row, col)) = terminal_hit_cell(
-                                &runtime.handles.tree,
-                                runtime.gpu.renderer.text(),
-                                hit,
-                                local_point,
-                            )
-                        {
-                            runtime
-                                .handles
-                                .tree
-                                .borrow_mut()
-                                .extend_terminal_selection(hit, row, col);
-                        }
-                    }
-                    InputEvent::PointerReleased {
-                        button: PointerButton::Primary,
-                        ..
-                    } => {
-                        // M18 Phase 2 (§8, §10): a real mouse-up always
-                        // ends any in-progress text drag, wherever it
-                        // happens -- the same "not conditioned on still
-                        // hitting the original node" real mouse-up
-                        // semantics `Tree::dispatch`'s own `self.
-                        // dragging = None` already established for
-                        // its own drags (M4 Phase 3).
-                        runtime.text_drag = None;
-                        // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
-                        // real `Terminal` sibling -- the real selection
-                        // itself stays visible (`TerminalState.
-                        // selection_start`/`end` are untouched here),
-                        // only the drag-tracking itself ends.
-                        runtime.terminal_drag = None;
-                    }
                     // A real OS appearance change: tre themes nothing
                     // itself (M99), so it only tells the framework.
                     InputEvent::ThemeChanged { dark } => {
@@ -1362,6 +1349,166 @@ mod tests {
     use peniko::Color;
     use peniko::kurbo::Point;
     use taffy::prelude::{AvailableSpace, Size, Style, length};
+
+    /// A window with one 200x30 text field at its top-left corner and one
+    /// 200x60 terminal under it; a real pointer press on either runs
+    /// `text_pointer_input`, which needs the tree *not* borrowed while it
+    /// writes. `simulate` never reaches it, so only a real window did.
+    fn field_and_terminal() -> (
+        std::rc::Rc<std::cell::RefCell<Tree>>,
+        engine_core::NodeId,
+        engine_core::NodeId,
+        engine_core::NodeId,
+    ) {
+        let mut tree = Tree::new();
+        let sized = |w: f32, h: f32| Style {
+            size: Size {
+                width: length(w),
+                height: length(h),
+            },
+            ..Default::default()
+        };
+        let paint = || PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0);
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                flex_direction: taffy::FlexDirection::Column,
+                ..sized(300.0, 200.0)
+            },
+            paint(),
+        );
+        let field = tree.insert(
+            NodeKind::TextField(engine_core::TextFieldState::new(
+                "hello world",
+                "Roboto",
+                400.0,
+                16.0,
+            )),
+            sized(200.0, 30.0),
+            paint(),
+        );
+        let terminal = tree.insert(
+            NodeKind::Terminal(engine_core::TerminalState::new(
+                20,
+                4,
+                engine_render::MONOSPACE_FONT_FAMILY,
+                14.0,
+            )),
+            sized(200.0, 60.0),
+            paint(),
+        );
+        tree.add_child(root, field);
+        tree.add_child(root, terminal);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+        (
+            std::rc::Rc::new(std::cell::RefCell::new(tree)),
+            root,
+            field,
+            terminal,
+        )
+    }
+
+    fn pointer(
+        event: engine_core::InputEvent,
+        tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
+        root: engine_core::NodeId,
+        drags: &mut (Option<engine_core::NodeId>, Option<engine_core::NodeId>),
+    ) {
+        let mut text = engine_render::TextRenderer::new();
+        super::text_pointer_input(&event, tree, root, &mut text, &mut drags.0, &mut drags.1);
+    }
+
+    fn press(position: Point) -> engine_core::InputEvent {
+        engine_core::InputEvent::PointerPressed {
+            position,
+            button: engine_core::PointerButton::Primary,
+        }
+    }
+
+    /// A real click in a text field puts the caret there and arms a drag.
+    /// It panicked with `RefCell already borrowed` (0.4.4 and 0.5.0).
+    #[test]
+    fn a_press_in_a_text_field_positions_the_caret_and_arms_a_drag() {
+        let (tree, root, field, _) = field_and_terminal();
+        let mut drags = (None, None);
+        pointer(press(Point::new(60.0, 10.0)), &tree, root, &mut drags);
+        assert_eq!(drags.0, Some(field), "the drag is armed");
+        let tree = tree.borrow();
+        let Some(NodeKind::TextField(state)) = tree.get(field).map(|n| &n.kind) else {
+            unreachable!()
+        };
+        assert!(state.cursor > 0, "the caret moved to the click");
+        assert_eq!(
+            state.selection_anchor, None,
+            "a plain click selects nothing"
+        );
+    }
+
+    /// Dragging from a press across the field selects what it passes over.
+    #[test]
+    fn a_drag_in_a_text_field_extends_the_selection() {
+        let (tree, root, field, _) = field_and_terminal();
+        let mut drags = (None, None);
+        pointer(press(Point::new(20.0, 10.0)), &tree, root, &mut drags);
+        pointer(
+            engine_core::InputEvent::PointerMoved {
+                position: Point::new(120.0, 10.0),
+            },
+            &tree,
+            root,
+            &mut drags,
+        );
+        {
+            let tree = tree.borrow();
+            let Some(NodeKind::TextField(state)) = tree.get(field).map(|n| &n.kind) else {
+                unreachable!()
+            };
+            assert!(state.selection_anchor.is_some(), "a selection began");
+            assert_ne!(Some(state.cursor), state.selection_anchor);
+        }
+        pointer(
+            engine_core::InputEvent::PointerReleased {
+                position: Point::new(120.0, 10.0),
+                button: engine_core::PointerButton::Primary,
+            },
+            &tree,
+            root,
+            &mut drags,
+        );
+        assert_eq!(drags, (None, None), "a release ends the drag");
+    }
+
+    /// The same for a terminal: a press starts a selection, a drag grows it.
+    #[test]
+    fn a_press_and_drag_in_a_terminal_select_cells() {
+        let (tree, root, _, terminal) = field_and_terminal();
+        let mut drags = (None, None);
+        pointer(press(Point::new(10.0, 40.0)), &tree, root, &mut drags);
+        assert_eq!(drags.1, Some(terminal), "the drag is armed");
+        pointer(
+            engine_core::InputEvent::PointerMoved {
+                position: Point::new(90.0, 60.0),
+            },
+            &tree,
+            root,
+            &mut drags,
+        );
+        let tree = tree.borrow();
+        let Some(NodeKind::Terminal(state)) = tree.get(terminal).map(|n| &n.kind) else {
+            unreachable!()
+        };
+        assert!(state.selection_start.is_some());
+        assert_ne!(
+            state.selection_start, state.selection_end,
+            "the selection grew"
+        );
+    }
 
     /// M94: the cursor comes from the node under the pointer or its nearest
     /// ancestor that sets one, the capturing node wins while it holds
