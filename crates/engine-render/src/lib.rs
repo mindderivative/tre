@@ -458,6 +458,82 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
     }
 }
 
+/// A node's own background: its `fill`, over the box rounded by its
+/// `corner_radius` (or per-corner radii). Every kind with a box paints it
+/// the way a box does (0.5.1, #45); before, only a box did, and `set` on
+/// any other kind was accepted and drew nothing.
+///
+/// `corner_radii_override` (`[top_left, top_right, bottom_right,
+/// bottom_left]`) wins when set; `None` falls through to the uniform
+/// scalar. The path comes from `geometry`, re-tessellated only when this
+/// node's `w`/`h`/radius changed since its last paint (`GeometryCache`).
+fn fill_box(
+    node: &engine_core::Node,
+    id: NodeId,
+    w: f64,
+    h: f64,
+    geometry: &mut GeometryCache,
+    scene: &mut Scene,
+    own_alpha: f64,
+) {
+    scene.set_paint(with_opacity(node.paint.background.current, own_alpha));
+    scene.fill_path(box_path(node, id, w, h, geometry));
+}
+
+/// The box's own rounded outline, for a fill or a clip.
+fn box_path<'g>(
+    node: &engine_core::Node,
+    id: NodeId,
+    w: f64,
+    h: f64,
+    geometry: &'g mut GeometryCache,
+) -> &'g BezPath {
+    match node
+        .paint
+        .corner_radii_override
+        .as_ref()
+        .map(|r| r.current.0)
+    {
+        Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
+        None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
+    }
+}
+
+/// A node's own border: `stroke_color` and `stroke_width`, drawn entirely
+/// inside its bounds (inset by half the stroke width, since strokes are
+/// centered on the path) and following the same rounded corners as the
+/// fill. It never changes layout. Skipped at a width of `0.0`.
+fn stroke_box(
+    node: &engine_core::Node,
+    id: NodeId,
+    w: f64,
+    h: f64,
+    geometry: &mut GeometryCache,
+    scene: &mut Scene,
+    own_alpha: f64,
+) {
+    let border_width = node.paint.border_width.current;
+    if border_width <= 0.0 {
+        return;
+    }
+    let inset = border_width / 2.0;
+    let border_path: &BezPath = match node
+        .paint
+        .corner_radii_override
+        .as_ref()
+        .map(|r| r.current.0)
+    {
+        Some(radii) => geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
+        None => {
+            let radius = (node.paint.corner_radius.current - inset).max(0.0);
+            geometry.rounded_rect_border(id, w, h, radius, inset)
+        }
+    };
+    scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+    scene.set_stroke(Stroke::new(border_width));
+    scene.stroke_path(border_path);
+}
+
 /// A node's own paint -- shadows, then what its kind draws -- in its own
 /// coordinates under `composed`.
 #[allow(clippy::too_many_arguments)]
@@ -517,66 +593,8 @@ fn draw_own(
         // properties too; it painted nothing before, so a root's fill never
         // showed.
         NodeKind::Rect | NodeKind::Container => {
-            let color = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(color);
-            // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
-            // (`[top_left, top_right, bottom_right, bottom_left]`)
-            // wins when set (a segmented group's first/last segment,
-            // rounded only on its outer edge). `None` falls
-            // through to the identical uniform-scalar `RoundedRect`
-            // this arm always painted.
-            // M34 Phase 1 (§5, §8): the real path itself comes from
-            // `geometry` now -- re-tessellated only when this
-            // node's own `w`/`h`/radius genuinely changed since its
-            // last paint, not rebuilt from scratch every frame
-            // (`GeometryCache`'s own doc comment has the real,
-            // measured motivation).
-            let path = match node
-                .paint
-                .corner_radii_override
-                .as_ref()
-                .map(|r| r.current.0)
-            {
-                Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
-                None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
-            };
-            scene.fill_path(path);
-            // M30 Phase 1 (§5, §7): a real stroked border (the Python
-            // API's `stroke_color`/`stroke_width`), universal
-            // `PaintProperties` like `background`/`corner_radius`. Inset by half the stroke
-            // width so the border paints entirely *inside* this node's
-            // own bounds (kurbo strokes are centered on the path by
-            // default) -- a border never grows past the node's own
-            // taffy-computed box the way a naive un-inset stroke would.
-            // Skipped entirely at `border_width <= 0.0`.
-            let border_width = node.paint.border_width.current;
-            if border_width > 0.0 {
-                let inset = border_width / 2.0;
-                // M38 Phase 4 (§5, §7): the border path now matches
-                // whichever real fill geometry this node actually used
-                // just above, closing a real, previously-dormant gap --
-                // `RectPathParams::PerCornerBorder`'s own doc comment
-                // has the full story (`geometry_cache.rs`).
-                let border_path: std::borrow::Cow<'_, BezPath> = if let Some(radii) = node
-                    .paint
-                    .corner_radii_override
-                    .as_ref()
-                    .map(|r| r.current.0)
-                {
-                    std::borrow::Cow::Borrowed(
-                        geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
-                    )
-                } else {
-                    let radius = (node.paint.corner_radius.current - inset).max(0.0);
-                    std::borrow::Cow::Borrowed(
-                        geometry.rounded_rect_border(id, w, h, radius, inset),
-                    )
-                };
-                let border_color = with_opacity(node.paint.border_color.current, own_alpha);
-                scene.set_paint(border_color);
-                scene.set_stroke(Stroke::new(border_width));
-                scene.stroke_path(&border_path);
-            }
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         NodeKind::Text(state) => {
             let color = with_opacity(node.paint.background.current, own_alpha);
@@ -597,6 +615,9 @@ fn draw_own(
                 },
                 id,
             );
+            // 0.5.1 (#45): a text node's `stroke_*` and `corner_radius`
+            // paint a border around its box; its `fill` is the glyph color.
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M15 Phase 1 (§5, §16.7): unlike `NodeKind::Text` (a plain
         // label with no visible box, `background` repurposed as the
@@ -607,8 +628,7 @@ fn draw_own(
         // `state.text_tint` (below).
         NodeKind::TextField(state) => {
             let radius = node.paint.corner_radius.current;
-            let bg = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(bg);
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
             // M38 Phase 7 (§5, §8): a real, previously-uncached fill --
             // direct grep before this phase found this arm still built
             // a fresh `RoundedRect::to_path` every frame, despite M38
@@ -619,7 +639,6 @@ fn draw_own(
             // same real cache `Rect`/`Terminal` already use -- also
             // reused directly below for this same node's
             // own real clip layer, since both need the identical path.
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
             // M20 Phase 2 (§7.1, §7.3): the real resolved color comes
             // from `state.text_tint` -- plain dark by default
@@ -661,6 +680,7 @@ fn draw_own(
             } else {
                 text.draw_field(scene, resources, state, text_at, show_caret, id);
             }
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own cell
         // grid -- `background` paints the real box fill first (the
@@ -670,10 +690,7 @@ fn draw_own(
         // fixed color (`engine-render` has no design system to resolve
         // one from, §4).
         NodeKind::Terminal(state) => {
-            let radius = node.paint.corner_radius.current;
-            let bg = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(bg);
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
 
             let cursor_color =
                 with_opacity(peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF), own_alpha);
@@ -690,22 +707,28 @@ fn draw_own(
                 tree.focused() == Some(id),
                 id,
             );
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
-        // A `VirtualList` container paints nothing itself -- it exists
+        // A `VirtualList` container paints only its box -- it exists
         // purely to give `taffy` something to lay its (windowed) children
         // out against; the recursive walk
         // below already only ever sees `VirtualListState::materialized`'s
         // small real subset, never `item_count`, with zero changes
         // needed here (§14 step 15, §11.7).
-        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints nothing of
-        // its own, like `VirtualList` -- its one real
+        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints no content of
+        // its own, like `VirtualList` (just its box, 0.5.1) -- its one real
         // child's own absolute position is already baked into `layout_
         // style` by `Tree::sync_scroll_view_layouts`, so the ordinary
         // recursive walk below (composed transform only, no extra
         // paint-time offset) already paints it in the right place; the
         // unconditional clip below is this kind's only other real
         // paint-time behavior.
-        NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
+        NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {
+            // 0.5.1 (#45): their own background and border, under the
+            // children (which `enter` clips to the same rounded box).
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
+        }
         // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
         // resolved ahead of time by `engine-py`'s `draw` callback
         // (`canvas.rs`'s own module doc comment) -- every coordinate is
@@ -719,6 +742,7 @@ fn draw_own(
         // `NodeKind` arm in this whole match that never touched the
         // node's own universal opacity at all).
         NodeKind::Canvas(state) => {
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
             for command in &state.commands {
                 match command {
                     DrawCommand::FillRect {
@@ -747,6 +771,7 @@ fn draw_own(
                     }
                 }
             }
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M22 Phase 1 (§5): an image is an externally owned GPU texture
         // (`image_cache` has why -- the renderer doesn't take CPU pixel
@@ -760,6 +785,21 @@ fn draw_own(
         // texels onto the node box. The paint has no opacity of its own,
         // so an opacity layer wraps it, skipped when fully transparent.
         NodeKind::Image(state) => {
+            // 0.5.1 (#45): a background behind the image (it shows through
+            // transparent pixels and letterbox bars), the image clipped to
+            // the rounded box, and a border on top.
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            let rounded = node.paint.corner_radius.current > 0.0
+                || node.paint.corner_radii_override.is_some();
+            if rounded {
+                scene.push_layer(
+                    Some(box_path(node, id, w, h, geometry)),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            }
             let img_width = state.image.width;
             let img_height = state.image.height;
             let node_opacity = own_alpha;
@@ -795,6 +835,10 @@ fn draw_own(
                 scene.reset_paint_transform();
                 scene.pop_layer();
             }
+            if rounded {
+                scene.pop_layer();
+            }
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M95 (D4): any vector path, in node-local pixels once fitted
         // into the view box. The fill is the whole path; the stroke is

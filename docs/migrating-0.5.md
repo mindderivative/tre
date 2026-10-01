@@ -56,6 +56,16 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   and wraps in the width that's left, and the node's `width` and `height`
   include it, as for a box. A text node with no padding is drawn exactly as
   before; one that set `padding` and relied on it being ignored should drop
-  it. A `text_input` and a `terminal` still ignore their own padding: put them
-  in a padded box.
+  it. A `text_input`, `terminal`, `image`, `path`, and `canvas` still ignore their
+  own padding: put them in a padded box.
+- **Every kind paints its own box.** `fill`, `stroke_color`, `stroke_width`,
+  and `corner_radius` were accepted on every kind but painted only on a box
+  (and a few on a text input, terminal, and path): `set` succeeded, `get` read
+  the value back, and nothing showed. An image, canvas, scroll view, and
+  virtual list now paint their `fill` behind their content, a text, text
+  input, and terminal paint a border and rounded corners, and an image is
+  clipped to its rounded box. A `text` and a `text_input` keep `fill` as the
+  glyph color, and a path keeps `stroke_*` as its outline and ignores
+  `corner_radius`. An app that set one of these on a kind that ignored it will
+  now see it; remove it to go back.
 

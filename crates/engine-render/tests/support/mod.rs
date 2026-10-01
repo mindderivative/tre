@@ -145,6 +145,9 @@ pub async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
         &mut text_renderer,
         &mut geometry_cache,
     );
+    // An image node needs its texture uploaded and bound before it renders;
+    // a tree without one has nothing to upload.
+    frame_renderer.sync_image_textures(tree, &device, &queue);
     let render_size = RenderSize { width, height };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });

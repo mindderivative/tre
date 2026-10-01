@@ -51,11 +51,16 @@ halfway point instead. The last frame is exactly the target path.
 
 | Property | Value |
 | --- | --- |
-| `fill` | `(r, g, b, a)` — a box's fill, a text's glyph color, an icon's tint |
-| `stroke_color`, `stroke_width` | the border, drawn inside the box; it never changes layout |
-| `corner_radius` | one radius, or `(top_left, top_right, bottom_right, bottom_left)` |
+| `fill` | `(r, g, b, a)` — a box's background, which also shows behind an image's transparent pixels and under a canvas, scroll view, virtual list, or terminal's content; a text's or a text input's glyph color; a path's fill |
+| `stroke_color`, `stroke_width` | the border, drawn inside the box; it never changes layout. On a path they are the path's outline instead |
+| `corner_radius` | one radius, or `(top_left, top_right, bottom_right, bottom_left)`: rounds the background and the border, and clips an image to the rounded box (a scroll view and a virtual list clip their content to it). A path has no box, so it ignores it |
 | `opacity` | `0.0`–`1.0` — **group opacity**: the node and its whole subtree fade together, as one layer |
 | `shadows` | a list of `(color, offset_x, offset_y, blur, spread)` — CSS `box-shadow`'s model, the first listed on top |
+
+Every kind paints these for its own box (0.5.1). Before, a text, text input,
+image, canvas, scroll view, virtual list, or terminal accepted `stroke_color`,
+`stroke_width`, or `corner_radius` (and the last four a `fill`) and drew nothing.
+Only a box showed them all.
 
 Colors are `(r, g, b, a)` tuples of ints, and a color's own alpha renders: a
 fill of `(255, 0, 0, 128)` is half-transparent red. `get` returns exactly the

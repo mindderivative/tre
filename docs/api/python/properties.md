@@ -136,8 +136,9 @@ title = window.create("text", text="A long list item title", width=180, height=h
 
 **`padding`** on a text node insets its text (0.5.1): the node's `width` and
 `height` include the padding, as for a box, and the text wraps in what's left.
-A `"text_input"` and a `"terminal"` don't inset their content by their own
-padding; put them in a padded `"box"`, as below.
+A `"text_input"`, `"terminal"`, `"image"`, `"path"`, and `"canvas"` don't inset
+their content by their own padding (their children do, as for a box); put them
+in a padded `"box"`, as below.
 
 ## Text input
 
