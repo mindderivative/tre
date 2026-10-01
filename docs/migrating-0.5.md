@@ -1,12 +1,15 @@
-# Upgrading to 0.5.0
+# Upgrading to 0.5.x
 
-No name was removed or renamed in 0.5.0: code written for 0.4.x runs
+No name was removed or renamed in 0.5.x: code written for 0.4.x runs
 unchanged. 0.5.0 adds custom windowing — a window can drop the OS's title
 bar and the framework draws its own; see
-[Custom Title Bars](guide/custom-title-bars.md). One behavior changed, and
-it is listed first in case your app relied on the old one.
+[Custom Title Bars](guide/custom-title-bars.md). A few behaviors changed, and
+each is listed here with the release that changed it, in case your code or
+tests relied on the old one.
 
-## Changed
+## 0.5.0
+
+### Changed
 
 - **A window root's fill paints.** `window.root.set(fill=...)` was accepted
   but never drawn, from 0.2.0 on: the root showed the window's clear color
@@ -14,7 +17,7 @@ it is listed first in case your app relied on the old one.
   corner radius and border. An app that set a root fill will now see it;
   one that relied on the black background should remove the fill.
 
-## Added
+### Added
 
 - **Undecorated windows.** `Window(decorations=False)` and
   `window.set(decorations=...)`. On macOS the title bar stays as a
@@ -44,3 +47,15 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   `RefCell already borrowed`. It did in 0.4.4 and 0.5.0 alike, and only on a
   real window: `window.simulate` never reached the code, so no headless test
   saw it. Nothing in your code needs to change.
+
+## 0.5.1
+
+- **`padding` on a text node insets its text.** Layout always reserved the
+  padding, but the text was drawn at the node's corner across its full width,
+  so the padding did nothing visible. The text now starts inside the padding
+  and wraps in the width that's left, and the node's `width` and `height`
+  include it, as for a box. A text node with no padding is drawn exactly as
+  before; one that set `padding` and relied on it being ignored should drop
+  it. A `text_input` and a `terminal` still ignore their own padding: put them
+  in a padded box.
+

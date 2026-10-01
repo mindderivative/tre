@@ -580,14 +580,19 @@ fn draw_own(
         }
         NodeKind::Text(state) => {
             let color = with_opacity(node.paint.background.current, own_alpha);
+            // 0.5.1 (#44): the node's padding insets its glyphs. taffy sizes
+            // the node padding-included, so the text lays out in what's
+            // left; before, it drew at the node's corner across its full
+            // width, and the padding was reserved but never used.
+            let padding = tree.layout(id).padding;
             text.draw(
                 scene,
                 resources,
                 state,
                 TextPlacement {
-                    x: 0.0,
-                    y: 0.0,
-                    max_width: w as f32,
+                    x: f64::from(padding.left),
+                    y: f64::from(padding.top),
+                    max_width: (w as f32 - padding.left - padding.right).max(0.0),
                     color,
                 },
                 id,

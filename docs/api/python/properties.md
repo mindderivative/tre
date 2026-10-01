@@ -134,6 +134,11 @@ width, height = window.measure_text("A long list item title", max_width=180, **s
 title = window.create("text", text="A long list item title", width=180, height=height, **style)
 ```
 
+**`padding`** on a text node insets its text (0.5.1): the node's `width` and
+`height` include the padding, as for a box, and the text wraps in what's left.
+A `"text_input"` and a `"terminal"` don't inset their content by their own
+padding; put them in a padded `"box"`, as below.
+
 ## Text input
 
 | Property | Value |
