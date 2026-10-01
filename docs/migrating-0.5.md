@@ -89,5 +89,6 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   it is created, raising `tre.ShaderError` (a `ValueError`) with the line and
   column in your source, and every node kind accepts, stores, and reads back
   `shader`. A `mode="fill"` shader draws its node's box behind the node's own
-  paint; effects and inputs are still to come. See
+  paint, a `mode="effect"` shader transforms the node's own rendered content,
+  and `inputs` let a shader sample image, video, and other shader nodes. See
   [Shader](api/python/shader.md).

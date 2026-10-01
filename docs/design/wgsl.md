@@ -202,7 +202,7 @@ for 0.5.1:
   and pixel tests.
 - **M4** (landed locally, #68) — texture inputs: naming an image or video node, binding it, dependency
   order, damage when an input changes.
-- **M5** — effects: the offscreen render of a node's content, `content(uv)`,
+- **M5** (landed locally, #69) — effects: the offscreen render of a node's content, `content(uv)`,
   nesting, and pixel tests (the shining text).
 - **M6** — animation and redraw, `animated`, the window clock, the loop staying
   awake; examples (shining text, a fractal panel) and a guide page.

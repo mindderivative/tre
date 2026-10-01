@@ -4,12 +4,11 @@
 object and the `shader` property; the design, and what is still to come, is
 [WGSL shaders](../../design/wgsl.md).
 
-!!! note "What draws today"
-    A `mode="fill"` shader is drawn, with or without `inputs`: it paints the node's
-    box, clipped to its rounded corners, *behind* the node's own paint (a
-    `fill` with some transparency tints it, a border draws over it). A shader
-    in `mode="effect"` is created, checked and stored, but not drawn yet; its
-    node paints as if it had none.
+!!! note "Fill and effect"
+    A `mode="fill"` shader paints the node's box, clipped to its rounded
+    corners, *behind* the node's own paint (a `fill` with some transparency
+    tints it, a border draws over it). A `mode="effect"` shader transforms the
+    node's own rendered content; see [Effects](#effects).
 
 ```python
 import tre
@@ -65,6 +64,40 @@ Wrong types (`uniforms={"a": "x"}`, `True`, a tuple of 5) raise `TypeError` or
 `ValueError`; a name tre provides (`Pixel`, `frame`, `u`, `content`, …) used in
 your source is reported with the list of names tre provides.
 
+## Effects
+
+In `mode="effect"`, `content(uv)` returns the node's own rendered pixels --
+its paint and all its descendants, drawn as if the node were the whole
+window -- at `uv` (0 to 1, from the top left), as straight-alpha RGBA. What
+`shade` returns **replaces** the node and its subtree: a shining text, a blur
+over a panel's children, a colour grade.
+
+```python
+shine = tre.Shader(
+    """
+    fn shade(p: Pixel) -> vec4<f32> {
+        let c = content(p.uv);
+        let band = smoothstep(0.0, 0.1, 1.0 - abs(p.uv.x - u.phase));
+        return vec4<f32>(c.rgb + band * 0.4 * c.a, c.a);
+    }
+    """,
+    uniforms={"phase": 0.5}, mode="effect",
+)
+label.set(shader=shine)
+```
+
+- The content is the node's **box**: what a node paints outside it (a shadow,
+  overflowing children) is not in `content` and not in the result. A node's
+  own transform and opacity apply to the result, as they would to the node.
+- The node stays where it was laid out: hit testing, focus and accessibility
+  are unchanged, and its descendants still receive input. A `canvas` or a
+  `text_input` inside an effect is drawn through it.
+- An effect inside an effect works: the inner one runs first. A fill shader on
+  a descendant paints into the content.
+- Any change in the subtree repaints the whole box, since a blur spreads it,
+  and re-renders the content once; an idle effect costs nothing. An effect that
+  only needs its own `uniforms` to change reuses the content.
+
 ## Inputs
 
 `inputs={"photo": node}` lets `shade` call `input_photo(uv)`, which returns
@@ -100,8 +133,10 @@ graded = window.create("box", width=200, height=200, shader=tre.Shader(
 ## What it costs
 
 A shader node costs one texture the size of its box and one render pass, run
-only when something changed: the shader's source or uniforms, or the node's
-size. An idle shader costs nothing per frame. Only visible, on-screen nodes
+only when something changed: the shader's source or uniforms, an input, or the
+node's size. An effect also costs a second texture (its content) and an
+offscreen render of its subtree, redone only when the subtree changes. An idle
+shader costs nothing per frame. Only visible, on-screen nodes
 run: a hidden node, a fully transparent one, or one scrolled out of view runs
 no pass. A node wider or taller than 8192 pixels, or a shader the GPU refuses,
 is logged once and paints as if it had no shader; it never stops the window.

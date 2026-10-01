@@ -159,6 +159,7 @@ pub fn build_tree_scene(
         height,
         None,
         &ShaderTextures::none(),
+        None,
         resources,
         text,
         geometry,
@@ -188,6 +189,7 @@ pub fn build_tree_scene_in(
         height,
         Some(rects),
         &ShaderTextures::none(),
+        None,
         resources,
         text,
         geometry,
@@ -210,7 +212,36 @@ pub fn build_tree_scene_shaded(
     geometry: &mut GeometryCache,
 ) -> Scene {
     build_scene(
-        tree, root, width, height, rects, shaders, resources, text, geometry,
+        tree, root, width, height, rects, shaders, None, resources, text, geometry,
+    )
+}
+
+/// 0.5.1 (#69): the scene of an effect node's own content, for its offscreen
+/// render: the node as the root at the origin (no transform or opacity of
+/// its own), `width` x `height` its box. A shader node inside it paints from
+/// `shaders` (an inner effect replaces its subtree), as in the main scene.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_effect_content(
+    tree: &Tree,
+    node: NodeId,
+    width: u16,
+    height: u16,
+    shaders: &ShaderTextures,
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
+) -> Scene {
+    build_scene(
+        tree,
+        node,
+        width,
+        height,
+        None,
+        shaders,
+        Some(node),
+        resources,
+        text,
+        geometry,
     )
 }
 
@@ -222,6 +253,7 @@ fn build_scene(
     height: u16,
     rects: Option<&[Rect]>,
     shaders: &ShaderTextures,
+    effect_root: Option<NodeId>,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
@@ -246,13 +278,18 @@ fn build_scene(
         tree,
         rects,
         shaders,
+        effect_root,
         scene: &mut scene,
         resources,
         text,
         geometry,
         open: Vec::new(),
     };
-    walk::walk(tree, root, visible, &mut painter);
+    if effect_root.is_some() {
+        walk::walk_root(tree, root, &mut painter);
+    } else {
+        walk::walk(tree, root, visible, &mut painter);
+    }
     if rects.is_some() {
         scene.pop_layer();
     }
@@ -368,6 +405,10 @@ struct Painter<'a> {
     rects: Option<&'a [Rect]>,
     /// 0.5.1 (#67): the nodes whose fill shader ran this frame.
     shaders: &'a ShaderTextures,
+    /// 0.5.1 (#69): the effect node whose content this scene is. It draws
+    /// itself and its subtree, with no opacity layer of its own, and not as
+    /// the effect's result.
+    effect_root: Option<NodeId>,
     scene: &'a mut Scene,
     resources: &'a mut Resources,
     text: &'a mut TextRenderer,
@@ -405,21 +446,53 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
         // too. The node's own paints are then fully opaque (`own_alpha` in
         // `draw_own`), their colors' own alpha applying through
         // `with_opacity`.
-        let opacity = node.paint.opacity.current;
+        let is_root = self.effect_root == Some(v.id);
+        let opacity = if is_root {
+            1.0
+        } else {
+            node.paint.opacity.current
+        };
         let layered = opacity < 1.0;
         if layered {
             self.scene
                 .push_layer(None, None, Some(opacity as f32), None, None);
         }
-        if draw_self {
-            if let Some(size) = self.shaders.size_of(v.id) {
-                paint_shader_fill(
+        // 0.5.1 (#69): an effect node whose shader ran is its result: the
+        // texture in place of the node and its subtree.
+        let shader = if is_root {
+            None
+        } else {
+            self.shaders.texture_of(v.id)
+        };
+        if let Some((size, true)) = shader {
+            if draw_self {
+                paint_shader_texture(
                     node,
                     v.id,
                     v.w,
                     v.h,
                     v.composed,
                     size,
+                    false,
+                    self.scene,
+                    self.geometry,
+                );
+            }
+            if layered {
+                self.scene.pop_layer();
+            }
+            return false;
+        }
+        if draw_self {
+            if let Some((size, false)) = shader {
+                paint_shader_texture(
+                    node,
+                    v.id,
+                    v.w,
+                    v.h,
+                    v.composed,
+                    size,
+                    true,
                     self.scene,
                     self.geometry,
                 );
@@ -509,24 +582,26 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
     }
 }
 
-/// 0.5.1 (#67): a node's fill shader, drawn as an external texture over its
-/// box -- clipped to the rounded corners, as an image is -- before the node's
+/// 0.5.1 (#67, #69): a node's shader texture -- a fill shader's, drawn behind
+/// the node's own paint, or an effect's result, drawn in the node's place --
+/// as an external texture over its box -- clipped to the rounded corners, as an image is -- before the node's
 /// own paint, which draws over it. `size` is the shader texture's size,
 /// which the box's rounds up to.
 #[allow(clippy::too_many_arguments)]
-fn paint_shader_fill(
+fn paint_shader_texture(
     node: &engine_core::Node,
     id: NodeId,
     w: f64,
     h: f64,
     composed: Affine,
     size: (u32, u32),
+    clip_rounded: bool,
     scene: &mut Scene,
     geometry: &mut GeometryCache,
 ) {
     scene.set_transform(composed);
-    let rounded =
-        node.paint.corner_radius.current > 0.0 || node.paint.corner_radii_override.is_some();
+    let rounded = clip_rounded
+        && (node.paint.corner_radius.current > 0.0 || node.paint.corner_radii_override.is_some());
     if rounded {
         scene.push_layer(
             Some(box_path(node, id, w, h, geometry)),
@@ -1172,7 +1247,7 @@ impl FrameRenderer {
             renderer,
             resources,
             images: image_cache::ImageTextureCache::new(),
-            shaders: shader_pass::ShaderPasses::new(),
+            shaders: shader_pass::ShaderPasses::new(config.format),
         }
     }
 
@@ -1281,9 +1356,12 @@ impl FrameRenderer {
         self.images.sync(tree, device, queue);
     }
 
-    /// 0.5.1 (#67): records this frame's fill-shader passes into `encoder`
-    /// (before the scene's render) and returns which nodes' textures the
-    /// scene may draw. `time` is the window's clock, in seconds.
+    /// 0.5.1 (#67, #69): runs this frame's shader passes and an effect's
+    /// offscreen content renders, each submitted to `queue` in dependency
+    /// order before the scene's render (an offscreen render can't share the
+    /// frame's encoder: the renderer writes its buffers at submit), and
+    /// returns which nodes' textures the scene may draw. `time` is the
+    /// window's clock, in seconds.
     #[allow(clippy::too_many_arguments)]
     pub fn run_shader_passes(
         &mut self,
@@ -1294,7 +1372,8 @@ impl FrameRenderer {
         time: f32,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
+        text: &mut TextRenderer,
+        geometry: &mut GeometryCache,
     ) -> ShaderTextures {
         self.shaders.run(
             tree,
@@ -1304,8 +1383,13 @@ impl FrameRenderer {
             time,
             device,
             queue,
-            encoder,
-            &mut self.images,
+            shader_pass::Gpu {
+                renderer: &mut self.renderer,
+                resources: &mut self.resources,
+                images: &mut self.images,
+                text,
+                geometry,
+            },
         )
     }
 

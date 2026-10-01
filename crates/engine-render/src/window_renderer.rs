@@ -168,16 +168,24 @@ impl WindowRenderer {
             Damage::Rects(rects) => Some(rects.as_slice()),
             _ => None,
         };
-        // Fill shaders run first, into the same encoder, so the scene can
+        // Shaders run first (each pass and offscreen render submitted in order), so the scene can
         // draw their textures.
         let shaders = match damage {
             Damage::None => {
                 self.frame_renderer.skip_shader_passes();
                 ShaderTextures::none()
             }
-            _ => self
-                .frame_renderer
-                .run_shader_passes(tree, root, width, height, self.time, device, queue, encoder),
+            _ => self.frame_renderer.run_shader_passes(
+                tree,
+                root,
+                width,
+                height,
+                self.time,
+                device,
+                queue,
+                &mut self.text,
+                &mut self.geometry,
+            ),
         };
         let scene = match damage {
             // Nothing changed: the kept frame is copied as it is.

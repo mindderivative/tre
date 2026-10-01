@@ -93,7 +93,15 @@ impl Scene {
 
     /// A transparent box at (x, y), w x h, with `shader`.
     fn node(&mut self, x: f32, y: f32, w: f32, h: f32, shader: Arc<Shader>) -> NodeId {
-        let id = self.tree.insert(
+        let id = self.boxed(x, y, w, h);
+        self.tree.add_child(self.root, id);
+        self.tree.get_mut(id).unwrap().shader = Some(shader);
+        id
+    }
+
+    /// A transparent box at (x, y), w x h, in no parent yet.
+    fn boxed(&mut self, x: f32, y: f32, w: f32, h: f32) -> NodeId {
+        self.tree.insert(
             NodeKind::Rect,
             Style {
                 position: Position::Absolute,
@@ -110,10 +118,7 @@ impl Scene {
                 ..Default::default()
             },
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
-        );
-        self.tree.add_child(self.root, id);
-        self.tree.get_mut(id).unwrap().shader = Some(shader);
-        id
+        )
     }
 
     /// One frame, as the app runs it; returns the damage.
@@ -528,4 +533,182 @@ fn a_node_that_is_not_an_image_and_has_no_shader_is_no_input() {
     );
     s.frame();
     assert_eq!(s.at(70, 20), BACKGROUND, "painted as if it had no shader");
+}
+
+// --- 0.5.1 (#69): effects -------------------------------------------------------
+
+const INVERT_CONTENT: &str = "fn shade(p: Pixel) -> vec4<f32> {\n    let c = content(p.uv);\n    return vec4<f32>(1.0 - c.rgb, c.a);\n}\n";
+const PASS: &str = "fn shade(p: Pixel) -> vec4<f32> {\n    return content(p.uv);\n}\n";
+const SWAP: &str = "fn shade(p: Pixel) -> vec4<f32> {\n    let c = content(p.uv);\n    return vec4<f32>(c.b, c.g, c.r, c.a);\n}\n";
+
+fn effect(wgsl: &str) -> Arc<Shader> {
+    Shader::new(wgsl.to_owned(), vec![], vec![], ShaderMode::Effect, false).expect("a valid effect")
+}
+
+impl Scene {
+    /// A child box of `parent` at (x, y), w x h, painted `rgba`.
+    fn child(&mut self, parent: NodeId, x: f32, y: f32, w: f32, h: f32, rgba: [u8; 4]) -> NodeId {
+        let id = self.boxed(x, y, w, h);
+        self.tree.add_child(parent, id);
+        let node = self.tree.get_mut(id).unwrap();
+        node.paint.background =
+            Animated::new(Color::from_rgba8(rgba[0], rgba[1], rgba[2], rgba[3]));
+        id
+    }
+}
+
+#[test]
+fn an_effect_transforms_its_nodes_own_content_and_children() {
+    let mut s = Scene::new();
+    let e = s.node(20.0, 20.0, 40.0, 40.0, effect(INVERT_CONTENT));
+    s.tree.get_mut(e).unwrap().paint.background = Animated::new(Color::from_rgba8(255, 0, 0, 255));
+    s.child(e, 10.0, 10.0, 20.0, 20.0, [255, 255, 255, 255]);
+    s.frame();
+    assert!(
+        near(s.at(25, 25), [0, 255, 255, 255], 2),
+        "own paint, inverted: {:?}",
+        s.at(25, 25)
+    );
+    assert!(
+        near(s.at(40, 40), [0, 0, 0, 255], 2),
+        "the child, inverted: {:?}",
+        s.at(40, 40)
+    );
+    assert_eq!(s.at(10, 10), BACKGROUND, "outside the node");
+}
+
+#[test]
+fn an_effect_passing_content_through_matches_drawing_it_directly() {
+    let mut s = Scene::new();
+    let e = s.node(20.0, 20.0, 40.0, 40.0, effect(PASS));
+    // Half-transparent red over the window's dark background.
+    s.child(e, 0.0, 0.0, 40.0, 40.0, [255, 0, 0, 128]);
+    s.frame();
+    let got = s.at(40, 40);
+    assert!(
+        near(got, [136, 8, 8, 255], 4),
+        "alpha survives the round trip: {got:?}"
+    );
+}
+
+#[test]
+fn a_change_in_the_subtree_redraws_the_whole_effect_box_and_an_idle_frame_costs_nothing() {
+    let mut s = Scene::new();
+    let e = s.node(20.0, 20.0, 40.0, 40.0, effect(INVERT_CONTENT));
+    let child = s.child(e, 0.0, 0.0, 10.0, 10.0, [255, 0, 0, 255]);
+    s.frame();
+    assert!(near(s.at(22, 22), [0, 255, 255, 255], 2));
+    assert_eq!(s.frame(), Damage::None);
+    assert_eq!(s.passes(), 0, "an idle frame renders and runs nothing");
+
+    s.tree.get_mut(child).unwrap().paint.background =
+        Animated::new(Color::from_rgba8(0, 0, 255, 255));
+    let damage = s.frame();
+    match &damage {
+        Damage::Rects(rects) => assert!(
+            rects
+                .iter()
+                .any(|r| r.contains_rect(peniko::kurbo::Rect::new(20.0, 20.0, 60.0, 60.0))),
+            "the whole effect box is damaged, not just the child: {damage:?}"
+        ),
+        other => panic!("expected rects, got {other:?}"),
+    }
+    assert_eq!(s.passes(), 1);
+    assert!(
+        near(s.at(22, 22), [255, 255, 0, 255], 2),
+        "{:?}",
+        s.at(22, 22)
+    );
+}
+
+#[test]
+fn an_effect_inside_an_effect_runs_inner_first() {
+    let mut s = Scene::new();
+    let outer = s.node(10.0, 10.0, 60.0, 60.0, effect(INVERT_CONTENT));
+    let inner = s.child(outer, 10.0, 10.0, 30.0, 30.0, [0, 0, 0, 0]);
+    s.tree.get_mut(inner).unwrap().shader = Some(effect(SWAP));
+    s.child(inner, 0.0, 0.0, 30.0, 30.0, [255, 0, 0, 255]);
+    s.frame();
+    assert_eq!(s.passes(), 2);
+    // red -> swapped to blue -> inverted to yellow.
+    assert!(
+        near(s.at(30, 30), [255, 255, 0, 255], 2),
+        "{:?}",
+        s.at(30, 30)
+    );
+}
+
+#[test]
+fn a_fill_shader_inside_an_effect_paints_into_its_content() {
+    let mut s = Scene::new();
+    let e = s.node(20.0, 20.0, 40.0, 40.0, effect(PASS));
+    let f = s.child(e, 0.0, 0.0, 40.0, 40.0, [0, 0, 0, 0]);
+    s.tree.get_mut(f).unwrap().shader = Some(tint(0.0, 1.0, 0.0, 1.0));
+    s.frame();
+    assert!(
+        near(s.at(40, 40), [0, 255, 0, 255], 2),
+        "{:?}",
+        s.at(40, 40)
+    );
+}
+
+#[test]
+fn an_effect_composes_under_its_opacity_and_transform() {
+    let mut s = Scene::new();
+    let e = s.node(10.0, 10.0, 40.0, 40.0, effect(PASS));
+    s.child(e, 0.0, 0.0, 40.0, 40.0, [255, 0, 0, 255]);
+    s.tree.get_mut(e).unwrap().paint.opacity = Animated::new(0.5);
+    s.tree.get_mut(e).unwrap().paint.node_transform.translate_x = Animated::new(30.0);
+    s.frame();
+    assert_eq!(
+        s.at(20, 30),
+        BACKGROUND,
+        "moved away from where it was laid out"
+    );
+    let got = s.at(60, 30);
+    assert!(
+        near(got, [136, 8, 8, 255], 4),
+        "half-opaque red, moved 30px: {got:?}"
+    );
+}
+
+#[test]
+fn a_hidden_effect_runs_nothing() {
+    let mut s = Scene::new();
+    let e = s.node(20.0, 20.0, 40.0, 40.0, effect(PASS));
+    s.child(e, 0.0, 0.0, 40.0, 40.0, [255, 0, 0, 255]);
+    s.tree.get_mut(e).unwrap().visible = false;
+    s.frame();
+    assert_eq!(s.passes(), 0);
+    assert_eq!(s.at(40, 40), BACKGROUND);
+}
+
+#[test]
+fn an_effect_over_text_transforms_its_glyphs() {
+    let mut s = Scene::new();
+    let id = s.boxed(10.0, 10.0, 100.0, 40.0);
+    s.tree.add_child(s.root, id);
+    let node = s.tree.get_mut(id).unwrap();
+    node.kind = NodeKind::Text(engine_core::TextState {
+        content: "HHHH".to_string(),
+        font_family: "Roboto".to_string(),
+        font_weight: 700.0,
+        font_size: 32.0,
+        align: engine_core::TextAlign::Start,
+        line_height: None,
+        options: Default::default(),
+    });
+    // The glyph colour is white; the effect inverts it to black.
+    node.paint.background = Animated::new(Color::from_rgba8(255, 255, 255, 255));
+    node.shader = Some(effect(INVERT_CONTENT));
+    s.frame();
+    let dark = |p: [u8; 4]| p[0] < 0x10 && p[1] < 0x10 && p[2] < 0x10 && p[3] == 255;
+    let white = |p: [u8; 4]| p[0] > 0xE0 && p[1] > 0xE0 && p[2] > 0xE0;
+    let any =
+        |test: &dyn Fn([u8; 4]) -> bool| (10..110).any(|x| (10..50).any(|y| test(s.at(x, y))));
+    assert!(
+        any(&|p| p[0] < 0x08 && p[3] == 255) || any(&dark),
+        "inverted glyphs are black"
+    );
+    assert!(!any(&white), "no white glyph pixels survive the inversion");
 }

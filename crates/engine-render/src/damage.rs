@@ -310,6 +310,43 @@ fn shader_fingerprint(
     }
 }
 
+/// 0.5.1 (#69): what `id`'s descendants paint, for an effect node: each one's
+/// place in the tree, its box, and everything `node_fingerprint` hashes.
+fn subtree_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId) {
+    for (index, &child) in tree.children_in_paint_order(id).iter().enumerate() {
+        let Some(node) = tree.get(child) else {
+            continue;
+        };
+        index.hash(h);
+        let layout = tree.layout(child);
+        for v in [
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height,
+        ] {
+            v.to_bits().hash(h);
+        }
+        node_fingerprint(h, tree, child, node);
+        subtree_fingerprint(h, tree, child);
+    }
+}
+
+/// 0.5.1 (#69): the fingerprint of an effect node's subtree alone -- what its
+/// offscreen content render depends on -- as a pass's staleness key.
+pub(crate) fn effect_content_fingerprint(tree: &Tree, id: NodeId) -> u64 {
+    let mut hasher = FINGERPRINT.build_hasher();
+    subtree_fingerprint(&mut hasher, tree, id);
+    // The node's own paint is part of its content too.
+    if let Some(node) = tree.get(id) {
+        let mut own = FINGERPRINT.build_hasher();
+        paint_fingerprint(&mut own, &node.paint);
+        std::mem::discriminant(&node.kind).hash(&mut hasher);
+        own.finish().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// Everything about `node` itself that decides its pixels.
 fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
     let Node {
@@ -337,7 +374,14 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
     // module changed since it was last painted.
     match shader {
         None => 0u8.hash(h),
-        Some(shader) => shader_fingerprint(h, tree, shader, 0),
+        Some(shader) => {
+            shader_fingerprint(h, tree, shader, 0);
+            // An effect's result depends on its whole subtree, so a change
+            // anywhere in it repaints the node's box.
+            if shader.mode() == engine_core::ShaderMode::Effect {
+                subtree_fingerprint(h, tree, id);
+            }
+        }
     }
     paint_fingerprint(h, paint);
     std::mem::discriminant(kind).hash(h);

@@ -224,7 +224,9 @@ fn prelude(mode: ShaderMode, uniforms: &[(String, UniformKind)], inputs: &[Strin
         s.push_str("@group(0) @binding(3) var content_sampler: sampler;\n");
         s.push_str(
             "fn content(uv: vec2<f32>) -> vec4<f32> {\n    \
-             return textureSampleLevel(content_texture, content_sampler, uv, 0.0);\n}\n",
+             let c = textureSampleLevel(content_texture, content_sampler, uv, 0.0);\n    \
+             if (c.a <= 0.0) { return vec4<f32>(0.0); }\n    \
+             return vec4<f32>(c.rgb / c.a, c.a);\n}\n",
         );
     }
     for (i, name) in inputs.iter().enumerate() {

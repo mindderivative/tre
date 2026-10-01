@@ -26,8 +26,16 @@
 //! too large, an input has no texture -- is logged once and the node paints
 //! as if it had no shader; it never takes down the frame (#60).
 //!
-//! Effects are a later milestone: such a shader is skipped here, and paints
-//! as if it had none.
+//! Effects (#69). A `mode="effect"` shader receives the node's own rendered
+//! content -- its paint and descendants, with `vello`, as if the node were
+//! the whole scene -- as `content(uv)`, and its result replaces the node and
+//! its subtree in the main scene. The content render is offscreen, into a
+//! texture of the node's box (overflow past the box is not part of it), and
+//! only when something in the subtree changed (`damage`'s fingerprint). The
+//! renderer writes its buffers when work is *submitted*, so each offscreen
+//! render is submitted on its own, in dependency order, before the frame's
+//! own encoder: every shader pass and content render here goes to the queue
+//! ahead of the main scene.
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -36,10 +44,12 @@ use std::task::{Context, Poll, Waker};
 
 use engine_core::{NodeId, NodeKind, Shader, ShaderMode, Tree, frame_block, node_id_as_u64};
 use peniko::kurbo::Rect;
-use vello_gpu::{TextureBindings, TextureId};
+use vello_gpu::{
+    ClearSettings, RenderSize, Renderer, Resources, TargetInit, TextureBindings, TextureId,
+};
 
 use crate::image_cache::{ImageInputs, ImageTextureCache, MAX_IMAGE_DIMENSION};
-use crate::walk;
+use crate::{GeometryCache, TextRenderer, build_effect_content, walk};
 
 /// The format shader textures are rendered in: what `image_cache` uses, so
 /// `vello_gpu` samples both alike.
@@ -59,7 +69,9 @@ pub(crate) fn texture_id_for(id: NodeId) -> TextureId {
 /// what the scene may draw.
 #[derive(Default)]
 pub struct ShaderTextures {
-    ready: HashMap<NodeId, (u32, u32)>,
+    /// Texture size, and whether it is an effect's result (which replaces
+    /// the node's subtree) rather than a fill (which paints behind it).
+    ready: HashMap<NodeId, ((u32, u32), bool)>,
 }
 
 impl ShaderTextures {
@@ -68,8 +80,9 @@ impl ShaderTextures {
         Self::default()
     }
 
-    /// The texture's size when `id`'s shader painted this frame.
-    pub(crate) fn size_of(&self, id: NodeId) -> Option<(u32, u32)> {
+    /// The texture's size, and whether it is an effect, when `id`'s shader
+    /// ran this frame.
+    pub(crate) fn texture_of(&self, id: NodeId) -> Option<((u32, u32), bool)> {
         self.ready.get(&id).copied()
     }
 
@@ -90,6 +103,17 @@ struct Key {
     time: u32,
     /// Each input's content version, in input order.
     inputs: Vec<u64>,
+    /// An effect's subtree fingerprint; `0` for a fill.
+    content: u64,
+}
+
+/// An effect node's offscreen content texture.
+struct Content {
+    // Held so the texture outlives its view.
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    /// The subtree fingerprint it was last rendered for.
+    key: Option<u64>,
 }
 
 /// One node's texture and the buffers its pass writes.
@@ -101,6 +125,7 @@ struct Target {
     frame: wgpu::Buffer,
     uniforms: wgpu::Buffer,
     key: Option<Key>,
+    content: Option<Content>,
     /// Bumped every time the pass runs: what a shader reading this one sees
     /// change.
     generation: u64,
@@ -116,27 +141,35 @@ struct Pipeline {
 #[derive(Clone)]
 struct Ready {
     size: (u32, u32),
+    effect: bool,
     view: wgpu::TextureView,
     version: u64,
-}
-
-/// Whether this milestone's pass draws `shader`: a fill.
-fn drawn_here(shader: &Shader) -> bool {
-    shader.mode() == ShaderMode::Fill
 }
 
 /// The pass list: every visible shader node, from the paint walk.
 struct Collect {
     nodes: Vec<NodeId>,
+    /// A node to leave out: the effect root of an offscreen walk.
+    skip: Option<NodeId>,
 }
 
 impl<'t> walk::Visitor<'t> for Collect {
     fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
-        if v.node.shader.as_deref().is_some_and(drawn_here) {
+        if v.node.shader.is_some() && self.skip != Some(v.id) {
             self.nodes.push(v.id);
         }
         true
     }
+}
+
+/// The renderer state a frame's shader work uses: the `vello` renderer for an
+/// effect's offscreen content, and what builds its scene.
+pub(crate) struct Gpu<'a> {
+    pub renderer: &'a mut Renderer,
+    pub resources: &'a mut Resources,
+    pub images: &'a mut ImageTextureCache,
+    pub text: &'a mut TextRenderer,
+    pub geometry: &'a mut GeometryCache,
 }
 
 /// One frame's working state.
@@ -145,7 +178,12 @@ struct Frame<'a> {
     time: f32,
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
-    encoder: &'a mut wgpu::CommandEncoder,
+    /// Pass work not yet submitted.
+    encoder: Option<wgpu::CommandEncoder>,
+    renderer: &'a mut Renderer,
+    resources: &'a mut Resources,
+    text: &'a mut TextRenderer,
+    geometry: &'a mut GeometryCache,
     bindings: &'a mut TextureBindings,
     images: ImageInputs<'a>,
     /// Shader nodes already brought up to date this frame.
@@ -155,7 +193,6 @@ struct Frame<'a> {
 }
 
 /// A window's shader textures, pipelines, and the passes that fill them.
-#[derive(Default)]
 pub struct ShaderPasses {
     targets: HashMap<NodeId, Target>,
     /// Pipelines by assembled source; `None` for a module the GPU refused
@@ -164,14 +201,57 @@ pub struct ShaderPasses {
     /// Nodes whose texture or inputs were refused, already logged.
     refused: HashSet<NodeId>,
     sampler: Option<wgpu::Sampler>,
+    /// The window surface's format, which `vello` renders an effect's
+    /// content in.
+    format: wgpu::TextureFormat,
     generation: u64,
     /// How many passes the last `run` recorded, for tests and tracing.
     last_passes: usize,
 }
 
+impl Frame<'_> {
+    /// The encoder for pass work, made on first use.
+    fn encoder(&mut self) -> &mut wgpu::CommandEncoder {
+        let device = self.device;
+        self.encoder.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("tre shader passes"),
+            })
+        })
+    }
+
+    /// Submits the pass work recorded so far.
+    fn flush(&mut self) {
+        if let Some(encoder) = self.encoder.take() {
+            self.queue.submit([encoder.finish()]);
+        }
+    }
+
+    /// The shader textures current so far this frame: what an effect's
+    /// content scene may draw.
+    fn ready(&self) -> ShaderTextures {
+        ShaderTextures {
+            ready: self
+                .done
+                .iter()
+                .filter_map(|(id, r)| r.as_ref().map(|r| (*id, (r.size, r.effect))))
+                .collect(),
+        }
+    }
+}
+
 impl ShaderPasses {
-    pub fn new() -> Self {
-        Self::default()
+    /// Shader passes for a window whose surface is `format`.
+    pub fn new(format: wgpu::TextureFormat) -> Self {
+        Self {
+            targets: HashMap::new(),
+            pipelines: HashMap::new(),
+            refused: HashSet::new(),
+            sampler: None,
+            format,
+            generation: 0,
+            last_passes: 0,
+        }
     }
 
     /// A frame with nothing to draw runs no pass.
@@ -197,10 +277,16 @@ impl ShaderPasses {
         time: f32,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        images: &mut ImageTextureCache,
+        gpu: Gpu<'_>,
     ) -> ShaderTextures {
         self.last_passes = 0;
+        let Gpu {
+            renderer,
+            resources,
+            images,
+            text,
+            geometry,
+        } = gpu;
         let (bindings, image_inputs) = images.split();
         self.evict(tree, bindings);
         let mut ready = ShaderTextures::none();
@@ -208,14 +294,21 @@ impl ShaderPasses {
             return ready;
         }
         let visible = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
-        let mut collect = Collect { nodes: Vec::new() };
+        let mut collect = Collect {
+            nodes: Vec::new(),
+            skip: None,
+        };
         walk::walk(tree, root, visible, &mut collect);
         let mut frame = Frame {
             tree,
             time,
             device,
             queue,
-            encoder,
+            encoder: None,
+            renderer,
+            resources,
+            text,
+            geometry,
             bindings,
             images: image_inputs,
             done: HashMap::new(),
@@ -223,9 +316,10 @@ impl ShaderPasses {
         };
         for id in collect.nodes {
             if let Some(r) = self.ensure(&mut frame, id) {
-                ready.ready.insert(id, r.size);
+                ready.ready.insert(id, (r.size, r.effect));
             }
         }
+        frame.flush();
         ready
     }
 
@@ -235,11 +329,7 @@ impl ShaderPasses {
             .targets
             .keys()
             .chain(self.refused.iter())
-            .filter(|id| {
-                !tree
-                    .get(**id)
-                    .is_some_and(|n| n.shader.as_deref().is_some_and(drawn_here))
-            })
+            .filter(|id| !tree.get(**id).is_some_and(|n| n.shader.is_some()))
             .copied()
             .collect();
         for id in gone {
@@ -277,7 +367,8 @@ impl ShaderPasses {
 
     fn resolve(&mut self, f: &mut Frame<'_>, id: NodeId) -> Option<Ready> {
         let node = f.tree.get(id)?;
-        let shader = node.shader.clone().filter(|s| drawn_here(s))?;
+        let shader = node.shader.clone()?;
+        let effect = shader.mode() == ShaderMode::Effect;
         let layout = f.tree.layout(id).size;
         let size = (layout.width.ceil() as u32, layout.height.ceil() as u32);
         if size.0 == 0 || size.1 == 0 {
@@ -310,10 +401,129 @@ impl ShaderPasses {
             versions.push(version);
         }
         self.refused.remove(&id);
-        self.run_pass(f, id, &shader, size, &views, versions)
+
+        // An effect's content is its subtree's own render, redone when the
+        // subtree changed (or the texture is new).
+        let uniform_len = shader.uniform_bytes().len() as u64;
+        let mut content = 0;
+        if effect {
+            content = crate::damage::effect_content_fingerprint(f.tree, id);
+            let reusable = self.reusable(id, size, uniform_len, true);
+            let stale = !reusable
+                || self
+                    .targets
+                    .get(&id)
+                    .and_then(|t| t.content.as_ref())
+                    .is_none_or(|c| c.key != Some(content));
+            if stale && !self.render_content(f, id, size, uniform_len, content) {
+                return None;
+            }
+        } else {
+            self.prepare_target(f, id, size, uniform_len, false);
+        }
+        self.run_pass(f, id, &shader, size, &views, versions, content)
+    }
+
+    /// Whether `id`'s texture and buffers already fit this size.
+    fn reusable(&self, id: NodeId, size: (u32, u32), uniform_len: u64, effect: bool) -> bool {
+        self.targets.get(&id).is_some_and(|t| {
+            t.size == size && t.uniforms.size() == uniform_len && t.content.is_some() == effect
+        })
+    }
+
+    /// Makes `id`'s texture, buffers and (for an effect) content texture fit.
+    fn prepare_target(
+        &mut self,
+        f: &mut Frame<'_>,
+        id: NodeId,
+        size: (u32, u32),
+        uniform_len: u64,
+        effect: bool,
+    ) {
+        if self.reusable(id, size, uniform_len, effect) {
+            return;
+        }
+        let target = new_target(f.device, size, uniform_len, effect.then_some(self.format));
+        f.bindings.insert(texture_id_for(id), target.view.clone());
+        self.targets.insert(id, target);
+    }
+
+    /// Renders an effect node's own content into its content texture, first
+    /// bringing up to date every shader in its subtree, and submitting each
+    /// step so the next sees it. `false` if the render failed.
+    fn render_content(
+        &mut self,
+        f: &mut Frame<'_>,
+        id: NodeId,
+        size: (u32, u32),
+        uniform_len: u64,
+        content: u64,
+    ) -> bool {
+        // The shaders inside this node paint into its content.
+        let mut inner = Collect {
+            nodes: Vec::new(),
+            skip: Some(id),
+        };
+        walk::walk_root(f.tree, id, &mut inner);
+        for node in inner.nodes {
+            self.ensure(f, node);
+        }
+        self.prepare_target(f, id, size, uniform_len, true);
+        let Some(view) = self
+            .targets
+            .get(&id)
+            .and_then(|t| t.content.as_ref())
+            .map(|c| c.view.clone())
+        else {
+            return false;
+        };
+        f.flush();
+        let ready = f.ready();
+        let scene = build_effect_content(
+            f.tree,
+            id,
+            size.0 as u16,
+            size.1 as u16,
+            &ready,
+            f.resources,
+            f.text,
+            f.geometry,
+        );
+        let mut encoder = f
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("tre effect content"),
+            });
+        let rendered = f.renderer.render(
+            &scene,
+            f.resources,
+            f.device,
+            f.queue,
+            &mut encoder,
+            &RenderSize {
+                width: size.0 as u16,
+                height: size.1 as u16,
+            },
+            &view,
+            None,
+            f.bindings,
+            TargetInit::Clear(ClearSettings::default()),
+        );
+        if let Err(error) = rendered {
+            if self.refused.insert(id) {
+                tracing::warn!(%error, "an effect's content could not be rendered; painted without its shader");
+            }
+            return false;
+        }
+        f.queue.submit([encoder.finish()]);
+        if let Some(c) = self.targets.get_mut(&id).and_then(|t| t.content.as_mut()) {
+            c.key = Some(content);
+        }
+        true
     }
 
     /// Runs one node's pass if it is stale.
+    #[allow(clippy::too_many_arguments)]
     fn run_pass(
         &mut self,
         f: &mut Frame<'_>,
@@ -322,11 +532,13 @@ impl ShaderPasses {
         size: (u32, u32),
         views: &[wgpu::TextureView],
         versions: Vec<u64>,
+        content: u64,
     ) -> Option<Ready> {
+        let effect = shader.mode() == ShaderMode::Effect;
         let source = shader.assembled();
         let uniform_bytes = shader.uniform_bytes();
         if !self.pipelines.contains_key(&source) {
-            let built = build_pipeline(f.device, &source, uniform_bytes.len(), views.len());
+            let built = build_pipeline(f.device, &source, uniform_bytes.len(), views.len(), effect);
             self.pipelines.insert(source.clone(), built);
         }
         let sampler = self
@@ -341,17 +553,6 @@ impl ShaderPasses {
             })
             .clone();
         let pipeline = self.pipelines.get(&source)?.as_ref()?;
-
-        let uniform_len = uniform_bytes.len() as u64;
-        let reuse = self
-            .targets
-            .get(&id)
-            .is_some_and(|t| t.size == size && t.uniforms.size() == uniform_len);
-        if !reuse {
-            let target = new_target(f.device, size, uniform_len);
-            f.bindings.insert(texture_id_for(id), target.view.clone());
-            self.targets.insert(id, target);
-        }
         let target = self.targets.get_mut(&id)?;
 
         let (values, layout) = shader.versions();
@@ -366,6 +567,7 @@ impl ShaderPasses {
                 0
             },
             inputs: versions,
+            content,
         };
         if target.key.as_ref() != Some(&key) {
             f.queue.write_buffer(
@@ -384,6 +586,17 @@ impl ShaderPasses {
                     resource: target.uniforms.as_entire_binding(),
                 },
             ];
+            if effect {
+                let content_view = &target.content.as_ref()?.view;
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(content_view),
+                });
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                });
+            }
             for (i, view) in views.iter().enumerate() {
                 entries.push(wgpu::BindGroupEntry {
                     binding: 4 + 2 * i as u32,
@@ -400,8 +613,8 @@ impl ShaderPasses {
                 entries: &entries,
             });
             {
-                let mut rpass = f.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("tre fill shader"),
+                let mut rpass = f.encoder().begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("tre shader"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &target.view,
                         depth_slice: None,
@@ -427,13 +640,19 @@ impl ShaderPasses {
         }
         Some(Ready {
             size,
+            effect,
             view: target.view.clone(),
             version: target.generation,
         })
     }
 }
 
-fn new_target(device: &wgpu::Device, size: (u32, u32), uniform_len: u64) -> Target {
+fn new_target(
+    device: &wgpu::Device,
+    size: (u32, u32),
+    uniform_len: u64,
+    content_format: Option<wgpu::TextureFormat>,
+) -> Target {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("tre shader node texture"),
         size: wgpu::Extent3d {
@@ -457,6 +676,28 @@ fn new_target(device: &wgpu::Device, size: (u32, u32), uniform_len: u64) -> Targ
             mapped_at_creation: false,
         })
     };
+    let content = content_format.map(|format| {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("tre effect content texture"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Content {
+            _texture: texture,
+            view,
+            key: None,
+        }
+    });
     Target {
         _texture: texture,
         view,
@@ -464,6 +705,7 @@ fn new_target(device: &wgpu::Device, size: (u32, u32), uniform_len: u64) -> Targ
         frame: buffer("tre shader frame", engine_core::FRAME_BLOCK_SIZE as u64),
         uniforms: buffer("tre shader uniforms", uniform_len),
         key: None,
+        content,
         generation: 0,
     }
 }
@@ -475,10 +717,11 @@ fn build_pipeline(
     source: &Arc<str>,
     uniform_len: usize,
     inputs: usize,
+    effect: bool,
 ) -> Option<Pipeline> {
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("tre fill shader"),
+        label: Some("tre shader"),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
     });
     let uniform = |binding, min| wgpu::BindGroupLayoutEntry {
@@ -495,6 +738,24 @@ fn build_pipeline(
         uniform(0, engine_core::FRAME_BLOCK_SIZE as u64),
         uniform(1, uniform_len as u64),
     ];
+    if effect {
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 2,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        });
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 3,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        });
+    }
     for i in 0..inputs as u32 {
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: 4 + 2 * i,
