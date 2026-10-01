@@ -92,7 +92,7 @@ fn canvas_draw_commands_paint_real_pixels_composed_with_an_ancestor_transform() 
         // M5 Phase 1's own transform_composition.rs test learned the
         // hard way).
         let root = tree.insert(
-            NodeKind::Rect,
+            NodeKind::Container,
             Style {
                 size: Size {
                     width: length(f32::from(width)),
@@ -198,7 +198,7 @@ fn canvas_draw_commands_compound_with_the_nodes_own_real_opacity() {
 
         let mut tree = Tree::new();
         let root = tree.insert(
-            NodeKind::Rect,
+            NodeKind::Container,
             Style {
                 size: Size {
                     width: length(f32::from(width)),

@@ -56,7 +56,7 @@ fn build(start: Instant, workload: Workload) -> (Tree, NodeId) {
     let all_animate = workload == Workload::Full;
     let mut tree = Tree::new();
     let root = tree.insert(
-        NodeKind::Rect,
+        NodeKind::Container,
         Style {
             display: taffy::Display::Flex,
             flex_wrap: FlexWrap::Wrap,

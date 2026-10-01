@@ -220,11 +220,13 @@ pub fn placed(x: f32, y: f32, w: f32, h: f32) -> Style {
     }
 }
 
-/// A 100x100 background root.
+/// A 100x100 background root. A `Container`, as a window's root is
+/// (`engine-py`'s `Window`): a `Rect` root once hid that a container's fill
+/// never painted (0.5.0, #46).
 pub fn scene() -> (Tree, NodeId) {
     let mut tree = Tree::new();
     let root = tree.insert(
-        NodeKind::Rect,
+        NodeKind::Container,
         Style {
             size: Size {
                 width: length(f32::from(SIZE)),

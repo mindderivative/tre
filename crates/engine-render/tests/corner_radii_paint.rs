@@ -27,7 +27,7 @@ async fn render(radii: Option<[f64; 4]>) -> (Vec<u8>, u32) {
     paint.corner_radii_override =
         radii.map(|r| engine_core::Animated::new(engine_core::CornerRadii(r)));
     let root = tree.insert(
-        NodeKind::Rect,
+        NodeKind::Container,
         Style {
             size: Size {
                 width: length(f32::from(SIZE)),

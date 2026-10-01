@@ -119,7 +119,7 @@ fn an_off_screen_parent_skips_its_whole_subtree_even_when_a_child_transforms_bac
         let (width, height) = (100u16, 100u16);
         let mut tree = Tree::new();
         let root = tree.insert(
-            NodeKind::Rect,
+            NodeKind::Container,
             Style {
                 size: Size {
                     width: length(f32::from(width)),
@@ -181,7 +181,7 @@ fn a_node_only_partially_overlapping_the_viewport_still_paints_its_visible_porti
         let (width, height) = (100u16, 100u16);
         let mut tree = Tree::new();
         let root = tree.insert(
-            NodeKind::Rect,
+            NodeKind::Container,
             Style {
                 size: Size {
                     width: length(f32::from(width)),
