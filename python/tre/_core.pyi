@@ -31,7 +31,17 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any, Literal, final, overload
 
-__all__ = ["App", "Window", "Node", "Painter", "Event", "LoopHandle", "register_font"]
+__all__ = [
+    "App",
+    "Window",
+    "Node",
+    "Painter",
+    "Event",
+    "LoopHandle",
+    "Shader",
+    "ShaderError",
+    "register_font",
+]
 
 Color = tuple[int, int, int, int]
 """An `(r, g, b, a)` byte tuple, 0-255 per channel, straight alpha."""
@@ -612,6 +622,54 @@ class LoopHandle:
         `callback` isn't callable.
         """
         ...
+
+class ShaderError(ValueError):
+    """A shader's source or names are wrong. `line`, `column` and
+    `source_line` place the problem in the WGSL you gave; each is `None`
+    when the problem has no position."""
+
+    line: int | None
+    column: int | None
+    source_line: str | None
+
+@final
+class Shader:
+    """0.5.1: WGSL with one function, `fn shade(p: Pixel) -> vec4<f32>`,
+    checked when it is made -- a mistake raises `ShaderError` with the line
+    and column in your source, and needs no GPU.
+
+    `uniforms` maps names to a number or a tuple of 2 to 4 numbers (an
+    `f32` or a `vec2`/`vec3`/`vec4`). `inputs` maps names to `Node`s of one
+    window, read in the shader as `input_<name>(uv)`. `mode` is `"fill"`
+    (paints the node's box behind its content) or `"effect"` (transforms the
+    node's own rendered content, read as `content(uv)`). `animated=True`
+    redraws every frame. Shaders are shared: give one `Shader` to several
+    nodes and `set(uniforms=...)` updates them all.
+    """
+
+    def __new__(
+        cls,
+        wgsl: str,
+        uniforms: dict[str, float | tuple[float, ...]] | None = None,
+        inputs: dict[str, Node] | None = None,
+        mode: str = "fill",
+        animated: bool = False,
+    ) -> Shader: ...
+    @property
+    def wgsl(self) -> str: ...
+    @property
+    def mode(self) -> str: ...
+    @property
+    def animated(self) -> bool: ...
+    @property
+    def uniforms(self) -> dict[str, float | tuple[float, ...]]: ...
+    @property
+    def inputs(self) -> dict[str, Node]: ...
+    def set(self, *, uniforms: dict[str, float | tuple[float, ...]]) -> None:
+        """Replaces the uniforms, all at once: a mistake raises and changes
+        nothing."""
+    def __eq__(self, other: object, /) -> bool: ...
+    def __hash__(self) -> int: ...
 
 @final
 class Painter:

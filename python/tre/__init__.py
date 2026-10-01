@@ -22,6 +22,8 @@ from tre._core import (
     Event,
     LoopHandle,
     Node,
+    Shader,
+    ShaderError,
     Window,
     register_font,
 )
@@ -40,6 +42,8 @@ __all__ = [
     "LoopHandle",
     "MONOSPACE_FONT_FAMILY",
     "Node",
+    "Shader",
+    "ShaderError",
     "Window",
     "register_font",
 ]

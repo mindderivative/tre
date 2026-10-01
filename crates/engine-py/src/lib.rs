@@ -22,6 +22,7 @@ mod node_handles;
 mod node_kind_props;
 mod node_layout;
 mod node_props;
+mod shader;
 mod shaper;
 mod terminal;
 mod thread_bound;
@@ -39,6 +40,7 @@ pub use canvas::Painter;
 pub use error::EngineError;
 pub use event::Event;
 pub use node::Node;
+pub use shader::Shader;
 pub use thread_handle::LoopHandle;
 pub use window::PyWindow;
 
@@ -53,6 +55,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Painter>()?;
     m.add_class::<Event>()?;
     m.add_class::<LoopHandle>()?;
+    m.add_class::<Shader>()?;
+    m.add("ShaderError", m.py().get_type::<shader::ShaderError>())?;
     m.add_function(wrap_pyfunction!(register_font, m)?)?;
     Ok(())
 }
