@@ -204,7 +204,7 @@ for 0.5.1:
   order, damage when an input changes.
 - **M5** (landed locally, #69) — effects: the offscreen render of a node's content, `content(uv)`,
   nesting, and pixel tests (the shining text).
-- **M6** — animation and redraw, `animated`, the window clock, the loop staying
+- **M6** (landed locally, #70) — animation and redraw, `animated`, the window clock, the loop staying
   awake; examples (shining text, a fractal panel) and a guide page.
 - **M7** — verification: CI on all three systems, the Tesserae compatibility run,
   and the held hardware-checks item.

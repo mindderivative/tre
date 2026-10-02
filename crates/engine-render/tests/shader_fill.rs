@@ -712,3 +712,116 @@ fn an_effect_over_text_transforms_its_glyphs() {
     );
     assert!(!any(&white), "no white glyph pixels survive the inversion");
 }
+
+// --- 0.5.1 (#70): time and animation --------------------------------------------
+
+const CLOCK: &str =
+    "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(frame.time, 0.0, 0.0, 1.0);\n}\n";
+
+fn clock(animated: bool) -> Arc<Shader> {
+    Shader::new(CLOCK.to_owned(), vec![], vec![], ShaderMode::Fill, animated).expect("valid")
+}
+
+impl Scene {
+    fn set_time(&mut self, seconds: f32) {
+        self.renderer.set_time(seconds);
+    }
+}
+
+#[test]
+fn an_animated_shader_sees_the_window_clock_and_repaints_exactly_its_box() {
+    let mut s = Scene::new();
+    s.node(20.0, 20.0, 40.0, 40.0, clock(true));
+    s.set_time(0.25);
+    s.frame();
+    assert!(near(s.at(40, 40), [64, 0, 0, 255], 2), "{:?}", s.at(40, 40));
+
+    s.set_time(0.5);
+    let damage = s.frame();
+    assert!(
+        near(s.at(40, 40), [128, 0, 0, 255], 2),
+        "{:?}",
+        s.at(40, 40)
+    );
+    match &damage {
+        Damage::Rects(rects) => {
+            let area = peniko::kurbo::Rect::new(20.0, 20.0, 60.0, 60.0).inflate(4.0, 4.0);
+            assert!(
+                rects.iter().all(|r| r.union(area) == area),
+                "only the node's box is repainted: {damage:?}"
+            );
+        }
+        other => panic!("expected the node's rect, got {other:?}"),
+    }
+    assert_eq!(s.passes(), 1);
+
+    s.set_time(0.5);
+    assert_eq!(s.frame(), Damage::None, "the same moment paints nothing");
+    assert_eq!(s.passes(), 0);
+}
+
+#[test]
+fn a_still_shader_ignores_the_clock() {
+    let mut s = Scene::new();
+    s.node(20.0, 20.0, 40.0, 40.0, clock(false));
+    s.set_time(0.25);
+    s.frame();
+    s.set_time(0.75);
+    assert_eq!(
+        s.frame(),
+        Damage::None,
+        "not animated: time changes nothing"
+    );
+    assert_eq!(s.passes(), 0);
+}
+
+#[test]
+fn only_a_drawn_animated_shader_keeps_the_loop_awake() {
+    let mut s = Scene::new();
+    s.node(20.0, 20.0, 40.0, 40.0, clock(false));
+    s.frame();
+    assert!(
+        !s.renderer.has_animated_shader(),
+        "a still shader lets the loop sleep"
+    );
+
+    let moving = s.node(70.0, 20.0, 30.0, 30.0, clock(true));
+    s.frame();
+    assert!(s.renderer.has_animated_shader());
+
+    s.tree.get_mut(moving).unwrap().visible = false;
+    s.frame();
+    assert!(
+        !s.renderer.has_animated_shader(),
+        "hidden, it no longer does"
+    );
+
+    s.tree.get_mut(moving).unwrap().visible = true;
+    let mut style = s.tree.get(moving).unwrap().layout_style.clone();
+    style.inset.left = length(900.0);
+    s.tree.set_layout_style(moving, style);
+    s.frame();
+    assert!(
+        !s.renderer.has_animated_shader(),
+        "off-screen, it doesn't either"
+    );
+}
+
+#[test]
+fn an_animated_fill_inside_an_effect_repaints_the_effect_each_frame() {
+    let mut s = Scene::new();
+    let e = s.node(20.0, 20.0, 40.0, 40.0, effect(PASS));
+    let f = s.child(e, 0.0, 0.0, 40.0, 40.0, [0, 0, 0, 0]);
+    s.tree.get_mut(f).unwrap().shader = Some(clock(true));
+    s.set_time(0.25);
+    s.frame();
+    assert!(near(s.at(40, 40), [64, 0, 0, 255], 2), "{:?}", s.at(40, 40));
+    assert!(s.renderer.has_animated_shader(), "found through the effect");
+    s.set_time(0.5);
+    s.frame();
+    assert!(
+        near(s.at(40, 40), [128, 0, 0, 255], 2),
+        "{:?}",
+        s.at(40, 40)
+    );
+}

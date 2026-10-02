@@ -1,7 +1,8 @@
 # Shader
 
 *New in 0.5.1.* A `Shader` is WGSL that paints a node. This page covers the
-object and the `shader` property; the design, and what is still to come, is
+object and the `shader` property; how to use it is the
+[Shaders guide](../../guide/shaders.md), and the design is
 [WGSL shaders](../../design/wgsl.md).
 
 !!! note "Fill and effect"
@@ -39,7 +40,7 @@ opened. The result is straight-alpha RGBA.
 | `uniforms` | `dict[str, float | tuple]` — a number is an `f32`; a tuple of 2, 3 or 4 numbers is a `vec2`, `vec3` or `vec4`. Names must be WGSL identifiers that are not reserved |
 | `inputs` | `dict[str, Node]` — nodes of one window, read as `input_<name>(uv)` (see [Inputs](#inputs)) |
 | `mode` | `"fill"` paints the node's box behind its content; `"effect"` transforms the node's own rendered content, read as `content(uv)` |
-| `animated` | `True` redraws the node every frame; otherwise it redraws only when something changes |
+| `animated` | `True` for a shader that reads `frame.time`: the node is repainted every frame (only its box), and the window keeps drawing frames while it is on screen. Otherwise it redraws only when something changes and a still window sleeps |
 
 Read-only properties: `wgsl`, `mode`, `animated`, `uniforms` (a new dict), and
 `inputs` (a new dict of the same `Node`s).

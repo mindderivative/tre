@@ -49,6 +49,13 @@ the run; while GPU work is still running the loop wakes about every 100 ms to
 poll, so a hang in the last frame is still seen
 ([GPU health](api/python/window.md#gpu-health)).
 
+A node may carry a WGSL [shader](guide/shaders.md). Before the scene renders,
+the renderer runs one pass per drawn shader node into a texture the size of
+its box, and the scene draws that texture in the node's place; an effect
+shader first renders the node's own subtree offscreen to read it. These passes
+run only when something changed, and a window drawing an `animated` shader keeps
+running like any animation.
+
 ## Design principles
 
 - **Rust owns every frame; Python owns intent.** Python never runs during

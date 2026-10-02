@@ -1398,6 +1398,11 @@ impl FrameRenderer {
         self.shaders.skipped();
     }
 
+    /// Whether a shader drawn by the last `run_shader_passes` is animated.
+    pub fn shaders_animated(&self) -> bool {
+        self.shaders.animated()
+    }
+
     /// How many shader passes the last `run_shader_passes` recorded.
     pub fn shader_pass_count(&self) -> usize {
         self.shaders.last_pass_count()

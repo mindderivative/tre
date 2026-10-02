@@ -207,6 +207,8 @@ pub struct ShaderPasses {
     generation: u64,
     /// How many passes the last `run` recorded, for tests and tracing.
     last_passes: usize,
+    /// Whether a shader that ran in the last `run` is `animated`.
+    animated: bool,
 }
 
 impl Frame<'_> {
@@ -251,7 +253,14 @@ impl ShaderPasses {
             format,
             generation: 0,
             last_passes: 0,
+            animated: false,
         }
+    }
+
+    /// Whether a shader that ran in the last `run` is animated -- the loop
+    /// must keep drawing frames while one does.
+    pub fn animated(&self) -> bool {
+        self.animated
     }
 
     /// A frame with nothing to draw runs no pass.
@@ -280,6 +289,7 @@ impl ShaderPasses {
         gpu: Gpu<'_>,
     ) -> ShaderTextures {
         self.last_passes = 0;
+        self.animated = false;
         let Gpu {
             renderer,
             resources,
@@ -369,6 +379,7 @@ impl ShaderPasses {
         let node = f.tree.get(id)?;
         let shader = node.shader.clone()?;
         let effect = shader.mode() == ShaderMode::Effect;
+        self.animated |= shader.animated();
         let layout = f.tree.layout(id).size;
         let size = (layout.width.ceil() as u32, layout.height.ceil() as u32);
         if size.0 == 0 || size.1 == 0 {
@@ -407,7 +418,7 @@ impl ShaderPasses {
         let uniform_len = shader.uniform_bytes().len() as u64;
         let mut content = 0;
         if effect {
-            content = crate::damage::effect_content_fingerprint(f.tree, id);
+            content = crate::damage::effect_content_fingerprint(f.tree, f.time, id);
             let reusable = self.reusable(id, size, uniform_len, true);
             let stale = !reusable
                 || self

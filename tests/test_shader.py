@@ -222,3 +222,35 @@ def test_an_image_node_may_read_its_own_pixels():
     img = image(window)
     img.set(shader=Shader(READ, inputs={"x": img}))
     assert img.get("shader").inputs["x"] == img
+
+
+# --- animation (#70) -----------------------------------------------------------------
+
+CLOCK = "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(fract(frame.time), 0.0, 0.0, 1.0);\n}\n"
+
+
+def test_a_live_window_runs_with_an_animated_shader():
+    """A smoke test of the real loop: an animated shader draws, with its time
+    from the window clock, through `App.run`. (`max_frames` runs frames
+    whether or not the loop would sleep, so it can't show the keep-awake
+    rule itself; that is `has_animated_shader` in `engine-render`'s tests.)"""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        pytest.skip("no display reachable")
+    script = textwrap.dedent(f"""
+        from tre import App, Shader, Window
+        w = Window(width=120, height=80)
+        box = w.create("box", width=60, height=60, shader=Shader({CLOCK!r}, animated=True))
+        w.root.add_child(box)
+        app = App()
+        app.add_window(w)
+        app.run(max_frames=30)
+        print("RAN")
+    """)
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip().splitlines()[-1] == "RAN"

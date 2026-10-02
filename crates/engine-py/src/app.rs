@@ -611,6 +611,9 @@ struct WindowRuntime {
     /// 0.4.0 M6: the window's shared handles (`WindowHandles`).
     handles: WindowHandles,
     gpu: GpuState,
+    /// 0.5.1 (#70): when the window opened, on the window's clock: a
+    /// shader's `frame.time` is the seconds since.
+    opened: std::time::Instant,
     /// M18 Phase 2 (§8, §10): which `TextField` (if any) a real
     /// press-and-drag is currently extending a selection in -- plain,
     /// not `RefCell`-wrapped, since only `on_input`'s own closure ever
@@ -783,6 +786,7 @@ impl App {
                     WindowRuntime {
                         handles: setup.handles.clone(),
                         gpu,
+                        opened: crate::clock::now(&setup.handles.tree),
                         text_drag: None,
                         terminal_drag: None,
                         cursor: Cursor::Default,
@@ -834,6 +838,21 @@ impl App {
 
                 let now = crate::clock::now(&runtime.handles.tree);
                 let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                // 0.5.1 (#70): a shader's time is the window's clock; and a
+                // window drawing an `animated` shader keeps running -- a frame
+                // per display refresh, repainting just that node -- exactly
+                // as it does for any animation. A still shader leaves the
+                // loop asleep.
+                runtime
+                    .gpu
+                    .renderer
+                    .set_time(now.saturating_duration_since(runtime.opened).as_secs_f32());
+                let any_active = if runtime.gpu.renderer.has_animated_shader() {
+                    runtime.handles.tree.borrow_mut().mark_dirty();
+                    true
+                } else {
+                    any_active
+                };
                 // 0.4.2 M12: an animated or `set` scroll offset reports
                 // its change here, once a frame.
                 crate::listeners::fire_scroll_changes(

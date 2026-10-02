@@ -59,6 +59,7 @@ nav:
       - Threading: guide/threading.md
       - Docking: guide/docking.md
       - Custom Title Bars: guide/custom-title-bars.md
+      - Shaders (0.5.1): guide/shaders.md
       - Building a Widget: guide/building-a-widget.md
   - Examples: examples.md
   - Python API Reference:

@@ -74,12 +74,16 @@ struct Record {
 pub struct DamageTracker {
     records: HashMap<NodeId, Record>,
     size: Option<(u16, u16)>,
+    /// 0.5.1 (#70): the window's clock, in seconds, which an animated
+    /// shader's pixels depend on.
+    time: f32,
 }
 
 /// One frame's walk (`walk::Visitor`): the records it builds and what it
 /// needs to build them.
 struct Recorder<'a> {
     tree: &'a Tree,
+    time: f32,
     text: &'a mut TextRenderer,
     records: HashMap<NodeId, Record>,
 }
@@ -87,6 +91,12 @@ struct Recorder<'a> {
 impl DamageTracker {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the time, in seconds, the next `damage` call sees: an animated
+    /// shader's node is damaged whenever it changes.
+    pub fn set_time(&mut self, seconds: f32) {
+        self.time = seconds;
     }
 
     /// Forgets the last frame, so the next `damage` is `Full` -- for when
@@ -109,6 +119,7 @@ impl DamageTracker {
         let window = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
         let mut recorder = Recorder {
             tree,
+            time: self.time,
             text,
             records: HashMap::with_capacity(self.records.len()),
         };
@@ -163,7 +174,7 @@ impl<'t> walk::Visitor<'t> for Recorder<'_> {
         rect(&mut hasher, v.visible);
         num(&mut hasher, v.w);
         num(&mut hasher, v.h);
-        node_fingerprint(&mut hasher, self.tree, v.id, v.node);
+        node_fingerprint(&mut hasher, self.tree, self.time, v.id, v.node);
         self.records.insert(
             v.id,
             Record {
@@ -281,6 +292,7 @@ fn local_painted(text: &mut TextRenderer, id: NodeId, node: &Node, w: f64, h: f6
 fn shader_fingerprint(
     h: &mut impl Hasher,
     tree: &Tree,
+    time: f32,
     shader: &std::sync::Arc<engine_core::Shader>,
     depth: usize,
 ) {
@@ -289,6 +301,11 @@ fn shader_fingerprint(
     shader.mode().hash(h);
     shader.animated().hash(h);
     shader.versions().hash(h);
+    // An animated shader paints differently every frame: the time is part
+    // of what it painted.
+    if shader.animated() {
+        time.to_bits().hash(h);
+    }
     for (_, input) in shader.inputs() {
         match tree.get(*input) {
             None => 0u8.hash(h),
@@ -302,7 +319,7 @@ fn shader_fingerprint(
                     let size = tree.layout(*input).size;
                     size.width.to_bits().hash(h);
                     size.height.to_bits().hash(h);
-                    shader_fingerprint(h, tree, inner, depth + 1);
+                    shader_fingerprint(h, tree, time, inner, depth + 1);
                 }
                 _ => 3u8.hash(h),
             },
@@ -312,7 +329,7 @@ fn shader_fingerprint(
 
 /// 0.5.1 (#69): what `id`'s descendants paint, for an effect node: each one's
 /// place in the tree, its box, and everything `node_fingerprint` hashes.
-fn subtree_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId) {
+fn subtree_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId) {
     for (index, &child) in tree.children_in_paint_order(id).iter().enumerate() {
         let Some(node) = tree.get(child) else {
             continue;
@@ -327,16 +344,16 @@ fn subtree_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId) {
         ] {
             v.to_bits().hash(h);
         }
-        node_fingerprint(h, tree, child, node);
-        subtree_fingerprint(h, tree, child);
+        node_fingerprint(h, tree, time, child, node);
+        subtree_fingerprint(h, tree, time, child);
     }
 }
 
 /// 0.5.1 (#69): the fingerprint of an effect node's subtree alone -- what its
 /// offscreen content render depends on -- as a pass's staleness key.
-pub(crate) fn effect_content_fingerprint(tree: &Tree, id: NodeId) -> u64 {
+pub(crate) fn effect_content_fingerprint(tree: &Tree, time: f32, id: NodeId) -> u64 {
     let mut hasher = FINGERPRINT.build_hasher();
-    subtree_fingerprint(&mut hasher, tree, id);
+    subtree_fingerprint(&mut hasher, tree, time, id);
     // The node's own paint is part of its content too.
     if let Some(node) = tree.get(id) {
         let mut own = FINGERPRINT.build_hasher();
@@ -348,7 +365,7 @@ pub(crate) fn effect_content_fingerprint(tree: &Tree, id: NodeId) -> u64 {
 }
 
 /// Everything about `node` itself that decides its pixels.
-fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
+fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId, node: &Node) {
     let Node {
         id: _,
         parent: _,
@@ -375,11 +392,11 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
     match shader {
         None => 0u8.hash(h),
         Some(shader) => {
-            shader_fingerprint(h, tree, shader, 0);
+            shader_fingerprint(h, tree, time, shader, 0);
             // An effect's result depends on its whole subtree, so a change
             // anywhere in it repaints the node's box.
             if shader.mode() == engine_core::ShaderMode::Effect {
-                subtree_fingerprint(h, tree, id);
+                subtree_fingerprint(h, tree, time, id);
             }
         }
     }

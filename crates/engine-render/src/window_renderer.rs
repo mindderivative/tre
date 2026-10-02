@@ -82,6 +82,14 @@ impl WindowRenderer {
     /// `frame.time`.
     pub fn set_time(&mut self, seconds: f32) {
         self.time = seconds;
+        self.tracker.set_time(seconds);
+    }
+
+    /// Whether the last frame drew a shader that is `animated`: a window
+    /// that does must keep drawing frames, one per display refresh, though
+    /// nothing else changes.
+    pub fn has_animated_shader(&self) -> bool {
+        self.frame_renderer.shaders_animated()
     }
 
     /// How many shader passes the last drawn frame ran.
