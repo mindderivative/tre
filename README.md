@@ -35,7 +35,7 @@ pip install tesserae-engine
 ```
 
 On PyPI it's **`tesserae-engine`** (the name `tre` there is another
-project's); you still `import tre`. Wheels cover CPython 3.9+ on Linux
+project's); you still `import tre`. Wheels cover CPython 3.12+ on Linux
 (x86_64), macOS (arm64), and Windows (x64); other platforms build from
 source. See
 [Installation](https://mindderivative.github.io/tre/installation/) for the

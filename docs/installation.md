@@ -7,8 +7,8 @@ install a pre-built wheel, or build one yourself from source.
 
 ## Requirements
 
-- Python 3.9 or newer (CPython; on Linux also free-threaded `3.14t`/
-  `3.15t` builds and PyPy 3.11 — see the supported set below)
+- Python 3.12 or newer (CPython; on Linux also free-threaded `3.14t`/
+  `3.15t` builds — see the supported set below)
 - Linux (x86_64), macOS (arm64), or Windows (x64); other platforms build
   from source
 
@@ -51,10 +51,12 @@ distribution, plus:
   repaired). The container ships several real CPython interpreters
   plus PyPy, and the build picks up every one it finds
   (`maturin-action`'s own `--find-interpreter`) rather than a
-  hand-maintained list — as of `v0.4.1` that's CPython 3.9–3.15
-  (including the free-threaded `3.14t`/`3.15t` builds) and PyPy 3.11.
+  hand-maintained list, filtered by the project's `requires-python`
+  (3.12 or newer): CPython 3.12–3.15, including the free-threaded
+  `3.14t`/`3.15t` builds. (Through 0.5.1 the set also had CPython 3.9–3.11
+  and PyPy 3.11.)
 - **macOS** (`arm64`) and **Windows** — one wheel per CPython version
-  in an explicit, hand-maintained matrix (currently 3.9–3.14) via
+  in an explicit, hand-maintained matrix (currently 3.12–3.14) via
   `actions/setup-python` — no free-threaded or PyPy builds on these
   two platforms; neither ships a container with several interpreters
   pre-installed the way the Linux build's own container does.

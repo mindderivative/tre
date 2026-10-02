@@ -57,6 +57,9 @@ jobs:
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1
         with:
           manylinux: auto
+          # `--find-interpreter` honours `requires-python` in pyproject.toml
+          # (>=3.12), so the container's CPython 3.9-3.11 and PyPy 3.11 are
+          # not built.
           args: --release --out dist --find-interpreter
           # M21 Phase 2 (§13): real finding from this workflow's own
           # first triggered run -- `yeslogic-fontconfig-sys`'s build
@@ -86,7 +89,7 @@ jobs:
         # match, a real gap found while scoping the standalone `.so`
         # asset below (which only makes sense built for a version the
         # matrix itself also ships).
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -108,7 +111,7 @@ jobs:
     strategy:
       matrix:
         # M69 (§13): same real gap and fix as the `macos` job above.
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
         with:
