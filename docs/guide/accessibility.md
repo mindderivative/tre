@@ -16,7 +16,7 @@ save = window.create("box", width=96, height=40, corner_radius=20,
 - `role` — what the node is: `"button"`, `"checkbox"`, `"switch"`,
   `"slider"`, `"textbox"`, `"menu"`, `"menuitem"`, `"dialog"`, `"tab"`,
   `"heading"`, `"list"`, `"listitem"`, and the rest listed on
-  [`Node`](../api/python/node.md#set-get-and-focus).
+  [`Node`](../reference/node.md#set-get-and-focus).
 - `label` — the name read aloud. A text node's words aren't exposed on their
   own, so label the widget that shows them.
 - State — `checked`, `selected`, `expanded`, `disabled`, and a heading's

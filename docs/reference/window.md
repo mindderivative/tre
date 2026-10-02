@@ -42,7 +42,7 @@ See [Layers](layers.md).
 Since 0.5.0, a window can be run without the OS's title bar and borders
 (`decorations=False`, or `set(decorations=...)` live), so the framework can
 draw its own — and needs these to wire it up. See the
-[custom-windowing design](../../design/custom-windowing.md).
+[custom-windowing design](../design/custom-windowing.md).
 
 **`minimize()`**, **`maximize()`**, and **`restore()`** act on the open
 window; before `App.run()` they set how it opens. **`close()`** closes the
@@ -257,7 +257,7 @@ paints it: wrapped within `max_width` when given, cut to `max_lines`, ended
 with an ellipsis for `overflow="ellipsis"`. The width is the widest shown
 line without its trailing whitespace. A text node has no size of its own —
 this is how a content-sized widget gets one. See
-[Text](../../guide/text.md#sizing-text-to-its-content).
+[Text](../guide/text.md#sizing-text-to-its-content).
 
 ## Clipboard
 
@@ -294,7 +294,7 @@ The `maximized` and `active` events fire only when the state changes, and before
 `App.run()` `maximize()`, `restore()`, and `minimize()` change it without an
 event, so `simulate("maximized", maximized=True)` straight after `maximize()` is
 no change and fires nothing. Simulate the report on a fresh window, or leave the
-state first ([Custom Title Bars](../../guide/custom-title-bars.md#testing-without-a-display)).
+state first ([Custom Title Bars](../guide/custom-title-bars.md#testing-without-a-display)).
 
 **`advance(ms)`** moves this window's time forward by exactly `ms`
 milliseconds, then runs animations, their `on_complete` callbacks, and
@@ -323,4 +323,4 @@ on only `advance` moves it. Each window keeps its own time, and
 | `undock_panel(panel)` | Takes `panel` out of its zone and off the tree; `dock_panel` can dock it again |
 
 `side` is one of `"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`.
-See [Docking](../../guide/docking.md) for a walkthrough.
+See [Docking](../guide/docking.md) for a walkthrough.

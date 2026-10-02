@@ -12,7 +12,7 @@ window.show_layer(node, anchor=None, placement="below", modal=False, dismissible
 window.hide_layer(node)
 ```
 
-The reference is [Layers](../api/python/layers.md).
+The reference is [Layers](../reference/layers.md).
 
 ## A menu
 

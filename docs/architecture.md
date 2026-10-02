@@ -19,7 +19,7 @@ engine-py        PyO3 classes, the per-frame loop, listeners, callbacks
 or GPU code, so it's tested on its own. Only `engine-py` imports `pyo3`, and
 its Python surface is the one stability contract. `engine-platform` and
 `engine-render` both build on `engine-core`. See
-[Rust Crates](api/rust.md) for each crate's role.
+[Rust API](api/rust.md) for each crate's types.
 
 ## How a frame is made
 
@@ -47,7 +47,7 @@ Each turn the loop also polls the GPU device. A GPU error becomes a
 `gpu_error` event instead of a panic, and a lost GPU fires `gpu_lost` and ends
 the run; while GPU work is still running the loop wakes about every 100 ms to
 poll, so a hang in the last frame is still seen
-([GPU health](api/python/window.md#gpu-health)).
+([GPU health](reference/window.md#gpu-health)).
 
 A node may carry a WGSL [shader](guide/shaders.md). Before the scene renders,
 the renderer runs one pass per drawn shader node into a texture the size of

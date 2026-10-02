@@ -112,7 +112,7 @@ On `text` and `text_input` unless noted.
 | Property | Value |
 | --- | --- |
 | `text` | The content. Setting it on a text input puts the caret at the end, and fires no `change` event: that's for edits the user makes |
-| `font_family` | A family name — see [`register_font`](index.md) |
+| `font_family` | A family name — see [`register_font`](../api/python.md#module) |
 | `font_weight` | 1–1000 |
 | `font_size` | Pixels (also on a terminal) |
 | `line_height` | A multiple of the font size, or `None` (`text` only) |

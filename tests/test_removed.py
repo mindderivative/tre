@@ -1,6 +1,6 @@
 """The migration gate's switch, `TRE_FORBID_REMOVED=1` (`tre/_removed.py`):
 its tables kept in step with the migration table in
-`docs/design/target-api.md` and `docs/migrating-0.3.5.md`, and what it
+`docs/migrating-0.3.5.md`, and what it
 forbids and leaves alone. The switch patches classes for the rest of a
 process, so it's exercised in a fresh one.
 """
@@ -17,7 +17,7 @@ from pathlib import Path
 import tre
 from tre import _core, _removed
 
-SPEC = Path(__file__).resolve().parent.parent / "docs" / "design" / "target-api.md"
+SPEC = Path(__file__).resolve().parent.parent / "docs" / "migrating-0.3.5.md"
 TABLE = SPEC.read_text().split("## Migration table", 1)[1]
 
 
@@ -110,7 +110,7 @@ GONE = {
 }  # fmt: skip
 
 
-PAGE = SPEC.parent.parent / "migrating-0.3.5.md"
+PAGE = SPEC
 
 
 def test_the_published_migration_page_names_every_forbidden_name() -> None:

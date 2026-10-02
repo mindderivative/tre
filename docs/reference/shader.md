@@ -2,8 +2,8 @@
 
 *New in 0.5.1.* A `Shader` is WGSL that paints a node. This page covers the
 object and the `shader` property; how to use it is the
-[Shaders guide](../../guide/shaders.md), and the design is
-[WGSL shaders](../../design/wgsl.md).
+[Shaders guide](../guide/shaders.md), and the design is
+[WGSL shaders](../design/wgsl.md).
 
 !!! note "Fill and effect"
     A `mode="fill"` shader paints the node's box, clipped to its rounded

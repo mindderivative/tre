@@ -38,7 +38,7 @@ into a project on 0.3.4 — it uses only names 0.3.4 has — and call its
 | `Theme`, `Window.theme`, `Window.set_theme` | the framework's theming |
 | The MD3 widget factories — `add_button`, `add_icon_button`, `add_fab`, `add_extended_fab`, `add_segmented_button`, `add_chip`, `add_menu_item`, `add_badge`, `add_linear_progress`, `add_circular_progress`, `add_loading_indicator`, `add_time_picker_dial`, `add_card`, `add_divider`, `add_tooltip`, `add_dialog`, `add_snackbar`, `add_side_sheet`, `add_navigation_rail`, `add_navigation_drawer`, `add_top_app_bar`, `add_toolbar`, `add_split_button`, `add_button_group`, `add_tabs`, `add_search_bar`, `add_search_view`, `add_list_item`, `add_list`, `add_accordion_header`, `add_tree_node`, `add_date_picker_day`, `add_time_input_field`, `add_period_selector`, `add_popover`, `add_link`, `add_spin_box`, `add_pagination`, `add_status_bar`, `add_checkbox`, `add_radio_button`, `add_switch`, `add_slider`, `add_carousel`, `add_splitter`, `add_node_graph`, `add_graph_node` | the framework's widgets, built from boxes, text, and paths |
 | Their state — `set_checked`, `get_checked`, `set_selected`, `get_selected`, `set_carousel_index`, `get_carousel_index`, `get_carousel_position`, `set_carousel_scroll`, `get_carousel_scroll`, `set_time_picker_dial_time`, `get_time_picker_dial_time`, `set_time_picker_dial_mode`, `get_time_picker_dial_mode` — and their properties `check_progress`, `select_progress`, `toggle_progress` | the framework's own state and animation |
-| `build_menu`, `open_menu`, `close_menu`, `open_dialog`, `close_dialog`, `open_snackbar`, `close_snackbar`, `open_side_sheet`, `close_side_sheet`, `open_navigation_drawer`, `close_navigation_drawer`, `Node.set_context_menu` | [`show_layer`/`hide_layer`](api/python/layers.md), and `on("secondary_click")` for a context menu |
+| `build_menu`, `open_menu`, `close_menu`, `open_dialog`, `close_dialog`, `open_snackbar`, `close_snackbar`, `open_side_sheet`, `close_side_sheet`, `open_navigation_drawer`, `close_navigation_drawer`, `Node.set_context_menu` | [`show_layer`/`hide_layer`](reference/layers.md), and `on("secondary_click")` for a context menu |
 | `build_shell`, `begin_container_transform`, `end_container_transform` | the framework's shell and transitions, with `animate` |
 | `Node.enable_interaction` (the ripple and state layer) | the framework's hover and press feedback, from `pointer_enter`/`pointer_leave`/`pointer_down` |
 | `add_icon` | a `"path"` node from the icon's SVG data |
@@ -141,3 +141,95 @@ These keep their names but act differently:
   instead of returning `False`.
 - **`remove()` keeps a node alive** for reattaching; `destroy()` frees it — the
   0.3.4 change, in case you're coming from 0.3.3.
+
+## Migration table
+
+Every current public name, and what it becomes.
+
+To check a codebase against it, run its tests with `TRE_FORBID_REMOVED=1` set:
+every name below that 0.3.5 removes or renames then raises an `AttributeError`
+naming its replacement — old property names too, in `animate` and `get`, and
+`animate`'s old positional `on_complete`. `from tre import View` fails with
+Python's own `ImportError`. The list lives in `tre/_removed.py`, kept in step
+with this table by `tests/test_removed.py`; the file uses only names 0.3.4
+has, so a project pinned to 0.3.4 can copy it and call its `install()`.
+
+### `Window` — creation
+
+| Today | Target |
+| --- | --- |
+| `add_rect`, `Container` kind | `create("box")` |
+| `add_text` | `create("text")` |
+| `add_text_field`, `add_code_editor` | `create("text_input")` |
+| `add_image_from_bytes`, `add_video` | `create("image")`; frames via `set(rgba=..., ...)` |
+| `add_image(path)` | removed (D6) |
+| `add_icon` | `create("path")` (icon data from the app) |
+| `add_canvas` | `create("canvas")` |
+| `add_scroll_view` | `create("scroll_view")` |
+| `add_virtual_list` | `create("virtual_list")` |
+| `add_terminal` | `create("terminal")` |
+| `add_dock_zone` | unchanged |
+| `add_button`, `add_icon_button`, `add_fab`, `add_extended_fab`, `add_segmented_button`, `add_chip`, `add_menu_item`, `add_badge`, `add_linear_progress`, `add_circular_progress`, `add_loading_indicator`, `add_time_picker_dial`, `add_card`, `add_divider`, `add_tooltip`, `add_dialog`, `add_snackbar`, `add_side_sheet`, `add_navigation_rail`, `add_navigation_drawer`, `add_top_app_bar`, `add_toolbar`, `add_split_button`, `add_button_group`, `add_tabs`, `add_search_bar`, `add_search_view`, `add_list_item`, `add_list`, `add_accordion_header`, `add_tree_node`, `add_date_picker_day`, `add_time_input_field`, `add_period_selector`, `add_popover`, `add_link`, `add_spin_box`, `add_pagination`, `add_status_bar`, `add_checkbox`, `add_radio_button`, `add_switch`, `add_slider`, `add_carousel`, `add_splitter`, `add_node_graph`, `add_graph_node` | framework |
+
+### `Window` — everything else
+
+| Today | Target |
+| --- | --- |
+| `from_view`, `show_view` | `root.add_child(screen)` (M96) |
+| `theme`, `set_theme` | framework (D7) |
+| `build_menu`, `open_menu`, `close_menu`, `open_dialog`, `close_dialog`, `open_snackbar`, `close_snackbar`, `open_side_sheet`, `close_side_sheet`, `open_navigation_drawer`, `close_navigation_drawer` | `show_layer`, `hide_layer` |
+| `build_shell`, `begin_container_transform`, `end_container_transform` | framework |
+| `get_monospace_cell_size` | `measure_text` |
+| `resize_terminal` | `terminal.set(cols=, rows=)` |
+| `copy_terminal_selection` | `terminal.get("selection")` + `write_clipboard` |
+| `click`, `hover`, `focus`, `scroll`, `right_click`, `press_key`, `type_text`, `press_ctrl`, `copy`, `cut`, `paste`, `select_all` | `simulate` |
+| `copy_to_system_clipboard`, `cut_to_system_clipboard`, `paste_from_system_clipboard` | `read_clipboard`, `write_clipboard`; text inputs handle the keys themselves |
+| `resize` | unchanged |
+| `dock_panel` | unchanged |
+| `set_active_tab` | `set_active_panel` |
+| `start_panel_drag(handle)` | `start_panel_drag(panel)` |
+| `set_dock_handle`, `set_drop_zone_highlight`, `drag_panel_over`, `drop_panel_at` | removed; `dock_target`/`dock_drop` events and `simulate` |
+| `set_virtual_list_window` | not needed: `tre` keeps the visible rows built (M96) |
+| `redraw_canvas(canvas)` | `canvas.redraw()` |
+
+### `Node`
+
+| Today | Target |
+| --- | --- |
+| `animate(property, to, duration_ms, on_complete)` | `animate(name, to, duration_ms, easing, on_complete)`; plus `stop_animation`, `get_target` |
+| `get(property)` | `get(name)` |
+| `set_layout(...)`, `set_text`, `set_checked`, `set_selected`, `set_clip_children`, `set_syntax_spans`, `set_folded_ranges`, `set_terminal_selection` | `set(...)` |
+| `get_text`, `get_checked`, `get_selected`, `is_focused` | `get("text")`, `get("focused")`; checked/selected become framework state |
+| `set_on_click`, `set_on_hover_enter`, `set_on_hover_exit`, `set_on_change`, `set_on_focus_enter`, `set_on_focus_exit` | `on("click")`, `on("pointer_enter")`, `on("pointer_leave")`, `on("change")`, `on("focus")`, `on("unfocus")` |
+| `set_context_menu` | `on("secondary_click")` + `show_layer` |
+| `enable_interaction` | framework (D8) |
+| `add_child` | unchanged |
+| `remove` | `remove` (now keeps the node alive, R5); `destroy` to free |
+| `push_frame` | `set(rgba=..., pixel_width=..., pixel_height=...)` (R9) |
+| `set_carousel_index`, `get_carousel_index`, `get_carousel_position`, `set_carousel_scroll`, `get_carousel_scroll`, `set_time_picker_dial_time`, `get_time_picker_dial_time`, `set_time_picker_dial_mode`, `get_time_picker_dial_mode` | framework |
+
+### Properties
+
+| Today | Target |
+| --- | --- |
+| `background`, `foreground` | `fill` (R1) |
+| `border_color`, `border_width` | `stroke_color`, `stroke_width` (R1) |
+| `corner_radii_override` | `corner_radius` 4-tuple |
+| `elevation` | `shadows` |
+| `transform` (tuple) | `translate_x`, `translate_y`, `scale` |
+| `rotation` (icons) | `rotation_deg` (every node) |
+| `shape` (MD3 shape library) | a `path`'s `data` |
+| `check_progress`, `select_progress`, `toggle_progress`, `value` | framework-owned animation state |
+| `opacity`, `corner_radius`, layout names | unchanged |
+
+### Other
+
+| Today | Target |
+| --- | --- |
+| `View` (`node`, `poll_reload`, `reconcile`, `set_stylesheet`, `set_theme`, `instantiate`, `click`, `hover`, `focus`, `right_click`), `Component` (`node`, `instantiate`, `remove`) | removed; the declarative layer moves to the app layer (M98) |
+| `Theme` (`role`, `is_set`, `shape`, `elevation`, `typography`) | removed; theming is the app's (D7) |
+| `Signal`, `Computed`, `Effect`, `ViewModel`, `batch`, `untrack` | moved out of the engine (D5) |
+| `CanvasContext` | `Painter` |
+| `Event.kind`, `Event.node`, `Event.source`, `Event.position` | `Event.type`, `Event.target`; `source` goes (use `target`), and `position` becomes `window_x`/`window_y` (M100) |
+| MD3 named motion curves | cubic bezier values (app code) |
+| `App`, `LoopHandle`, `register_font`, `MONOSPACE_FONT_FAMILY` | unchanged |

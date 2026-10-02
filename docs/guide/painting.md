@@ -105,7 +105,7 @@ Video is the same node with each frame set as it arrives:
 ## Canvas
 
 A `"canvas"` node draws with code. Its `draw` callback gets a
-[`Painter`](../api/python/painter.md) and runs when the canvas is created,
+[`Painter`](../reference/painter.md) and runs when the canvas is created,
 when `draw` is set, and whenever you call `canvas.redraw()` — never on its
 own, so redraw when your data changes:
 
@@ -134,7 +134,7 @@ when most of it changed. Nothing in your code has to say what changed.
 instead, and `window.get("partial_redraw_active")` says whether the open
 window really redraws partially (`None` before `App.run()` opens it).
 `window.set(show_damage=True)` (0.4.1) tints each frame's redrawn areas, for
-debugging. See [Window](../api/python/window.md).
+debugging. See [Window](../reference/window.md).
 
 ## What Tesserae Engine leaves to you
 

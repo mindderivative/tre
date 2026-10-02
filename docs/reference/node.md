@@ -76,7 +76,7 @@ never for an animation replaced or stopped first.
 **`get_target(name)`** is where a running animation is heading — `get(name)`
 when nothing animates it — and **`stop_animation(name)`** stops it where it
 is. See [Paint, Paths, and Animation](paint.md#animating) and the
-[Animation](../../guide/animation.md) guide.
+[Animation](../guide/animation.md) guide.
 
 ## `redraw`
 

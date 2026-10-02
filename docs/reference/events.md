@@ -2,7 +2,7 @@
 
 Listeners registered with `on(event, handler)` on a [`Node`](node.md) or a
 [`Window`](window.md). For a walkthrough, see
-[Events and Input](../../guide/events-and-input.md).
+[Events and Input](../guide/events-and-input.md).
 
 ## Node listeners
 

@@ -3,7 +3,7 @@
 Input reaches your code through listeners. `node.on(event, handler)`
 registers one — replacing any earlier listener for that event on that node —
 and `node.off(event)` removes it. A handler takes no arguments, or one: the
-[`Event`](../api/python/events.md#event).
+[`Event`](../reference/events.md#event).
 
 ```python
 button.on("click", lambda: save())
@@ -12,7 +12,7 @@ button.on("pointer_down", lambda e: print(e.x, e.y, e.button))
 
 An exception in a handler is logged and doesn't stop the app. Every event,
 and every field it carries, is in
-[Events and Listeners](../api/python/events.md).
+[Events and Listeners](../reference/events.md).
 
 ## Bubbling
 
