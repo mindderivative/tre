@@ -74,7 +74,7 @@ complete switch.
 - **[Getting Started](getting-started.md)** — a first window, step by step.
 - **[Python API Reference](api/python/index.md)** — every class, method,
   property, and event.
-- **[Upgrading to 0.5.0](migrating-0.5.md)** — from 0.4.x: no renames,
+- **[Upgrading to 0.5.x](migrating-0.5.md)** — from 0.4.x: no renames,
   custom windowing, and a window root's fill now paints.
 - **[Upgrading to 0.4.x](migrating-0.4.md)** — from 0.3.5: no renames, a
   few behavior changes.

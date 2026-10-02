@@ -145,6 +145,9 @@ pub async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
         &mut text_renderer,
         &mut geometry_cache,
     );
+    // An image node needs its texture uploaded and bound before it renders;
+    // a tree without one has nothing to upload.
+    frame_renderer.sync_image_textures(tree, &device, &queue);
     let render_size = RenderSize { width, height };
     let mut encoder =
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
@@ -220,11 +223,13 @@ pub fn placed(x: f32, y: f32, w: f32, h: f32) -> Style {
     }
 }
 
-/// A 100x100 background root.
+/// A 100x100 background root. A `Container`, as a window's root is
+/// (`engine-py`'s `Window`): a `Rect` root once hid that a container's fill
+/// never painted (0.5.0, #46).
 pub fn scene() -> (Tree, NodeId) {
     let mut tree = Tree::new();
     let root = tree.insert(
-        NodeKind::Rect,
+        NodeKind::Container,
         Style {
             size: Size {
                 width: length(f32::from(SIZE)),

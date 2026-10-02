@@ -63,6 +63,56 @@ pub(crate) fn walk<'t>(
     visit(tree, root, Affine::IDENTITY, visible, 1.0, None, 0, visitor);
 }
 
+/// 0.5.1 (#69): walks the subtree under `id` as if it were the whole tree,
+/// for an effect's offscreen render: `id` is placed at the origin with no
+/// transform of its own and no opacity of its own (the main scene applies
+/// both to the effect's result), and its box is the visible area.
+pub(crate) fn walk_root<'t>(tree: &'t Tree, id: NodeId, visitor: &mut impl Visitor<'t>) {
+    let Some(node) = tree.get(id) else { return };
+    let layout = tree.layout(id);
+    let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
+    let bounds = Rect::new(0.0, 0.0, w, h);
+    let here = Visit {
+        id,
+        node,
+        composed: Affine::IDENTITY,
+        w,
+        h,
+        bounds,
+        visible: bounds,
+        opacity: 1.0,
+        parent: None,
+        order: 0,
+    };
+    descend(tree, &here, visitor);
+}
+
+/// A node the rules accepted: the visitor's `enter`, then the children in
+/// paint order, then `leave`.
+fn descend<'t>(tree: &'t Tree, here: &Visit<'t>, visitor: &mut impl Visitor<'t>) {
+    if !visitor.enter(here) {
+        return;
+    }
+    let child_visible = if clips_children(here.node) {
+        here.visible.intersect(here.bounds)
+    } else {
+        here.visible
+    };
+    for (index, &child) in tree.children_in_paint_order(here.id).iter().enumerate() {
+        visit(
+            tree,
+            child,
+            here.composed,
+            child_visible,
+            here.opacity,
+            Some(here.id),
+            index,
+            visitor,
+        );
+    }
+    visitor.leave(here);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn visit<'t>(
     tree: &'t Tree,
@@ -102,25 +152,5 @@ fn visit<'t>(
         parent,
         order,
     };
-    if !visitor.enter(&here) {
-        return;
-    }
-    let child_visible = if clips_children(node) {
-        visible.intersect(bounds)
-    } else {
-        visible
-    };
-    for (index, &child) in tree.children_in_paint_order(id).iter().enumerate() {
-        visit(
-            tree,
-            child,
-            composed,
-            child_visible,
-            here.opacity,
-            Some(id),
-            index,
-            visitor,
-        );
-    }
-    visitor.leave(&here);
+    descend(tree, &here, visitor);
 }

@@ -1241,6 +1241,10 @@ pub struct Node {
     /// 0.5.0 M3 (issue #28): whether a primary press here moves the window
     /// -- the framework's own title bar. See `WindowRegion`.
     pub window_region: WindowRegion,
+    /// 0.5.1 (#66): the node's shader, if any -- its fill (`Fill`) or an
+    /// effect on its own content (`Effect`). Shared between nodes; drawn by
+    /// the renderer in a later milestone.
+    pub shader: Option<std::sync::Arc<crate::Shader>>,
 }
 
 /// 0.5.0 M3 (issue #28): a node's part in moving the window, for a

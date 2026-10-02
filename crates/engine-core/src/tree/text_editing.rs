@@ -35,7 +35,11 @@ impl Tree {
         if !state.multiline {
             return;
         }
-        let viewport_height = f64::from(self.layout(field).size.height);
+        // 0.5.1 (#53): the viewport is the content box, inside the padding.
+        let layout = self.layout(field);
+        let pad = layout.padding;
+        let viewport_height = f64::from(layout.size.height - pad.top - pad.bottom).max(0.0);
+        let viewport_width = f64::from(layout.size.width - pad.left - pad.right).max(0.0);
         let NodeKind::TextField(state) = &self.nodes[field].kind else {
             unreachable!("checked above")
         };
@@ -63,7 +67,6 @@ impl Tree {
         // field_max_width` never wraps a `multiline` field's own real
         // lines, so a long line can overflow the box horizontally the
         // same way tall content overflows it vertically.
-        let viewport_width = f64::from(self.layout(field).size.width);
         let char_width = f64::from(state.font_size) * Self::CODE_EDITOR_CHAR_WIDTH_RATIO;
         let h_scroll = if char_width <= 0.0 {
             0.0

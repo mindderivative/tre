@@ -69,3 +69,15 @@ Using a `Window`, `Node`, or `App` from any thread but its own raises
 Exception` won't swallow the mistake. Dropping one on another thread is
 safe: if Python's garbage collector frees a Tesserae Engine object on a worker, the
 free itself happens on the object's own thread at its next frame.
+
+## Idle windows and the GIL
+
+Since 0.5.1 an idle window waits for its next event with the GIL released, so
+worker threads (a file watcher, a loader) run while it sits still, and their
+`call_soon` calls arrive. Through 0.5.0.1 they did not: the idle loop held the
+GIL, and a thread only got through while the window was still drawing. When the
+loop wakes it takes the GIL back, so a Python thread that never lets go (a
+CPU-bound loop) can delay a wake-up by up to CPython's 5 ms switch interval;
+measured, an idle window's `call_soon` takes well under a millisecond
+otherwise. Tell long CPU-bound work to run in a process or release the GIL
+(`time.sleep(0)` in the loop, or native code).

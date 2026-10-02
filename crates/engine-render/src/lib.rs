@@ -25,8 +25,10 @@
 mod damage;
 mod fonts;
 mod geometry_cache;
+mod gpu_watch;
 mod image_cache;
 mod persistent_target;
+mod shader_pass;
 mod text;
 mod walk;
 mod window_renderer;
@@ -42,8 +44,10 @@ use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 pub use damage::{Damage, DamageTracker, MAX_RECTS};
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
+pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
+pub use shader_pass::{ShaderPasses, ShaderTextures};
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 pub use window_renderer::WindowRenderer;
 
@@ -148,7 +152,18 @@ pub fn build_tree_scene(
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
 ) -> Scene {
-    build_scene(tree, root, width, height, None, resources, text, geometry)
+    build_scene(
+        tree,
+        root,
+        width,
+        height,
+        None,
+        &ShaderTextures::none(),
+        None,
+        resources,
+        text,
+        geometry,
+    )
 }
 
 /// 0.4.0 M5: `build_tree_scene` for a partial redraw -- only what paints
@@ -173,6 +188,57 @@ pub fn build_tree_scene_in(
         width,
         height,
         Some(rects),
+        &ShaderTextures::none(),
+        None,
+        resources,
+        text,
+        geometry,
+    )
+}
+
+/// 0.5.1 (#67): `build_tree_scene` (`rects: None`) or `build_tree_scene_in`
+/// for a frame whose fill shaders ran: a node in `shaders` paints its box
+/// from its shader's texture, behind its own paint.
+#[allow(clippy::too_many_arguments)]
+pub fn build_tree_scene_shaded(
+    tree: &Tree,
+    root: NodeId,
+    width: u16,
+    height: u16,
+    rects: Option<&[Rect]>,
+    shaders: &ShaderTextures,
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
+) -> Scene {
+    build_scene(
+        tree, root, width, height, rects, shaders, None, resources, text, geometry,
+    )
+}
+
+/// 0.5.1 (#69): the scene of an effect node's own content, for its offscreen
+/// render: the node as the root at the origin (no transform or opacity of
+/// its own), `width` x `height` its box. A shader node inside it paints from
+/// `shaders` (an inner effect replaces its subtree), as in the main scene.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_effect_content(
+    tree: &Tree,
+    node: NodeId,
+    width: u16,
+    height: u16,
+    shaders: &ShaderTextures,
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
+) -> Scene {
+    build_scene(
+        tree,
+        node,
+        width,
+        height,
+        None,
+        shaders,
+        Some(node),
         resources,
         text,
         geometry,
@@ -186,6 +252,8 @@ fn build_scene(
     width: u16,
     height: u16,
     rects: Option<&[Rect]>,
+    shaders: &ShaderTextures,
+    effect_root: Option<NodeId>,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
@@ -209,13 +277,19 @@ fn build_scene(
     let mut painter = Painter {
         tree,
         rects,
+        shaders,
+        effect_root,
         scene: &mut scene,
         resources,
         text,
         geometry,
         open: Vec::new(),
     };
-    walk::walk(tree, root, visible, &mut painter);
+    if effect_root.is_some() {
+        walk::walk_root(tree, root, &mut painter);
+    } else {
+        walk::walk(tree, root, visible, &mut painter);
+    }
     if rects.is_some() {
         scene.pop_layer();
     }
@@ -329,6 +403,12 @@ struct Painter<'a> {
     tree: &'a Tree,
     /// A partial redraw's damage rects; `None` paints everything.
     rects: Option<&'a [Rect]>,
+    /// 0.5.1 (#67): the nodes whose fill shader ran this frame.
+    shaders: &'a ShaderTextures,
+    /// 0.5.1 (#69): the effect node whose content this scene is. It draws
+    /// itself and its subtree, with no opacity layer of its own, and not as
+    /// the effect's result.
+    effect_root: Option<NodeId>,
     scene: &'a mut Scene,
     resources: &'a mut Resources,
     text: &'a mut TextRenderer,
@@ -366,13 +446,57 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
         // too. The node's own paints are then fully opaque (`own_alpha` in
         // `draw_own`), their colors' own alpha applying through
         // `with_opacity`.
-        let opacity = node.paint.opacity.current;
+        let is_root = self.effect_root == Some(v.id);
+        let opacity = if is_root {
+            1.0
+        } else {
+            node.paint.opacity.current
+        };
         let layered = opacity < 1.0;
         if layered {
             self.scene
                 .push_layer(None, None, Some(opacity as f32), None, None);
         }
+        // 0.5.1 (#69): an effect node whose shader ran is its result: the
+        // texture in place of the node and its subtree.
+        let shader = if is_root {
+            None
+        } else {
+            self.shaders.texture_of(v.id)
+        };
+        if let Some((size, true)) = shader {
+            if draw_self {
+                paint_shader_texture(
+                    node,
+                    v.id,
+                    v.w,
+                    v.h,
+                    v.composed,
+                    size,
+                    false,
+                    self.scene,
+                    self.geometry,
+                );
+            }
+            if layered {
+                self.scene.pop_layer();
+            }
+            return false;
+        }
         if draw_self {
+            if let Some((size, false)) = shader {
+                paint_shader_texture(
+                    node,
+                    v.id,
+                    v.w,
+                    v.h,
+                    v.composed,
+                    size,
+                    true,
+                    self.scene,
+                    self.geometry,
+                );
+            }
             draw_own(
                 self.tree,
                 v.id,
@@ -458,6 +582,161 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
     }
 }
 
+/// 0.5.1 (#67, #69): a node's shader texture -- a fill shader's, drawn behind
+/// the node's own paint, or an effect's result, drawn in the node's place --
+/// as an external texture over its box -- clipped to the rounded corners, as an image is -- before the node's
+/// own paint, which draws over it. `size` is the shader texture's size,
+/// which the box's rounds up to.
+#[allow(clippy::too_many_arguments)]
+fn paint_shader_texture(
+    node: &engine_core::Node,
+    id: NodeId,
+    w: f64,
+    h: f64,
+    composed: Affine,
+    size: (u32, u32),
+    clip_rounded: bool,
+    scene: &mut Scene,
+    geometry: &mut GeometryCache,
+) {
+    scene.set_transform(composed);
+    let rounded = clip_rounded
+        && (node.paint.corner_radius.current > 0.0 || node.paint.corner_radii_override.is_some());
+    if rounded {
+        scene.push_layer(
+            Some(box_path(node, id, w, h, geometry)),
+            None,
+            None,
+            None,
+            None,
+        );
+    }
+    let region = vello_common::geometry::RectU16 {
+        x0: 0,
+        y0: 0,
+        x1: size.0 as u16,
+        y1: size.1 as u16,
+    };
+    let transform = Affine::scale_non_uniform(w / f64::from(size.0), h / f64::from(size.1));
+    scene.set_paint(vello_common::paint::Image {
+        image: vello_common::paint::ImageSource::external_texture(
+            shader_pass::texture_id_for(id),
+            region,
+            true,
+        ),
+        sampler: peniko::ImageSampler {
+            quality: peniko::ImageQuality::Medium,
+            ..Default::default()
+        },
+    });
+    scene.set_paint_transform(transform);
+    scene.fill_rect(&Rect::new(0.0, 0.0, w, h));
+    scene.reset_paint_transform();
+    if rounded {
+        scene.pop_layer();
+    }
+}
+
+/// A node's own background: its `fill`, over the box rounded by its
+/// `corner_radius` (or per-corner radii). Every kind with a box paints it
+/// the way a box does (0.5.1, #45); before, only a box did, and `set` on
+/// any other kind was accepted and drew nothing.
+///
+/// `corner_radii_override` (`[top_left, top_right, bottom_right,
+/// bottom_left]`) wins when set; `None` falls through to the uniform
+/// scalar. The path comes from `geometry`, re-tessellated only when this
+/// node's `w`/`h`/radius changed since its last paint (`GeometryCache`).
+fn fill_box(
+    node: &engine_core::Node,
+    id: NodeId,
+    w: f64,
+    h: f64,
+    geometry: &mut GeometryCache,
+    scene: &mut Scene,
+    own_alpha: f64,
+) {
+    scene.set_paint(with_opacity(node.paint.background.current, own_alpha));
+    scene.fill_path(box_path(node, id, w, h, geometry));
+}
+
+/// The box's own rounded outline, for a fill or a clip.
+fn box_path<'g>(
+    node: &engine_core::Node,
+    id: NodeId,
+    w: f64,
+    h: f64,
+    geometry: &'g mut GeometryCache,
+) -> &'g BezPath {
+    match node
+        .paint
+        .corner_radii_override
+        .as_ref()
+        .map(|r| r.current.0)
+    {
+        Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
+        None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
+    }
+}
+
+/// Where a node's own content draws (0.5.1, #53): its box inset by its
+/// computed `padding`, as children are laid out. A text input's text, a
+/// terminal's cells, an image, a path, and a canvas's painter coordinates
+/// all start at `(x, y)` and fit `w` by `h`; the node's own background and
+/// border stay on its whole box. With no padding it is the whole box, so
+/// nothing moves.
+struct ContentBox {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+fn content_box(tree: &Tree, id: NodeId, w: f64, h: f64) -> ContentBox {
+    let pad = tree.layout(id).padding;
+    let (left, top) = (f64::from(pad.left), f64::from(pad.top));
+    ContentBox {
+        x: left,
+        y: top,
+        w: (w - left - f64::from(pad.right)).max(0.0),
+        h: (h - top - f64::from(pad.bottom)).max(0.0),
+    }
+}
+
+/// A node's own border: `stroke_color` and `stroke_width`, drawn entirely
+/// inside its bounds (inset by half the stroke width, since strokes are
+/// centered on the path) and following the same rounded corners as the
+/// fill. It never changes layout. Skipped at a width of `0.0`.
+fn stroke_box(
+    node: &engine_core::Node,
+    id: NodeId,
+    w: f64,
+    h: f64,
+    geometry: &mut GeometryCache,
+    scene: &mut Scene,
+    own_alpha: f64,
+) {
+    let border_width = node.paint.border_width.current;
+    if border_width <= 0.0 {
+        return;
+    }
+    let inset = border_width / 2.0;
+    let border_path: &BezPath = match node
+        .paint
+        .corner_radii_override
+        .as_ref()
+        .map(|r| r.current.0)
+    {
+        Some(radii) => geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
+        None => {
+            let radius = (node.paint.corner_radius.current - inset).max(0.0);
+            geometry.rounded_rect_border(id, w, h, radius, inset)
+        }
+    };
+    scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+    scene.set_stroke(Stroke::new(border_width));
+    scene.stroke_path(border_path);
+}
+
 /// A node's own paint -- shadows, then what its kind draws -- in its own
 /// coordinates under `composed`.
 #[allow(clippy::too_many_arguments)]
@@ -517,81 +796,31 @@ fn draw_own(
         // properties too; it painted nothing before, so a root's fill never
         // showed.
         NodeKind::Rect | NodeKind::Container => {
-            let color = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(color);
-            // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
-            // (`[top_left, top_right, bottom_right, bottom_left]`)
-            // wins when set (a segmented group's first/last segment,
-            // rounded only on its outer edge). `None` falls
-            // through to the identical uniform-scalar `RoundedRect`
-            // this arm always painted.
-            // M34 Phase 1 (§5, §8): the real path itself comes from
-            // `geometry` now -- re-tessellated only when this
-            // node's own `w`/`h`/radius genuinely changed since its
-            // last paint, not rebuilt from scratch every frame
-            // (`GeometryCache`'s own doc comment has the real,
-            // measured motivation).
-            let path = match node
-                .paint
-                .corner_radii_override
-                .as_ref()
-                .map(|r| r.current.0)
-            {
-                Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
-                None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
-            };
-            scene.fill_path(path);
-            // M30 Phase 1 (§5, §7): a real stroked border (the Python
-            // API's `stroke_color`/`stroke_width`), universal
-            // `PaintProperties` like `background`/`corner_radius`. Inset by half the stroke
-            // width so the border paints entirely *inside* this node's
-            // own bounds (kurbo strokes are centered on the path by
-            // default) -- a border never grows past the node's own
-            // taffy-computed box the way a naive un-inset stroke would.
-            // Skipped entirely at `border_width <= 0.0`.
-            let border_width = node.paint.border_width.current;
-            if border_width > 0.0 {
-                let inset = border_width / 2.0;
-                // M38 Phase 4 (§5, §7): the border path now matches
-                // whichever real fill geometry this node actually used
-                // just above, closing a real, previously-dormant gap --
-                // `RectPathParams::PerCornerBorder`'s own doc comment
-                // has the full story (`geometry_cache.rs`).
-                let border_path: std::borrow::Cow<'_, BezPath> = if let Some(radii) = node
-                    .paint
-                    .corner_radii_override
-                    .as_ref()
-                    .map(|r| r.current.0)
-                {
-                    std::borrow::Cow::Borrowed(
-                        geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
-                    )
-                } else {
-                    let radius = (node.paint.corner_radius.current - inset).max(0.0);
-                    std::borrow::Cow::Borrowed(
-                        geometry.rounded_rect_border(id, w, h, radius, inset),
-                    )
-                };
-                let border_color = with_opacity(node.paint.border_color.current, own_alpha);
-                scene.set_paint(border_color);
-                scene.set_stroke(Stroke::new(border_width));
-                scene.stroke_path(&border_path);
-            }
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         NodeKind::Text(state) => {
             let color = with_opacity(node.paint.background.current, own_alpha);
+            // 0.5.1 (#44): the node's padding insets its glyphs. taffy sizes
+            // the node padding-included, so the text lays out in what's
+            // left; before, it drew at the node's corner across its full
+            // width, and the padding was reserved but never used.
+            let padding = tree.layout(id).padding;
             text.draw(
                 scene,
                 resources,
                 state,
                 TextPlacement {
-                    x: 0.0,
-                    y: 0.0,
-                    max_width: w as f32,
+                    x: f64::from(padding.left),
+                    y: f64::from(padding.top),
+                    max_width: (w as f32 - padding.left - padding.right).max(0.0),
                     color,
                 },
                 id,
             );
+            // 0.5.1 (#45): a text node's `stroke_*` and `corner_radius`
+            // paint a border around its box; its `fill` is the glyph color.
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M15 Phase 1 (§5, §16.7): unlike `NodeKind::Text` (a plain
         // label with no visible box, `background` repurposed as the
@@ -602,8 +831,7 @@ fn draw_own(
         // `state.text_tint` (below).
         NodeKind::TextField(state) => {
             let radius = node.paint.corner_radius.current;
-            let bg = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(bg);
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
             // M38 Phase 7 (§5, §8): a real, previously-uncached fill --
             // direct grep before this phase found this arm still built
             // a fresh `RoundedRect::to_path` every frame, despite M38
@@ -614,7 +842,6 @@ fn draw_own(
             // same real cache `Rect`/`Terminal` already use -- also
             // reused directly below for this same node's
             // own real clip layer, since both need the identical path.
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
             // M20 Phase 2 (§7.1, §7.3): the real resolved color comes
             // from `state.text_tint` -- plain dark by default
@@ -641,10 +868,12 @@ fn draw_own(
             // establishes -- `0.0` for every field that never sets it
             // (every single-line field, and every multiline field
             // whose own longest real line still fits the box).
+            // 0.5.1 (#53): inside the node's padding.
+            let content = content_box(tree, id, w, h);
             let text_at = TextPlacement {
-                x: -state.horizontal_scroll_offset.current,
-                y: -state.scroll_offset.current,
-                max_width: w as f32,
+                x: content.x - state.horizontal_scroll_offset.current,
+                y: content.y - state.scroll_offset.current,
+                max_width: content.w as f32,
                 color: text_color,
             };
             let show_caret = tree.focused() == Some(id);
@@ -656,6 +885,7 @@ fn draw_own(
             } else {
                 text.draw_field(scene, resources, state, text_at, show_caret, id);
             }
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own cell
         // grid -- `background` paints the real box fill first (the
@@ -665,42 +895,47 @@ fn draw_own(
         // fixed color (`engine-render` has no design system to resolve
         // one from, §4).
         NodeKind::Terminal(state) => {
-            let radius = node.paint.corner_radius.current;
-            let bg = with_opacity(node.paint.background.current, own_alpha);
-            scene.set_paint(bg);
-            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
 
             let cursor_color =
                 with_opacity(peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF), own_alpha);
+            // 0.5.1 (#53): the cell grid starts inside the node's padding.
+            let content = content_box(tree, id, w, h);
             text.draw_terminal(
                 scene,
                 resources,
                 state,
                 TextPlacement {
-                    x: 0.0,
-                    y: 0.0,
-                    max_width: w as f32,
+                    x: content.x,
+                    y: content.y,
+                    max_width: content.w as f32,
                     color: cursor_color,
                 },
                 tree.focused() == Some(id),
                 id,
             );
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
-        // A `VirtualList` container paints nothing itself -- it exists
+        // A `VirtualList` container paints only its box -- it exists
         // purely to give `taffy` something to lay its (windowed) children
         // out against; the recursive walk
         // below already only ever sees `VirtualListState::materialized`'s
         // small real subset, never `item_count`, with zero changes
         // needed here (§14 step 15, §11.7).
-        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints nothing of
-        // its own, like `VirtualList` -- its one real
+        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints no content of
+        // its own, like `VirtualList` (just its box, 0.5.1) -- its one real
         // child's own absolute position is already baked into `layout_
         // style` by `Tree::sync_scroll_view_layouts`, so the ordinary
         // recursive walk below (composed transform only, no extra
         // paint-time offset) already paints it in the right place; the
         // unconditional clip below is this kind's only other real
         // paint-time behavior.
-        NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {}
+        NodeKind::VirtualList(_) | NodeKind::ScrollView(_) => {
+            // 0.5.1 (#45): their own background and border, under the
+            // children (which `enter` clips to the same rounded box).
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
+        }
         // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
         // resolved ahead of time by `engine-py`'s `draw` callback
         // (`canvas.rs`'s own module doc comment) -- every coordinate is
@@ -714,6 +949,10 @@ fn draw_own(
         // `NodeKind` arm in this whole match that never touched the
         // node's own universal opacity at all).
         NodeKind::Canvas(state) => {
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            // 0.5.1 (#53): painter coordinates start at the padding.
+            let content = content_box(tree, id, w, h);
+            scene.set_transform(composed * Affine::translate((content.x, content.y)));
             for command in &state.commands {
                 match command {
                     DrawCommand::FillRect {
@@ -742,6 +981,8 @@ fn draw_own(
                     }
                 }
             }
+            scene.set_transform(composed);
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M22 Phase 1 (§5): an image is an externally owned GPU texture
         // (`image_cache` has why -- the renderer doesn't take CPU pixel
@@ -755,6 +996,21 @@ fn draw_own(
         // texels onto the node box. The paint has no opacity of its own,
         // so an opacity layer wraps it, skipped when fully transparent.
         NodeKind::Image(state) => {
+            // 0.5.1 (#45): a background behind the image (it shows through
+            // transparent pixels and letterbox bars), the image clipped to
+            // the rounded box, and a border on top.
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            let rounded = node.paint.corner_radius.current > 0.0
+                || node.paint.corner_radii_override.is_some();
+            if rounded {
+                scene.push_layer(
+                    Some(box_path(node, id, w, h, geometry)),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            }
             let img_width = state.image.width;
             let img_height = state.image.height;
             let node_opacity = own_alpha;
@@ -762,8 +1018,16 @@ fn draw_own(
             let fits = img_width <= image_cache::MAX_IMAGE_DIMENSION
                 && img_height <= image_cache::MAX_IMAGE_DIMENSION;
             if img_width > 0 && img_height > 0 && fits && node_opacity > 0.0 {
-                let (source_region, transform) =
-                    image_sample_rect(w, h, img_width, img_height, state.content_fit);
+                // 0.5.1 (#53): fitted into the content box (inside the padding).
+                let content = content_box(tree, id, w, h);
+                let (source_region, transform) = image_sample_rect(
+                    content.w,
+                    content.h,
+                    img_width,
+                    img_height,
+                    state.content_fit,
+                );
+                let transform = Affine::translate((content.x, content.y)) * transform;
                 // The texture is an image paint: `transform` maps the
                 // source region's texels to the node box, as the paint
                 // transform, and the fill covers the region's image there.
@@ -790,6 +1054,10 @@ fn draw_own(
                 scene.reset_paint_transform();
                 scene.pop_layer();
             }
+            if rounded {
+                scene.pop_layer();
+            }
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
         }
         // M95 (D4): any vector path, in node-local pixels once fitted
         // into the view box. The fill is the whole path; the stroke is
@@ -797,7 +1065,10 @@ fn draw_own(
         // caps and joins, and its width stays in pixels however the view
         // box scales the path.
         NodeKind::Path(state) => {
-            let (fill, stroke) = state.geometry(w, h);
+            // 0.5.1 (#53): the view box fits the content box, inside the padding.
+            let content = content_box(tree, id, w, h);
+            let (fill, stroke) = state.geometry(content.w, content.h);
+            scene.set_transform(composed * Affine::translate((content.x, content.y)));
             let fill_color = node.paint.background.current;
             if fill_color.components[3] > 0.0 {
                 scene.set_paint(with_opacity(fill_color, own_alpha));
@@ -813,6 +1084,7 @@ fn draw_own(
                 );
                 scene.stroke_path(&stroke);
             }
+            scene.set_transform(composed);
         }
     }
 }
@@ -964,6 +1236,8 @@ pub struct FrameRenderer {
     // caller's own tree has real `Image` nodes and calls
     // `sync_image_textures`.
     images: image_cache::ImageTextureCache,
+    // 0.5.1 (#67): the fill-shader passes and their textures.
+    shaders: shader_pass::ShaderPasses,
 }
 
 impl FrameRenderer {
@@ -973,6 +1247,7 @@ impl FrameRenderer {
             renderer,
             resources,
             images: image_cache::ImageTextureCache::new(),
+            shaders: shader_pass::ShaderPasses::new(config.format),
         }
     }
 
@@ -1079,6 +1354,58 @@ impl FrameRenderer {
     /// then stays empty, exactly this crate's pre-M22 behavior.
     pub fn sync_image_textures(&mut self, tree: &Tree, device: &wgpu::Device, queue: &wgpu::Queue) {
         self.images.sync(tree, device, queue);
+    }
+
+    /// 0.5.1 (#67, #69): runs this frame's shader passes and an effect's
+    /// offscreen content renders, each submitted to `queue` in dependency
+    /// order before the scene's render (an offscreen render can't share the
+    /// frame's encoder: the renderer writes its buffers at submit), and
+    /// returns which nodes' textures the scene may draw. `time` is the
+    /// window's clock, in seconds.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_shader_passes(
+        &mut self,
+        tree: &Tree,
+        root: NodeId,
+        width: u16,
+        height: u16,
+        time: f32,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        text: &mut TextRenderer,
+        geometry: &mut GeometryCache,
+    ) -> ShaderTextures {
+        self.shaders.run(
+            tree,
+            root,
+            width,
+            height,
+            time,
+            device,
+            queue,
+            shader_pass::Gpu {
+                renderer: &mut self.renderer,
+                resources: &mut self.resources,
+                images: &mut self.images,
+                text,
+                geometry,
+            },
+        )
+    }
+
+    /// A frame that draws nothing: no shader pass ran.
+    pub fn skip_shader_passes(&mut self) {
+        self.shaders.skipped();
+    }
+
+    /// Whether a shader drawn by the last `run_shader_passes` is animated.
+    pub fn shaders_animated(&self) -> bool {
+        self.shaders.animated()
+    }
+
+    /// How many shader passes the last `run_shader_passes` recorded.
+    pub fn shader_pass_count(&self) -> usize {
+        self.shaders.last_pass_count()
     }
 
     /// The same `Resources` `render` uses internally, exposed for

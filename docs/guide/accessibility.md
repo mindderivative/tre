@@ -21,7 +21,9 @@ save = window.create("box", width=96, height=40, corner_radius=20,
   own, so label the widget that shows them.
 - State — `checked`, `selected`, `expanded`, `disabled`, and a heading's
   `level`. Keep them current as the widget changes: a switch sets
-  `checked` each time it toggles.
+  `checked` each time it toggles. They are for assistive technology:
+  `disabled` doesn't stop the node taking focus, clicks, or keys — the widget
+  does that.
 - Value — `value` (a string or number), with `value_min`, `value_max`, and
   `value_step` for a range such as a slider or progress bar.
 

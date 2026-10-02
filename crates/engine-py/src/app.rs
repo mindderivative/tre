@@ -10,24 +10,30 @@
 //! orchestrates opening all of them together via `engine_platform::
 //! run_windowed_multi`.
 //!
-//! **No `Python::detach` around the render loop, deliberately, despite
-//! §9's own stated habit ("wrap layout/paint/render so per-frame work
-//! never serializes behind the GIL... costs nothing today").** Real
-//! finding (unchanged since step 6): `detach`'s closure must be `Ungil`,
-//! which on stable pyo3 0.29 requires `Send` -- and every `PyWindow`'s
-//! `Rc<RefCell<Tree>>` is `!Send` by design (§9). Revisit if a later
-//! step introduces real GIL contention from a second thread.
+//! **No `Python::detach` around the render loop** -- its closure must be
+//! `Ungil`, which on stable pyo3 0.29 requires `Send`, and every
+//! `PyWindow`'s `Rc<RefCell<Tree>>` is `!Send` by design (§9). Real GIL
+//! contention from a second thread arrived with `LoopHandle` (M87): an idle
+//! loop parked in `ControlFlow::Wait` with the GIL held starves every other
+//! Python thread, since CPython only hands the GIL over when the holder runs
+//! bytecode (0.5.1, #92). So the loop releases the GIL for its wait alone,
+//! with `PyEval_SaveThread`/`PyEval_RestoreThread` from `IdleHooks`, which
+//! the platform layer calls in `about_to_wait` and before any other handler:
+//! every Python callback still runs on the loop thread with the GIL held.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{
-    WindowConfig, WindowLifecycle, WindowOptions, WindowRequest, run_windowed_multi,
+    EventLoopWaker, IdleHooks, WindowConfig, WindowLifecycle, WindowOptions, WindowRequest,
+    run_windowed_multi_with,
 };
-use engine_render::{TextPlacement, TextRenderer, WindowRenderer};
+use engine_render::{GpuReport, GpuWatch, TextPlacement, TextRenderer, WindowRenderer};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
@@ -101,11 +107,16 @@ fn text_field_hit_offset(
     let NodeKind::TextField(state) = &node.kind else {
         return None;
     };
-    let width = tree.layout(hit).size.width;
+    // The placement the field is painted at (`engine-render`'s `draw_own`):
+    // inside its padding, and shifted by how far a multiline field has
+    // scrolled. A click is resolved against what is painted, so it must use
+    // the same one; before, it used the node's corner and ignored the scroll.
+    let layout = tree.layout(hit);
+    let pad = layout.padding;
     let at = TextPlacement {
-        x: 0.0,
-        y: 0.0,
-        max_width: width,
+        x: f64::from(pad.left) - state.horizontal_scroll_offset.current,
+        y: f64::from(pad.top) - state.scroll_offset.current,
+        max_width: (layout.size.width - pad.left - pad.right).max(0.0),
         color: peniko::Color::TRANSPARENT,
     };
     Some(text_renderer.hit_test_position(state, at, local_point))
@@ -127,7 +138,13 @@ fn terminal_hit_cell(
     let tree_ref = tree.borrow();
     match tree_ref.get(hit).map(|n| &n.kind) {
         Some(NodeKind::Terminal(state)) => {
-            Some(text_renderer.terminal_hit_cell(state, local_point))
+            // The cell grid starts inside the node's padding.
+            let pad = tree_ref.layout(hit).padding;
+            let inside = Point::new(
+                local_point.x - f64::from(pad.left),
+                local_point.y - f64::from(pad.top),
+            );
+            Some(text_renderer.terminal_hit_cell(state, inside))
         }
         _ => None,
     }
@@ -271,6 +288,9 @@ struct GpuState {
     /// damage tracker (M4), with the frame sequence that uses them --
     /// `engine_render::WindowRenderer`, which the pixel tests drive too.
     renderer: WindowRenderer,
+    /// 0.5.1 (#65): this device's health: its lost and error handlers, and
+    /// the stall watchdog. Installed the moment the device exists.
+    watch: GpuWatch,
 }
 
 impl GpuState {
@@ -300,6 +320,9 @@ impl GpuState {
             ..Default::default()
         }))
         .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
+        // 0.5.1 (#65): replaces wgpu's default handler, which panics on any
+        // GPU error, and learns of a lost device.
+        let watch = GpuWatch::install(&device);
 
         // 0.4.0 review: a window larger than the GPU's textures can be
         // renders at the largest size it can, not a panic in `configure`.
@@ -334,6 +357,7 @@ impl GpuState {
             device,
             queue,
             renderer,
+            watch,
         })
     }
 
@@ -500,10 +524,100 @@ fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
     }
 }
 
+/// 0.5.1 (#65): turns what the GPU reported into window events, on the
+/// loop's own thread with the GIL, and returns why the device was lost, if it
+/// was.
+fn deliver_gpu_reports(
+    handles: &WindowHandles,
+    reports: Vec<GpuReport>,
+    py: Python<'_>,
+) -> Option<String> {
+    let mut lost = None;
+    for report in reports {
+        match report {
+            GpuReport::Lost { destroyed, message } => {
+                let reason = if destroyed { "destroyed" } else { "unknown" };
+                lost = Some(if message.is_empty() {
+                    format!("the device was {reason}")
+                } else {
+                    message.clone()
+                });
+                listeners::deliver_window(
+                    &handles.window_listeners,
+                    py,
+                    WindowEventType::GpuLost,
+                    |e| {
+                        e.reason = Some(reason.to_string());
+                        e.message = Some(message);
+                    },
+                );
+            }
+            GpuReport::Error { message } => {
+                listeners::deliver_window(
+                    &handles.window_listeners,
+                    py,
+                    WindowEventType::GpuError,
+                    |e| e.message = Some(message),
+                );
+            }
+            GpuReport::Stalled { seconds } => {
+                listeners::deliver_window(
+                    &handles.window_listeners,
+                    py,
+                    WindowEventType::GpuStalled,
+                    |e| e.seconds = Some(seconds),
+                );
+            }
+        }
+    }
+    lost
+}
+
+/// 0.5.1 (#65): while any GPU work is in flight, wakes an otherwise idle
+/// loop about every 100 ms so the device gets polled -- a hang in the last
+/// submitted frame would otherwise never be noticed, since nothing else runs
+/// in a sleeping loop. It costs nothing while the GPU is idle.
+struct GpuWake {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl GpuWake {
+    fn start(waker: EventLoopWaker) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("tre-gpu-wake".into())
+            .spawn(move || {
+                while !flag.load(Ordering::Relaxed) {
+                    std::thread::park_timeout(Duration::from_millis(100));
+                    if engine_render::any_in_flight() {
+                        waker.wake();
+                    }
+                }
+            })
+            .ok();
+        Self { stop, thread }
+    }
+}
+
+impl Drop for GpuWake {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            thread.thread().unpark();
+            let _ = thread.join();
+        }
+    }
+}
+
 struct WindowRuntime {
     /// 0.4.0 M6: the window's shared handles (`WindowHandles`).
     handles: WindowHandles,
     gpu: GpuState,
+    /// 0.5.1 (#70): when the window opened, on the window's clock: a
+    /// shader's `frame.time` is the seconds since.
+    opened: std::time::Instant,
     /// M18 Phase 2 (§8, §10): which `TextField` (if any) a real
     /// press-and-drag is currently extending a selection in -- plain,
     /// not `RefCell`-wrapped, since only `on_input`'s own closure ever
@@ -643,7 +757,35 @@ impl App {
         // has stopped.
         let startup_error: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
         let startup_error_for_created = startup_error.clone();
-        let result = run_windowed_multi(
+        let startup_error_for_frame = startup_error.clone();
+        let startup_error_for_lifecycle = startup_error.clone();
+        let gpu_wake: Rc<RefCell<Option<GpuWake>>> = Rc::new(RefCell::new(None));
+        let gpu_wake_for_setup = gpu_wake.clone();
+        // 0.5.1 (#92): the loop waits for the next event with this thread's
+        // GIL released, so other Python threads (a file watcher, a
+        // `LoopHandle.call_soon` caller) run while the window is idle. The
+        // platform layer calls these around its wait only: every callback
+        // below runs with the GIL held again, as before. See the header.
+        let thread_state: Rc<std::cell::Cell<*mut pyo3::ffi::PyThreadState>> =
+            Rc::new(std::cell::Cell::new(std::ptr::null_mut()));
+        let thread_state_for_restore = thread_state.clone();
+        let idle = IdleHooks {
+            // SAFETY: `PyEval_SaveThread`/`PyEval_RestoreThread` are the
+            // pair `Python::detach` itself uses. The platform layer calls
+            // `release` only from `about_to_wait` and `reacquire` before any
+            // other handler runs, always on this thread, and no Python
+            // object is touched in between.
+            release: Box::new(move || {
+                thread_state.set(unsafe { pyo3::ffi::PyEval_SaveThread() });
+            }),
+            reacquire: Box::new(move || {
+                let state = thread_state_for_restore.replace(std::ptr::null_mut());
+                if !state.is_null() {
+                    unsafe { pyo3::ffi::PyEval_RestoreThread(state) };
+                }
+            }),
+        };
+        let result = run_windowed_multi_with(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
                 *setup.handles.os_window.borrow_mut() = Some(window.clone());
@@ -672,6 +814,7 @@ impl App {
                     WindowRuntime {
                         handles: setup.handles.clone(),
                         gpu,
+                        opened: crate::clock::now(&setup.handles.tree),
                         text_drag: None,
                         terminal_drag: None,
                         cursor: Cursor::Default,
@@ -694,8 +837,50 @@ impl App {
                     return false;
                 };
 
+                // 0.5.1 (#65): what the GPU says about itself, before any of
+                // this frame's work touches it. `_lose_gpu` is a test hook.
+                if runtime.handles.lose_gpu.take() {
+                    runtime.gpu.device.destroy();
+                }
+                runtime
+                    .gpu
+                    .watch
+                    .set_watchdog(runtime.handles.gpu_watchdog.get());
+                let reports = runtime.gpu.watch.poll(&runtime.gpu.device);
+                if let Some(why) = deliver_gpu_reports(&runtime.handles, reports, py) {
+                    // A lost GPU ends the run: every window is closed (a
+                    // `close_requested` listener can't keep one open) and
+                    // `App.run()` raises this.
+                    *startup_error_for_frame.borrow_mut() =
+                        Some(format!("the GPU was lost: {why}; the run has ended"));
+                    for (id, other) in runtimes.iter() {
+                        if let Some(waker) = other.handles.waker.borrow().as_ref() {
+                            waker.close_window(*id);
+                        }
+                    }
+                    return false;
+                }
+                if runtime.gpu.watch.is_lost() {
+                    return false;
+                }
+
                 let now = crate::clock::now(&runtime.handles.tree);
                 let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                // 0.5.1 (#70): a shader's time is the window's clock; and a
+                // window drawing an `animated` shader keeps running -- a frame
+                // per display refresh, repainting just that node -- exactly
+                // as it does for any animation. A still shader leaves the
+                // loop asleep.
+                runtime
+                    .gpu
+                    .renderer
+                    .set_time(now.saturating_duration_since(runtime.opened).as_secs_f32());
+                let any_active = if runtime.gpu.renderer.has_animated_shader() {
+                    runtime.handles.tree.borrow_mut().mark_dirty();
+                    true
+                } else {
+                    any_active
+                };
                 // 0.4.2 M12: an animated or `set` scroll offset reports
                 // its change here, once a frame.
                 crate::listeners::fire_scroll_changes(
@@ -891,6 +1076,7 @@ impl App {
                     );
                 }
                 runtime.gpu.queue.submit([encoder.finish()]);
+                runtime.gpu.watch.submitted(&runtime.gpu.queue);
                 // 0.4.1 M8: what this frame redrew, over the image but never
                 // the kept frame; its own submit, after the frame's.
                 if runtime.handles.show_damage.get() {
@@ -903,6 +1089,8 @@ impl App {
                         &gpu.queue,
                         &view,
                     );
+                    // The overlay submits its own work.
+                    gpu.watch.submitted(&gpu.queue);
                 }
                 runtime.gpu.queue.present(output);
                 if reconfigure {
@@ -1254,12 +1442,17 @@ impl App {
                     return true;
                 };
                 match lifecycle {
-                    WindowLifecycle::CloseRequested => !listeners::deliver_window(
-                        &runtime.handles.window_listeners,
-                        py,
-                        WindowEventType::CloseRequested,
-                        |_| {},
-                    ),
+                    // 0.5.1 (#65): once the GPU is lost the run is ending, and a
+                    // listener can't keep a window open.
+                    WindowLifecycle::CloseRequested => {
+                        startup_error_for_lifecycle.borrow().is_some()
+                            || !listeners::deliver_window(
+                                &runtime.handles.window_listeners,
+                                py,
+                                WindowEventType::CloseRequested,
+                                |_| {},
+                            )
+                    }
                     WindowLifecycle::Closed => {
                         listeners::deliver_window(
                             &runtime.handles.window_listeners,
@@ -1276,6 +1469,7 @@ impl App {
                 // M87: from here on, `LoopHandle.call_soon` wakes this
                 // run's loop -- including one idle in `ControlFlow::Wait`.
                 calls_for_setup.set_waker(Some(waker.clone()));
+                *gpu_wake_for_setup.borrow_mut() = Some(GpuWake::start(waker.clone()));
                 for (index, setup) in setups_for_setup.iter().enumerate() {
                     opener.open_window(WindowRequest {
                         config: WindowConfig {
@@ -1309,12 +1503,14 @@ impl App {
                     *setup.handles.waker.borrow_mut() = Some(waker.clone());
                 }
             },
+            Some(idle),
         );
 
         // M87: this run's loop is gone -- a `call_soon` from now on just
         // queues, waiting for a later `run()`'s first frame, rather than
         // waking a proxy with no loop behind it.
         self.calls.set_waker(None);
+        gpu_wake.borrow_mut().take(); // stops and joins the wake thread
         // M94: no window is open any more.
         for setup in setups_for_cleanup.iter() {
             *setup.handles.os_window.borrow_mut() = None;
@@ -1354,17 +1550,30 @@ mod tests {
     /// 200x60 terminal under it; a real pointer press on either runs
     /// `text_pointer_input`, which needs the tree *not* borrowed while it
     /// writes. `simulate` never reaches it, so only a real window did.
-    fn field_and_terminal() -> (
+    type Scene = (
         std::rc::Rc<std::cell::RefCell<Tree>>,
         engine_core::NodeId,
         engine_core::NodeId,
         engine_core::NodeId,
-    ) {
+    );
+
+    fn field_and_terminal() -> Scene {
+        field_and_terminal_padded(0.0, 0.0)
+    }
+
+    /// The same, with `padding` left and top on the field and the terminal.
+    fn field_and_terminal_padded(pad_left: f32, pad_top: f32) -> Scene {
         let mut tree = Tree::new();
         let sized = |w: f32, h: f32| Style {
             size: Size {
                 width: length(w),
                 height: length(h),
+            },
+            padding: taffy::geometry::Rect {
+                left: length(pad_left),
+                top: length(pad_top),
+                right: length(0.0),
+                bottom: length(0.0),
             },
             ..Default::default()
         };
@@ -1373,7 +1582,11 @@ mod tests {
             NodeKind::Container,
             Style {
                 flex_direction: taffy::FlexDirection::Column,
-                ..sized(300.0, 200.0)
+                size: Size {
+                    width: length(300.0),
+                    height: length(200.0),
+                },
+                ..Default::default()
             },
             paint(),
         );
@@ -1507,6 +1720,113 @@ mod tests {
         assert_ne!(
             state.selection_start, state.selection_end,
             "the selection grew"
+        );
+    }
+
+    fn state_of_field(
+        tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
+        field: engine_core::NodeId,
+    ) -> usize {
+        let tree = tree.borrow();
+        let Some(NodeKind::TextField(state)) = tree.get(field).map(|n| &n.kind) else {
+            unreachable!()
+        };
+        state.cursor
+    }
+
+    /// 0.5.1 (#53): with `padding`, a click lands on the character under it:
+    /// the same glyph, clicked where it now is, gives the same offset.
+    #[test]
+    fn a_click_in_a_padded_text_input_lands_on_the_character_under_it() {
+        let (plain, root, field, _) = field_and_terminal();
+        let mut drags = (None, None);
+        pointer(press(Point::new(60.0, 10.0)), &plain, root, &mut drags);
+        let expected = state_of_field(&plain, field);
+        assert!(expected > 0, "the click is inside the text");
+
+        let (padded, root, field, _) = field_and_terminal_padded(40.0, 10.0);
+        let mut drags = (None, None);
+        pointer(
+            press(Point::new(60.0 + 40.0, 10.0 + 10.0)),
+            &padded,
+            root,
+            &mut drags,
+        );
+        assert_eq!(state_of_field(&padded, field), expected);
+    }
+
+    /// The same for a terminal: the cell under the pointer, inside the padding.
+    #[test]
+    fn a_click_in_a_padded_terminal_lands_on_the_cell_under_it() {
+        fn cell(
+            tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
+            terminal: engine_core::NodeId,
+        ) -> Option<(u16, u16)> {
+            let tree = tree.borrow();
+            let Some(NodeKind::Terminal(state)) = tree.get(terminal).map(|n| &n.kind) else {
+                unreachable!()
+            };
+            state.selection_start
+        }
+        let (plain, root, _, terminal) = field_and_terminal();
+        let mut drags = (None, None);
+        pointer(press(Point::new(60.0, 50.0)), &plain, root, &mut drags);
+        let expected = cell(&plain, terminal);
+        assert!(expected.is_some());
+
+        let (padded, root, _, terminal) = field_and_terminal_padded(20.0, 10.0);
+        let mut drags = (None, None);
+        pointer(
+            press(Point::new(60.0 + 20.0, 50.0 + 10.0)),
+            &padded,
+            root,
+            &mut drags,
+        );
+        assert_eq!(cell(&padded, terminal), expected);
+    }
+
+    /// Found while doing #53: the hit test ignored a multiline field's scroll,
+    /// so a click in a scrolled field landed on the line it would have under
+    /// an unscrolled one. It must resolve against what is painted.
+    #[test]
+    fn a_click_in_a_scrolled_multiline_field_lands_on_the_line_under_it() {
+        fn click_at_the_top(scroll: f64) -> usize {
+            let mut tree = Tree::new();
+            let content = (0..40)
+                .map(|i| format!("line{i}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut state = engine_core::TextFieldState::new(content, "Roboto", 400.0, 14.0);
+            state.multiline = true;
+            state.scroll_offset.current = scroll;
+            let field = tree.insert(
+                NodeKind::TextField(state),
+                Style {
+                    size: Size {
+                        width: length(200.0),
+                        height: length(100.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
+            );
+            tree.compute_layout(
+                field,
+                Size {
+                    width: AvailableSpace::Definite(200.0),
+                    height: AvailableSpace::Definite(100.0),
+                },
+            );
+            let tree = std::rc::Rc::new(std::cell::RefCell::new(tree));
+            let mut drags = (None, None);
+            pointer(press(Point::new(5.0, 5.0)), &tree, field, &mut drags);
+            state_of_field(&tree, field)
+        }
+        let unscrolled = click_at_the_top(0.0);
+        let scrolled = click_at_the_top(100.0);
+        assert!(
+            scrolled > unscrolled,
+            "scrolled content: line {scrolled} vs {unscrolled}"
         );
     }
 

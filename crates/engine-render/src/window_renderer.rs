@@ -21,8 +21,8 @@ use peniko::kurbo::{Affine, Rect, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Scene};
 
 use crate::{
-    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, TextRenderer,
-    build_tree_scene, build_tree_scene_in,
+    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, ShaderTextures,
+    TextRenderer, build_tree_scene_shaded,
 };
 
 /// The redrawn-areas overlay's colours (0.4.1 M8): a translucent fill and a
@@ -38,6 +38,8 @@ pub struct WindowRenderer {
     geometry: GeometryCache,
     target: Option<PersistentTarget>,
     tracker: DamageTracker,
+    /// 0.5.1 (#67): the window's clock, for shaders that read `frame.time`.
+    time: f32,
 }
 
 /// A window extent as the renderer takes it (`u16`), clamped rather than
@@ -72,7 +74,27 @@ impl WindowRenderer {
             geometry: GeometryCache::new(),
             target: persistent.then(|| PersistentTarget::new(device, format, width, height)),
             tracker: DamageTracker::new(),
+            time: 0.0,
         }
+    }
+
+    /// Sets the time, in seconds, the next frame's shaders see as
+    /// `frame.time`.
+    pub fn set_time(&mut self, seconds: f32) {
+        self.time = seconds;
+        self.tracker.set_time(seconds);
+    }
+
+    /// Whether the last frame drew a shader that is `animated`: a window
+    /// that does must keep drawing frames, one per display refresh, though
+    /// nothing else changes.
+    pub fn has_animated_shader(&self) -> bool {
+        self.frame_renderer.shaders_animated()
+    }
+
+    /// How many shader passes the last drawn frame ran.
+    pub fn shader_pass_count(&self) -> usize {
+        self.frame_renderer.shader_pass_count()
     }
 
     /// The window's text shaper -- the one painting uses, so hit-testing
@@ -154,24 +176,35 @@ impl WindowRenderer {
             Damage::Rects(rects) => Some(rects.as_slice()),
             _ => None,
         };
-        let scene = match damage {
-            // Nothing changed: the kept frame is copied as it is.
-            Damage::None => None,
-            Damage::Full => Some(build_tree_scene(
+        // Shaders run first (each pass and offscreen render submitted in order), so the scene can
+        // draw their textures.
+        let shaders = match damage {
+            Damage::None => {
+                self.frame_renderer.skip_shader_passes();
+                ShaderTextures::none()
+            }
+            _ => self.frame_renderer.run_shader_passes(
                 tree,
                 root,
                 width,
                 height,
-                self.frame_renderer.resources_mut(),
+                self.time,
+                device,
+                queue,
                 &mut self.text,
                 &mut self.geometry,
-            )),
-            Damage::Rects(rects) => Some(build_tree_scene_in(
+            ),
+        };
+        let scene = match damage {
+            // Nothing changed: the kept frame is copied as it is.
+            Damage::None => None,
+            _ => Some(build_tree_scene_shaded(
                 tree,
                 root,
                 width,
                 height,
                 rects,
+                &shaders,
                 self.frame_renderer.resources_mut(),
                 &mut self.text,
                 &mut self.geometry,

@@ -74,12 +74,16 @@ struct Record {
 pub struct DamageTracker {
     records: HashMap<NodeId, Record>,
     size: Option<(u16, u16)>,
+    /// 0.5.1 (#70): the window's clock, in seconds, which an animated
+    /// shader's pixels depend on.
+    time: f32,
 }
 
 /// One frame's walk (`walk::Visitor`): the records it builds and what it
 /// needs to build them.
 struct Recorder<'a> {
     tree: &'a Tree,
+    time: f32,
     text: &'a mut TextRenderer,
     records: HashMap<NodeId, Record>,
 }
@@ -87,6 +91,12 @@ struct Recorder<'a> {
 impl DamageTracker {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets the time, in seconds, the next `damage` call sees: an animated
+    /// shader's node is damaged whenever it changes.
+    pub fn set_time(&mut self, seconds: f32) {
+        self.time = seconds;
     }
 
     /// Forgets the last frame, so the next `damage` is `Full` -- for when
@@ -109,6 +119,7 @@ impl DamageTracker {
         let window = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
         let mut recorder = Recorder {
             tree,
+            time: self.time,
             text,
             records: HashMap::with_capacity(self.records.len()),
         };
@@ -163,7 +174,7 @@ impl<'t> walk::Visitor<'t> for Recorder<'_> {
         rect(&mut hasher, v.visible);
         num(&mut hasher, v.w);
         num(&mut hasher, v.h);
-        node_fingerprint(&mut hasher, self.tree, v.id, v.node);
+        node_fingerprint(&mut hasher, self.tree, self.time, v.id, v.node);
         self.records.insert(
             v.id,
             Record {
@@ -274,8 +285,87 @@ fn local_painted(text: &mut TextRenderer, id: NodeId, node: &Node, w: f64, h: f6
     local
 }
 
+/// 0.5.1 (#66, #68): a shader's part in its node's pixels: which shader, in
+/// which mode, whether its uniforms or module changed -- and what its inputs
+/// hold now: an image node's current frame, or another shader's own
+/// fingerprint, so a change anywhere upstream repaints the node.
+fn shader_fingerprint(
+    h: &mut impl Hasher,
+    tree: &Tree,
+    time: f32,
+    shader: &std::sync::Arc<engine_core::Shader>,
+    depth: usize,
+) {
+    1u8.hash(h);
+    (std::sync::Arc::as_ptr(shader) as usize).hash(h);
+    shader.mode().hash(h);
+    shader.animated().hash(h);
+    shader.versions().hash(h);
+    // An animated shader paints differently every frame: the time is part
+    // of what it painted.
+    if shader.animated() {
+        time.to_bits().hash(h);
+    }
+    for (_, input) in shader.inputs() {
+        match tree.get(*input) {
+            None => 0u8.hash(h),
+            Some(node) => match (&node.kind, &node.shader) {
+                (NodeKind::Image(state), _) => {
+                    1u8.hash(h);
+                    state.image.data.id().hash(h);
+                }
+                (_, Some(inner)) if depth < 16 => {
+                    2u8.hash(h);
+                    let size = tree.layout(*input).size;
+                    size.width.to_bits().hash(h);
+                    size.height.to_bits().hash(h);
+                    shader_fingerprint(h, tree, time, inner, depth + 1);
+                }
+                _ => 3u8.hash(h),
+            },
+        }
+    }
+}
+
+/// 0.5.1 (#69): what `id`'s descendants paint, for an effect node: each one's
+/// place in the tree, its box, and everything `node_fingerprint` hashes.
+fn subtree_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId) {
+    for (index, &child) in tree.children_in_paint_order(id).iter().enumerate() {
+        let Some(node) = tree.get(child) else {
+            continue;
+        };
+        index.hash(h);
+        let layout = tree.layout(child);
+        for v in [
+            layout.location.x,
+            layout.location.y,
+            layout.size.width,
+            layout.size.height,
+        ] {
+            v.to_bits().hash(h);
+        }
+        node_fingerprint(h, tree, time, child, node);
+        subtree_fingerprint(h, tree, time, child);
+    }
+}
+
+/// 0.5.1 (#69): the fingerprint of an effect node's subtree alone -- what its
+/// offscreen content render depends on -- as a pass's staleness key.
+pub(crate) fn effect_content_fingerprint(tree: &Tree, time: f32, id: NodeId) -> u64 {
+    let mut hasher = FINGERPRINT.build_hasher();
+    subtree_fingerprint(&mut hasher, tree, time, id);
+    // The node's own paint is part of its content too.
+    if let Some(node) = tree.get(id) {
+        let mut own = FINGERPRINT.build_hasher();
+        paint_fingerprint(&mut own, &node.paint);
+        std::mem::discriminant(&node.kind).hash(&mut hasher);
+        own.finish().hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 /// Everything about `node` itself that decides its pixels.
-fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
+fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId, node: &Node) {
     let Node {
         id: _,
         parent: _,
@@ -293,11 +383,43 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, id: NodeId, node: &Node) {
         cursor: _,
         // 0.5.0 M3: which presses move the window; paints nothing.
         window_region: _,
+        shader,
     } = node;
     visible.hash(h);
     z_index.hash(h);
+    // 0.5.1 (#66): which shader, in which mode, and whether its uniforms or
+    // module changed since it was last painted.
+    match shader {
+        None => 0u8.hash(h),
+        Some(shader) => {
+            shader_fingerprint(h, tree, time, shader, 0);
+            // An effect's result depends on its whole subtree, so a change
+            // anywhere in it repaints the node's box.
+            if shader.mode() == engine_core::ShaderMode::Effect {
+                subtree_fingerprint(h, tree, time, id);
+            }
+        }
+    }
     paint_fingerprint(h, paint);
     std::mem::discriminant(kind).hash(h);
+    // 0.5.1 (#44, #53): a node that draws its own content draws it inside its
+    // padding, so padding is part of its pixels even when its box doesn't
+    // change size. (A box's padding only moves its children, which
+    // fingerprint themselves.)
+    if matches!(
+        kind,
+        NodeKind::Text(_)
+            | NodeKind::TextField(_)
+            | NodeKind::Terminal(_)
+            | NodeKind::Image(_)
+            | NodeKind::Path(_)
+            | NodeKind::Canvas(_)
+    ) {
+        let pad = tree.layout(id).padding;
+        for edge in [pad.left, pad.top, pad.right, pad.bottom] {
+            edge.to_bits().hash(h);
+        }
+    }
     let focused = tree.focused() == Some(id);
     match kind {
         NodeKind::Rect | NodeKind::Container => {}

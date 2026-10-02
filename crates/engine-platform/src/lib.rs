@@ -559,6 +559,49 @@ where
     L: FnMut(WindowId, WindowLifecycle) -> bool,
     S: FnOnce(&WindowOpener, &EventLoopWaker),
 {
+    run_windowed_multi_with(
+        on_window_created,
+        on_frame,
+        build_access_update,
+        on_input,
+        on_access_action,
+        on_lifecycle,
+        setup,
+        None,
+    )
+}
+
+/// 0.5.1 (#92): what a host that holds a lock the loop's *waiting* shouldn't
+/// (Python's GIL) gives the loop: `release` is called right before the loop
+/// goes to wait for the next event, and `reacquire` as soon as it wakes --
+/// before any of the callbacks above run. Nothing the callbacks do needs the
+/// lock while the loop is between the two.
+pub struct IdleHooks {
+    pub release: Box<dyn FnMut()>,
+    pub reacquire: Box<dyn FnMut()>,
+}
+
+/// [`run_windowed_multi`] with [`IdleHooks`] around the loop's wait.
+#[allow(clippy::too_many_arguments)]
+pub fn run_windowed_multi_with<C, F, A, S, N, X, L>(
+    on_window_created: C,
+    on_frame: F,
+    build_access_update: A,
+    on_input: N,
+    on_access_action: X,
+    on_lifecycle: L,
+    setup: S,
+    idle: Option<IdleHooks>,
+) -> Result<(), winit::error::EventLoopError>
+where
+    C: FnMut(WindowId, u64, Arc<Window>) -> bool,
+    F: FnMut(WindowId, u32, bool) -> bool,
+    A: FnMut(WindowId) -> accesskit::TreeUpdate,
+    N: FnMut(WindowId, InputEvent),
+    X: FnMut(WindowId, accesskit::ActionRequest),
+    L: FnMut(WindowId, WindowLifecycle) -> bool,
+    S: FnOnce(&WindowOpener, &EventLoopWaker),
+{
     let event_loop = EventLoop::<PlatformEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let proxy = event_loop.create_proxy();
@@ -589,8 +632,13 @@ where
         on_input,
         on_access_action,
         on_lifecycle,
+        idle,
+        released: false,
     };
-    event_loop.run_app(&mut app)
+    let result = event_loop.run_app(&mut app);
+    // The loop may end right after a wait began: take the lock back.
+    app.attach();
+    result
 }
 
 /// The original single-window entry point, kept source-compatible for
@@ -688,6 +736,34 @@ struct MultiWindowApp<C, F, A, N, X, L> {
     on_input: N,
     on_access_action: X,
     on_lifecycle: L,
+    /// 0.5.1 (#92): see [`IdleHooks`].
+    idle: Option<IdleHooks>,
+    /// Whether `idle.release` has been called with no `reacquire` since.
+    released: bool,
+}
+
+impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
+    /// Takes back what `park` gave up, if it did. Every handler starts with
+    /// this, so a callback never runs while the host's lock is released,
+    /// whatever order the platform delivers the loop's events in.
+    fn attach(&mut self) {
+        if self.released {
+            self.released = false;
+            if let Some(idle) = &mut self.idle {
+                (idle.reacquire)();
+            }
+        }
+    }
+
+    /// Gives the host's lock up for the wait that follows.
+    fn park(&mut self) {
+        if !self.released
+            && let Some(idle) = &mut self.idle
+        {
+            self.released = true;
+            (idle.release)();
+        }
+    }
 }
 
 impl<C, F, A, N, X, L> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X, L>
@@ -699,7 +775,16 @@ where
     X: FnMut(WindowId, accesskit::ActionRequest),
     L: FnMut(WindowId, WindowLifecycle) -> bool,
 {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
+        self.attach();
+    }
+
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+        self.park();
+    }
+
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+        self.attach();
         // Windows are created lazily, in `user_event`, as `OpenWindow`
         // requests arrive -- not eagerly here. `setup`'s own
         // `open_window` calls (sent before the loop starts) are queued
@@ -708,6 +793,7 @@ where
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PlatformEvent) {
+        self.attach();
         match event {
             PlatformEvent::OpenWindow(request) => {
                 // accesskit_winit's own hard requirement: the adapter
@@ -895,6 +981,7 @@ where
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        self.attach();
         let Self {
             windows,
             on_frame,

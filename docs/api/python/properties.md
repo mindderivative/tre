@@ -134,6 +134,17 @@ width, height = window.measure_text("A long list item title", max_width=180, **s
 title = window.create("text", text="A long list item title", width=180, height=height, **style)
 ```
 
+**`padding`** makes a content box, and a node's own content draws inside it
+(0.5.1): a text node's text, a text input's text and caret, a terminal's cells,
+an image (fitted into it), a path (its view box fitted into it), and a canvas
+(whose painter coordinates start at the padding). The node's `width` and
+`height` include the padding, as for a box, and text wraps in what's left. The
+node's own background, border and rounded corners stay on its whole box, and
+its children are laid out inside the padding, as before. Pointer events' `x`
+and `y` stay relative to the node's own corner, so subtract the padding to
+match a canvas's painter coordinates. Clicks and hit tests land on what is
+painted.
+
 ## Text input
 
 | Property | Value |

@@ -10,8 +10,9 @@ directly.
 
 **`fill_rect(x, y, width, height, color)`**
 
-Queues a filled rectangle in node-local coordinates. `color` is an
-`(r, g, b, a)` byte tuple.
+Queues a filled rectangle in node-local coordinates, which start at the
+canvas's padding: `(0, 0)` is the corner of its content box (0.5.1; with no
+padding, the node's own corner). `color` is an `(r, g, b, a)` byte tuple.
 
 ## `fill_circle`
 

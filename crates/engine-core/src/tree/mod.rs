@@ -254,6 +254,7 @@ impl Tree {
             hit_testable: true,
             cursor: None,
             window_region: crate::node::WindowRegion::Default,
+            shader: None,
             visible: true,
             z_index: 0,
         });
@@ -651,6 +652,40 @@ impl Tree {
             NodeKind::Image(state) => Some((id, state)),
             _ => None,
         })
+    }
+
+    /// 0.5.1 (#68): whether giving `id` `shader` would make a shader depend
+    /// on itself. A shader's inputs are nodes; an input that is not an image
+    /// node is sampled through its own shader, which has inputs in turn.
+    /// (An image node as an input means its image pixels, so it ends the
+    /// chain.)
+    pub fn shader_cycle(&self, id: NodeId, shader: &crate::Shader) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack: Vec<NodeId> = shader.inputs().iter().map(|(_, n)| *n).collect();
+        while let Some(next) = stack.pop() {
+            let Some(node) = self.nodes.get(next) else {
+                continue;
+            };
+            if matches!(node.kind, NodeKind::Image(_)) {
+                continue;
+            }
+            if next == id {
+                return true;
+            }
+            if !seen.insert(next) {
+                continue;
+            }
+            if let Some(inner) = &node.shader {
+                stack.extend(inner.inputs().iter().map(|(_, n)| *n));
+            }
+        }
+        false
+    }
+
+    /// 0.5.1 (#67): whether any node has a shader -- the renderer's cheap
+    /// check before it plans shader passes.
+    pub fn has_shaders(&self) -> bool {
+        self.nodes.values().any(|node| node.shader.is_some())
     }
 
     /// M15 Phase 2 (§8, §10): real keyboard-driven `TextField` editing

@@ -110,6 +110,9 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `maximized` | The window was maximized or restored (0.5.0) | `maximized` |
 | `active` | The window gained or lost the OS's focus (0.5.0) | `active` |
 | `titlebar_inset` | The area the OS's window controls take over the content changed — macOS's traffic lights on an undecorated window, 0 in fullscreen (0.5.0) | `titlebar_inset` |
+| `gpu_lost` | The GPU was lost — a driver fault, or a hang the driver's own timeout caught — and the run is ending (0.5.1) | `reason` (`"unknown"` or `"destroyed"`), `message` |
+| `gpu_error` | The GPU reported an error; the draw that caused it was skipped. Once per distinct message (0.5.1) | `message` |
+| `gpu_stalled` | A submitted frame hasn't completed after `gpu_watchdog` seconds (0.5.1) | `seconds` |
 
 A window event has no node: `event.target` is `None`.
 
@@ -127,8 +130,8 @@ instead of only what changed ([Window](window.md)). `window.get(name)` reads
 `width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`,
 `partial_redraw_active`, or `show_damage`, and (0.5.0) `decorations`,
 `fullscreen`, `min_width`, `min_height`, `maximized`, `minimized`, `active`,
-`platform`, `resize_border`, `system_menu`, `titlebar_inset`, and
-`native_controls` — see
+`platform`, `resize_border`, `system_menu`, `titlebar_inset`,
+`native_controls`, and (0.5.1) `gpu_watchdog` — see
 [Window controls and state](window.md#window-controls-and-state),
 [macOS: the overlay title bar](window.md#macos-the-overlay-title-bar), and
 [Title bar and borders](window.md#title-bar-and-borders).
@@ -199,7 +202,7 @@ window.simulate("resize", width=800, height=600)
 | `color_scheme` | `dark` |
 | `scale_factor` | `scale_factor` |
 | `close_requested`, `closed` | — |
-| `maximized` / `active` | `maximized` / `active` — sets the window's state; the event fires only if it changed, as the live window's does |
+| `maximized` / `active` | `maximized` / `active` — sets the window's state; the event fires only if it changed, as the live window's does. Before `App.run()`, `maximize()`/`restore()`/`minimize()` change the state with no event, so simulating the state you're already in fires nothing |
 
 Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
 window-space `x`/`y` without a node. Pointer, wheel, click, and key events also

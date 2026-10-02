@@ -127,6 +127,12 @@ pub(crate) struct WindowHandles {
     /// `(height, width)` in logical pixels, as last reported -- non-zero
     /// only for macOS's overlay title bar.
     pub(crate) titlebar_inset: Rc<Cell<(f64, f64)>>,
+    /// 0.5.1 (#65): the stall watchdog's limit in seconds; `None` (the
+    /// default) is off.
+    pub(crate) gpu_watchdog: Rc<Cell<Option<f64>>>,
+    /// 0.5.1 (#65): set by the private `_lose_gpu`, a test hook: the frame
+    /// loop destroys the device, which then reports itself lost.
+    pub(crate) lose_gpu: Rc<Cell<bool>>,
     /// 0.5.0 M2: the smallest inner size the user can resize to, in
     /// logical pixels; `(0.0, 0.0)` for none.
     pub(crate) min_size: Rc<Cell<(f64, f64)>>,
@@ -221,6 +227,8 @@ impl PyWindow {
                 active: Rc::new(Cell::new(false)),
                 fullscreen: Rc::new(Cell::new(false)),
                 titlebar_inset: Rc::new(Cell::new((0.0, 0.0))),
+                gpu_watchdog: Rc::new(Cell::new(None)),
+                lose_gpu: Rc::new(Cell::new(false)),
                 min_size: Rc::new(Cell::new((0.0, 0.0))),
                 icon: Rc::new(RefCell::new(None)),
                 press_cancelled: Rc::new(Cell::new(false)),

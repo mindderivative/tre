@@ -18,4 +18,5 @@ peniko = "0.6.1"
 # graph, only a direct edge to what was already there.
 smallvec = "1"
 slotmap = "1.1.1"
+naga = { workspace = true }
 taffy = "0.14.0"

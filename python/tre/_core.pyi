@@ -31,7 +31,17 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any, Literal, final, overload
 
-__all__ = ["App", "Window", "Node", "Painter", "Event", "LoopHandle", "register_font"]
+__all__ = [
+    "App",
+    "Window",
+    "Node",
+    "Painter",
+    "Event",
+    "LoopHandle",
+    "Shader",
+    "ShaderError",
+    "register_font",
+]
 
 Color = tuple[int, int, int, int]
 """An `(r, g, b, a)` byte tuple, 0-255 per channel, straight alpha."""
@@ -106,6 +116,14 @@ class Event:
     titlebar_inset: tuple[float, float] | None
     """(0.5.0) `titlebar_inset`: the new `(height, width)` the OS's window
     controls take over the content."""
+    reason: str | None
+    """(0.5.1) `gpu_lost`: `"unknown"` for a GPU fault, `"destroyed"` for a
+    destroyed device."""
+    message: str | None
+    """(0.5.1) `gpu_lost`: what the driver reported (empty for a destroyed
+    device); `gpu_error`: the GPU error."""
+    seconds: float | None
+    """(0.5.1) `gpu_stalled`: how long the submitted frame has run."""
     scale_factor: float | None
     """`scale_factor`: the window's new scale factor."""
     related_target: Node | None
@@ -307,8 +325,12 @@ class Window:
         `dock_target`/`dock_drop`, or (0.5.0) `maximized` and `active`,
         fired when the window is maximized or restored and when it gains
         or loses focus, and `titlebar_inset`, fired when the area the OS's
-        window controls take over the content changes (macOS) --
-        replacing any earlier one.
+        window controls take over the content changes (macOS) -- and (0.5.1)
+        `gpu_lost` (`reason`, `message`: the GPU was lost, and the run ends
+        right after), `gpu_error` (`message`: the GPU reported an error,
+        once per distinct message, and the draw was skipped) and
+        `gpu_stalled` (`seconds`: a submitted frame hasn't completed, with
+        `gpu_watchdog` on) -- replacing any earlier one.
         Raises `ValueError` for an unknown event.
         """
         ...
@@ -345,6 +367,7 @@ class Window:
         icon: tuple[bytes, int, int] | None = ...,
         resize_border: float = ...,
         system_menu: bool = ...,
+        gpu_watchdog: float | None = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -369,7 +392,10 @@ class Window:
         on a `window_region="drag"` node (and, on Windows, Alt+Space on an
         undecorated window) opens the OS's window menu -- off by default,
         an opt-in on every platform for a framework that doesn't show its
-        own."""
+        own. `gpu_watchdog`: (0.5.1) seconds, greater than 0, after which a
+        submitted frame that hasn't completed fires `gpu_stalled` -- once, and
+        it only reports, since stuck GPU work can't be cancelled; `None`, the
+        default, is off."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -398,6 +424,8 @@ class Window:
     @overload
     def get(self, name: Literal["titlebar_inset"]) -> tuple[float, float]: ...
     @overload
+    def get(self, name: Literal["gpu_watchdog"]) -> float | None: ...
+    @overload
     def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
     @overload
     def get(self, name: Literal["platform"]) -> str: ...
@@ -421,7 +449,8 @@ class Window:
         `(height, width)`, the top-left area the OS's window controls take
         over the content, non-zero only for an undecorated macOS window
         outside fullscreen, and `native_controls`: whether those controls
-        are shown (so the framework hides its own)."""
+        are shown (so the framework hides its own) -- and `gpu_watchdog`: the
+        stall watchdog's limit in seconds, or `None` when it is off."""
         ...
     def show_layer(
         self,
@@ -486,9 +515,13 @@ class Window:
         `color_scheme` (`dark`), `scale_factor` (`scale_factor`),
         `close_requested`, `closed`, and (0.5.0) `maximized` (`maximized`)
         and `active` (`active`), which set the window's state and fire only
-        when it changes, as the live window does, and `titlebar_inset`
-        (`height`, `width`), likewise. Unknown events or fields raise
-        `ValueError`.
+        when it changes, as the live window does -- and before `App.run()`,
+        `maximize()`, `restore()`, and `minimize()` change it with no event,
+        so simulating the state you are already in fires nothing -- and
+        `titlebar_inset` (`height`, `width`), likewise -- and (0.5.1)
+        `gpu_lost` (`reason`, `message`), `gpu_error` (`message`) and
+        `gpu_stalled` (`seconds`), which deliver the event to its listener
+        with no GPU involved. Unknown events or fields raise `ValueError`.
         """
         ...
     # -- size and clipboard ----------------------------------------------
@@ -589,6 +622,55 @@ class LoopHandle:
         `callback` isn't callable.
         """
         ...
+
+class ShaderError(ValueError):
+    """A shader's source or names are wrong. `line`, `column` and
+    `source_line` place the problem in the WGSL you gave; each is `None`
+    when the problem has no position."""
+
+    line: int | None
+    column: int | None
+    source_line: str | None
+
+@final
+class Shader:
+    """0.5.1: WGSL with one function, `fn shade(p: Pixel) -> vec4<f32>`,
+    checked when it is made -- a mistake raises `ShaderError` with the line
+    and column in your source, and needs no GPU.
+
+    `uniforms` maps names to a number or a tuple of 2 to 4 numbers (an
+    `f32` or a `vec2`/`vec3`/`vec4`). `inputs` maps names to `Node`s of one
+    window, read in the shader as `input_<name>(uv)`: an image or video node is
+    its pixels, any other node must have a shader, whose output is read. `mode` is `"fill"`
+    (paints the node's box behind its content) or `"effect"` (transforms the
+    node's own rendered content, read as `content(uv)`). `animated=True`
+    redraws every frame. Shaders are shared: give one `Shader` to several
+    nodes and `set(uniforms=...)` updates them all.
+    """
+
+    def __new__(
+        cls,
+        wgsl: str,
+        uniforms: dict[str, float | tuple[float, ...]] | None = None,
+        inputs: dict[str, Node] | None = None,
+        mode: str = "fill",
+        animated: bool = False,
+    ) -> Shader: ...
+    @property
+    def wgsl(self) -> str: ...
+    @property
+    def mode(self) -> str: ...
+    @property
+    def animated(self) -> bool: ...
+    @property
+    def uniforms(self) -> dict[str, float | tuple[float, ...]]: ...
+    @property
+    def inputs(self) -> dict[str, Node]: ...
+    def set(self, *, uniforms: dict[str, float | tuple[float, ...]]) -> None:
+        """Replaces the uniforms, all at once: a mistake raises and changes
+        nothing."""
+    def __eq__(self, other: object, /) -> bool: ...
+    def __hash__(self) -> int: ...
 
 @final
 class Painter:

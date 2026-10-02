@@ -247,3 +247,24 @@ def test_live_fullscreen_and_a_minimum_larger_than_the_window():
     assert log == "[('fullscreen', True), ('min', 400.0, 300.0)]", (
         "a minimum larger than the window grows it, whatever the platform does"
     )
+
+
+def test_the_documented_quiet_state_before_the_window_opens() -> None:
+    """The sequence in the Custom Title Bars guide ("Testing without a
+    display"): before `App.run()` the controls change the state with no
+    event, so simulating the state you are already in fires nothing."""
+    window = Window()
+    heard = []
+    window.on("maximized", lambda e: heard.append(e.maximized))
+    window.maximize()
+    assert window.get("maximized") is True and heard == []
+    window.simulate("maximized", maximized=True)  # no change: no event
+    assert heard == []
+    window.simulate("maximized", maximized=False)
+    window.simulate("maximized", maximized=True)
+    assert heard == [False, True]
+    fresh = Window()
+    fresh.on("maximized", lambda e: heard.append(("fresh", e.maximized)))
+    fresh.simulate("maximized", maximized=True)  # a fresh window: it fires
+    assert heard[-1] == ("fresh", True)
+

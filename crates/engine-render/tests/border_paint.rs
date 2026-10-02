@@ -35,7 +35,7 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
     paint.border_color = engine_core::Animated::new(BORDER);
     paint.border_width = engine_core::Animated::new(border_width);
     let root = tree.insert(
-        NodeKind::Rect,
+        NodeKind::Container,
         Style {
             size: Size {
                 width: length(f32::from(SIZE)),

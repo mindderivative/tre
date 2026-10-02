@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 license = "MIT"
 authors = ["Phil Hodgins <philip.a.hodgins@gmail.com>"]
@@ -36,6 +36,10 @@ vello_gpu = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e93
 vello_common = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e936c9cc456d18d41467bb6d0e12f", default-features = false, features = ["std"] }
 glifo = { git = "https://github.com/linebender/vello", rev = "b408cd003d5e936c9cc456d18d41467bb6d0e12f" }
 wgpu = "30.0.1"
+# 0.5.1 (#66): parses and validates a shader's WGSL on the CPU, with no GPU.
+# Already in the lock at this version through `wgpu` and `vello_gpu_shaders`;
+# a direct dependency adds no new crate.
+naga = { version = "30.0.1", default-features = false, features = ["wgsl-in"] }
 
 # Debug builds grew `target/debug` to 462 GB (full debug info in every test
 # and example binary, plus the incremental cache). Line tables keep file and

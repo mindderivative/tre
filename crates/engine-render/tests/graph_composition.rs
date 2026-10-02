@@ -134,7 +134,7 @@ fn canvas_transform_custom_hit_test_and_virtual_list_all_compose_under_one_share
 
         let mut tree = Tree::new();
         let root = tree.insert(
-            NodeKind::Rect,
+            NodeKind::Container,
             Style {
                 size: Size {
                     width: length(f32::from(width)),

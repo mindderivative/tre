@@ -10,6 +10,7 @@ bindings (`tre._core`), with type stubs for IDEs and `mypy`.
 | [`Window`](window.md) | Owns a node tree and its size and title; creates nodes, shows layers, simulates input, docking |
 | [`Node`](node.md) | A handle to one node — events, animation, property reads/writes |
 | [`Event`](events.md#event) | What a listener receives when it takes one argument — see [Events and Listeners](events.md#event) |
+| [`Shader`](shader.md) | WGSL that paints a node (0.5.1): checked when it is created, set with `node.set(shader=...)` |
 | [`Painter`](painter.md) | The drawing surface a canvas node's `draw` callback receives |
 
 Across classes: [Nodes and Properties](properties.md) lists every kind and

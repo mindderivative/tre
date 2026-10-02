@@ -31,7 +31,7 @@ impl Scene {
     fn new() -> Self {
         let mut tree = Tree::new();
         let root = tree.insert(
-            NodeKind::Rect,
+            NodeKind::Container,
             Style {
                 size: Size {
                     width: length(f32::from(W)),
@@ -160,6 +160,45 @@ fn a_move_damages_where_the_node_was_and_where_it_is() {
         covers(&damage, Rect::new(200.0, 20.0, 230.0, 50.0)),
         "{damage:?}"
     );
+}
+
+/// 0.5.1 (#44, #53): a padded node draws its own content inside the padding,
+/// so changing the padding moves pixels even when its box is the same size.
+/// Layout reaches paint only as size and position otherwise, so without this a
+/// padding change alone would leave stale pixels.
+#[test]
+fn a_padding_change_damages_a_node_whose_content_it_moves() {
+    let mut s = Scene::new();
+    let canvas = s.add(
+        s.root,
+        NodeKind::Canvas(engine_core::CanvasState::new()),
+        40.0,
+        40.0,
+        60.0,
+        60.0,
+    );
+    s.settle();
+    let mut style = s.tree.get(canvas).unwrap().layout_style.clone();
+    style.padding.left = length(20.0);
+    s.tree.set_layout_style(canvas, style);
+    let damage = s.frame();
+    assert!(
+        covers(&damage, Rect::new(40.0, 40.0, 100.0, 100.0)),
+        "the padded canvas is redrawn: {damage:?}"
+    );
+}
+
+/// An empty box's padding paints nothing and moves no child, so it still
+/// damages nothing.
+#[test]
+fn a_padding_change_on_an_empty_box_damages_nothing() {
+    let mut s = Scene::new();
+    let node = s.rect(40.0, 40.0, 60.0, 60.0);
+    s.settle();
+    let mut style = s.tree.get(node).unwrap().layout_style.clone();
+    style.padding.left = length(20.0);
+    s.tree.set_layout_style(node, style);
+    assert_eq!(s.frame(), Damage::None);
 }
 
 #[test]
@@ -551,4 +590,54 @@ fn damage_walk_cost_beside_a_large_terminal_and_canvas() {
     println!(
         "damage walk beside a 200x60 terminal and 2000 canvas commands: {per_frame:?} a frame"
     );
+}
+
+// --- 0.5.1 (#66): a node's shader is part of what it paints ---------------------
+
+const SHADE: &str = "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.amount);\n}\n";
+
+fn shader(amount: f32) -> std::sync::Arc<engine_core::Shader> {
+    engine_core::Shader::new(
+        SHADE.to_owned(),
+        vec![("amount".to_owned(), engine_core::UniformValue::F32(amount))],
+        vec![],
+        engine_core::ShaderMode::Fill,
+        false,
+    )
+    .expect("a valid shader")
+}
+
+#[test]
+fn setting_changing_and_clearing_a_shader_damages_the_node() {
+    let mut s = Scene::new();
+    let node = s.rect(40.0, 40.0, 60.0, 60.0);
+    s.settle();
+    let area = Rect::new(40.0, 40.0, 100.0, 100.0);
+
+    let shader = shader(0.5);
+    s.tree.get_mut(node).unwrap().shader = Some(shader.clone());
+    let damage = s.frame();
+    assert!(covers(&damage, area), "setting a shader: {damage:?}");
+    assert!(within(&damage, area, 4.0), "and only there: {damage:?}");
+    assert_eq!(s.frame(), Damage::None, "then it is settled");
+
+    shader
+        .set_uniforms(vec![(
+            "amount".to_owned(),
+            engine_core::UniformValue::F32(0.9),
+        )])
+        .unwrap();
+    let damage = s.frame();
+    assert!(covers(&damage, area), "a new uniform value: {damage:?}");
+    assert_eq!(s.frame(), Damage::None);
+
+    s.tree.get_mut(node).unwrap().shader = Some(self::shader(0.9));
+    assert!(
+        covers(&s.frame(), area),
+        "a different shader with equal values"
+    );
+
+    s.tree.get_mut(node).unwrap().shader = None;
+    assert!(covers(&s.frame(), area), "clearing it");
+    assert_eq!(s.frame(), Damage::None);
 }

@@ -2752,6 +2752,54 @@ fn canvas_custom_circle_hit_test_overrides_the_default_rect() {
     );
 }
 
+/// 0.5.1 (#53): a canvas's painter coordinates start at its padding, so a
+/// custom hit shape is in those coordinates: a circle at painter (10, 10) in
+/// a canvas padded 30 left and 20 top is at the node's local (40, 30).
+#[test]
+fn canvas_custom_hit_shape_is_in_painter_coordinates_inside_the_padding() {
+    let mut tree = Tree::new();
+    let mut state = CanvasState::new();
+    state.hit_test = Some(CustomHitTest::Circle {
+        cx: 10.0,
+        cy: 10.0,
+        radius: 5.0,
+    });
+    let canvas = tree.insert(
+        NodeKind::Canvas(state),
+        Style {
+            size: Size {
+                width: length(100.0),
+                height: length(100.0),
+            },
+            padding: taffy::geometry::Rect {
+                left: length(30.0),
+                top: length(20.0),
+                right: length(0.0),
+                bottom: length(0.0),
+            },
+            ..Default::default()
+        },
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+    );
+    tree.compute_layout(
+        canvas,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    assert_eq!(
+        tree.hit_test(canvas, Point::new(40.0, 30.0)),
+        Some(canvas),
+        "the circle's center, in the content box"
+    );
+    assert_eq!(
+        tree.hit_test(canvas, Point::new(10.0, 10.0)),
+        None,
+        "the node's corner is not painter (10, 10)"
+    );
+}
+
 /// The path half of the same claim (§11.10's own "a bezier curve
 /// within N pixels of the point" example) -- a straight diagonal
 /// `BezPath` (a degenerate, zero-curvature case of the same real
@@ -4782,6 +4830,52 @@ fn scroll_text_field_caret_into_view_scrolls_down_to_reveal_a_caret_below_the_vi
     assert!(
         (scroll - 13.4).abs() < 0.01,
         "must scroll down exactly enough to reveal line 5's own real bottom edge, got {scroll}"
+    );
+}
+
+/// 0.5.1 (#53): the viewport the caret must stay in is the content box, not
+/// the border box -- a field padded 20 top and bottom shows 60 of its 100.
+#[test]
+fn scroll_text_field_caret_into_view_uses_the_content_box_of_a_padded_field() {
+    let mut tree = Tree::new();
+    let content = (0..20)
+        .map(|i| format!("line{i}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
+    state.multiline = true;
+    let field = tree.insert(
+        NodeKind::TextField(state),
+        Style {
+            size: Size {
+                width: length(200.0),
+                height: length(100.0),
+            },
+            padding: taffy::geometry::Rect {
+                left: length(0.0),
+                top: length(20.0),
+                right: length(0.0),
+                bottom: length(20.0),
+            },
+            ..Default::default()
+        },
+        PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 1.0),
+    );
+    tree.compute_layout(
+        field,
+        Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    tree.set_focus_to(field);
+    // Line 5's bottom edge is at 113.4. A 100px viewport scrolls to 13.4
+    // (the unpadded test above); the 60px content box scrolls to 53.4.
+    tree.set_text_field_cursor(field, 30);
+    let scroll = field_state(&tree, field).scroll_offset.current;
+    assert!(
+        (scroll - 53.4).abs() < 0.01,
+        "must reveal the caret within the 60px content box, got {scroll}"
     );
 }
 

@@ -77,6 +77,12 @@ impl Tree {
         // `draw_own` draws into under the identical `composed`
         // transform (M5 Phase 1).
         let local_point = composed.inverse() * point;
+        // 0.5.1 (#53): a canvas's painter coordinates start at its padding,
+        // and a custom hit shape is in those coordinates.
+        let painter_point = {
+            let pad = layout.padding;
+            local_point - peniko::kurbo::Vec2::new(f64::from(pad.left), f64::from(pad.top))
+        };
 
         // M30 Phase 5 Step 1 (§5, §7): `Node::hit_testable`'s own real
         // opt-out, checked before the per-`NodeKind` match below --
@@ -91,11 +97,11 @@ impl Tree {
             match &node.kind {
                 NodeKind::Canvas(state) => match &state.hit_test {
                     Some(CustomHitTest::Circle { cx, cy, radius }) => {
-                        (local_point - Point::new(*cx, *cy)).hypot() <= *radius
+                        (painter_point - Point::new(*cx, *cy)).hypot() <= *radius
                     }
                     Some(CustomHitTest::Path { path, tolerance }) => {
                         path.segments()
-                            .map(|seg| seg.nearest(local_point, 0.1).distance_sq)
+                            .map(|seg| seg.nearest(painter_point, 0.1).distance_sq)
                             .fold(f64::INFINITY, f64::min)
                             .sqrt()
                             <= *tolerance

@@ -4,9 +4,12 @@
 //! before any is applied, so a bad call changes nothing. M96 extends the
 //! same two methods to every property.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use engine_core::{
     AccessValue, Animated, CornerRadii, Cursor, Interpolate, Live, NodeKind, PathData, Role,
-    Shadow, Shadows, TerminalPalette, WindowRegion,
+    Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
 };
 use peniko::Color;
 use peniko::kurbo::Rect;
@@ -23,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 43] = [
+const SETTABLE: [&str; 44] = [
     "visible",
     "z_index",
     "clip_children",
@@ -67,6 +70,7 @@ const SETTABLE: [&str; 43] = [
     "cursor",
     "hit_testable",
     "window_region",
+    "shader",
 ];
 
 /// The M93 role vocabulary.
@@ -123,6 +127,8 @@ pub(crate) enum Change {
     /// 0.5.0 M3: `window_region`.
     WindowRegion(WindowRegion),
     HitTestable(bool),
+    /// 0.5.1 (#66): the node's `shader`; `None` clears it.
+    Shader(Option<std::sync::Arc<engine_core::Shader>>),
     Style(StyleEdit),
     Kind(KindChange),
     /// M96: a canvas's `draw`, or a virtual list's `materialize` or
@@ -704,11 +710,30 @@ fn parse_callback(
     })
 }
 
+/// 0.5.1 (#66): `shader` takes a `tre.Shader` or `None`. Its input nodes
+/// must live in the same window as the node it is set on.
+fn parse_shader(value: &Bound<'_, PyAny>, tree: &Rc<RefCell<Tree>>) -> PyResult<Change> {
+    if value.is_none() {
+        return Ok(Change::Shader(None));
+    }
+    let shader = value
+        .cast::<crate::shader::Shader>()
+        .map_err(|_| invalid("shader", "a tre.Shader or None"))?
+        .get();
+    if !shader.inputs_in(value.py(), tree) {
+        return Err(PyValueError::new_err(
+            "node property `shader`: the shader's input nodes belong to a different Window",
+        ));
+    }
+    Ok(Change::Shader(Some(shader.core.clone())))
+}
+
 /// Every property `set` accepts, parsed and checked against `kind` --
 /// nothing is applied until all of them pass.
 pub(crate) fn parse_all(
     props: Option<&Bound<'_, PyDict>>,
     kind: &NodeKind,
+    tree: &Rc<RefCell<Tree>>,
 ) -> PyResult<Vec<Change>> {
     let mut changes = Vec::new();
     if let Some(props) = props {
@@ -720,6 +745,10 @@ pub(crate) fn parse_all(
             }
             if let Some(callback) = parse_callback(&name, &value, kind) {
                 changes.push(callback?);
+                continue;
+            }
+            if name == "shader" {
+                changes.push(parse_shader(&value, tree)?);
                 continue;
             }
             let change = parse(&name, &value)?;
@@ -749,7 +778,18 @@ impl Node {
             let node = tree
                 .get(self.id)
                 .ok_or(crate::error::EngineError::Destroyed)?;
-            parse_all(props, &node.kind)?
+            let changes = parse_all(props, &node.kind, &self.tree)?;
+            for change in &changes {
+                if let Change::Shader(Some(shader)) = change
+                    && tree.shader_cycle(self.id, shader)
+                {
+                    return Err(PyValueError::new_err(
+                        "node property `shader`: the shader would read itself -- through its \
+                         inputs it depends on this node's own shader",
+                    ));
+                }
+            }
+            changes
         };
         let redraw = changes
             .iter()
@@ -845,6 +885,14 @@ impl Node {
                     .into_pyobject(py)?
                     .into_any()
                     .unbind(),
+                "shader" => match &node.shader {
+                    None => py.None(),
+                    Some(core) => Py::new(
+                        py,
+                        crate::shader::Shader::wrap(py, core.clone(), |id| self.handle_to(id)),
+                    )?
+                    .into_any(),
+                },
                 "hit_testable" => any(node.hit_testable.into_pyobject(py)?.to_owned().into_any()),
                 "window_region" => match node.window_region {
                     WindowRegion::Default => py.None(),
@@ -1088,6 +1136,7 @@ impl Node {
                 Change::Cursor(cursor) => node.cursor = cursor,
                 Change::WindowRegion(region) => node.window_region = region,
                 Change::HitTestable(hit_testable) => node.hit_testable = hit_testable,
+                Change::Shader(shader) => node.shader = shader,
                 Change::Style(edit) => edit(style.get_or_insert_with(|| node.layout_style.clone())),
                 Change::Kind(kind_change) => {
                     resize_terminal |= kind_change.resizes_terminal;

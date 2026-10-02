@@ -164,3 +164,49 @@ def test_app_itself_is_rejected_from_a_background_thread():
     thread.join()
     assert len(errors) == 1
     assert "belongs to the thread that created it" in str(errors[0])
+
+
+# --- an idle window and other threads (0.5.1, #92) ---------------------------
+
+IDLE_SCRIPT = """
+import threading, time
+from tre import App, Window
+
+window = Window(width=120, height=80)
+app = App()
+app.add_window(window)
+handle = app.thread_handle()
+seen = []
+
+def worker():
+    # Long enough that the window has drawn its first frames and gone idle.
+    time.sleep(1.5)
+    handle.call_soon(lambda: (seen.append("callback"), window.close()))
+
+threading.Thread(target=worker, daemon=True).start()
+# Also a plain Python thread of the app's own, no loop handle involved.
+ticks = []
+threading.Thread(target=lambda: [ticks.append(time.sleep(0.05)) for _ in range(10)], daemon=True).start()
+start = time.monotonic()
+app.run()
+if not seen:
+    print("NO_FRAMES")
+else:
+    print(f"CALLBACK after {time.monotonic() - start:.1f}s, background ticks {len(ticks)}")
+"""
+
+
+def test_an_idle_window_lets_other_threads_run():
+    """An idle loop used to wait for input with the GIL held, so a worker
+    thread that woke after the window went idle could never run (nor its
+    `call_soon`). Unfixed, `run()` here never returns and the timeout fails
+    this test."""
+    result = subprocess.run(
+        [sys.executable, "-c", IDLE_SCRIPT], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr
+    if "NO_FRAMES" in result.stdout:
+        pytest.skip("no display reachable -- App.run() returned at once")
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("CALLBACK after "), line
+    assert line.endswith("background ticks 10"), line
