@@ -1,12 +1,17 @@
 # WGSL shaders (0.5.1)
 
-!!! note "Decided (2026-09-30) — being scoped"
+!!! note "Decided (2026-09-30) — built in 0.5.1"
     This is the design for [issue #43](https://github.com/mindderivative/tre/issues/43),
-    decided by the project owner: shader support ships in **0.5.1**, and
-    0.5.1 is not pushed until it is complete. Each question below ends with
-    its **Decided** line. The work is tracked in
-    [#54](https://github.com/mindderivative/tre/issues/54). Nothing here is
-    built yet.
+    decided by the project owner and built for **0.5.1**. Each question below
+    ends with its **Decided** line, which is what was built; to use shaders,
+    see the [Shaders guide](../guide/shaders.md) and the
+    [reference](../api/python/shader.md). The work was tracked in
+    [#54](https://github.com/mindderivative/tre/issues/54). Two things came
+    out differently from the text below: `frame.time` is the window's clock
+    since it opened and is not moved by `window.advance()` (a live window runs
+    on real time; the tests drive it through the renderer), and an effect's
+    offscreen renders are submitted separately from the frame's encoder
+    (ARCHITECTURE §11.14 has why).
 
 ## The goal
 
@@ -141,7 +146,7 @@ as if it had no shader; it never takes down the frame loop.
 source, an input texture, or, for an effect, anything in its subtree. A shader
 that reads `frame.time` sets `animated=True` and redraws every frame, keeping
 the loop awake like any animation; otherwise the loop still sleeps. `time` is
-the window's clock, so `window.advance()` makes it deterministic. Partial redraw
+the window's clock (seconds since the window opened). Partial redraw
 repaints exactly the shader node's box.
 
 **Q8. Which shader nodes run?** ([#62](https://github.com/mindderivative/tre/issues/62))
@@ -206,5 +211,5 @@ for 0.5.1:
   nesting, and pixel tests (the shining text).
 - **M6** (landed locally, #70) — animation and redraw, `animated`, the window clock, the loop staying
   awake; examples (shining text, a fractal panel) and a guide page.
-- **M7** — verification: CI on all three systems, the Tesserae compatibility run,
-  and the held hardware-checks item.
+- **M7** (#71) — verification: the CI-equivalent runs, the Tesserae compatibility
+  run, and the held hardware-checks item (#91).
