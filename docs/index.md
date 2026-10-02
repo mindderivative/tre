@@ -4,8 +4,8 @@
 
 Tesserae Engine (imported as `tre`) gives Python the building blocks of a desktop UI — nodes, layout,
 paint, animation, input, text, accessibility, and layers — and renders them
-on the GPU. It has no widgets and no theme of its own: a framework built on
-it, such as Tesserae, turns the blocks into buttons, dialogs, and design
+on the GPU. It has no widgets and no theme of its own: a UI library or
+application built on it turns the blocks into buttons, dialogs, and design
 systems. You write Python; the engine underneath uses:
 
 - [`vello_gpu`](https://github.com/linebender/vello) for GPU rendering
@@ -53,15 +53,16 @@ app.run()
 - **[Docking](guide/docking.md)** — panels in zones, dragged between them.
 - **[Custom Title Bars](guide/custom-title-bars.md)** — an undecorated window
   with a title bar, buttons, and borders of your own (0.5.0).
+- **[Shaders](guide/shaders.md)** — your own WGSL paints a node or transforms
+  its rendered content (0.5.1).
 
 [Building a Widget](guide/building-a-widget.md) puts them together into a
 complete switch.
 
-## What Tesserae Engine leaves to the framework
+## What Tesserae Engine leaves to your code
 
-- **Widgets and design** — Material Design 3 or any other design system is
-  built from the blocks; Tesserae Engine draws no default styling, focus ring, or
-  scrim.
+- **Widgets and design** — any design system is built from the blocks;
+  Tesserae Engine draws no default styling, focus ring, or scrim.
 - **Declarative views and state** — views, bindings, and reactivity sit on
   top of `window.create`, `node.set`, and `insert_child`.
 - **Files** — images arrive as decoded pixels and fonts as bytes; Tesserae Engine
@@ -72,14 +73,15 @@ complete switch.
 - **[Installation](installation.md)** — `pip install tesserae-engine`, a released wheel, or a build from
   source.
 - **[Getting Started](getting-started.md)** — a first window, step by step.
-- **[Python API Reference](api/python/index.md)** — every class, method,
-  property, and event.
+- **[Python API](api/python.md)** and **[Rust API](api/rust.md)** — every
+  class or type with its properties, methods and events, on one page each,
+  for quick reference. The [Reference](reference/app.md) pages go deeper.
 - **[Upgrading to 0.5.x](migrating-0.5.md)** — from 0.4.x: no renames,
   custom windowing, and a window root's fill now paints.
 - **[Upgrading to 0.4.x](migrating-0.4.md)** — from 0.3.5: no renames, a
   few behavior changes.
-- **[Migrating to 0.3.5](migrating-0.3.5.md)** — from 0.3.4: what moved to
-  the framework and what was renamed.
+- **[Upgrading to 0.3.5](migrating-0.3.5.md)** — from 0.3.4: what left the
+  engine and what was renamed.
 - **[Architecture](architecture.md)** — the crates and how a frame is made.
 
 Tesserae Engine is a second, from-scratch iteration of an earlier Vulkan engine,

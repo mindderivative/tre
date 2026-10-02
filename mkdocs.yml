@@ -38,6 +38,7 @@ markdown_extensions:
       permalink: true
   - tables
   - admonition
+  - attr_list
   - pymdownx.details
   - pymdownx.superfences
   - pymdownx.highlight
@@ -56,38 +57,34 @@ nav:
       - Text: guide/text.md
       - Accessibility: guide/accessibility.md
       - Layers: guide/layers.md
-      - Threading: guide/threading.md
       - Docking: guide/docking.md
+      - Threading: guide/threading.md
       - Custom Title Bars: guide/custom-title-bars.md
-      - Shaders (0.5.1): guide/shaders.md
+      - Shaders: guide/shaders.md
       - Building a Widget: guide/building-a-widget.md
   - Examples: examples.md
-  - Python API Reference:
-      - Overview: api/python/index.md
-      - App: api/python/app.md
-      - Window: api/python/window.md
-      - Node: api/python/node.md
-      - Nodes and Properties: api/python/properties.md
-      - Events and Listeners: api/python/events.md
-      - Layers: api/python/layers.md
-      - Paint, Paths, and Animation: api/python/paint.md
-      - Painter: api/python/painter.md
-      - Shader (0.5.1): api/python/shader.md
-  - Rust Crates: api/rust.md
+  - API:
+      - Rust API: api/rust.md
+      - Python API: api/python.md
+  - Reference:
+      - App: reference/app.md
+      - Window: reference/window.md
+      - Node: reference/node.md
+      - Node properties: reference/properties.md
+      - Paint, paths, and animation: reference/paint.md
+      - Events and listeners: reference/events.md
+      - Layers: reference/layers.md
+      - Painter: reference/painter.md
+      - Shader: reference/shader.md
   - Architecture: architecture.md
-  - Migrating:
+  - Upgrading:
       - To 0.5.x: migrating-0.5.md
       - To 0.4.x: migrating-0.4.md
       - To 0.3.5: migrating-0.3.5.md
       - To 0.3.3: migrating-0.3.3.md
   - Design:
-      - Custom windowing (0.5.0): design/custom-windowing.md
-      - WGSL shaders (0.5.1): design/wgsl.md
-      - Target API: design/target-api.md
-      - Legacy widget reference: design/legacy-widgets.md
-      - Legacy widget behavior: design/legacy-behavior.md
-      - MD3 handover: design/md3-handover.md
-      - Binding and cascade audit: design/binding-cascade-audit.md
+      - Custom windowing: design/custom-windowing.md
+      - WGSL shaders: design/wgsl.md
   - Contributing: contributing.md
 
 validation:

@@ -5,7 +5,7 @@
     decided by the project owner and built for **0.5.1**. Each question below
     ends with its **Decided** line, which is what was built; to use shaders,
     see the [Shaders guide](../guide/shaders.md) and the
-    [reference](../api/python/shader.md). The work was tracked in
+    [reference](../reference/shader.md). The work was tracked in
     [#54](https://github.com/mindderivative/tre/issues/54). Two things came
     out differently from the text below: `frame.time` is the window's clock
     since it opened and is not moved by `window.advance()` (a live window runs
@@ -169,7 +169,7 @@ title-bar checks (#47, #48), and don't block 0.5.1.
 
 **Decided:** Python only. A `Shader` is a Python object; the declarative view
 formats can't create one. Where its source comes from, and any checking of the
-data a framework feeds it, is the framework's (Tesserae's) job: tre only
+data a framework feeds it, is the host app's job: tre only
 reports an error at creation time (Q6). Separately, and for **every** node, not
 only shaders, tre should detect and report a hung or lost GPU where `wgpu`
 makes that possible ([#65](https://github.com/mindderivative/tre/issues/65)).
@@ -211,5 +211,5 @@ for 0.5.1:
   nesting, and pixel tests (the shining text).
 - **M6** (landed locally, #70) — animation and redraw, `animated`, the window clock, the loop staying
   awake; examples (shining text, a fractal panel) and a guide page.
-- **M7** (#71) — verification: the CI-equivalent runs, the Tesserae compatibility
+- **M7** (#71) — verification: the CI-equivalent runs, a downstream compatibility
   run, and the held hardware-checks item (#91).

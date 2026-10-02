@@ -81,3 +81,24 @@ Commit messages match the existing history's style (see `git log`); real,
 empirically-verified findings are preferred over assumptions — a claim
 about behavior is checked by actually running the code, not inferred
 from reading it alone.
+
+## The API pages
+
+[`docs/api/rust.md`](api/rust.md) and [`docs/api/python.md`](api/python.md) are
+generated, not written by hand. Regenerate them when a public item changes:
+
+```bash
+# Rust: rustdoc's JSON, then the page (descriptions come from doc comments;
+# tools/rust_api_descriptions*.json replaces any that read badly)
+for c in engine-core engine-render engine-platform; do
+  RUSTC_BOOTSTRAP=1 cargo rustdoc -p $c --lib -- -Z unstable-options --output-format json
+done
+python tools/gen_rust_api.py
+
+# Python: from python/tre/_core.pyi (the Node and Window property and event
+# tables are at the top of the script)
+python tools/gen_python_api.py
+```
+
+Write a doc comment's first sentence as the one-line description a reader
+wants: it is what the page shows.

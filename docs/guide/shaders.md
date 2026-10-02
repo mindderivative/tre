@@ -3,7 +3,7 @@
 *New in 0.5.1.* A node can be painted by your own WGSL: a fractal behind a
 panel, shining text, a colour grade over a picture. You write one function,
 give it to a node, and tre does the rest. The details of the object and its
-arguments are in the [Shader reference](../api/python/shader.md); this page is
+arguments are in the [Shader reference](../reference/shader.md); this page is
 how to use it.
 
 ## Two kinds of shader
@@ -81,7 +81,7 @@ feed a shader, are your framework's job: tre reports only this.
 A problem only the GPU finds is logged once, and the node paints as if it had
 no shader; it never stops the window. A GPU that hangs or is lost is reported
 for every node, not just shaders: see
-[GPU health](../api/python/window.md#gpu-health).
+[GPU health](../reference/window.md#gpu-health).
 
 ## Animation
 
@@ -116,7 +116,7 @@ shader's own uniforms reuses the content.
 `inputs={"photo": node}` lets the shader read another node: an `image` or
 `video` node is its pixels (a new video frame repaints the shader), and any
 other node must have a shader, whose output is read. See
-[Inputs](../api/python/shader.md#inputs).
+[Inputs](../reference/shader.md#inputs).
 
 ## What it costs
 

@@ -37,7 +37,7 @@ tests relied on the old one.
 - **macOS.** `get("titlebar_inset")`, `get("native_controls")`, and the
   `titlebar_inset` window event.
 
-See [Window](api/python/window.md#window-controls-and-state) for the
+See [Window](reference/window.md#window-controls-and-state) for the
 reference and `examples/custom_titlebar.py` for all of it in one window.
 
 ## 0.5.0.1
@@ -83,7 +83,7 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   `RuntimeError("the GPU was lost: …")`. `window.set(gpu_watchdog=seconds)` opts in
   to a `gpu_stalled` event for a frame that never finishes. Code that caught
   `PanicException` to survive a GPU error should listen for `gpu_error` instead.
-  See [GPU health](api/python/window.md#gpu-health).
+  See [GPU health](reference/window.md#gpu-health).
 - **`tre.Shader` and `node.set(shader=...)`.** WGSL shaders arrive in 0.5.1 in
   stages. This stage adds the object and the property: a shader is checked when
   it is created, raising `tre.ShaderError` (a `ValueError`) with the line and
@@ -92,7 +92,7 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   paint, an `animated=True` shader sees `frame.time` and keeps the window
   drawing, a `mode="effect"` shader transforms the node's own rendered content,
   and `inputs` let a shader sample image, video, and other shader nodes. See
-  [Shader](api/python/shader.md).
+  [Shader](reference/shader.md).
 - **An idle window no longer starves other Python threads.** Through 0.5.0.1,
   `App.run()` waited for the next event with the GIL held, so a worker thread
   (a file watcher, the background loader in the

@@ -183,8 +183,8 @@ To test a listener, simulate the report on a fresh window, or leave the state
 first as above. To test your button, check `get("maximized")` after the click
 and test the listener separately.
 
-See [Window controls and state](../api/python/window.md#window-controls-and-state),
-[macOS: the overlay title bar](../api/python/window.md#macos-the-overlay-title-bar),
-and [Title bar and borders](../api/python/window.md#title-bar-and-borders) for
+See [Window controls and state](../reference/window.md#window-controls-and-state),
+[macOS: the overlay title bar](../reference/window.md#macos-the-overlay-title-bar),
+and [Title bar and borders](../reference/window.md#title-bar-and-borders) for
 the reference, and the [design](../design/custom-windowing.md) for why each
 behaves as it does.

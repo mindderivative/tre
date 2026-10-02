@@ -57,7 +57,7 @@ panel.add_child(search)
 window.root.add_child(panel)
 ```
 
-Every property is on [Nodes and Properties](../api/python/properties.md).
+Every property is on [Nodes and Properties](../reference/properties.md).
 
 ## Flex layout
 
@@ -89,7 +89,7 @@ its row.
 `min_width`, `max_width`, `min_height`, and `max_height` bound a size, and
 `aspect_ratio` fixes width over height. `flex_wrap="wrap"` lets children
 flow onto more lines, and `align_content` spaces those lines. The
-[property reference](../api/python/properties.md) lists every layout
+[property reference](../reference/properties.md) lists every layout
 property and its values.
 
 ## Grid layout
@@ -123,7 +123,7 @@ gallery = window.create("box", display="grid", width="100%", gap=8,
 `row_gap` and `column_gap` space the rows and columns apart (`gap` sets both),
 and `justify_items`/`justify_self` place a child across its cell's width the
 way `align_items`/`align_self` do across its height. The full list is in
-[Node properties](../api/python/properties.md#grid-layout).
+[Node properties](../reference/properties.md#grid-layout).
 
 ## Absolute positioning
 
@@ -180,7 +180,7 @@ Switching screens is `old.remove()` then `window.root.add_child(new)`. The
 removed screen keeps its scroll offsets, text, and selection, so attaching it
 again brings it back as it was. A detached node you no longer hold is freed
 automatically; `destroy()` frees one now. See
-[Lifetime](../api/python/node.md#lifetime).
+[Lifetime](../reference/node.md#lifetime).
 
 ## Visibility and stacking
 

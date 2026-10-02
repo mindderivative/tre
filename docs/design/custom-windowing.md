@@ -2,8 +2,8 @@
 
 !!! note "Decided and released (0.5.0, 2026-09-30)"
     This is 0.5.0's M1 design for [issue #28](https://github.com/mindderivative/tre/issues/28),
-    reviewed by Tesserae and decided by the project owner: every
-    recommendation accepted, with Tesserae's refinements, and five
+    reviewed and decided by the project owner: every
+    recommendation accepted, with refinements, and five
     [additions](#additions-from-the-review). Each question below ends with
     its **Decided** line. Built: M2's undecorated windows,
     controls, state and events, fullscreen, minimum size, icon, and
@@ -158,7 +158,7 @@ button or a search field must not drag the window.
 - Explicit, as Electron does: everything inside a drag region drags unless
   marked `window_region="none"`.
 
-**Decided:** automatic, with Tesserae's tighter rule. A node is interactive
+**Decided:** automatic, with a tighter rule. A node is interactive
 if it's focusable, has a `click` listener, or holds the pointer capture;
 hover listeners and `pointer_down` alone don't count, so a tooltip's anchor
 and a context menu's secondary-press listener still drag. Only the nodes
@@ -249,7 +249,7 @@ nothing needs one.
 
 ## Additions from the review
 
-Tesserae's review found five things a real title bar needs; all were
+The review found five things a real title bar needs; all were
 accepted.
 
 1. **`pointer_cancel`.** `winit` swallows the button release after

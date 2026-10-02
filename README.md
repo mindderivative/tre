@@ -10,8 +10,7 @@ and threading — and renders them on the GPU, redrawing only what changed, with
 [`parley`](https://github.com/linebender/parley), and exposed to screen
 readers through [`AccessKit`](https://github.com/AccessKit/accesskit).
 
-It has no widgets and no theme of its own. A framework built on it —
-[Tesserae](https://github.com/mindderivative/tesserae) is the first — turns
+It has no widgets and no theme of its own. A UI library or application built on it turns
 the blocks into buttons, dialogs, and design systems.
 
 ```python
