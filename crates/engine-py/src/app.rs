@@ -10,13 +10,16 @@
 //! orchestrates opening all of them together via `engine_platform::
 //! run_windowed_multi`.
 //!
-//! **No `Python::detach` around the render loop, deliberately, despite
-//! §9's own stated habit ("wrap layout/paint/render so per-frame work
-//! never serializes behind the GIL... costs nothing today").** Real
-//! finding (unchanged since step 6): `detach`'s closure must be `Ungil`,
-//! which on stable pyo3 0.29 requires `Send` -- and every `PyWindow`'s
-//! `Rc<RefCell<Tree>>` is `!Send` by design (§9). Revisit if a later
-//! step introduces real GIL contention from a second thread.
+//! **No `Python::detach` around the render loop** -- its closure must be
+//! `Ungil`, which on stable pyo3 0.29 requires `Send`, and every
+//! `PyWindow`'s `Rc<RefCell<Tree>>` is `!Send` by design (§9). Real GIL
+//! contention from a second thread arrived with `LoopHandle` (M87): an idle
+//! loop parked in `ControlFlow::Wait` with the GIL held starves every other
+//! Python thread, since CPython only hands the GIL over when the holder runs
+//! bytecode (0.5.1, #92). So the loop releases the GIL for its wait alone,
+//! with `PyEval_SaveThread`/`PyEval_RestoreThread` from `IdleHooks`, which
+//! the platform layer calls in `about_to_wait` and before any other handler:
+//! every Python callback still runs on the loop thread with the GIL held.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -27,7 +30,8 @@ use std::time::Duration;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{
-    EventLoopWaker, WindowConfig, WindowLifecycle, WindowOptions, WindowRequest, run_windowed_multi,
+    EventLoopWaker, IdleHooks, WindowConfig, WindowLifecycle, WindowOptions, WindowRequest,
+    run_windowed_multi_with,
 };
 use engine_render::{GpuReport, GpuWatch, TextPlacement, TextRenderer, WindowRenderer};
 use peniko::kurbo::Point;
@@ -757,7 +761,31 @@ impl App {
         let startup_error_for_lifecycle = startup_error.clone();
         let gpu_wake: Rc<RefCell<Option<GpuWake>>> = Rc::new(RefCell::new(None));
         let gpu_wake_for_setup = gpu_wake.clone();
-        let result = run_windowed_multi(
+        // 0.5.1 (#92): the loop waits for the next event with this thread's
+        // GIL released, so other Python threads (a file watcher, a
+        // `LoopHandle.call_soon` caller) run while the window is idle. The
+        // platform layer calls these around its wait only: every callback
+        // below runs with the GIL held again, as before. See the header.
+        let thread_state: Rc<std::cell::Cell<*mut pyo3::ffi::PyThreadState>> =
+            Rc::new(std::cell::Cell::new(std::ptr::null_mut()));
+        let thread_state_for_restore = thread_state.clone();
+        let idle = IdleHooks {
+            // SAFETY: `PyEval_SaveThread`/`PyEval_RestoreThread` are the
+            // pair `Python::detach` itself uses. The platform layer calls
+            // `release` only from `about_to_wait` and `reacquire` before any
+            // other handler runs, always on this thread, and no Python
+            // object is touched in between.
+            release: Box::new(move || {
+                thread_state.set(unsafe { pyo3::ffi::PyEval_SaveThread() });
+            }),
+            reacquire: Box::new(move || {
+                let state = thread_state_for_restore.replace(std::ptr::null_mut());
+                if !state.is_null() {
+                    unsafe { pyo3::ffi::PyEval_RestoreThread(state) };
+                }
+            }),
+        };
+        let result = run_windowed_multi_with(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
                 *setup.handles.os_window.borrow_mut() = Some(window.clone());
@@ -1475,6 +1503,7 @@ impl App {
                     *setup.handles.waker.borrow_mut() = Some(waker.clone());
                 }
             },
+            Some(idle),
         );
 
         // M87: this run's loop is gone -- a `call_soon` from now on just

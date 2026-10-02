@@ -93,3 +93,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   drawing, a `mode="effect"` shader transforms the node's own rendered content,
   and `inputs` let a shader sample image, video, and other shader nodes. See
   [Shader](api/python/shader.md).
+- **An idle window no longer starves other Python threads.** Through 0.5.0.1,
+  `App.run()` waited for the next event with the GIL held, so a worker thread
+  (a file watcher, the background loader in the
+  [threading guide](guide/threading.md)) could not run while the window sat
+  idle, and its `LoopHandle.call_soon` never arrived. The loop now releases the
+  GIL for its wait alone; every callback still runs on the loop thread with the
+  GIL held. A workaround that ticks the window to keep the loop spinning is no
+  longer needed.
