@@ -74,6 +74,15 @@ jobs:
           # Debian-based manylinux variant.
           before-script-linux: |
             yum install -y fontconfig-devel || dnf install -y fontconfig-devel || (apt-get update && apt-get install -y libfontconfig1-dev)
+      # The floor is Python 3.12 (pyproject.toml's requires-python). This
+      # fails the build if `--find-interpreter` ever built an older one.
+      - name: Check no wheel is older than Python 3.12
+        run: |
+          if ls dist | grep -E -- '-(cp3(9|10|11)|pp3(9|10|11))-'; then
+            echo "a wheel for Python older than 3.12 was built" >&2
+            exit 1
+          fi
+          ls dist
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux
