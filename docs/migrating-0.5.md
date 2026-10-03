@@ -102,9 +102,9 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   GIL held. A workaround that ticks the window to keep the loop spinning is no
   longer needed.
 
-## After 0.5.1
+## 0.5.2
 
-- **Python 3.12 or newer.** Releases after 0.5.1 drop the wheels for CPython
-  3.9, 3.10 and 3.11 and for PyPy 3.11 (which is Python 3.11 compatible), and
-  `requires-python` is `>=3.12`. `pip` on an older Python keeps installing
-  0.5.1 and earlier. Nothing in the API changes.
+- **Python 3.12 or newer.** 0.5.2 drops the wheels for CPython 3.9, 3.10 and
+  3.11 and for PyPy 3.11 (which is Python 3.11 compatible), and `requires-python`
+  is `>=3.12`. `pip` on an older Python keeps installing 0.5.1 and earlier.
+  Nothing in the API changes.
