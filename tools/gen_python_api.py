@@ -170,6 +170,7 @@ WINDOW_PROPERTIES = [
     ("`resize_border`, `system_menu`", "set, get", "Border width for undecorated windows; the OS window menu."),
     ("`titlebar_inset`, `native_controls`", "get", "macOS traffic-light area; whether the OS shows its controls."),
     ("`gpu_watchdog`", "set, get", "Seconds before a stuck frame fires `gpu_stalled`; `None` is off."),
+    ("`present_mode`", "set, get", "`\"vsync\"` (default) paces frames to the display; `\"low_latency\"` shows the newest frame at once."),
 ]
 WINDOW_EVENTS = [
     ("`resize`", "`width`, `height`", "The client area changed size."),
