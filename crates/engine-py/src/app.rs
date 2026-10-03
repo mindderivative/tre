@@ -1194,7 +1194,11 @@ impl App {
                 // 0.5.4 (#102): input arrives in physical pixels; the engine
                 // speaks logical ones. A resize first records the physical
                 // size the surface needs.
-                runtime.handles.refresh_scale();
+                if runtime.handles.refresh_scale() {
+                    // Consumed here, so the frame won't see it change: the
+                    // logical size moved, and layout must follow.
+                    runtime.handles.tree.borrow_mut().mark_dirty();
+                }
                 if let InputEvent::Resized { width, height } = &event {
                     runtime.handles.width.set(*width as u32);
                     runtime.handles.height.set(*height as u32);
