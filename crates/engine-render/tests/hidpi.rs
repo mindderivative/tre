@@ -420,3 +420,32 @@ fn an_effect_is_rendered_at_the_physical_size() {
     assert_eq!(w.at(39, 60), rgba(BG));
     assert!(near(w.at(41, 60), [0, 0, 0, 255], 2));
 }
+
+#[test]
+fn fractional_scales_put_box_edges_on_whole_device_pixels() {
+    // 3 logical px at 1.5x is 4.5 device px: unsnapped, the left column of
+    // the box would be half red over the background.
+    let mut w = Window::new((40.0, 40.0), 1.5);
+    w.rect(3.0, 3.0, 10.0, 10.0, RED, 0.0); // 15x15 device px
+    w.frame();
+    let pixels = w.pixels();
+    // Every pixel is either all background or all red: no blended edge.
+    let blended = pixels
+        .iter()
+        .filter(|p| !near(**p, rgba(BG), 2) && !near(**p, rgba(RED), 2))
+        .count();
+    assert_eq!(blended, 0, "snapped edges leave no blended pixels");
+    let red = pixels.iter().filter(|p| near(**p, rgba(RED), 2)).count();
+    assert_eq!(red, 15 * 15);
+}
+
+#[test]
+fn snapping_changes_nothing_at_whole_scales() {
+    let mut scaled = Window::new((60.0, 40.0), 2.0);
+    scaled.rect(7.0, 5.0, 20.0, 11.0, RED, 0.0);
+    scaled.frame();
+    let mut authored = Window::new((120.0, 80.0), 1.0);
+    authored.rect(14.0, 10.0, 40.0, 22.0, RED, 0.0);
+    authored.frame();
+    assert_eq!(differing(&scaled.pixels(), &authored.pixels(), 0), 0);
+}

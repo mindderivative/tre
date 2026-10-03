@@ -390,7 +390,30 @@ pub(crate) fn composed_transform(
     w: f64,
     h: f64,
 ) -> Affine {
-    parent * Affine::translate(position) * node.paint.local_transform(w, h)
+    snapped_offset(parent, position) * node.paint.local_transform(w, h)
+}
+
+/// `parent` moved by a node's layout `position`, with that move rounded to
+/// whole device pixels when `parent` is a plain scale and shift (0.5.4,
+/// #102). At a fractional display scale a logical offset lands between
+/// device pixels (3 at 1.5x is 4.5), and an edge or a glyph there is
+/// smeared over two; rounding puts it on the grid. Only the layout offset
+/// is rounded, not the parent's own shift, so an animated transform still
+/// moves smoothly, and at a scale where offsets are already whole (1x, 2x)
+/// nothing changes. A rotated or skewed parent is left exact.
+fn snapped_offset(parent: Affine, position: (f64, f64)) -> Affine {
+    let [a, b, c, d, e, f] = parent.as_coeffs();
+    if b != 0.0 || c != 0.0 {
+        return parent * Affine::translate(position);
+    }
+    Affine::new([
+        a,
+        b,
+        c,
+        d,
+        e + (position.0 * a).round(),
+        f + (position.1 * d).round(),
+    ])
 }
 
 /// The window-space bounding box of `rect` (node-local) under
