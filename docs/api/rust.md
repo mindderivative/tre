@@ -1204,6 +1204,23 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 | `Error` | `{ message: String }` | The device reported an error and the draw that caused it is skipped. |
 | `Stalled` | `{ seconds: f64 }` | A submitted frame has not completed after the given number of seconds. |
 
+### PresentChoice { #presentchoice }
+
+*enum.* What an app asks of the swapchain.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Vsync` |  | One frame per display refresh, never tearing; the default. |
+| `LowLatency` |  | Shows the newest frame at once (Mailbox); the loop is not paced. |
+
+| Method | Description |
+| --- | --- |
+| `fn from_name(name: &str) -> Option<Self>` | The choice a Python name stands for. |
+| `fn mode(self, supported: &[PresentMode]) -> PresentMode` | The present mode to configure a surface with, given the modes it supports. |
+| `fn name(self) -> &'static str` | The name Python uses. |
+
 ### Functions (engine-render) { #functions-engine-render }
 
 | Function | Description |

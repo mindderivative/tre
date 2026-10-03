@@ -33,7 +33,9 @@ use engine_platform::{
     EventLoopWaker, IdleHooks, WindowConfig, WindowLifecycle, WindowOptions, WindowRequest,
     run_windowed_multi_with,
 };
-use engine_render::{GpuReport, GpuWatch, TextPlacement, TextRenderer, WindowRenderer};
+use engine_render::{
+    GpuReport, GpuWatch, PresentChoice, TextPlacement, TextRenderer, WindowRenderer,
+};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
@@ -291,12 +293,21 @@ struct GpuState {
     /// 0.5.1 (#65): this device's health: its lost and error handlers, and
     /// the stall watchdog. Installed the moment the device exists.
     watch: GpuWatch,
+    /// 0.5.4 (#101): how the swapchain paces frames, and the modes this
+    /// surface supports (the choice picks one of them).
+    present: PresentChoice,
+    present_modes: Vec<wgpu::PresentMode>,
 }
 
 impl GpuState {
     /// 0.4.0: an `Err` (no adapter, no device, or a surface this adapter
     /// can't drive) ends the run, and `App.run()` raises it.
-    fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, String> {
+    fn new(
+        window: Arc<Window>,
+        width: u32,
+        height: u32,
+        present: PresentChoice,
+    ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
             .create_surface(window.clone())
@@ -331,12 +342,16 @@ impl GpuState {
         let mut config = surface
             .get_default_config(&adapter, width, height)
             .ok_or("the window's surface isn't supported by this GPU adapter")?;
+        // 0.5.4 (#101): `get_default_config` takes the first mode the driver
+        // lists, which is `Mailbox` on Linux with Mesa: it never waits for the
+        // display, so one animating box ran the loop at ~3,500 frames a second
+        // and used a whole CPU core. Choose the mode ourselves.
+        let capabilities = surface.get_capabilities(&adapter);
+        config.present_mode = present.mode(&capabilities.present_modes);
+        tracing::debug!(mode = ?config.present_mode, choice = present.name(), "present mode");
         // 0.4.0 M3: render into a persistent target and copy it into the
         // swapchain image, where the surface allows copies into it.
-        let copyable = surface
-            .get_capabilities(&adapter)
-            .usages
-            .contains(wgpu::TextureUsages::COPY_DST);
+        let copyable = capabilities.usages.contains(wgpu::TextureUsages::COPY_DST);
         if copyable {
             config.usage |= wgpu::TextureUsages::COPY_DST;
             tracing::debug!("rendering through a persistent target, copied to the surface");
@@ -358,7 +373,24 @@ impl GpuState {
             queue,
             renderer,
             watch,
+            present,
+            present_modes: capabilities.present_modes,
         })
+    }
+
+    /// 0.5.4 (#101): switches how the swapchain paces frames, live. A no-op
+    /// when the choice is the one in effect, so it can be called every frame.
+    fn set_present(&mut self, choice: PresentChoice) {
+        if choice == self.present {
+            return;
+        }
+        self.present = choice;
+        let mode = choice.mode(&self.present_modes);
+        if mode != self.surface_config.present_mode {
+            self.surface_config.present_mode = mode;
+            self.surface.configure(&self.device, &self.surface_config);
+            tracing::debug!(?mode, choice = choice.name(), "present mode changed");
+        }
     }
 
     /// M32 Phase 2 (§4, §5): reconfigures the real wgpu surface to a
@@ -798,6 +830,7 @@ impl App {
                     window,
                     setup.handles.width.get(),
                     setup.handles.height.get(),
+                    setup.handles.present_mode.get(),
                 ) {
                     Ok(gpu) => gpu,
                     Err(err) => {
@@ -947,6 +980,8 @@ impl App {
                 // work when the surface's own configured size has
                 // fallen behind the window's true current one, even if
                 // nothing else changed.
+                // 0.5.4 (#101): `window.set(present_mode=...)` takes effect live.
+                runtime.gpu.set_present(runtime.handles.present_mode.get());
                 let resized = runtime
                     .gpu
                     .needs_resize(runtime.handles.width.get(), runtime.handles.height.get());

@@ -2,5 +2,7 @@
   "Node.window_region": "Whether a primary press here moves the window, for a custom title bar.",
   "GpuWatch::poll": "Polls the device without blocking and returns what the GPU reported since the last call.",
   "WindowRenderer::has_animated_shader": "Whether the last frame drew an animated shader, which keeps the window drawing frames.",
-  "TextOptions.ellipsis": "Ends a cut last line with an ellipsis."
+  "TextOptions.ellipsis": "Ends a cut last line with an ellipsis.",
+  "PresentChoice::LowLatency": "Shows the newest frame at once (Mailbox); the loop is not paced.",
+  "PresentChoice::Vsync": "One frame per display refresh, never tearing; the default."
 }

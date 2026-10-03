@@ -130,6 +130,9 @@ pub(crate) struct WindowHandles {
     /// 0.5.1 (#65): the stall watchdog's limit in seconds; `None` (the
     /// default) is off.
     pub(crate) gpu_watchdog: Rc<Cell<Option<f64>>>,
+    /// 0.5.4 (#101): how the swapchain paces frames; `vsync` (the default)
+    /// or `low_latency`. Read every frame, so `set` takes effect live.
+    pub(crate) present_mode: Rc<Cell<engine_render::PresentChoice>>,
     /// 0.5.1 (#65): set by the private `_lose_gpu`, a test hook: the frame
     /// loop destroys the device, which then reports itself lost.
     pub(crate) lose_gpu: Rc<Cell<bool>>,
@@ -228,6 +231,7 @@ impl PyWindow {
                 fullscreen: Rc::new(Cell::new(false)),
                 titlebar_inset: Rc::new(Cell::new((0.0, 0.0))),
                 gpu_watchdog: Rc::new(Cell::new(None)),
+                present_mode: Rc::new(Cell::new(engine_render::PresentChoice::default())),
                 lose_gpu: Rc::new(Cell::new(false)),
                 min_size: Rc::new(Cell::new((0.0, 0.0))),
                 icon: Rc::new(RefCell::new(None)),

@@ -368,6 +368,7 @@ class Window:
         resize_border: float = ...,
         system_menu: bool = ...,
         gpu_watchdog: float | None = ...,
+        present_mode: str = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -395,7 +396,10 @@ class Window:
         own. `gpu_watchdog`: (0.5.1) seconds, greater than 0, after which a
         submitted frame that hasn't completed fires `gpu_stalled` -- once, and
         it only reports, since stuck GPU work can't be cancelled; `None`, the
-        default, is off."""
+        default, is off. `present_mode`: (0.5.4) `"vsync"` (the default) paces
+        frames to the display; `"low_latency"` shows the newest frame at once
+        where the surface allows (`Mailbox`), at the cost of rendering as fast
+        as possible while something animates. Takes effect live."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -425,6 +429,8 @@ class Window:
     def get(self, name: Literal["titlebar_inset"]) -> tuple[float, float]: ...
     @overload
     def get(self, name: Literal["gpu_watchdog"]) -> float | None: ...
+    @overload
+    def get(self, name: Literal["present_mode"]) -> str: ...
     @overload
     def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
     @overload

@@ -120,3 +120,15 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.4
+
+- **An animating window is paced to the display.** The swapchain used the first
+  present mode the driver listed, which on Linux with Mesa is `Mailbox`: it never
+  waits for the display, so any continuous animation, even one box, ran the loop
+  at thousands of frames a second and used a whole CPU core (measured: 97.5% of a
+  core, now 7 to 9%). The default is now vsync. A still window was never affected
+  and still costs nothing. An app that wants the old behavior, the newest frame at
+  once, asks for it with `window.set(present_mode="low_latency")`, live or before
+  `App.run()`. macOS and Windows already listed a vsync mode first, so little
+  changes there.
+

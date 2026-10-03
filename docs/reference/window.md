@@ -235,6 +235,14 @@ edge outlined in orange. It's for seeing partial redraw work and for finding
 redraws an app didn't mean to cause. The tint goes on the image the window
 shows, never on the frame Tesserae Engine keeps, so it never changes what later frames
 draw. Off by default.
+**`set(present_mode=...)`** (0.5.4) chooses how frames are paced to the display.
+`"vsync"`, the default, shows one frame per display refresh and lets the loop
+wait for the display between frames, so a window with something animating uses a
+few percent of a core. `"low_latency"` shows the newest frame at once
+(`Mailbox`, where the surface has it, else vsync): a frame is never a refresh
+old, but while something animates the loop renders as fast as it can and uses a
+whole core. It takes effect at once, even in an open window. A window with
+nothing changing costs nothing in either mode.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), `dark` — the OS's current appearance,
 or `None` where it can't say ([Window properties](events.md#window-properties))

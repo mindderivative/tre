@@ -233,7 +233,7 @@ impl PyWindow {
 
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
 const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
-    min_width, min_height, icon, resize_border, system_menu, gpu_watchdog";
+    min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode";
 
 /// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
 /// RGBA8 bytes, `width * height * 4` of them.
@@ -316,6 +316,20 @@ pub(crate) fn grow_to_minimum(handles: &crate::window::WindowHandles) {
 
 /// 0.5.1 (#65): the stall watchdog's limit: `None` turns it off, otherwise a
 /// number of seconds greater than 0.
+/// 0.5.4 (#101): `present_mode`, `"vsync"` or `"low_latency"`.
+fn parse_present_mode(
+    name: &str,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<engine_render::PresentChoice> {
+    let bad = || {
+        PyValueError::new_err(format!(
+            "window property `{name}` must be \"vsync\" or \"low_latency\""
+        ))
+    };
+    let text: String = value.extract().map_err(|_| bad())?;
+    engine_render::PresentChoice::from_name(&text).ok_or_else(bad)
+}
+
 fn parse_watchdog(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Option<f64>> {
     if value.is_none() {
         return Ok(None);
@@ -618,6 +632,7 @@ impl PyWindow {
         let mut icon = None;
         let mut resize_border = None;
         let mut gpu_watchdog = None;
+        let mut present_mode = None;
         let mut system_menu = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
@@ -652,6 +667,7 @@ impl PyWindow {
                     "min_height" => min_height = Some(parse_min_edge(&name, &value)?),
                     "resize_border" => resize_border = Some(parse_min_edge(&name, &value)?),
                     "gpu_watchdog" => gpu_watchdog = Some(parse_watchdog(&name, &value)?),
+                    "present_mode" => present_mode = Some(parse_present_mode(&name, &value)?),
                     "system_menu" => {
                         system_menu = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `system_menu` must be a bool")
@@ -698,6 +714,9 @@ impl PyWindow {
         }
         if let Some(seconds) = gpu_watchdog {
             self.handles.gpu_watchdog.set(seconds);
+        }
+        if let Some(choice) = present_mode {
+            self.handles.present_mode.set(choice);
         }
         if let Some(border) = resize_border {
             self.handles.resize_border.set(border);
@@ -837,6 +856,14 @@ impl PyWindow {
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
+            "present_mode" => self
+                .handles
+                .present_mode
+                .get()
+                .name()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
             "min_height" => self
                 .handles
                 .min_size
@@ -923,7 +950,7 @@ impl PyWindow {
                      scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
-                     native_controls, gpu_watchdog"
+                     native_controls, gpu_watchdog, present_mode"
                 )));
             }
         })
