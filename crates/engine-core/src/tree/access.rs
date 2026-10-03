@@ -56,8 +56,9 @@ impl Tree {
             .get(id)
             .expect("build_access_update: NodeId not found in this Tree");
         let layout = self.layout(id);
-        let x = offset_x + f64::from(layout.location.x);
-        let y = offset_y + f64::from(layout.location.y);
+        let (sx, sy) = self.scroll_shift(id);
+        let x = offset_x + f64::from(layout.location.x) + sx;
+        let y = offset_y + f64::from(layout.location.y) + sy;
         let w = f64::from(layout.size.width);
         let h = f64::from(layout.size.height);
 

@@ -102,6 +102,9 @@ pub struct Tree {
     /// 0.5.4 (#103): the nodes the last full scan found animating, and the
     /// `animations_started` count it was taken at. See `tick_all`.
     animating: Vec<NodeId>,
+    /// 0.5.4 (#105): the root and available space the last `compute_layout`
+    /// answered, to skip a repeat of the same question.
+    last_layout: Option<(NodeId, Size<AvailableSpace>)>,
     scanned_at: Option<u64>,
     scroll_view_count: usize,
     virtual_list_count: usize,
@@ -140,6 +143,7 @@ impl Tree {
         Self {
             nodes: SlotMap::with_key(),
             animating: Vec::new(),
+            last_layout: None,
             scanned_at: None,
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),

@@ -58,8 +58,12 @@ impl Tree {
             return None;
         }
         let layout = self.layout(id);
+        let (sx, sy) = self.scroll_shift(id);
         let composed = parent_transform
-            * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
+            * Affine::translate((
+                f64::from(layout.location.x) + sx,
+                f64::from(layout.location.y) + sy,
+            ))
             * node
                 .paint
                 .local_transform(f64::from(layout.size.width), f64::from(layout.size.height));

@@ -371,9 +371,10 @@ fn subtree_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId) 
         };
         index.hash(h);
         let layout = tree.layout(child);
+        let (sx, sy) = tree.scroll_shift(child);
         for v in [
-            layout.location.x,
-            layout.location.y,
+            layout.location.x + sx as f32,
+            layout.location.y + sy as f32,
             layout.size.width,
             layout.size.height,
         ] {

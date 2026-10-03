@@ -139,7 +139,11 @@ fn visit<'t>(
     }
     let layout = tree.layout(id);
     let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
-    let position = (f64::from(layout.location.x), f64::from(layout.location.y));
+    let (sx, sy) = tree.scroll_shift(id);
+    let position = (
+        f64::from(layout.location.x) + sx,
+        f64::from(layout.location.y) + sy,
+    );
     let composed = composed_transform(parent_transform, position, node, w, h);
     let bounds = transformed_bounds(composed, Rect::new(0.0, 0.0, w, h));
     if !bounds.overlaps(visible) {

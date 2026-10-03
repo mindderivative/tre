@@ -52,9 +52,19 @@ impl Tree {
             .taffy_nodes
             .get(root)
             .expect("compute_layout: root NodeId not found in this Tree");
-        self.taffy
-            .compute_layout(root_taffy, available_space)
-            .expect("compute_layout: taffy layout computation failed");
+        // 0.5.4 (#105): taffy rounds every node's layout on each call even
+        // when it computed nothing, which at 3,000 nodes is most of a
+        // scrolled frame. A root whose cache is intact, asked the same
+        // question as last time, has nothing to redo.
+        let asked = (root, available_space);
+        let clean =
+            self.last_layout == Some(asked) && !self.taffy.dirty(root_taffy).unwrap_or(true);
+        if !clean {
+            self.taffy
+                .compute_layout(root_taffy, available_space)
+                .expect("compute_layout: taffy layout computation failed");
+            self.last_layout = Some(asked);
+        }
         // M36 Phase 1 (§5, §7, §11.7): the identical real "container-
         // level state drives one real child's own real layout_style,
         // then taffy runs once more so it actually lands" shape the
@@ -114,6 +124,7 @@ impl Tree {
             .filter(|(_, node)| matches!(node.kind, NodeKind::ScrollView(_)))
             .map(|(id, _)| id)
             .collect();
+        let mut changed = false;
         for view in views {
             let Some(max_scroll) = self.max_scroll(view) else {
                 continue;
@@ -122,7 +133,6 @@ impl Tree {
             let NodeKind::ScrollView(state) = &self.nodes[view].kind else {
                 unreachable!("checked by the filter above")
             };
-            let horizontal = state.horizontal;
             // Real, honest re-clamp on every real layout pass, the
             // identical "content may have shrunk since last frame"
             // discipline pyCopper's own `_clamped_scroll` already
@@ -135,26 +145,23 @@ impl Tree {
                 state.scroll.current = clamped;
             }
 
+            // 0.5.4 (#105): the offset is no longer baked into the child's
+            // inset; it is a paint-time shift (`scroll_shift`), so a scroll
+            // changes no layout and taffy has nothing to redo.
             let mut style = self.nodes[child].layout_style.clone();
             style.position = Position::Absolute;
-            style.inset = if horizontal {
-                TaffyRect {
-                    left: length(-clamped as f32),
-                    top: length(0.0),
-                    right: auto(),
-                    bottom: auto(),
-                }
-            } else {
-                TaffyRect {
-                    left: length(0.0),
-                    top: length(-clamped as f32),
-                    right: auto(),
-                    bottom: auto(),
-                }
+            style.inset = TaffyRect {
+                left: length(0.0),
+                top: length(0.0),
+                right: auto(),
+                bottom: auto(),
             };
-            self.set_layout_style(child, style);
+            if self.nodes[child].layout_style != style {
+                self.set_layout_style(child, style);
+                changed = true;
+            }
         }
-        true
+        changed
     }
 
     /// M37 (§5, §7, §11.7): the real fix for a genuine, previously
@@ -189,11 +196,11 @@ impl Tree {
             .filter(|(_, node)| matches!(node.kind, NodeKind::VirtualList(_)))
             .map(|(id, _)| id)
             .collect();
+        let mut changed = false;
         for list in lists {
             let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
                 unreachable!("checked by the filter above")
             };
-            let scroll = state.scroll_offset.current;
             let materialized: Vec<(usize, NodeId)> =
                 state.materialized.iter().map(|(&i, &id)| (i, id)).collect();
 
@@ -201,7 +208,9 @@ impl Tree {
                 let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
                     unreachable!("checked by the filter above")
                 };
-                let top = state.offset_of(idx) - scroll;
+                // 0.5.4 (#105): the row's place in the list, not on screen;
+                // the scroll is a paint-time shift (`scroll_shift`).
+                let top = state.offset_of(idx);
 
                 let mut style = self.nodes[child].layout_style.clone();
                 style.position = Position::Absolute;
@@ -211,10 +220,13 @@ impl Tree {
                     right: auto(),
                     bottom: auto(),
                 };
-                self.set_layout_style(child, style);
+                if self.nodes[child].layout_style != style {
+                    self.set_layout_style(child, style);
+                    changed = true;
+                }
             }
         }
-        true
+        changed
     }
 
     /// The computed box for `id`, after `compute_layout` has run for a
@@ -252,6 +264,30 @@ impl Tree {
         (p.x, p.y)
     }
 
+    /// 0.5.4 (#105): how far `id`'s parent scrolls it, as the translation to
+    /// add to its layout location when painting and hit-testing: the single
+    /// child of a `ScrollView` moves by minus the view's offset, and a
+    /// `VirtualList`'s rows by minus its scroll. Layout places children as
+    /// if unscrolled, so scrolling never invalidates it. Every reader of a
+    /// node's position goes through here.
+    pub fn scroll_shift(&self, id: NodeId) -> (f64, f64) {
+        let Some(parent) = self.nodes.get(id).and_then(|n| n.parent) else {
+            return (0.0, 0.0);
+        };
+        match self.nodes.get(parent).map(|n| &n.kind) {
+            Some(NodeKind::ScrollView(state)) => {
+                let offset = state.scroll.current;
+                if state.horizontal {
+                    (-offset, 0.0)
+                } else {
+                    (0.0, -offset)
+                }
+            }
+            Some(NodeKind::VirtualList(state)) => (0.0, -state.scroll_offset.current),
+            _ => (0.0, 0.0),
+        }
+    }
+
     /// The root-to-`id` composition of every node's layout offset and own
     /// transform -- shared by `absolute_position` and `window_to_local`.
     pub(super) fn composed_transform(&self, id: NodeId) -> Affine {
@@ -274,8 +310,12 @@ impl Tree {
                 .nodes
                 .get(node_id)
                 .expect("absolute_position: NodeId not found in this Tree");
+            let (sx, sy) = self.scroll_shift(node_id);
             composed = composed
-                * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
+                * Affine::translate((
+                    f64::from(layout.location.x) + sx,
+                    f64::from(layout.location.y) + sy,
+                ))
                 * node
                     .paint
                     .local_transform(f64::from(layout.size.width), f64::from(layout.size.height));

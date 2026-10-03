@@ -6075,16 +6075,17 @@ fn a_wheel_over_a_carousel_it_cannot_move_scrolls_the_page_around_it() {
             height: AvailableSpace::Definite(100.0),
         },
     );
-    let wheel = |x: f64, y: f64| InputEvent::Scroll {
+    let wheel_at = |x: f64, y: f64, at_y: f64| InputEvent::Scroll {
         delta: ScrollDelta::Lines(x, y),
-        position: Point::new(50.0, 25.0),
+        position: Point::new(50.0, at_y),
     };
-    tree.dispatch(page, wheel(0.0, -2.0), Instant::now());
+    tree.dispatch(page, wheel_at(0.0, -2.0, 25.0), Instant::now());
     assert_eq!(
         (offset_of(&tree, page), offset_of(&tree, carousel)),
         (40.0, 0.0)
     );
-    tree.dispatch(page, wheel(-2.0, 0.0), Instant::now());
+    // The page scrolled 40, so the carousel now spans y -40..10.
+    tree.dispatch(page, wheel_at(-2.0, 0.0, 5.0), Instant::now());
     assert_eq!(
         (offset_of(&tree, page), offset_of(&tree, carousel)),
         (40.0, 40.0)
@@ -6462,4 +6463,84 @@ fn tick_cost_with_one_animating_node_in_9216() {
         tree.tick_all(t0 + Duration::from_millis(i));
     }
     println!("tick_all: {:?} per frame", start.elapsed() / runs as u32);
+}
+
+/// 0.5.4 (#105): a scroll offset moves what is painted and hit, and changes
+/// no layout.
+mod scroll_without_layout {
+    use super::*;
+
+    fn relayout(tree: &mut Tree, view: NodeId) {
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+    }
+
+    #[test]
+    fn scrolling_a_view_moves_its_content_and_not_its_layout() {
+        let (mut tree, view, boxes) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        let content = tree.get(view).unwrap().children[0];
+        let before = tree.layout(content).location;
+        assert_eq!(tree.absolute_position(boxes[2]), (0.0, 200.0));
+
+        tree.scroll_scroll_view_by(view, 150.0);
+        relayout(&mut tree, view);
+
+        assert_eq!(
+            tree.layout(content).location,
+            before,
+            "layout is unchanged by a scroll"
+        );
+        assert_eq!(tree.scroll_shift(content), (0.0, -150.0));
+        assert_eq!(tree.scroll_shift(view), (0.0, 0.0));
+        assert_eq!(tree.absolute_position(boxes[2]), (0.0, 50.0));
+        // A point where box 2 now is hits box 2; its old place hits box 0/1.
+        let hit = tree.hit_test_at(view, Point::new(10.0, 60.0), Affine::IDENTITY);
+        assert_eq!(hit.map(|(id, _)| id), Some(boxes[2]));
+    }
+
+    #[test]
+    fn a_view_scroll_leaves_taffy_with_nothing_to_redo() {
+        let (mut tree, view, _boxes) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        tree.scroll_scroll_view_by(view, 50.0);
+        relayout(&mut tree, view);
+        // The sync passes found nothing to change: no second layout pass.
+        assert!(!tree.sync_scroll_view_layouts());
+        assert!(!tree.sync_virtual_list_layouts());
+    }
+
+    #[test]
+    fn a_horizontal_view_shifts_sideways() {
+        let mut tree = Tree::new();
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(true)),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(50.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        let (k, s, p) = leaf(400.0, 50.0);
+        let strip = tree.insert(k, s, p);
+        tree.add_child(view, strip);
+        relayout(&mut tree, view);
+        tree.scroll_scroll_view_by(view, 120.0);
+        relayout(&mut tree, view);
+        assert_eq!(tree.scroll_shift(strip), (-120.0, 0.0));
+        assert_eq!(tree.absolute_position(strip), (-120.0, 0.0));
+    }
+
+    #[test]
+    fn a_node_outside_a_scroller_is_not_shifted() {
+        let (tree, view, boxes) = view_over_boxes(&[100.0]);
+        assert_eq!(tree.scroll_shift(boxes[0]), (0.0, 0.0));
+        assert_eq!(tree.scroll_shift(view), (0.0, 0.0));
+    }
 }

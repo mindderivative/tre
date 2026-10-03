@@ -148,3 +148,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   at 9,000 nodes, now 1.5 ms, from keeping the records in a slot-indexed array
   reused between frames and not re-bounding nodes that paint only their box.
   The result is unchanged; the cost still grows with the tree.
+- **Scrolling no longer runs layout.** A scroll view's or virtual list's offset used
+  to be written into its content's layout position, so every scrolled frame
+  re-ran layout (1.55 ms with 3,000 rows). The offset is now a paint-time shift,
+  `Tree::scroll_shift`, that painting, hit testing, accessibility bounds and
+  `absolute_position` all read, and layout skips a call whose answer it already
+  has: 8.5 µs per scrolled frame. One visible consequence for code that
+  reads layout directly: a scrolled child's layout position is where it sits
+  unscrolled; use `absolute_position` for where it is on screen.
