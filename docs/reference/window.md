@@ -264,6 +264,41 @@ root's layout box follows. It fires no `resize` event — that reports a
 change the user made; `simulate("resize", width=, height=)` stands in for
 one.
 
+## `snapshot`
+
+**`snapshot(width=None, height=None, scale=None, time=0.0)`** (0.5.4) returns
+what the window draws as `(rgba, width, height)`: straight-alpha RGBA8 bytes,
+`width * height * 4` of them, top row first. It renders the window's tree
+offscreen, so it works before `App.run()` and on a machine with no display
+(it uses a software GPU adapter where there is no GPU), and it leaves the
+window as it was.
+
+`width` and `height` are logical pixels and default to the window's own;
+`scale` multiplies them into the pixels returned, and defaults to the
+window's (`1.0` before it opens, or with `dpi_scaling` off). `time` is the
+clock, in seconds, that an animated shader sees as `frame.time`. Animations
+are drawn at their current values; they are not advanced. A size or scale
+that isn't greater than 0 raises `ValueError`; no GPU, or a size the GPU
+can't render, raises `RuntimeError`.
+
+`tre.write_png(path, rgba, width, height)` saves the pixels as a PNG, and
+`tre.png_bytes(rgba, width, height)` returns the file's bytes, both with the
+standard library alone:
+
+```python
+import tre
+
+window = Window(width=320, height=200)
+...  # build the tree
+tre.write_png("home.png", *window.snapshot())
+tre.write_png("home@2x.png", *window.snapshot(scale=2))
+```
+
+What it returns is what the window shows: the same renderer draws both, and
+a live window and its snapshot are pixel for pixel the same. That makes it
+usable for visual regression tests (compare against a stored image) and for
+documentation screenshots.
+
 ## `measure_text`
 
 **`measure_text(text, font_family="Roboto", font_size=16, font_weight=400,

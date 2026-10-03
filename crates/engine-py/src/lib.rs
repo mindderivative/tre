@@ -33,6 +33,7 @@ mod window_docking;
 mod window_events;
 mod window_input;
 mod window_layers;
+mod window_snapshot;
 
 use pyo3::prelude::*;
 

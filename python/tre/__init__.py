@@ -27,6 +27,7 @@ from tre._core import (
     Window,
     register_font,
 )
+from tre.snapshot import png_bytes, write_png
 
 #: M32 Phase 1 (§5, §8, §10): the bundled monospace face a terminal always
 #: shapes with (`engine_render::MONOSPACE_FONT_FAMILY`, "Hack Nerd Font
@@ -45,7 +46,9 @@ __all__ = [
     "Shader",
     "ShaderError",
     "Window",
+    "png_bytes",
     "register_font",
+    "write_png",
 ]
 
 # M97: the migration gate's switch -- see `tre/_removed.py`.

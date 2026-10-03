@@ -106,6 +106,7 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `set_active_panel(side: str, index: int) -> None` | Shows the `index`th panel docked in `side`'s zone (was `set_active_tab`). |
 | `show_layer(node, anchor, placement, modal, dismissible) -> None` | Shows `node` over the window's content, above every layer already open. |
 | `simulate(event: str, node: Node \| None=None, **fields: Any) -> None` | Delivers a synthetic event as real input would, for tests with no display. |
+| `snapshot(width, height, scale, time) -> tuple[bytes, int, int]` | What the window draws, as `(rgba, width, height)`: straight-alpha RGBA8 bytes, `width * height * 4` of them, top row first. |
 | `start_panel_drag(panel: Node) -> None` | Starts dragging `panel`, a docked panel. |
 | `undock_panel(panel: Node) -> None` | Takes `panel` out of docking. |
 | `write_clipboard(text: str) -> bool` | Puts `text` on the OS clipboard; `False` when it can't be reached (logged, never raised). |

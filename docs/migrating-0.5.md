@@ -163,3 +163,14 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   stops paying for them. 50,000 boxes now take about 120 MB (the baseline
   measured about 210 MB). Rust code that builds a node from state by hand
   wraps it: `NodeKind::TextField(Box::new(state))`.
+- **Colours are drawn as specified.** A window rendered into an sRGB surface
+  format, which is what the driver lists first on Linux and most desktops, so
+  the GPU encoded the renderer's already-encoded colours a second time: a
+  fill of `(103, 80, 164)` showed as `(170, 152, 210)`, and every colour was
+  lighter and flatter than asked. The engine now chooses a non-sRGB format
+  where one exists, and colours on screen are the ones you set. If you chose
+  colours by eye against the old output, expect them to look darker and more
+  saturated now; the numbers you wrote are what you get.
+- **A window can be read as pixels.** `window.snapshot()` returns what it draws
+  as RGBA bytes, offscreen and without a display, and `tre.write_png` saves it
+  (see [Window](reference/window.md#snapshot)).

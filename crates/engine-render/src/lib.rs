@@ -30,6 +30,7 @@ mod image_cache;
 mod persistent_target;
 mod present;
 mod shader_pass;
+mod snapshot;
 mod text;
 mod walk;
 mod window_renderer;
@@ -48,8 +49,9 @@ pub use geometry_cache::GeometryCache;
 pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
-pub use present::PresentChoice;
+pub use present::{PresentChoice, linear_surface_format};
 pub use shader_pass::{ShaderPasses, ShaderTextures};
+pub use snapshot::{Snapshot, snapshot};
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 pub use window_renderer::WindowRenderer;
 

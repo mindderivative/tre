@@ -515,6 +515,25 @@ class Window:
         renders no frames. The first call pins the window's clock at the
         real current time; `App.run()` returns it to the real clock."""
         ...
+    def snapshot(
+        self,
+        width: float | None = None,
+        height: float | None = None,
+        scale: float | None = None,
+        time: float = 0.0,
+    ) -> tuple[bytes, int, int]:
+        """(0.5.4) What the window draws, as `(rgba, width, height)`:
+        straight-alpha RGBA8 bytes, `width * height * 4` of them, top row first.
+        Rendered offscreen from the window's tree, so it works before
+        `App.run()` and with no display. `width` and `height` are logical
+        pixels and default to the window's; `scale` (default the window's,
+        `1.0` before it opens or with `dpi_scaling` off) multiplies them into
+        the pixels returned; `time` is the clock an animated shader sees as
+        `frame.time`. Animations are drawn at their current values. Save it
+        with `tre.write_png`. Raises `ValueError` for a size or scale that
+        isn't greater than 0, and `RuntimeError` with no GPU or for a size
+        the GPU can't render."""
+        ...
     def simulate(self, event: str, node: Node | None = None, **fields: Any) -> None:
         """M94: delivers a synthetic event exactly as real input would,
         for headless tests. Pointer events (`pointer_down`, `pointer_up`,

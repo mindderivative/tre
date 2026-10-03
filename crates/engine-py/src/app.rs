@@ -348,6 +348,10 @@ impl GpuState {
         // and used a whole CPU core. Choose the mode ourselves.
         let capabilities = surface.get_capabilities(&adapter);
         config.present_mode = present.mode(&capabilities.present_modes);
+        // 0.5.4 (#128): not an sRGB format, which would encode every colour twice.
+        if let Some(format) = engine_render::linear_surface_format(&capabilities.formats) {
+            config.format = format;
+        }
         tracing::debug!(mode = ?config.present_mode, choice = present.name(), "present mode");
         // 0.4.0 M3: render into a persistent target and copy it into the
         // swapchain image, where the surface allows copies into it.
