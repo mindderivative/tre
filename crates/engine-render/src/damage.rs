@@ -25,7 +25,6 @@
 //! the window, or on a first frame, a size change, or a `reset`, the answer
 //! is a full redraw.
 
-use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, Hasher};
 
 use engine_core::{
@@ -35,6 +34,7 @@ use engine_core::{
 };
 use peniko::Color;
 use peniko::kurbo::{Affine, Rect, Shape};
+use slotmap::SecondaryMap;
 
 use crate::{TextRenderer, transformed_bounds, walk};
 
@@ -71,7 +71,10 @@ struct Record {
 
 /// Remembers each node's painted rect and fingerprint from the last frame.
 pub struct DamageTracker {
-    records: HashMap<NodeId, Record>,
+    records: SecondaryMap<NodeId, Record>,
+    /// 0.5.4 (#104): the frame being built, kept between calls so its
+    /// storage is reused instead of allocated each frame.
+    spare: SecondaryMap<NodeId, Record>,
     size: Option<(u16, u16)>,
     /// 0.5.1 (#70): the window's clock, in seconds, which an animated
     /// shader's pixels depend on.
@@ -87,13 +90,14 @@ struct Recorder<'a> {
     tree: &'a Tree,
     time: f32,
     text: &'a mut TextRenderer,
-    records: HashMap<NodeId, Record>,
+    records: &'a mut SecondaryMap<NodeId, Record>,
 }
 
 impl Default for DamageTracker {
     fn default() -> Self {
         Self {
-            records: HashMap::new(),
+            records: SecondaryMap::new(),
+            spare: SecondaryMap::new(),
             size: None,
             time: 0.0,
             scale: 1.0,
@@ -139,17 +143,20 @@ impl DamageTracker {
         text: &mut TextRenderer,
     ) -> Damage {
         let window = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+        self.spare.clear();
         let mut recorder = Recorder {
             tree,
             time: self.time,
             text,
-            records: HashMap::with_capacity(self.records.len()),
+            records: &mut self.spare,
         };
         walk::walk(tree, root, Affine::scale(self.scale), window, &mut recorder);
-        let current = recorder.records;
 
         let first = self.size != Some((width, height));
-        let previous = std::mem::replace(&mut self.records, current);
+        // `spare` is now this frame; `records` (the last) becomes the next
+        // frame's scratch.
+        std::mem::swap(&mut self.records, &mut self.spare);
+        let previous = &self.spare;
         self.size = Some((width, height));
         if first {
             return Damage::Full;
@@ -170,7 +177,7 @@ impl DamageTracker {
                 None => rects.push(now.painted),
             }
         }
-        for (id, before) in &previous {
+        for (id, before) in previous {
             if !self.records.contains_key(id) {
                 rects.push(before.painted);
             }
@@ -225,7 +232,13 @@ pub(crate) fn painted_rect(
     visible: Rect,
 ) -> Rect {
     let local = local_painted(text, id, node, w, h);
-    let mut painted = transformed_bounds(composed, local);
+    // Most nodes paint nothing outside their box, and the walk has already
+    // bounded that box under `composed` (0.5.4, #104).
+    let mut painted = if local == Rect::new(0.0, 0.0, w, h) {
+        bounds
+    } else {
+        transformed_bounds(composed, local)
+    };
     if let NodeKind::TextField(state) = &node.kind
         && !state.multiline
     {

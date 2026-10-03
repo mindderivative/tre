@@ -922,6 +922,7 @@ dependencies = [
  "parley",
  "peniko",
  "pollster",
+ "slotmap",
  "taffy",
  "tracing",
  "vello_common",

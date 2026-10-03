@@ -641,3 +641,20 @@ fn setting_changing_and_clearing_a_shader_damages_the_node() {
     assert!(covers(&s.frame(), area), "clearing it");
     assert_eq!(s.frame(), Damage::None);
 }
+
+/// 0.5.4 (#104): records live in an array keyed by slot; a node removed and
+/// another inserted into its slot must still read as a removal plus an
+/// addition, not as "the same node, unchanged".
+#[test]
+fn a_node_that_takes_a_removed_nodes_slot_is_a_new_node() {
+    let mut s = Scene::new();
+    let old = s.rect(10.0, 10.0, 20.0, 20.0);
+    s.settle();
+    s.tree.remove(old);
+    // Same size and colour as the removed node, in a different place: only
+    // the node's identity differs.
+    s.rect(200.0, 100.0, 20.0, 20.0);
+    let damage = s.frame();
+    assert!(covers(&damage, Rect::new(10.0, 10.0, 30.0, 30.0)));
+    assert!(covers(&damage, Rect::new(200.0, 100.0, 220.0, 120.0)));
+}

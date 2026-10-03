@@ -143,3 +143,8 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   with one card animating). The tree now ticks only the nodes known to be
   animating, and looks at every node once only when a new animation has started:
   75 ns per frame in the same case. Nothing to change in an app.
+- **The damage walk is about 2.4x cheaper.** Working out what changed each frame
+  fingerprinted every visible node into a hashed map built from scratch: 3.7 ms
+  at 9,000 nodes, now 1.5 ms, from keeping the records in a slot-indexed array
+  reused between frames and not re-bounding nodes that paint only their box.
+  The result is unchanged; the cost still grows with the tree.
