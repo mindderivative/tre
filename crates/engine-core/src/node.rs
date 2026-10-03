@@ -68,7 +68,7 @@ pub enum NodeKind {
     /// real caret/highlight paint geometry, the same "engine-core holds
     /// inert data, engine-render re-derives it" split `TextState`
     /// itself already uses.
-    TextField(TextFieldState),
+    TextField(Box<TextFieldState>),
     /// M22 Phase 1 (§5): decoded pixels, painted as an external GPU
     /// texture (`engine-render`'s `image_cache`) -- see
     /// `ImageState`'s own doc comment for the real crate-boundary
@@ -83,7 +83,7 @@ pub enum NodeKind {
     /// engine-render re-derives paint geometry" split `TextFieldState`
     /// already established, extended to a whole cell grid instead of
     /// one string).
-    Terminal(TerminalState),
+    Terminal(Box<TerminalState>),
     /// M36 Phase 1 (§5, §7, §11.7): a real, general scrollable
     /// viewport over one oversized child -- see `ScrollViewState`'s
     /// own doc comment for the real design (grounded directly in the

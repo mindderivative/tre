@@ -431,7 +431,7 @@ impl PyWindow {
             "text_input" => {
                 let mut state = TextFieldState::new("", "Roboto", 400.0, 16.0);
                 state.text_tint = Animated::new(Color::from_rgba8(0, 0, 0, 255));
-                NodeKind::TextField(state)
+                NodeKind::TextField(Box::new(state))
             }
             "image" => {
                 require(&["rgba", "pixel_width", "pixel_height"])?;
@@ -479,12 +479,12 @@ impl PyWindow {
                     .and_then(|v| v.extract().ok())
                     .unwrap_or(1);
                 session = Some((shell, cols, rows, scrollback));
-                NodeKind::Terminal(TerminalState::new(
+                NodeKind::Terminal(Box::new(TerminalState::new(
                     cols.max(1),
                     rows.max(1),
                     MONOSPACE_FONT_FAMILY,
                     14.0,
-                ))
+                )))
             }
             _ => {
                 return Err(PyValueError::new_err(format!(

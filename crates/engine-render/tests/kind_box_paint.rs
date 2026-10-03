@@ -97,11 +97,16 @@ fn every_kind() -> Vec<(&'static str, NodeKind)> {
         ("text", text()),
         (
             "text_input",
-            NodeKind::TextField(TextFieldState::new("", "Roboto", 400.0, 16.0)),
+            NodeKind::TextField(Box::new(TextFieldState::new("", "Roboto", 400.0, 16.0))),
         ),
         (
             "terminal",
-            NodeKind::Terminal(TerminalState::new(4, 2, "Hack Nerd Font Mono", 12.0)),
+            NodeKind::Terminal(Box::new(TerminalState::new(
+                4,
+                2,
+                "Hack Nerd Font Mono",
+                12.0,
+            ))),
         ),
     ]);
     kinds

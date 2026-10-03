@@ -1760,7 +1760,7 @@ mod tests {
     /// what the eviction tests below need a real `NodeId` for.
     fn terminal_node(tree: &mut Tree, state: TerminalState) -> engine_core::NodeId {
         tree.insert(
-            NodeKind::Terminal(state),
+            NodeKind::Terminal(Box::new(state)),
             Style {
                 size: Size {
                     width: length(200.0),

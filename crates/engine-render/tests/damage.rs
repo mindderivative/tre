@@ -321,7 +321,9 @@ fn focusing_a_text_input_damages_it_for_the_caret() {
     let mut s = Scene::new();
     let field = s.add(
         s.root,
-        NodeKind::TextField(TextFieldState::new("hello", "Roboto", 400.0, 14.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new(
+            "hello", "Roboto", 400.0, 14.0,
+        ))),
         20.0,
         200.0,
         120.0,
@@ -533,7 +535,12 @@ fn a_terminal_is_damaged_across_its_whole_grid_not_just_its_box() {
     let mut s = Scene::new();
     let terminal = s.add(
         s.root,
-        NodeKind::Terminal(TerminalState::new(12, 2, "Hack Nerd Font Mono", 24.0)),
+        NodeKind::Terminal(Box::new(TerminalState::new(
+            12,
+            2,
+            "Hack Nerd Font Mono",
+            24.0,
+        ))),
         10.0,
         10.0,
         20.0,
@@ -561,7 +568,12 @@ fn damage_walk_cost_beside_a_large_terminal_and_canvas() {
     let mut s = Scene::new();
     s.add(
         s.root,
-        NodeKind::Terminal(TerminalState::new(200, 60, "Hack Nerd Font Mono", 12.0)),
+        NodeKind::Terminal(Box::new(TerminalState::new(
+            200,
+            60,
+            "Hack Nerd Font Mono",
+            12.0,
+        ))),
         0.0,
         0.0,
         300.0,

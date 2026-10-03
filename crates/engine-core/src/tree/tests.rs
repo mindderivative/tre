@@ -3260,7 +3260,7 @@ fn dispatch_reports_focus_changed_on_a_real_click_to_focus_transition() {
     let (_, _, root_paint) = leaf(0.0, 0.0);
     let root = tree.insert(NodeKind::Container, root_style, root_paint);
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new("hi", "Roboto", 400.0, 16.0))),
         Style {
             size: Size {
                 width: length(120.0),
@@ -3646,7 +3646,9 @@ fn build_access_update_reports_the_real_value_role_and_focus_action_for_a_text_f
     let mut tree = Tree::new();
     let (_, style, paint) = leaf(120.0, 32.0);
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("hello", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new(
+            "hello", "Roboto", 400.0, 16.0,
+        ))),
         style,
         paint,
     );
@@ -3686,7 +3688,9 @@ fn text_field_scene(content: &str) -> (Tree, NodeId, NodeId) {
     let root = tree.insert(NodeKind::Container, root_style, root_paint);
 
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new(content, "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new(
+            content, "Roboto", 400.0, 16.0,
+        ))),
         Style {
             size: Size {
                 width: length(120.0),
@@ -4574,7 +4578,7 @@ fn pointer_press_on_a_text_field_moves_focus_there() {
     let (_, _, root_paint) = leaf(0.0, 0.0);
     let root = tree.insert(NodeKind::Container, root_style, root_paint);
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new("hi", "Roboto", 400.0, 16.0))),
         Style {
             size: Size {
                 width: length(120.0),
@@ -4628,7 +4632,7 @@ fn pointer_right_click_on_a_text_field_also_moves_focus_there() {
     let (_, _, root_paint) = leaf(0.0, 0.0);
     let root = tree.insert(NodeKind::Container, root_style, root_paint);
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new("hi", "Roboto", 400.0, 16.0))),
         Style {
             size: Size {
                 width: length(120.0),
@@ -4796,7 +4800,7 @@ fn caret_follow_scene() -> (Tree, NodeId, NodeId) {
     let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
     state.multiline = true;
     let field = tree.insert(
-        NodeKind::TextField(state),
+        NodeKind::TextField(Box::new(state)),
         Style {
             size: Size {
                 width: length(200.0),
@@ -4845,7 +4849,7 @@ fn scroll_text_field_caret_into_view_uses_the_content_box_of_a_padded_field() {
     let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
     state.multiline = true;
     let field = tree.insert(
-        NodeKind::TextField(state),
+        NodeKind::TextField(Box::new(state)),
         Style {
             size: Size {
                 width: length(200.0),
@@ -4946,7 +4950,7 @@ fn horizontal_caret_follow_scene() -> (Tree, NodeId, NodeId) {
     let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
     state.multiline = true;
     let field = tree.insert(
-        NodeKind::TextField(state),
+        NodeKind::TextField(Box::new(state)),
         Style {
             size: Size {
                 width: length(100.0),
@@ -5139,7 +5143,7 @@ fn terminal_scene(rows: &[&str]) -> (Tree, NodeId) {
         }
     }
     let terminal = tree.insert(
-        NodeKind::Terminal(state),
+        NodeKind::Terminal(Box::new(state)),
         Style::default(),
         PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 1.0),
     );
@@ -5287,7 +5291,7 @@ fn terminal_selected_text_trims_real_trailing_blank_cells_per_row() {
         state.cells[col].ch = ch;
     }
     let term = tree.insert(
-        NodeKind::Terminal(state),
+        NodeKind::Terminal(Box::new(state)),
         Style::default(),
         PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 1.0),
     );
@@ -6404,7 +6408,7 @@ mod active_ticking {
         let mut tree = Tree::new();
         let (_, style, paint) = leaf(5.0, 5.0);
         let field = tree.insert(
-            NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+            NodeKind::TextField(Box::new(TextFieldState::new("hi", "Roboto", 400.0, 16.0))),
             style,
             paint,
         );

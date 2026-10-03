@@ -1659,22 +1659,22 @@ mod tests {
             paint(),
         );
         let field = tree.insert(
-            NodeKind::TextField(engine_core::TextFieldState::new(
+            NodeKind::TextField(Box::new(engine_core::TextFieldState::new(
                 "hello world",
                 "Roboto",
                 400.0,
                 16.0,
-            )),
+            ))),
             sized(200.0, 30.0),
             paint(),
         );
         let terminal = tree.insert(
-            NodeKind::Terminal(engine_core::TerminalState::new(
+            NodeKind::Terminal(Box::new(engine_core::TerminalState::new(
                 20,
                 4,
                 engine_render::MONOSPACE_FONT_FAMILY,
                 14.0,
-            )),
+            ))),
             sized(200.0, 60.0),
             paint(),
         );
@@ -1868,7 +1868,7 @@ mod tests {
             state.multiline = true;
             state.scroll_offset.current = scroll;
             let field = tree.insert(
-                NodeKind::TextField(state),
+                NodeKind::TextField(Box::new(state)),
                 Style {
                     size: Size {
                         width: length(200.0),

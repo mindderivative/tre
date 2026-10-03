@@ -172,7 +172,9 @@ pub struct ActiveAnimation<T> {
 /// the same mechanism regardless of what `T` is.
 pub struct Animated<T: Interpolate + Clone> {
     pub current: T,
-    pub active: Option<ActiveAnimation<T>>,
+    /// Boxed (0.5.4, #106): most values most of the time are not animating,
+    /// and an inline animation more than tripled every one of them.
+    pub active: Option<Box<ActiveAnimation<T>>>,
 }
 
 impl<T: Interpolate + Clone> Animated<T> {
@@ -206,14 +208,14 @@ impl<T: Interpolate + Clone> Animated<T> {
 
     pub fn animate_to(&mut self, to: T, duration: Duration, curve: MotionCurve, now: Instant) {
         STARTED.fetch_add(1, Ordering::Relaxed);
-        self.active = Some(ActiveAnimation {
+        self.active = Some(Box::new(ActiveAnimation {
             from: self.current.clone(),
             to,
             start: now,
             duration,
             curve,
             on_complete: None,
-        });
+        }));
     }
 
     /// M9 Phase 1 (§5): `animate_to`'s own real completion-callback
@@ -230,14 +232,14 @@ impl<T: Interpolate + Clone> Animated<T> {
         on_complete: CompletionHandle,
     ) {
         STARTED.fetch_add(1, Ordering::Relaxed);
-        self.active = Some(ActiveAnimation {
+        self.active = Some(Box::new(ActiveAnimation {
             from: self.current.clone(),
             to,
             start: now,
             duration,
             curve,
             on_complete: Some(on_complete),
-        });
+        }));
     }
 
     /// Advances this value to `now`, returning `true` if it's still

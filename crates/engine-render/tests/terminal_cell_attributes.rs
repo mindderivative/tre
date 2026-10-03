@@ -94,7 +94,7 @@ fn build_scene(cell: TerminalCell) -> (Tree, engine_core::NodeId) {
     let mut state = TerminalState::new(10, 1, "Roboto", 16.0);
     state.cells.fill(cell);
     let terminal = tree.insert(
-        NodeKind::Terminal(state),
+        NodeKind::Terminal(Box::new(state)),
         Style {
             size: Size {
                 width: length(f32::from(WIDTH)),

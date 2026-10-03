@@ -224,7 +224,7 @@ fn an_empty_text_input_shows_its_placeholder_in_its_color() {
         state.placeholder = "WWW".to_string();
         state.placeholder_fill = Some(GREEN);
         let field = tree.insert(
-            NodeKind::TextField(state),
+            NodeKind::TextField(Box::new(state)),
             placed(0.0, 0.0, 100.0, 40.0),
             PaintProperties::new(BLACK, 0.0, 1.0),
         );
@@ -286,7 +286,7 @@ fn a_terminal_paints_indexed_colors_from_its_palette() {
             };
         }
         let terminal = tree.insert(
-            NodeKind::Terminal(state),
+            NodeKind::Terminal(Box::new(state)),
             placed(0.0, 0.0, 100.0, 40.0),
             PaintProperties::new(BLACK, 0.0, 1.0),
         );

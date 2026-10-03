@@ -156,3 +156,10 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   has: 8.5 µs per scrolled frame. One visible consequence for code that
   reads layout directly: a scrolled child's layout position is where it sits
   unscrolled; use `absolute_position` for where it is on screen.
+- **A node is 60% smaller.** `Node` went from 3,048 to 1,208 bytes: a running
+  animation is boxed and exists only while it runs (it was inline in every
+  animatable value, 1,640 bytes of paint state per node, now 304), and the two
+  largest node kinds, text inputs and terminals, are boxed so every other node
+  stops paying for them. 50,000 boxes now take about 120 MB (the baseline
+  measured about 210 MB). Rust code that builds a node from state by hand
+  wraps it: `NodeKind::TextField(Box::new(state))`.
