@@ -690,6 +690,10 @@ fn fill_box(
     own_alpha: f64,
 ) {
     scene.set_paint(with_opacity(node.paint.background.current, own_alpha));
+    if node.paint.corner_radii_override.is_none() && node.paint.corner_radius.current <= 0.0 {
+        scene.fill_rect(&Rect::new(0.0, 0.0, w, h));
+        return;
+    }
     scene.fill_path(box_path(node, id, w, h, geometry));
 }
 
@@ -736,6 +740,12 @@ fn content_box(tree: &Tree, id: NodeId, w: f64, h: f64) -> ContentBox {
     }
 }
 
+/// The widest border drawn as four rects. `Stroke::new` joins with round
+/// joins, which round a border's outer corners by half its width: invisible
+/// at 1px, a visible difference from square rects at 2px and up, so wider
+/// borders keep the stroke and look as they always did.
+const SQUARE_BORDER_MAX: f64 = 1.0;
+
 /// A node's own border: `stroke_color` and `stroke_width`, drawn entirely
 /// inside its bounds (inset by half the stroke width, since strokes are
 /// centered on the path) and following the same rounded corners as the
@@ -751,6 +761,26 @@ fn stroke_box(
 ) {
     let border_width = node.paint.border_width.current;
     if border_width <= 0.0 {
+        return;
+    }
+    // 0.5.4 (#107): a square box's border is four rects, which vello fills far
+    // more cheaply than it expands a stroke (~2.4 us -> see the scene cost
+    // test), and covers exactly the pixels the stroke did.
+    if node.paint.corner_radii_override.is_none()
+        && node.paint.corner_radius.current <= 0.0
+        && border_width <= SQUARE_BORDER_MAX
+        && border_width * 2.0 < w.min(h)
+    {
+        scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+        let b = border_width;
+        for rect in [
+            Rect::new(0.0, 0.0, w, b),
+            Rect::new(0.0, h - b, w, h),
+            Rect::new(0.0, b, b, h - b),
+            Rect::new(w - b, b, w, h - b),
+        ] {
+            scene.fill_rect(&rect);
+        }
         return;
     }
     let inset = border_width / 2.0;
