@@ -138,3 +138,8 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   screen. `width`, `height`, pointer positions and pixel scroll deltas become
   logical. It is off by default, so nothing changes for an app or framework that
   already multiplies by `scale_factor` itself; turn it on only if yours does not.
+- **Animations cost what they run, not what the tree holds.** Each frame used to
+  visit every node to advance its animations (0.6 to 1.3 ms at 9,000 nodes, even
+  with one card animating). The tree now ticks only the nodes known to be
+  animating, and looks at every node once only when a new animation has started:
+  75 ns per frame in the same case. Nothing to change in an app.

@@ -4,7 +4,21 @@
 //! this step exists to validate the animation core in isolation, per
 //! Design Principle 5, before anything is built on top of it.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+/// 0.5.4 (#103): how many animations have ever been started, in the whole
+/// process. `Tree::tick_all` compares it with the count it last saw: equal
+/// means nothing new has started, so only the nodes it already knows are
+/// animating need ticking; different means one might have, anywhere, so it
+/// looks at every node once. Counting starts rather than registering nodes
+/// is why no code that starts an animation can forget to say so.
+static STARTED: AtomicU64 = AtomicU64::new(0);
+
+/// The number of animations started so far (see `STARTED`).
+pub(crate) fn animations_started() -> u64 {
+    STARTED.load(Ordering::Relaxed)
+}
 
 /// Implemented by every type an `Animated<T>` can wrap -- `f64`,
 /// `peniko::Color`, and `kurbo::Affine` here, plus `CornerRadii`,
@@ -191,6 +205,7 @@ impl<T: Interpolate + Clone> Animated<T> {
     }
 
     pub fn animate_to(&mut self, to: T, duration: Duration, curve: MotionCurve, now: Instant) {
+        STARTED.fetch_add(1, Ordering::Relaxed);
         self.active = Some(ActiveAnimation {
             from: self.current.clone(),
             to,
@@ -214,6 +229,7 @@ impl<T: Interpolate + Clone> Animated<T> {
         now: Instant,
         on_complete: CompletionHandle,
     ) {
+        STARTED.fetch_add(1, Ordering::Relaxed);
         self.active = Some(ActiveAnimation {
             from: self.current.clone(),
             to,

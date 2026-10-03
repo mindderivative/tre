@@ -6310,3 +6310,156 @@ fn a_text_nodes_width_set_after_creation_is_rounded_up_too() {
         length(66.43)
     );
 }
+
+/// 0.5.4 (#103): `tick_all` ticks only known-animating nodes between full
+/// scans; an animation started anywhere, on any value, must still be seen.
+mod active_ticking {
+    use super::*;
+    use crate::animation::MotionCurve;
+    use std::time::Duration;
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    fn many(tree: &mut Tree, n: usize) -> Vec<NodeId> {
+        (0..n)
+            .map(|_| {
+                let (kind, style, paint) = leaf(5.0, 5.0);
+                tree.insert(kind, style, paint)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_animation_started_after_a_scan_is_still_ticked() {
+        let mut tree = Tree::new();
+        let ids = many(&mut tree, 50);
+        let t0 = Instant::now();
+        // A first tick with nothing running settles the scan.
+        assert!(!tree.tick_all(t0).0);
+        // Later starts on two different nodes, with ticks in between.
+        tree.get_mut(ids[7]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0,
+        );
+        let (active, _) = tree.tick_all(t0 + SECOND / 2);
+        assert!(active);
+        tree.get_mut(ids[41]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0 + SECOND / 2,
+        );
+        assert!(tree.tick_all(t0 + SECOND * 3 / 4).0);
+        let a = tree.get(ids[7]).unwrap().paint.opacity.current;
+        let b = tree.get(ids[41]).unwrap().paint.opacity.current;
+        assert!((a - 0.25).abs() < 0.01, "first keeps running: {a}");
+        assert!((b - 0.75).abs() < 0.01, "second runs from its start: {b}");
+        // Both finish, then the tree is idle.
+        let (active, _) = tree.tick_all(t0 + SECOND * 5);
+        assert!(!active);
+        assert_eq!(tree.get(ids[7]).unwrap().paint.opacity.current, 0.0);
+        assert_eq!(tree.get(ids[41]).unwrap().paint.opacity.current, 0.0);
+        assert!(!tree.tick_all(t0 + SECOND * 6).0);
+    }
+
+    #[test]
+    fn a_finished_animation_is_not_ticked_again() {
+        let mut tree = Tree::new();
+        let ids = many(&mut tree, 3);
+        let t0 = Instant::now();
+        tree.get_mut(ids[1]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0,
+        );
+        assert!(!tree.tick_all(t0 + SECOND * 2).0);
+        // A value set directly after it finished stays put.
+        tree.get_mut(ids[1]).unwrap().paint.opacity.current = 0.9;
+        assert!(!tree.tick_all(t0 + SECOND * 3).0);
+        assert_eq!(tree.get(ids[1]).unwrap().paint.opacity.current, 0.9);
+    }
+
+    #[test]
+    fn a_removed_animating_node_is_skipped() {
+        let mut tree = Tree::new();
+        let ids = many(&mut tree, 3);
+        let t0 = Instant::now();
+        tree.get_mut(ids[0]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0,
+        );
+        assert!(tree.tick_all(t0 + SECOND / 2).0);
+        tree.remove(ids[0]);
+        assert!(!tree.tick_all(t0 + SECOND * 3 / 4).0);
+    }
+
+    #[test]
+    fn a_text_fields_tint_and_a_scroll_views_offset_are_ticked() {
+        let mut tree = Tree::new();
+        let (_, style, paint) = leaf(5.0, 5.0);
+        let field = tree.insert(
+            NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+            style,
+            paint,
+        );
+        let (_, style, paint) = leaf(5.0, 5.0);
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(false)),
+            style,
+            paint,
+        );
+        let t0 = Instant::now();
+        assert!(!tree.tick_all(t0).0);
+        if let NodeKind::TextField(s) = &mut tree.get_mut(field).unwrap().kind {
+            s.text_tint.animate_to(
+                Color::from_rgba8(0, 0, 255, 255),
+                SECOND,
+                MotionCurve::Linear,
+                t0,
+            );
+        }
+        if let NodeKind::ScrollView(s) = &mut tree.get_mut(view).unwrap().kind {
+            s.scroll.animate_to(40.0, SECOND, MotionCurve::Linear, t0);
+        }
+        assert!(tree.tick_all(t0 + SECOND / 2).0);
+        assert!(!tree.tick_all(t0 + SECOND * 2).0);
+        let NodeKind::ScrollView(s) = &tree.get(view).unwrap().kind else {
+            unreachable!()
+        };
+        assert_eq!(s.scroll.current, 40.0);
+    }
+}
+
+/// 0.5.4 (#103): `cargo test -p engine-core --release tick_cost -- --ignored --nocapture`
+#[test]
+#[ignore = "timing, not correctness"]
+fn tick_cost_with_one_animating_node_in_9216() {
+    use crate::animation::MotionCurve;
+    use std::time::Duration;
+    let mut tree = Tree::new();
+    let ids: Vec<NodeId> = (0..9216)
+        .map(|_| {
+            let (kind, style, paint) = leaf(5.0, 5.0);
+            tree.insert(kind, style, paint)
+        })
+        .collect();
+    let t0 = Instant::now();
+    tree.get_mut(ids[100]).unwrap().paint.opacity.animate_to(
+        0.0,
+        Duration::from_secs(3600),
+        MotionCurve::Linear,
+        t0,
+    );
+    tree.tick_all(t0);
+    let runs = 2000;
+    let start = Instant::now();
+    for i in 0..runs {
+        tree.tick_all(t0 + Duration::from_millis(i));
+    }
+    println!("tick_all: {:?} per frame", start.elapsed() / runs as u32);
+}

@@ -99,6 +99,10 @@ pub struct Tree {
     /// the very first frame always paints. Read via `take_dirty`, never
     /// this field directly, so "read" and "reset" can never drift apart.
     dirty: bool,
+    /// 0.5.4 (#103): the nodes the last full scan found animating, and the
+    /// `animations_started` count it was taken at. See `tick_all`.
+    animating: Vec<NodeId>,
+    scanned_at: Option<u64>,
     scroll_view_count: usize,
     virtual_list_count: usize,
     /// M94: the node holding pointer capture (`set_pointer_capture`).
@@ -135,6 +139,8 @@ impl Tree {
     pub fn new() -> Self {
         Self {
             nodes: SlotMap::with_key(),
+            animating: Vec::new(),
+            scanned_at: None,
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
             focused: None,
@@ -569,32 +575,58 @@ impl Tree {
         true
     }
 
+    /// One node's animatable values, ticked: whether any is still running.
+    fn tick_node(node: &mut Node, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool {
+        let mut active = node.paint.tick(now, completed);
+        // M95: a path's data (morphing) and stroke trim.
+        if let NodeKind::Path(state) = &mut node.kind
+            && state.tick(now, completed)
+        {
+            active = true;
+        }
+        // M96: a text input's animatable `fill` (its text color), and a
+        // scroll view's animatable `scroll_offset`.
+        if let NodeKind::TextField(state) = &mut node.kind
+            && state.text_tint.tick(now, completed)
+        {
+            active = true;
+        }
+        if let NodeKind::ScrollView(state) = &mut node.kind
+            && state.scroll.tick(now, completed)
+        {
+            active = true;
+        }
+        active
+    }
+
+    /// Advances every running animation to `now`. A full pass over the
+    /// tree happens only when an animation has started somewhere since the
+    /// last one (`animations_started`); otherwise only the nodes that pass
+    /// found animating are ticked, so the cost follows the animations, not
+    /// the tree's size (0.5.4, #103).
     pub fn tick_all(&mut self, now: Instant) -> (bool, Vec<CompletionHandle>) {
-        let mut any_active = false;
         let mut completed = Vec::new();
-        for node in self.nodes.values_mut() {
-            if node.paint.tick(now, &mut completed) {
-                any_active = true;
+        let started = crate::animation::animations_started();
+        let full = self.scanned_at != Some(started);
+        let mut still = Vec::new();
+        if full {
+            for (id, node) in &mut self.nodes {
+                if Self::tick_node(node, now, &mut completed) {
+                    still.push(id);
+                }
             }
-            // M95: a path's data (morphing) and stroke trim.
-            if let NodeKind::Path(state) = &mut node.kind
-                && state.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            // M96: a text input's animatable `fill` (its text color), and
-            // a scroll view's animatable `scroll_offset`.
-            if let NodeKind::TextField(state) = &mut node.kind
-                && state.text_tint.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            if let NodeKind::ScrollView(state) = &mut node.kind
-                && state.scroll.tick(now, &mut completed)
-            {
-                any_active = true;
+            self.scanned_at = Some(started);
+        } else {
+            for &id in &self.animating {
+                if let Some(node) = self.nodes.get_mut(id)
+                    && Self::tick_node(node, now, &mut completed)
+                {
+                    still.push(id);
+                }
             }
         }
+        self.animating = still;
+        let any_active = !self.animating.is_empty();
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the
         // exact signal this needs, just never fed into a redraw
