@@ -134,6 +134,10 @@ width, height = window.measure_text("A long list item title", max_width=180, **s
 title = window.create("text", text="A long list item title", width=180, height=height, **style)
 ```
 
+A text node's explicit `width`, `min_width` and `max_width` are laid out rounded
+**up** to a whole pixel (0.5.3), so a width from `measure_text` always fits its
+text; `get` reads back the value you set and `layout_width` the rounded one.
+
 **`padding`** makes a content box, and a node's own content draws inside it
 (0.5.1): a text node's text, a text input's text and caret, a terminal's cells,
 an image (fitted into it), a path (its view box fitted into it), and a canvas

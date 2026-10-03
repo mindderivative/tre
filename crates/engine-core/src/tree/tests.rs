@@ -6167,3 +6167,146 @@ fn a_wheel_chains_past_a_view_that_cannot_move_its_way() {
         "content that fits has nothing to scroll: the page takes it"
     );
 }
+
+// --- 0.5.3 (#98): a text node's explicit width is rounded up, not down ----------
+
+fn text_node(tree: &mut Tree, style: Style) -> NodeId {
+    tree.insert(
+        NodeKind::Text(crate::node::TextState {
+            content: "Add a task".to_string(),
+            font_family: "Roboto".to_string(),
+            font_weight: 500.0,
+            font_size: 14.0,
+            align: crate::node::TextAlign::Start,
+            line_height: None,
+            options: Default::default(),
+        }),
+        style,
+        PaintProperties::new(Color::from_rgba8(255, 255, 255, 255), 0.0, 1.0),
+    )
+}
+
+/// Lays `child` out as the only child of a wide root and returns its width.
+fn laid_out_width(kind_text: bool, style: Style) -> (f32, Style) {
+    let mut tree = Tree::new();
+    let (k, root_style, paint) = leaf(400.0, 100.0);
+    let root = tree.insert(k, root_style, paint);
+    let child = if kind_text {
+        text_node(&mut tree, style)
+    } else {
+        let (k, _, paint) = leaf(0.0, 0.0);
+        tree.insert(k, style, paint)
+    };
+    tree.add_child(root, child);
+    tree.compute_layout(
+        root,
+        Size {
+            width: AvailableSpace::Definite(400.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    (
+        tree.layout(child).size.width,
+        tree.get(child).unwrap().layout_style.clone(),
+    )
+}
+
+fn width_style(width: f32) -> Style {
+    Style {
+        size: Size {
+            width: length(width),
+            height: length(20.0),
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_text_nodes_explicit_width_is_laid_out_rounded_up() {
+    for (set, laid_out) in [
+        (66.43, 67.0),
+        (66.0, 66.0),
+        (66.01, 67.0),
+        (66.99, 67.0),
+        (0.5, 1.0),
+    ] {
+        let (width, _) = laid_out_width(true, width_style(set));
+        assert_eq!(width, laid_out, "width {set}");
+    }
+}
+
+#[test]
+fn a_boxes_width_is_still_rounded_as_before() {
+    let (width, _) = laid_out_width(false, width_style(66.43));
+    assert_eq!(width, 66.0, "only text gets the round-up");
+}
+
+#[test]
+fn the_node_keeps_the_width_that_was_set() {
+    let (_, style) = laid_out_width(true, width_style(66.43));
+    assert_eq!(
+        style.size.width,
+        length(66.43),
+        "get() reads back exactly what was set"
+    );
+}
+
+#[test]
+fn a_text_nodes_min_and_max_width_are_rounded_up_too() {
+    let mut style = width_style(10.0);
+    style.min_size.width = length(66.43);
+    let (width, _) = laid_out_width(true, style);
+    assert_eq!(
+        width, 67.0,
+        "a minimum the text needs is not rounded below it"
+    );
+    let mut style = Style {
+        size: Size {
+            width: taffy::style::Dimension::auto(),
+            height: length(20.0),
+        },
+        ..Default::default()
+    };
+    style.max_size.width = length(66.43);
+    style.flex_grow = 1.0;
+    let (width, _) = laid_out_width(true, style);
+    assert_eq!(
+        width, 67.0,
+        "a cap the text fits in is not rounded below it"
+    );
+}
+
+#[test]
+fn a_text_nodes_percent_and_auto_widths_are_untouched() {
+    let style = Style {
+        size: Size {
+            width: taffy::style::Dimension::percent(0.5),
+            height: length(20.0),
+        },
+        ..Default::default()
+    };
+    let (width, _) = laid_out_width(true, style);
+    assert_eq!(width, 200.0);
+}
+
+#[test]
+fn a_text_nodes_width_set_after_creation_is_rounded_up_too() {
+    let mut tree = Tree::new();
+    let (k, root_style, paint) = leaf(400.0, 100.0);
+    let root = tree.insert(k, root_style, paint);
+    let child = text_node(&mut tree, width_style(50.0));
+    tree.add_child(root, child);
+    tree.set_layout_style(child, width_style(66.43));
+    tree.compute_layout(
+        root,
+        Size {
+            width: AvailableSpace::Definite(400.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    assert_eq!(tree.layout(child).size.width, 67.0);
+    assert_eq!(
+        tree.get(child).unwrap().layout_style.size.width,
+        length(66.43)
+    );
+}

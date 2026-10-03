@@ -35,6 +35,14 @@ label = window.create("text", text="A long list item title",
 
 That's how a button hugs its label, or a chip fits its text.
 
+Layout rounds every box to whole pixels, so a text node's explicit `width`
+(and `min_width`, `max_width`) is laid out **rounded up**: a width the text fits
+in still fits. Given the `66.43` that `measure_text` returned, the node is 67
+wide and the text stays on one line; rounded down to 66, it would have wrapped.
+`get("width")` still reads back what you set, and `layout_width` is the whole
+pixel above it. Percentage and `auto` widths, and every other kind of node
+(boxes included), are rounded as before.
+
 ## Fonts
 
 Tesserae Engine bundles Roboto (regular and medium), Noto Sans Arabic, and Hack Nerd
