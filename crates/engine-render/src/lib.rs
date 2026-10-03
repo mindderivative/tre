@@ -162,6 +162,7 @@ pub fn build_tree_scene(
         None,
         &ShaderTextures::none(),
         None,
+        1.0,
         resources,
         text,
         geometry,
@@ -192,6 +193,7 @@ pub fn build_tree_scene_in(
         Some(rects),
         &ShaderTextures::none(),
         None,
+        1.0,
         resources,
         text,
         geometry,
@@ -200,7 +202,9 @@ pub fn build_tree_scene_in(
 
 /// 0.5.1 (#67): `build_tree_scene` (`rects: None`) or `build_tree_scene_in`
 /// for a frame whose fill shaders ran: a node in `shaders` paints its box
-/// from its shader's texture, behind its own paint.
+/// from its shader's texture, behind its own paint. 0.5.4 (#102): `scale` is
+/// the display scale -- layout is in logical pixels and the scene, `width`,
+/// `height` and `rects` in physical ones.
 #[allow(clippy::too_many_arguments)]
 pub fn build_tree_scene_shaded(
     tree: &Tree,
@@ -209,12 +213,13 @@ pub fn build_tree_scene_shaded(
     height: u16,
     rects: Option<&[Rect]>,
     shaders: &ShaderTextures,
+    scale: f64,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
 ) -> Scene {
     build_scene(
-        tree, root, width, height, rects, shaders, None, resources, text, geometry,
+        tree, root, width, height, rects, shaders, None, scale, resources, text, geometry,
     )
 }
 
@@ -229,6 +234,7 @@ pub(crate) fn build_effect_content(
     width: u16,
     height: u16,
     shaders: &ShaderTextures,
+    scale: f64,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
@@ -241,6 +247,7 @@ pub(crate) fn build_effect_content(
         None,
         shaders,
         Some(node),
+        scale,
         resources,
         text,
         geometry,
@@ -256,6 +263,7 @@ fn build_scene(
     rects: Option<&[Rect]>,
     shaders: &ShaderTextures,
     effect_root: Option<NodeId>,
+    scale: f64,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
@@ -287,10 +295,11 @@ fn build_scene(
         geometry,
         open: Vec::new(),
     };
+    let base = Affine::scale(scale);
     if effect_root.is_some() {
-        walk::walk_root(tree, root, &mut painter);
+        walk::walk_root(tree, root, base, &mut painter);
     } else {
-        walk::walk(tree, root, visible, &mut painter);
+        walk::walk(tree, root, base, visible, &mut painter);
     }
     if rects.is_some() {
         scene.pop_layer();
@@ -1372,6 +1381,7 @@ impl FrameRenderer {
         width: u16,
         height: u16,
         time: f32,
+        scale: f64,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         text: &mut TextRenderer,
@@ -1383,6 +1393,7 @@ impl FrameRenderer {
             width,
             height,
             time,
+            scale,
             device,
             queue,
             shader_pass::Gpu {

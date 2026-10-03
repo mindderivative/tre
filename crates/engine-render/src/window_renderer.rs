@@ -40,6 +40,9 @@ pub struct WindowRenderer {
     tracker: DamageTracker,
     /// 0.5.1 (#67): the window's clock, for shaders that read `frame.time`.
     time: f32,
+    /// 0.5.4 (#102): the display scale. Layout is in logical pixels; this
+    /// multiplies them into the physical pixels the frame is drawn in.
+    scale: f64,
 }
 
 /// A window extent as the renderer takes it (`u16`), clamped rather than
@@ -75,6 +78,17 @@ impl WindowRenderer {
             target: persistent.then(|| PersistentTarget::new(device, format, width, height)),
             tracker: DamageTracker::new(),
             time: 0.0,
+            scale: 1.0,
+        }
+    }
+
+    /// Sets the display scale (default `1.0`): layout stays in logical
+    /// pixels and everything drawn, culled and damaged is in physical ones.
+    /// A change redraws the next frame in full.
+    pub fn set_scale(&mut self, scale: f64) {
+        if self.scale != scale {
+            self.scale = scale;
+            self.tracker.set_scale(scale);
         }
     }
 
@@ -189,6 +203,7 @@ impl WindowRenderer {
                 width,
                 height,
                 self.time,
+                self.scale,
                 device,
                 queue,
                 &mut self.text,
@@ -205,6 +220,7 @@ impl WindowRenderer {
                 height,
                 rects,
                 &shaders,
+                self.scale,
                 self.frame_renderer.resources_mut(),
                 &mut self.text,
                 &mut self.geometry,

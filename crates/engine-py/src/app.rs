@@ -826,6 +826,15 @@ impl App {
                 if setup.handles.minimized.get() {
                     window.set_minimized(true);
                 }
+                // 0.5.4 (#102): from here the stored size is the window's real
+                // (physical) one, not the logical size it was asked for, and
+                // the scale is the window's if `dpi_scaling` is on.
+                let inner = window.inner_size();
+                if inner.width > 0 && inner.height > 0 {
+                    setup.handles.width.set(inner.width);
+                    setup.handles.height.set(inner.height);
+                }
+                setup.handles.refresh_scale();
                 let gpu = match GpuState::new(
                     window,
                     setup.handles.width.get(),
@@ -980,6 +989,12 @@ impl App {
                 // work when the surface's own configured size has
                 // fallen behind the window's true current one, even if
                 // nothing else changed.
+                // 0.5.4 (#102): the display scale (the window's, when
+                // `dpi_scaling` is on): a change relays out and redraws.
+                if runtime.handles.refresh_scale() {
+                    runtime.handles.tree.borrow_mut().mark_dirty();
+                }
+                runtime.gpu.renderer.set_scale(runtime.handles.scale.get());
                 // 0.5.4 (#101): `window.set(present_mode=...)` takes effect live.
                 runtime.gpu.set_present(runtime.handles.present_mode.get());
                 let resized = runtime
@@ -1004,9 +1019,12 @@ impl App {
                 crate::node_callbacks::layout(
                     &runtime.handles.tree,
                     runtime.handles.root,
-                    Size {
-                        width: AvailableSpace::Definite(runtime.handles.width.get() as f32),
-                        height: AvailableSpace::Definite(runtime.handles.height.get() as f32),
+                    {
+                        let (width, height) = runtime.handles.logical_size();
+                        Size {
+                            width: AvailableSpace::Definite(width as f32),
+                            height: AvailableSpace::Definite(height as f32),
+                        }
                     },
                     &runtime.handles.handlers,
                     py,
@@ -1145,11 +1163,12 @@ impl App {
                 let runtime = runtimes
                     .get(&window_id)
                     .expect("build_access_update requested for a window with no runtime state");
+                // 0.5.4 (#102): bounds in physical pixels, like the window.
                 runtime
                     .handles
                     .tree
                     .borrow()
-                    .build_access_update(runtime.handles.root)
+                    .build_access_update_scaled(runtime.handles.root, runtime.handles.scale.get())
             },
             // M4 Phase 1 step 3: the real "meaning-dependent" half
             // `Tree::dispatch` leaves for its own caller (§2 Design
@@ -1171,6 +1190,16 @@ impl App {
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return;
                 };
+
+                // 0.5.4 (#102): input arrives in physical pixels; the engine
+                // speaks logical ones. A resize first records the physical
+                // size the surface needs.
+                runtime.handles.refresh_scale();
+                if let InputEvent::Resized { width, height } = &event {
+                    runtime.handles.width.set(*width as u32);
+                    runtime.handles.height.set(*height as u32);
+                }
+                let event = crate::scale::to_logical(event, runtime.handles.scale.get());
 
                 // M94: modifier state is shared by every window's event
                 // routing (`listeners::modifiers`), nothing more to do.
@@ -1296,8 +1325,8 @@ impl App {
                     // either sibling project's own size-bucketing
                     // approach).
                     InputEvent::Resized { width, height } => {
-                        runtime.handles.width.set(width as u32);
-                        runtime.handles.height.set(height as u32);
+                        // (The physical size was stored above; `width` and
+                        // `height` here are logical.)
                         listeners::deliver_window(
                             &runtime.handles.window_listeners,
                             py,

@@ -224,16 +224,18 @@ fn pointer_point(
 impl PyWindow {
     /// The window's size, as layout's available space.
     fn available(&self) -> Size<AvailableSpace> {
+        let (width, height) = self.handles.logical_size();
         Size {
-            width: AvailableSpace::Definite(self.handles.width.get() as f32),
-            height: AvailableSpace::Definite(self.handles.height.get() as f32),
+            width: AvailableSpace::Definite(width as f32),
+            height: AvailableSpace::Definite(height as f32),
         }
     }
 }
 
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
 const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
-    min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode";
+    min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
+    dpi_scaling";
 
 /// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
 /// RGBA8 bytes, `width * height * 4` of them.
@@ -633,6 +635,7 @@ impl PyWindow {
         let mut resize_border = None;
         let mut gpu_watchdog = None;
         let mut present_mode = None;
+        let mut dpi_scaling = None;
         let mut system_menu = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
@@ -668,6 +671,11 @@ impl PyWindow {
                     "resize_border" => resize_border = Some(parse_min_edge(&name, &value)?),
                     "gpu_watchdog" => gpu_watchdog = Some(parse_watchdog(&name, &value)?),
                     "present_mode" => present_mode = Some(parse_present_mode(&name, &value)?),
+                    "dpi_scaling" => {
+                        dpi_scaling = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `dpi_scaling` must be a bool")
+                        })?);
+                    }
                     "system_menu" => {
                         system_menu = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `system_menu` must be a bool")
@@ -718,6 +726,12 @@ impl PyWindow {
         if let Some(choice) = present_mode {
             self.handles.present_mode.set(choice);
         }
+        if let Some(on) = dpi_scaling {
+            self.handles.dpi_scaling.set(on);
+            self.handles.refresh_scale();
+            // Layout, the frame and the input all change units.
+            self.handles.tree.borrow_mut().mark_dirty();
+        }
         if let Some(border) = resize_border {
             self.handles.resize_border.set(border);
         }
@@ -762,11 +776,17 @@ impl PyWindow {
     /// (0.4.0) `partial_redraw_active`, or (0.4.1) `show_damage`.
     fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
         Ok(match name {
-            "width" => f64::from(self.handles.width.get())
+            "width" => self
+                .handles
+                .logical_size()
+                .0
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
-            "height" => f64::from(self.handles.height.get())
+            "height" => self
+                .handles
+                .logical_size()
+                .1
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
@@ -854,6 +874,14 @@ impl PyWindow {
                 .gpu_watchdog
                 .get()
                 .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "dpi_scaling" => self
+                .handles
+                .dpi_scaling
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
                 .into_any()
                 .unbind(),
             "present_mode" => self
@@ -950,7 +978,7 @@ impl PyWindow {
                      scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
-                     native_controls, gpu_watchdog, present_mode"
+                     native_controls, gpu_watchdog, present_mode, dpi_scaling"
                 )));
             }
         })
@@ -1237,8 +1265,15 @@ impl PyWindow {
                         "`resize` needs a finite, non-negative width and height",
                     ));
                 }
-                self.handles.width.set(width as u32);
-                self.handles.height.set(height as u32);
+                // 0.5.4 (#102): `width` and `height` are logical; the stored
+                // size is the physical one.
+                let scale = self.handles.scale.get();
+                self.handles
+                    .width
+                    .set(crate::scale::to_physical(width, scale));
+                self.handles
+                    .height
+                    .set(crate::scale::to_physical(height, scale));
                 tree.borrow_mut().dispatch(
                     root,
                     InputEvent::Resized {

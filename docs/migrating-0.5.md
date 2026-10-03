@@ -132,3 +132,9 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   `App.run()`. macOS and Windows already listed a vsync mode first, so little
   changes there.
 
+- **HiDPI scaling is available, and off.** `window.set(dpi_scaling=True)` lays
+  the window out in logical pixels and draws it at the display's
+  `scale_factor`, so an app written at 1x is the same size and sharp on a 2x
+  screen. `width`, `height`, pointer positions and pixel scroll deltas become
+  logical. It is off by default, so nothing changes for an app or framework that
+  already multiplies by `scale_factor` itself; turn it on only if yours does not.

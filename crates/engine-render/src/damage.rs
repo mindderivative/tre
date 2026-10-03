@@ -70,13 +70,15 @@ struct Record {
 }
 
 /// Remembers each node's painted rect and fingerprint from the last frame.
-#[derive(Default)]
 pub struct DamageTracker {
     records: HashMap<NodeId, Record>,
     size: Option<(u16, u16)>,
     /// 0.5.1 (#70): the window's clock, in seconds, which an animated
     /// shader's pixels depend on.
     time: f32,
+    /// 0.5.4 (#102): the display scale; layout is logical, the painted rects
+    /// and the window physical.
+    scale: f64,
 }
 
 /// One frame's walk (`walk::Visitor`): the records it builds and what it
@@ -88,6 +90,17 @@ struct Recorder<'a> {
     records: HashMap<NodeId, Record>,
 }
 
+impl Default for DamageTracker {
+    fn default() -> Self {
+        Self {
+            records: HashMap::new(),
+            size: None,
+            time: 0.0,
+            scale: 1.0,
+        }
+    }
+}
+
 impl DamageTracker {
     pub fn new() -> Self {
         Self::default()
@@ -97,6 +110,15 @@ impl DamageTracker {
     /// shader's node is damaged whenever it changes.
     pub fn set_time(&mut self, seconds: f32) {
         self.time = seconds;
+    }
+
+    /// Sets the display scale (default 1). A change forgets the last frame,
+    /// so the next `damage` is `Full`.
+    pub fn set_scale(&mut self, scale: f64) {
+        if self.scale != scale {
+            self.scale = scale;
+            self.reset();
+        }
     }
 
     /// Forgets the last frame, so the next `damage` is `Full` -- for when
@@ -123,7 +145,7 @@ impl DamageTracker {
             text,
             records: HashMap::with_capacity(self.records.len()),
         };
-        walk::walk(tree, root, window, &mut recorder);
+        walk::walk(tree, root, Affine::scale(self.scale), window, &mut recorder);
         let current = recorder.records;
 
         let first = self.size != Some((width, height));

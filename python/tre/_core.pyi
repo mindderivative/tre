@@ -369,6 +369,7 @@ class Window:
         system_menu: bool = ...,
         gpu_watchdog: float | None = ...,
         present_mode: str = ...,
+        dpi_scaling: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -399,7 +400,13 @@ class Window:
         default, is off. `present_mode`: (0.5.4) `"vsync"` (the default) paces
         frames to the display; `"low_latency"` shows the newest frame at once
         where the surface allows (`Mailbox`), at the cost of rendering as fast
-        as possible while something animates. Takes effect live."""
+        as possible while something animates. Takes effect live. `dpi_scaling`:
+        (0.5.4) `True` lays the window out in logical pixels and draws it at the
+        display's `scale_factor`, so an app written at 1x looks the same size
+        and crisp on a HiDPI screen; `width`, `height` and every pointer
+        position are then logical. `False`, the default, leaves everything in
+        physical pixels, for a framework that multiplies by `scale_factor`
+        itself. Takes effect live."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -431,6 +438,8 @@ class Window:
     def get(self, name: Literal["gpu_watchdog"]) -> float | None: ...
     @overload
     def get(self, name: Literal["present_mode"]) -> str: ...
+    @overload
+    def get(self, name: Literal["dpi_scaling"]) -> bool: ...
     @overload
     def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
     @overload

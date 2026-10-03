@@ -133,6 +133,14 @@ pub(crate) struct WindowHandles {
     /// 0.5.4 (#101): how the swapchain paces frames; `vsync` (the default)
     /// or `low_latency`. Read every frame, so `set` takes effect live.
     pub(crate) present_mode: Rc<Cell<engine_render::PresentChoice>>,
+    /// 0.5.4 (#102): whether layout is in logical pixels and the frame is
+    /// drawn at the display's scale. Off by default, so an app (or a
+    /// framework) that scales for itself is unchanged.
+    pub(crate) dpi_scaling: Rc<Cell<bool>>,
+    /// 0.5.4 (#102): the scale in effect: the window's scale factor when
+    /// `dpi_scaling` is on and the window is open, else `1.0`. Refreshed by
+    /// `refresh_scale`.
+    pub(crate) scale: Rc<Cell<f64>>,
     /// 0.5.1 (#65): set by the private `_lose_gpu`, a test hook: the frame
     /// loop destroys the device, which then reports itself lost.
     pub(crate) lose_gpu: Rc<Cell<bool>>,
@@ -170,6 +178,41 @@ pub(crate) type IconPixels = (Vec<u8>, u32, u32);
 
 /// M94: see `PyWindow::os_window`.
 pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window::Window>>>>;
+
+impl WindowHandles {
+    /// 0.5.4 (#102): the scale in effect right now, from `dpi_scaling` and the
+    /// open window; updates `scale` and says whether it changed.
+    pub(crate) fn refresh_scale(&self) -> bool {
+        let wanted = if self.dpi_scaling.get() {
+            self.os_window
+                .borrow()
+                .as_ref()
+                .map_or(1.0, |window| window.scale_factor())
+        } else {
+            1.0
+        };
+        let wanted = if wanted.is_finite() && wanted > 0.0 {
+            wanted
+        } else {
+            1.0
+        };
+        if wanted == self.scale.get() {
+            return false;
+        }
+        self.scale.set(wanted);
+        true
+    }
+
+    /// 0.5.4 (#102): the window's size in logical pixels -- what layout
+    /// sees. `width`/`height` hold the physical size once the window is open.
+    pub(crate) fn logical_size(&self) -> (f64, f64) {
+        let scale = self.scale.get();
+        (
+            f64::from(self.width.get()) / scale,
+            f64::from(self.height.get()) / scale,
+        )
+    }
+}
 
 #[pymethods]
 impl PyWindow {
@@ -232,6 +275,8 @@ impl PyWindow {
                 titlebar_inset: Rc::new(Cell::new((0.0, 0.0))),
                 gpu_watchdog: Rc::new(Cell::new(None)),
                 present_mode: Rc::new(Cell::new(engine_render::PresentChoice::default())),
+                dpi_scaling: Rc::new(Cell::new(false)),
+                scale: Rc::new(Cell::new(1.0)),
                 lose_gpu: Rc::new(Cell::new(false)),
                 min_size: Rc::new(Cell::new((0.0, 0.0))),
                 icon: Rc::new(RefCell::new(None)),

@@ -22,6 +22,7 @@ mod node_handles;
 mod node_kind_props;
 mod node_layout;
 mod node_props;
+mod scale;
 mod shader;
 mod shaper;
 mod terminal;

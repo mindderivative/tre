@@ -43,7 +43,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 use engine_core::{NodeId, NodeKind, Shader, ShaderMode, Tree, frame_block, node_id_as_u64};
-use peniko::kurbo::Rect;
+use peniko::kurbo::{Affine, Rect};
 use vello_gpu::{
     ClearSettings, RenderSize, Renderer, Resources, TargetInit, TextureBindings, TextureId,
 };
@@ -176,6 +176,9 @@ pub(crate) struct Gpu<'a> {
 struct Frame<'a> {
     tree: &'a Tree,
     time: f32,
+    /// The display scale: textures are sized in physical pixels, a node's
+    /// layout in logical ones (0.5.4, #102).
+    scale: f64,
     device: &'a wgpu::Device,
     queue: &'a wgpu::Queue,
     /// Pass work not yet submitted.
@@ -284,6 +287,7 @@ impl ShaderPasses {
         width: u16,
         height: u16,
         time: f32,
+        scale: f64,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         gpu: Gpu<'_>,
@@ -308,10 +312,11 @@ impl ShaderPasses {
             nodes: Vec::new(),
             skip: None,
         };
-        walk::walk(tree, root, visible, &mut collect);
+        walk::walk(tree, root, Affine::scale(scale), visible, &mut collect);
         let mut frame = Frame {
             tree,
             time,
+            scale,
             device,
             queue,
             encoder: None,
@@ -381,7 +386,10 @@ impl ShaderPasses {
         let effect = shader.mode() == ShaderMode::Effect;
         self.animated |= shader.animated();
         let layout = f.tree.layout(id).size;
-        let size = (layout.width.ceil() as u32, layout.height.ceil() as u32);
+        let size = (
+            (f64::from(layout.width) * f.scale).ceil() as u32,
+            (f64::from(layout.height) * f.scale).ceil() as u32,
+        );
         if size.0 == 0 || size.1 == 0 {
             return None;
         }
@@ -475,7 +483,7 @@ impl ShaderPasses {
             nodes: Vec::new(),
             skip: Some(id),
         };
-        walk::walk_root(f.tree, id, &mut inner);
+        walk::walk_root(f.tree, id, Affine::scale(f.scale), &mut inner);
         for node in inner.nodes {
             self.ensure(f, node);
         }
@@ -496,6 +504,7 @@ impl ShaderPasses {
             size.0 as u16,
             size.1 as u16,
             &ready,
+            f.scale,
             f.resources,
             f.text,
             f.geometry,

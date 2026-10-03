@@ -24,6 +24,26 @@ impl Tree {
         }
     }
 
+    /// 0.5.4 (#102): [`build_access_update`](Self::build_access_update) with
+    /// every node's bounds multiplied by `scale`: layout is in logical
+    /// pixels, and assistive technology wants the window's physical ones.
+    pub fn build_access_update_scaled(&self, root: NodeId, scale: f64) -> accesskit::TreeUpdate {
+        let mut update = self.build_access_update(root);
+        if scale != 1.0 {
+            for (_, node) in &mut update.nodes {
+                if let Some(b) = node.bounds() {
+                    node.set_bounds(accesskit::Rect {
+                        x0: b.x0 * scale,
+                        y0: b.y0 * scale,
+                        x1: b.x1 * scale,
+                        y1: b.y1 * scale,
+                    });
+                }
+            }
+        }
+        update
+    }
+
     pub(super) fn collect_access_nodes(
         &self,
         id: NodeId,

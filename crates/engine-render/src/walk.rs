@@ -54,28 +54,37 @@ pub(crate) trait Visitor<'t> {
 }
 
 /// Walks `root`'s tree within `visible`, calling `visitor` at each node.
+/// `base` is the transform every node starts under: the window's display
+/// scale (0.5.4, #102), so layout stays in logical pixels while `composed`,
+/// `bounds` and `visible` are in physical ones.
 pub(crate) fn walk<'t>(
     tree: &'t Tree,
     root: NodeId,
+    base: Affine,
     visible: Rect,
     visitor: &mut impl Visitor<'t>,
 ) {
-    visit(tree, root, Affine::IDENTITY, visible, 1.0, None, 0, visitor);
+    visit(tree, root, base, visible, 1.0, None, 0, visitor);
 }
 
 /// 0.5.1 (#69): walks the subtree under `id` as if it were the whole tree,
 /// for an effect's offscreen render: `id` is placed at the origin with no
 /// transform of its own and no opacity of its own (the main scene applies
 /// both to the effect's result), and its box is the visible area.
-pub(crate) fn walk_root<'t>(tree: &'t Tree, id: NodeId, visitor: &mut impl Visitor<'t>) {
+pub(crate) fn walk_root<'t>(
+    tree: &'t Tree,
+    id: NodeId,
+    base: Affine,
+    visitor: &mut impl Visitor<'t>,
+) {
     let Some(node) = tree.get(id) else { return };
     let layout = tree.layout(id);
     let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
-    let bounds = Rect::new(0.0, 0.0, w, h);
+    let bounds = transformed_bounds(base, Rect::new(0.0, 0.0, w, h));
     let here = Visit {
         id,
         node,
-        composed: Affine::IDENTITY,
+        composed: base,
         w,
         h,
         bounds,

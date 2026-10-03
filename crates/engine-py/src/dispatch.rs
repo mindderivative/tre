@@ -458,12 +458,9 @@ pub(crate) fn border_direction(
     {
         return None;
     }
-    edge_at(
-        border,
-        f64::from(window.width.get()),
-        f64::from(window.height.get()),
-        position,
-    )
+    // 0.5.4 (#102): `position` and the border are logical pixels.
+    let (width, height) = window.logical_size();
+    edge_at(border, width, height, position)
 }
 
 /// 0.5.0 M3: the edge or corner of a `w` x `h` window that `position` is

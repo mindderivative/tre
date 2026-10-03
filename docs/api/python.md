@@ -102,7 +102,7 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `read_clipboard() -> str \| None` | Returns the OS clipboard's text, or `None` when there is none or it can't be reached. |
 | `resize(width: int, height: int) -> None` | Sets the window's size from code; the root's layout box follows. |
 | `restore() -> None` | Restores a minimized or maximized window to its normal size; before `App.run()`, undoes `minimize()`/`maximize()`. |
-| `set(*, title, partial_redraw, show_damage, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
+| `set(*, title, partial_redraw, show_damage, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, dpi_scaling) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
 | `set_active_panel(side: str, index: int) -> None` | Shows the `index`th panel docked in `side`'s zone (was `set_active_tab`). |
 | `show_layer(node, anchor, placement, modal, dismissible) -> None` | Shows `node` over the window's content, above every layer already open. |
 | `simulate(event: str, node: Node \| None=None, **fields: Any) -> None` | Delivers a synthetic event as real input would, for tests with no display. |

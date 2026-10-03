@@ -243,6 +243,16 @@ few percent of a core. `"low_latency"` shows the newest frame at once
 old, but while something animates the loop renders as fast as it can and uses a
 whole core. It takes effect at once, even in an open window. A window with
 nothing changing costs nothing in either mode.
+**`set(dpi_scaling=True)`** (0.5.4) makes the window HiDPI-aware. The app
+lays out in *logical* pixels and the engine draws at the display's
+`scale_factor`: on a 2x screen a 100x60 box is 200x120 device pixels, and
+text, borders and rounded corners are drawn at that resolution, so they stay
+sharp instead of being stretched. `width`, `height`, the root's layout box,
+pointer positions and pixel scroll deltas are all logical too, and shader
+`frame.size` stays in device pixels. Off by default, since a framework that
+already multiplies by `scale_factor` itself would be scaled twice; with it
+off nothing changes. It takes effect live, and follows the window to a
+monitor with a different scale.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), `dark` — the OS's current appearance,
 or `None` where it can't say ([Window properties](events.md#window-properties))
