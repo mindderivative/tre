@@ -108,3 +108,15 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   3.11 and for PyPy 3.11 (which is Python 3.11 compatible), and `requires-python`
   is `>=3.12`. `pip` on an older Python keeps installing 0.5.1 and earlier.
   Nothing in the API changes.
+
+## 0.5.3
+
+- **A text node's width is rounded up.** Layout rounds boxes to whole pixels, and
+  a text node given the width `measure_text` returned (66.43, say) was laid out
+  66 wide, so text that exactly fit wrapped. A text node's explicit `width`,
+  `min_width` and `max_width` are now laid out rounded up, so such a width fits.
+  `layout_width` can be up to a pixel wider than before for a text node with a
+  fractional width; `get("width")` still reads back what you set. Whole-pixel
+  widths, percentages, `auto`, and every other kind are unchanged. A workaround
+  that rounds measured widths up yourself is no longer needed, and harmless.
+

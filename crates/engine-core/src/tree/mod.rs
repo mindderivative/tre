@@ -241,7 +241,7 @@ impl Tree {
         }
         let taffy_node = self
             .taffy
-            .new_leaf(layout_style.clone())
+            .new_leaf(layout::laid_out_style(&kind, &layout_style))
             .expect("TaffyTree::new_leaf is infallible for a leaf with no children");
         let id = self.nodes.insert_with_key(|id| Node {
             id,

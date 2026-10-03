@@ -2,6 +2,45 @@
 
 use super::*;
 
+/// 0.5.3 (#98): the style `taffy` lays a node out with.
+///
+/// `taffy` rounds every box to whole pixels, so a text node given
+/// `width=66.43` (what `measure_text` says its text needs) was laid out 66
+/// wide, and the text, which needs 66.43, wrapped. A text node's explicit
+/// `width`, `min_width` and `max_width` are therefore rounded **up** before
+/// `taffy` sees them: a width the text fits in still fits after the rounding.
+/// The node's own `layout_style` keeps the value that was set (so `get`
+/// reads it back exactly); only the laid-out size is the whole pixel above.
+/// Percentages, `auto` and every other kind are untouched, and so are
+/// heights (a text node's height doesn't wrap anything).
+pub(super) fn laid_out_style(kind: &NodeKind, style: &Style) -> Style {
+    if !matches!(kind, NodeKind::Text(_)) {
+        return style.clone();
+    }
+    fn up(dimension: taffy::style::Dimension) -> taffy::style::Dimension {
+        match dimension.expand() {
+            taffy::style::ExpandedDimension::Length(v) if v.is_finite() && v > 0.0 => {
+                taffy::style::Dimension::length(v.ceil())
+            }
+            _ => dimension,
+        }
+    }
+    // `min_size`/`max_size` are `LengthPercentageAuto`, `size` a `Dimension`.
+    fn up_limit(limit: taffy::style::LengthPercentageAuto) -> taffy::style::LengthPercentageAuto {
+        match limit.expand() {
+            taffy::style::ExpandedLengthPercentageAuto::Length(v) if v.is_finite() && v > 0.0 => {
+                taffy::style::LengthPercentageAuto::length(v.ceil())
+            }
+            _ => limit,
+        }
+    }
+    let mut out = style.clone();
+    out.size.width = up(out.size.width);
+    out.min_size.width = up_limit(out.min_size.width);
+    out.max_size.width = up_limit(out.max_size.width);
+    out
+}
+
 impl Tree {
     /// Computes layout for `root`'s whole subtree. §5's `layout_style`
     /// lives on `Node`, not duplicated here -- `insert`/`add_child` are
@@ -259,13 +298,14 @@ impl Tree {
             .taffy_nodes
             .get(id)
             .expect("set_layout_style: NodeId not found in this Tree");
-        self.taffy
-            .set_style(taffy_node, style.clone())
-            .expect("set_layout_style: taffy rejected the style update");
-        self.nodes
+        let node = self
+            .nodes
             .get_mut(id)
-            .expect("set_layout_style: NodeId not found in this Tree")
-            .layout_style = style;
+            .expect("set_layout_style: NodeId not found in this Tree");
+        self.taffy
+            .set_style(taffy_node, laid_out_style(&node.kind, &style))
+            .expect("set_layout_style: taffy rejected the style update");
+        node.layout_style = style;
     }
 
     /// M94: maps a window-space point into `id`'s own local space, through
