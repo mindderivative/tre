@@ -146,6 +146,8 @@ pub(crate) enum Change {
     TrimStart(f64),
     TrimEnd(f64),
     Fill(Color),
+    /// 0.5.4 (#109): `fill` set to a `Gradient`.
+    FillGradient(engine_core::Gradient),
     StrokeColor(Color),
     StrokeWidth(f64),
     Opacity(f64),
@@ -331,13 +333,22 @@ pub(crate) fn animatable_to_py(
     }
     let number = |v: f64| -> PyResult<Py<PyAny>> { Ok(v.into_pyobject(py)?.into_any().unbind()) };
     let value = match name {
-        "fill" => color_to_py(
-            match &node.kind {
-                NodeKind::TextField(state) => *pick(&state.text_tint, target),
-                _ => *pick(&node.paint.background, target),
-            },
-            py,
-        )?,
+        "fill" => match &node.paint.gradient {
+            Some(gradient) => Py::new(
+                py,
+                crate::gradient::PyGradient {
+                    inner: pick(gradient, target).clone(),
+                },
+            )?
+            .into_any(),
+            None => color_to_py(
+                match &node.kind {
+                    NodeKind::TextField(state) => *pick(&state.text_tint, target),
+                    _ => *pick(&node.paint.background, target),
+                },
+                py,
+            )?,
+        },
         "scroll_offset" => {
             let NodeKind::ScrollView(state) = &node.kind else {
                 return Err(PyValueError::new_err(
@@ -398,10 +409,15 @@ pub(crate) fn animatable_to_py(
 /// no animation to stop.
 pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyResult<bool> {
     match name {
-        "fill" => match &mut node.kind {
-            NodeKind::TextField(state) => state.text_tint.stop(),
-            _ => node.paint.background.stop(),
-        },
+        "fill" => {
+            if let Some(gradient) = &mut node.paint.gradient {
+                gradient.stop();
+            }
+            match &mut node.kind {
+                NodeKind::TextField(state) => state.text_tint.stop(),
+                _ => node.paint.background.stop(),
+            }
+        }
         "scroll_offset" => {
             let NodeKind::ScrollView(state) = &mut node.kind else {
                 return Err(PyValueError::new_err(
@@ -461,6 +477,9 @@ impl Change {
         fn terminal(kind: &NodeKind) -> bool {
             matches!(kind, NodeKind::Terminal(_))
         }
+        fn box_node(kind: &NodeKind) -> bool {
+            matches!(kind, NodeKind::Rect | NodeKind::Container)
+        }
         Some(match self {
             Change::Data(_) => ("data", "path", path),
             Change::ViewBox(_) => ("view_box", "path", path),
@@ -474,6 +493,7 @@ impl Change {
             Change::ScrollbarFill(_) => ("scrollbar_fill", "scroll_view", scroll_view),
             Change::ScrollbarWidth(_) => ("scrollbar_width", "scroll_view", scroll_view),
             Change::Palette(_) => ("palette", "terminal", terminal),
+            Change::FillGradient(_) => ("fill", "box (a gradient)", box_node),
             _ => return None,
         })
     }
@@ -656,7 +676,12 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         }),
         "trim_start" => Change::TrimStart(fraction(value, name)?),
         "trim_end" => Change::TrimEnd(fraction(value, name)?),
-        "fill" => Change::Fill(parse_color(value, name)?),
+        "fill" => match value.extract::<crate::gradient::PyGradient>() {
+            Ok(gradient) => Change::FillGradient(gradient.inner),
+            Err(_) => Change::Fill(parse_color(value, name).map_err(|_| {
+                invalid(name, "an (r, g, b, a) tuple of 0-255 ints, or a Gradient")
+            })?),
+        },
         "stroke_color" => Change::StrokeColor(parse_color(value, name)?),
         "stroke_width" => Change::StrokeWidth(parse_non_negative(value, name)?),
         "opacity" => Change::Opacity(fraction(value, name)?),
@@ -1192,10 +1217,17 @@ impl Node {
                         state.trim_end = Animated::new(end);
                     }
                 }
-                Change::Fill(color) => match &mut node.kind {
-                    NodeKind::TextField(state) => state.text_tint = Animated::new(color),
-                    _ => node.paint.background = Animated::new(color),
-                },
+                Change::Fill(color) => {
+                    match &mut node.kind {
+                        NodeKind::TextField(state) => state.text_tint = Animated::new(color),
+                        _ => node.paint.background = Animated::new(color),
+                    }
+                    // A colour replaces any gradient.
+                    node.paint.gradient = None;
+                }
+                Change::FillGradient(gradient) => {
+                    node.paint.gradient = Some(Box::new(Animated::new(gradient)));
+                }
                 Change::StrokeColor(color) => node.paint.border_color = Animated::new(color),
                 Change::StrokeWidth(width) => node.paint.border_width = Animated::new(width),
                 Change::Opacity(opacity) => node.paint.opacity = Animated::new(opacity),

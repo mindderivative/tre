@@ -174,3 +174,8 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - **A window can be read as pixels.** `window.snapshot()` returns what it draws
   as RGBA bytes, offscreen and without a display, and `tre.write_png` saves it
   (see [Window](reference/window.md#snapshot)).
+- **Fills can be gradients.** A box's `fill` takes a `tre.Gradient`
+  (`Gradient.linear`, `.radial`, `.sweep`) as well as a colour, and animates
+  between compatible ones (see [Gradients](reference/paint.md#gradients)).
+  Nothing changes for a fill set to a colour. Canvas painter calls still take
+  colours only.

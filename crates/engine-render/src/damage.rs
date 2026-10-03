@@ -496,6 +496,7 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         shadows,
         node_transform,
         clip_children,
+        gradient,
     } = paint;
     color(h, background.current);
     num(h, corner_radius.current);
@@ -522,6 +523,40 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         num(h, part.current);
     }
     clip_children.hash(h);
+    // 0.5.4 (#109): a gradient is part of the fill.
+    match gradient {
+        None => 0u8.hash(h),
+        Some(gradient) => {
+            1u8.hash(h);
+            gradient_fingerprint(h, &gradient.current);
+        }
+    }
+}
+
+fn gradient_fingerprint(h: &mut impl Hasher, gradient: &engine_core::Gradient) {
+    use engine_core::GradientShape;
+    match gradient.shape() {
+        GradientShape::Linear { angle_deg } => {
+            0u8.hash(h);
+            num(h, *angle_deg);
+        }
+        GradientShape::Radial { center, radius } => {
+            1u8.hash(h);
+            num(h, center.0);
+            num(h, center.1);
+            num(h, *radius);
+        }
+        GradientShape::Sweep { center, start_deg } => {
+            2u8.hash(h);
+            num(h, center.0);
+            num(h, center.1);
+            num(h, *start_deg);
+        }
+    }
+    for stop in gradient.stops() {
+        stop.offset.to_bits().hash(h);
+        color(h, stop.color);
+    }
 }
 
 fn options_fingerprint(h: &mut impl Hasher, options: &TextOptions) {

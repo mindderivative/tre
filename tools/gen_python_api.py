@@ -36,6 +36,7 @@ CLASS_DESCRIPTIONS = {
     "Node": "A handle to one node in a window's tree: properties, animation, events, structure.",
     "Event": "What a listener receives when it takes one argument; never constructed directly.",
     "Painter": "The drawing surface a canvas node's `draw` callback receives.",
+    "Gradient": "A linear, radial or sweep gradient to give a box as its `fill`.",
     "Shader": "WGSL that paints a node (a fill) or transforms its rendered content (an effect).",
     "ShaderError": "A shader's source or names are wrong, positioned in the WGSL you gave.",
 }
@@ -45,6 +46,7 @@ GUIDE = {
     "Node": "reference/node.md",
     "Event": "reference/events.md",
     "Painter": "reference/painter.md",
+    "Gradient": "reference/paint.md#gradients",
     "Shader": "reference/shader.md",
     "LoopHandle": "guide/threading.md",
 }
@@ -377,7 +379,7 @@ def main() -> int:
     tree = ast.parse(STUB.read_text())
     classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
-    order = ["App", "LoopHandle", "Window", "Node", "Event", "Painter", "Shader", "ShaderError"]
+    order = ["App", "LoopHandle", "Window", "Node", "Event", "Painter", "Gradient", "Shader", "ShaderError"]
     missing = set(classes) - set(order)
     if missing:
         print(f"classes not in the page order: {sorted(missing)}", file=sys.stderr)

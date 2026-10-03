@@ -212,6 +212,42 @@ impl Node {
                 }
             }
             // M95: the target API's paint names.
+            "fill" if to.extract::<crate::gradient::PyGradient>().is_ok() => {
+                let target = to
+                    .extract::<crate::gradient::PyGradient>()
+                    .expect("checked")
+                    .inner;
+                if !matches!(node.kind, NodeKind::Rect | NodeKind::Container) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `fill` takes a Gradient only on a box node",
+                    ));
+                }
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                match &mut node.paint.gradient {
+                    Some(current) => {
+                        if !current.current.animates_to(&target) {
+                            return Err(pyo3::exceptions::PyValueError::new_err(
+                                "a gradient fill can animate only to a gradient of the same kind \
+                                 with the same number of stops; set `fill` to the new one instead",
+                            ));
+                        }
+                        animate_field(current, target, duration, curve, now, handle);
+                    }
+                    // From a flat colour: fade in, from the target's own shape
+                    // and stops in that colour.
+                    none => {
+                        let mut from =
+                            engine_core::Animated::new(target.solid(node.paint.background.current));
+                        animate_field(&mut from, target, duration, curve, now, handle);
+                        *none = Some(Box::new(from));
+                    }
+                }
+            }
+            "fill" if node.paint.gradient.is_some() => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "a gradient fill can't animate to a color; set `fill` to the color instead",
+                ));
+            }
             "fill" => {
                 let value = crate::node_props::parse_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));

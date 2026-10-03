@@ -85,6 +85,39 @@ are a key and an ambient shadow per level:
 card.set(shadows=[((0, 0, 0, 77), 0, 1, 2, 0), ((0, 0, 0, 38), 0, 1, 3, 1)])
 ```
 
+## Gradients
+
+A box's `fill` can be a `tre.Gradient` (0.5.4) instead of a colour: a ramp
+across the box, linear, radial or sweeping around a point. Only a box takes one
+(`window.create("box")`, a window's root); on a text, a text input or a path,
+`fill` is a colour.
+
+```python
+from tre import Gradient
+
+card.set(fill=Gradient.linear([(0x67, 0x50, 0xA4, 0xFF), (0x21, 0x00, 0x5D, 0xFF)], angle=135))
+glow.set(fill=Gradient.radial([(255, 255, 255, 200), (255, 255, 255, 0)], radius=0.8))
+dial.set(fill=Gradient.sweep([red, yellow, green, red], start=0))
+```
+
+| Constructor | Runs |
+| --- | --- |
+| `Gradient.linear(stops, angle=180)` | along a line through the box's centre at `angle` degrees: 0 points up, 90 right, 180 down (the default). The line spans the box, so the first and last stops land on its corners |
+| `Gradient.radial(stops, center=(0.5, 0.5), radius=1.0)` | outward from `center`, a fraction of the box; `radius` is a fraction of the half-diagonal, so `1.0` reaches the far corner of a centred gradient |
+| `Gradient.sweep(stops, center=(0.5, 0.5), start=0)` | around `center`, clockwise from `start` degrees past up |
+
+`stops` are colours, spaced evenly from 0 to 1, or `(offset, color)` pairs with
+offsets from 0 to 1 that don't decrease. There must be at least two. A stop's
+alpha is honoured, so a gradient can fade to transparent. A gradient follows its
+box as layout resizes it, and follows its rounded corners.
+
+A `Gradient` is immutable. `node.get("fill")` returns it while one is set, and
+setting `fill` to a colour replaces it. Animating `fill` to a gradient of the
+same kind and number of stops interpolates the colours, offsets, angle, centre
+and radius; animating from a flat colour fades the gradient in from that colour.
+Animating between unlike gradients, or from a gradient to a colour, raises
+`ValueError`: set `fill` instead.
+
 ## Animating
 
 ```python

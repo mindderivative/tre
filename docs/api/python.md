@@ -14,6 +14,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | [`Node`](#node) | A handle to one node in a window's tree: properties, animation, events, structure. |
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
 | [`Painter`](#painter) | The drawing surface a canvas node's `draw` callback receives. |
+| [`Gradient`](#gradient) | A linear, radial or sweep gradient to give a box as its `fill`. |
 | [`Shader`](#shader) | WGSL that paints a node (a fill) or transforms its rendered content (an effect). |
 | [`ShaderError`](#shadererror) | A shader's source or names are wrong, positioned in the WGSL you gave. |
 
@@ -357,6 +358,33 @@ The drawing surface a canvas node's `draw` callback receives.
 | `set_hit_test_circle(cx: float, cy: float, radius: float) -> None` | Replaces this canvas's default rectangular hit test with a circular one. |
 | `set_hit_test_path(points: Sequence[Sequence[float]], tolerance: float) -> None` | Replaces this canvas's default rectangular hit test with a stroke-shaped one. |
 | `stroke_path(points: Sequence[Sequence[float]], color: Color, width: float) -> None` | Strokes a path in canvas-local coordinates. |
+
+**Events:** none.
+
+## Gradient { #gradient }
+
+A linear, radial or sweep gradient to give a box as its `fill`.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [Gradient reference](../reference/paint.md#gradients)
+
+**Properties:**
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `kind` | `str` | `"linear"`, `"radial"` or `"sweep"`. |
+| `stops` | `list[tuple[float, Color]]` |  |
+| `angle` | `float \| None` |  |
+| `center` | `tuple[float, float] \| None` |  |
+| `radius` | `float \| None` |  |
+| `start` | `float \| None` |  |
+
+**Methods:**
+
+| Method | Description |
+| --- | --- |
+| `linear(stops: Sequence[Color] \| Sequence[tuple[float, Color]], angle: float=180.0) -> Gradient` | Along a line through the box's centre at `angle` degrees (0 up, 90 right, 180 down), spanning the box. |
+| `radial(stops, center, radius) -> Gradient` | Outward from `center` (fractions of the box; `None` is `(0.5, 0.5)`, the middle). |
+| `sweep(stops, center, start) -> Gradient` | Around `center` (`None` is the middle), starting `start` degrees clockwise from up. |
 
 **Events:** none.
 

@@ -1149,6 +1149,10 @@ pub struct PaintProperties {
     /// spilling out. Not `Animated`: nothing needs a *smooth
     /// transition* into/out of clipping, only a static per-node choice.
     pub clip_children: bool,
+    /// 0.5.4 (#109): a gradient painted in place of `background`'s colour,
+    /// which stays what a fill set back to a colour starts from. Boxed: most
+    /// nodes have none.
+    pub gradient: Option<Box<Animated<crate::Gradient>>>,
 }
 
 impl PaintProperties {
@@ -1164,6 +1168,7 @@ impl PaintProperties {
             shadows: Animated::new(Shadows::default()),
             node_transform: NodeTransform::default(),
             clip_children: false,
+            gradient: None,
         }
     }
 
@@ -1195,7 +1200,12 @@ impl PaintProperties {
             .is_some_and(|radii| radii.tick(now, completed));
         let shadows = self.shadows.tick(now, completed);
         let node_transform = self.node_transform.tick(now, completed);
-        radii
+        let gradient = self
+            .gradient
+            .as_mut()
+            .is_some_and(|gradient| gradient.tick(now, completed));
+        gradient
+            || radii
             || shadows
             || node_transform
             || background

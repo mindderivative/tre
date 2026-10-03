@@ -37,6 +37,7 @@ __all__ = [
     "Node",
     "Painter",
     "Event",
+    "Gradient",
     "LoopHandle",
     "Shader",
     "ShaderError",
@@ -160,7 +161,7 @@ class Node:
     def animate(
         self,
         property: str,
-        to: float | Color | Sequence[float] | Sequence[Any] | str,
+        to: float | Color | Gradient | Sequence[float] | Sequence[Any] | str,
         duration_ms: int = 0,
         easing: str | tuple[float, float, float, float] | None = None,
         on_complete: Callable[[], object] | None = None,
@@ -665,6 +666,59 @@ class ShaderError(ValueError):
     line: int | None
     column: int | None
     source_line: str | None
+
+@final
+class Gradient:
+    """(0.5.4) A gradient to give a box (`Rect`/`Container`, `window.create("box")`)
+    as its `fill`: `node.set(fill=Gradient.linear([...]))`. Build one with
+    `Gradient.linear`, `Gradient.radial` or `Gradient.sweep`. Positions are
+    relative to the box, so a gradient follows its box as layout resizes it.
+    Immutable; to change a fill, set or animate `fill` to another. Setting
+    `fill` to a colour replaces a gradient; `node.get("fill")` returns the
+    `Gradient` while one is set. Animating `fill` between gradients of the same
+    kind and number of stops interpolates their colours, positions and angles;
+    animating from a flat colour fades the gradient in."""
+
+    @staticmethod
+    def linear(
+        stops: Sequence[Color] | Sequence[tuple[float, Color]], angle: float = 180.0
+    ) -> Gradient:
+        """Along a line through the box's centre at `angle` degrees (0 up, 90 right,
+        180 down), spanning the box. `stops` are colours spaced evenly, or
+        `(offset, color)` pairs with offsets from 0 to 1 that don't decrease."""
+        ...
+    @staticmethod
+    def radial(
+        stops: Sequence[Color] | Sequence[tuple[float, Color]],
+        center: tuple[float, float] | None = None,
+        radius: float = 1.0,
+    ) -> Gradient:
+        """Outward from `center` (fractions of the box; `None` is `(0.5, 0.5)`, the middle). `radius` is a fraction of the
+        half-diagonal, so `1.0` reaches the far corner of a centred gradient."""
+        ...
+    @staticmethod
+    def sweep(
+        stops: Sequence[Color] | Sequence[tuple[float, Color]],
+        center: tuple[float, float] | None = None,
+        start: float = 0.0,
+    ) -> Gradient:
+        """Around `center` (`None` is the middle), starting `start` degrees clockwise from up."""
+        ...
+    @property
+    def kind(self) -> str:
+        """`"linear"`, `"radial"` or `"sweep"`."""
+        ...
+    @property
+    def stops(self) -> list[tuple[float, Color]]: ...
+    @property
+    def angle(self) -> float | None: ...
+    @property
+    def center(self) -> tuple[float, float] | None: ...
+    @property
+    def radius(self) -> float | None: ...
+    @property
+    def start(self) -> float | None: ...
+    def __eq__(self, other: object, /) -> bool: ...
 
 @final
 class Shader:

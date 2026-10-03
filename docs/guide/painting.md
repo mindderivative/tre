@@ -21,8 +21,8 @@ card = window.create("box", width=240, height=120,
                      corner_radius=12)
 ```
 
-- `fill` — the box's color. On a text it's the glyph color, and on a path
-  the shape's fill.
+- `fill` — the box's color, or a `Gradient` (see [Gradients](../reference/paint.md#gradients)).
+  On a text it's the glyph color, and on a path the shape's fill.
 - `stroke_color`, `stroke_width` — a border drawn inside the box, so it never
   changes layout.
 - `corner_radius` — one radius, or `(top_left, top_right, bottom_right,

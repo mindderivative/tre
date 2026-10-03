@@ -13,6 +13,7 @@ mod dispatch;
 mod dock;
 mod error;
 mod event;
+mod gradient;
 mod grid;
 mod listeners;
 mod node;
@@ -55,6 +56,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWindow>()?;
     m.add_class::<Node>()?;
     m.add_class::<Painter>()?;
+    m.add_class::<gradient::PyGradient>()?;
     m.add_class::<Event>()?;
     m.add_class::<LoopHandle>()?;
     m.add_class::<Shader>()?;

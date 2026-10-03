@@ -691,12 +691,29 @@ fn fill_box(
     scene: &mut Scene,
     own_alpha: f64,
 ) {
-    scene.set_paint(with_opacity(node.paint.background.current, own_alpha));
-    if node.paint.corner_radii_override.is_none() && node.paint.corner_radius.current <= 0.0 {
+    // 0.5.4 (#109): a gradient replaces the flat colour; its stops' own alpha
+    // applies (`own_alpha` is 1 where it matters, as for every fill).
+    let gradient = node.paint.gradient.as_ref().map(|g| &g.current);
+    match gradient {
+        Some(gradient) => {
+            let (paint, transform) = gradient.resolve(w, h);
+            scene.set_paint(paint);
+            scene.set_paint_transform(transform);
+        }
+        None => scene.set_paint(with_opacity(node.paint.background.current, own_alpha)),
+    }
+    if gradient.is_none()
+        && node.paint.corner_radii_override.is_none()
+        && node.paint.corner_radius.current <= 0.0
+    {
         scene.fill_rect(&Rect::new(0.0, 0.0, w, h));
         return;
     }
     scene.fill_path(box_path(node, id, w, h, geometry));
+    if gradient.is_some() {
+        // The paint transform is scene state: the next node must not inherit it.
+        scene.reset_paint_transform();
+    }
 }
 
 /// The box's own rounded outline, for a fill or a clip.
