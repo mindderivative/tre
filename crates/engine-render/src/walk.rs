@@ -41,6 +41,8 @@ pub(crate) struct Visit<'t> {
     pub parent: Option<NodeId>,
     /// Its index among its parent's children, in paint order.
     pub order: usize,
+    /// The window's own scale, the grid layout offsets snap to (0.5.4, review).
+    pub grid: f64,
 }
 
 /// One walk's own work at each node.
@@ -72,7 +74,17 @@ pub(crate) fn walk<'t>(
     visible: Rect,
     visitor: &mut impl Visitor<'t>,
 ) {
-    visit(tree, root, base, visible, 1.0, None, 0, visitor);
+    visit(
+        tree,
+        root,
+        base,
+        visible,
+        1.0,
+        None,
+        0,
+        base.as_coeffs()[0],
+        visitor,
+    );
 }
 
 /// 0.5.1 (#69): walks the subtree under `id` as if it were the whole tree,
@@ -100,6 +112,7 @@ pub(crate) fn walk_root<'t>(
         opacity: 1.0,
         parent: None,
         order: 0,
+        grid: base.as_coeffs()[0],
     };
     descend(tree, &here, visitor);
 }
@@ -123,6 +136,7 @@ fn descend<'t>(tree: &'t Tree, here: &Visit<'t>, visitor: &mut impl Visitor<'t>)
             here.opacity,
             Some(here.id),
             index,
+            here.grid,
             visitor,
         );
     }
@@ -138,6 +152,7 @@ fn visit<'t>(
     parent_opacity: f64,
     parent: Option<NodeId>,
     order: usize,
+    grid: f64,
     visitor: &mut impl Visitor<'t>,
 ) {
     let Some(here) = resolve(
@@ -148,6 +163,7 @@ fn visit<'t>(
         parent_opacity,
         parent,
         order,
+        grid,
     ) else {
         return;
     };
@@ -167,6 +183,7 @@ pub(crate) fn resolve<'t>(
     parent_opacity: f64,
     parent: Option<NodeId>,
     order: usize,
+    grid: f64,
 ) -> Option<Visit<'t>> {
     let node = tree.get(id)?;
     if !node.visible {
@@ -179,7 +196,7 @@ pub(crate) fn resolve<'t>(
         f64::from(layout.location.x) + sx,
         f64::from(layout.location.y) + sy,
     );
-    let composed = composed_transform(parent_transform, position, node, w, h);
+    let composed = composed_transform(parent_transform, position, node, w, h, grid);
     let bounds = transformed_bounds(composed, Rect::new(0.0, 0.0, w, h));
     if !bounds.overlaps(visible) {
         return None;
@@ -199,6 +216,7 @@ pub(crate) fn resolve<'t>(
         opacity: parent_opacity * opacity,
         parent,
         order,
+        grid,
     })
 }
 

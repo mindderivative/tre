@@ -877,6 +877,7 @@ impl DamageTracker {
             removed: Vec::new(),
             changes: Vec::new(),
             visited: 0,
+            scale: self.scale,
         };
         pass.register();
         let base = Affine::scale(self.scale);
@@ -928,6 +929,8 @@ struct Pass<'a> {
     removed: Vec<NodeId>,
     changes: Vec<Change>,
     visited: usize,
+    /// The window's scale: what layout offsets snap to.
+    scale: f64,
 }
 
 impl Pass<'_> {
@@ -986,6 +989,7 @@ impl Pass<'_> {
             parent_opacity,
             parent,
             order,
+            self.scale,
         ) else {
             if old.is_some() {
                 self.remove_subtree(id)?;

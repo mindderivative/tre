@@ -316,7 +316,11 @@ pointer positions and pixel scroll deltas are all logical too, and shader
 `frame.size` stays in device pixels. Off by default, since a framework that
 already multiplies by `scale_factor` itself would be scaled twice; with it
 off nothing changes. It takes effect live, and follows the window to a
-monitor with a different scale.
+monitor with a different scale. At a fractional scale such as 1.5, a node's layout
+offset is rounded to a whole device pixel so its edges and glyphs sit on the grid.
+This applies only to nodes whose ancestors add no scale of their own: under a node
+with a paint `scale` (a hover zoom, say) offsets stay exact, so a child moves
+smoothly as that scale animates instead of stepping by whole pixels.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), `dark` — the OS's current appearance,
 or `None` where it can't say ([Window properties](events.md#window-properties))

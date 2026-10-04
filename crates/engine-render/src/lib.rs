@@ -465,8 +465,9 @@ pub(crate) fn composed_transform(
     node: &engine_core::Node,
     w: f64,
     h: f64,
+    grid: f64,
 ) -> Affine {
-    snapped_offset(parent, position) * node.paint.local_transform(w, h)
+    snapped_offset(parent, position, grid) * node.paint.local_transform(w, h)
 }
 
 /// `parent` moved by a node's layout `position`, with that move rounded to
@@ -476,10 +477,13 @@ pub(crate) fn composed_transform(
 /// smeared over two; rounding puts it on the grid. Only the layout offset
 /// is rounded, not the parent's own shift, so an animated transform still
 /// moves smoothly, and at a scale where offsets are already whole (1x, 2x)
-/// nothing changes. A rotated or skewed parent is left exact.
-fn snapped_offset(parent: Affine, position: (f64, f64)) -> Affine {
+/// nothing changes. A parent that is rotated, skewed, or scaled by anything
+/// but the window's own scale `grid` (a node with a paint scale, say) is left
+/// exact: its children's offsets are not on the device grid to begin with,
+/// and rounding them would step them by whole pixels as the scale animates.
+fn snapped_offset(parent: Affine, position: (f64, f64), grid: f64) -> Affine {
     let [a, b, c, d, e, f] = parent.as_coeffs();
-    if b != 0.0 || c != 0.0 {
+    if b != 0.0 || c != 0.0 || (a - grid).abs() > 1e-9 || (d - grid).abs() > 1e-9 {
         return parent * Affine::translate(position);
     }
     Affine::new([

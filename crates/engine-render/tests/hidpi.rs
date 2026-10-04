@@ -621,3 +621,44 @@ fn a_sticky_header_paints_where_it_sticks_and_partial_redraw_follows_it() {
         "the third section's body"
     );
 }
+
+/// The x centre of the red coverage in `w`, in device pixels.
+fn red_centre_x(w: &Window) -> f64 {
+    let (mut sum, mut total) = (0.0, 0.0);
+    let width = u32::from(w.physical.0);
+    for (i, p) in w.pixels().iter().enumerate() {
+        // Red over a black background: the red channel is the coverage.
+        let coverage = f64::from(p[0]) / 255.0;
+        sum += coverage * ((i as u32 % width) as f64 + 0.5);
+        total += coverage;
+    }
+    sum / total
+}
+
+#[test]
+fn offsets_under_a_paint_scaled_parent_are_not_snapped_to_the_window_grid() {
+    // A 40x40 parent scaled 1.05 about its centre, holding a box at logical
+    // (3, 3), in a 1.5x window. The parent's scale is not the window's, so the
+    // box's offset is not on the device grid and stays exact (rounding it
+    // moved the box by up to half a pixel, stepping it as the scale animated).
+    let mut w = Window::new((40.0, 40.0), 1.5);
+    let root = w.root;
+    let parent = w.add(
+        root,
+        NodeKind::Rect,
+        style(0.0, 0.0, 40.0, 40.0),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
+    );
+    w.tree.get_mut(parent).unwrap().paint.node_transform.scale = engine_core::Animated::new(1.05);
+    w.add(
+        parent,
+        NodeKind::Rect,
+        style(3.0, 3.0, 10.0, 10.0),
+        PaintProperties::new(RED, 0.0, 1.0),
+    );
+    w.frame();
+    // Exact: x from 1.5*(20 + 1.05*(3-20)) to 1.5*(20 + 1.05*(13-20)).
+    let want = (1.5 * (20.0 + 1.05 * (3.0 - 20.0)) + 1.5 * (20.0 + 1.05 * (13.0 - 20.0))) / 2.0;
+    let got = red_centre_x(&w);
+    assert!((got - want).abs() < 0.1, "centre {got}, exact {want}");
+}
