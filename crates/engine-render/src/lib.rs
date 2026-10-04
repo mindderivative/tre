@@ -1418,6 +1418,10 @@ fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Sc
     for child in &group.children {
         match child {
             SvgNode::Group(g) => paint_svg_group(g, here, scene),
+            SvgNode::Image(image) => {
+                scene.set_transform(here);
+                paint_svg_image(image, scene);
+            }
             SvgNode::Path(p) => {
                 scene.set_transform(here);
                 let fill = |scene: &mut Scene| {
@@ -1474,6 +1478,44 @@ fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Sc
         scene.pop_layer();
     }
     scene.set_transform(here);
+}
+
+/// A raster image the caller decoded, scaled into its box at the origin.
+fn paint_svg_image(image: &engine_core::SvgImage, scene: &mut Scene) {
+    let (bw, bh) = (image.bitmap.image.width, image.bitmap.image.height);
+    // `MAX_IMAGE_DIMENSION` is below a `u16`; a larger one was never uploaded.
+    if bw == 0
+        || bh == 0
+        || bw > image_cache::MAX_IMAGE_DIMENSION
+        || bh > image_cache::MAX_IMAGE_DIMENSION
+        || image.width <= 0.0
+        || image.height <= 0.0
+    {
+        return;
+    }
+    let source = vello_common::paint::ImageSource::external_texture(
+        image_cache::svg_texture_id(image.bitmap.id),
+        vello_common::geometry::RectU16 {
+            x0: 0,
+            y0: 0,
+            x1: bw as u16,
+            y1: bh as u16,
+        },
+        true,
+    );
+    scene.set_paint(vello_common::paint::Image {
+        image: source,
+        sampler: peniko::ImageSampler {
+            quality: peniko::ImageQuality::Medium,
+            ..Default::default()
+        },
+    });
+    scene.set_paint_transform(Affine::scale_non_uniform(
+        image.width / f64::from(bw),
+        image.height / f64::from(bh),
+    ));
+    scene.fill_rect(&Rect::new(0.0, 0.0, image.width, image.height));
+    scene.reset_paint_transform();
 }
 
 /// Masks what the current layer holds: the mask's shapes (whose alpha is the

@@ -67,6 +67,9 @@ pub struct ImageTextureCache {
     /// Oversized images already warned about, by content id, so the
     /// warning comes once per image rather than every frame.
     too_large: HashSet<u64>,
+    /// 0.5.4 (#147): the textures of the raster images SVG nodes were given,
+    /// by `SvgBitmap::id`.
+    svg_textures: HashMap<u64, wgpu::Texture>,
 }
 
 impl ImageTextureCache {
@@ -182,6 +185,8 @@ impl ImageTextureCache {
             self.uploaded.insert(id, blob_id);
         }
 
+        self.sync_svg_images(tree, device, queue);
+
         // Real, confirmed bug found in review: this loop above was
         // purely additive -- a node's own uploaded GPU texture (and
         // its `TextureBindings` entry) was never freed once the node
@@ -205,6 +210,80 @@ impl ImageTextureCache {
             self.uploaded.remove(&id);
         }
     }
+}
+
+impl ImageTextureCache {
+    /// 0.5.4 (#147): uploads each raster image an SVG node was given, once,
+    /// and frees those no node has any more.
+    fn sync_svg_images(&mut self, tree: &Tree, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let bitmaps = tree.svg_bitmaps();
+        for bitmap in &bitmaps {
+            let image = &bitmap.image;
+            if self.svg_textures.contains_key(&bitmap.id)
+                || image.width > MAX_IMAGE_DIMENSION
+                || image.height > MAX_IMAGE_DIMENSION
+            {
+                continue;
+            }
+            let source = vello_common::paint::ImageSource::from_peniko_image_data(image);
+            let vello_common::paint::ImageSource::Pixmap(pixmap) = source else {
+                unreachable!("from_peniko_image_data always returns ImageSource::Pixmap")
+            };
+            let (width, height) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
+            let size = wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            };
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("engine-render SVG image texture"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                pixmap.data_as_u8_slice(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: Some(height),
+                },
+                size,
+            );
+            self.bindings.insert(
+                svg_texture_id(bitmap.id),
+                texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            );
+            self.svg_textures.insert(bitmap.id, texture);
+        }
+        let live: HashSet<u64> = bitmaps.iter().map(|b| b.id).collect();
+        let gone: Vec<u64> = self
+            .svg_textures
+            .keys()
+            .filter(|id| !live.contains(id))
+            .copied()
+            .collect();
+        for id in gone {
+            self.svg_textures.remove(&id);
+            self.bindings.remove(svg_texture_id(id));
+        }
+    }
+}
+
+/// The `TextureId` an SVG node's raster image is bound under: a range
+/// no `Image` node's id reaches (those are slot-map keys, far below it).
+pub(crate) fn svg_texture_id(bitmap: u64) -> TextureId {
+    TextureId((1 << 62) | bitmap)
 }
 
 /// 0.5.1 (#68): the uploaded image textures, for a shader that samples an

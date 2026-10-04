@@ -55,7 +55,48 @@ pub struct SvgGroup {
 #[derive(Debug)]
 pub enum SvgNode {
     Group(SvgGroup),
+    Image(Box<SvgImage>),
     Path(Box<SvgPath>),
+}
+
+/// Pixels the caller decoded, straight-alpha RGBA8.
+pub struct SvgBitmap {
+    pub image: peniko::ImageData,
+    /// Unique to this bitmap: what the renderer keys its GPU texture by.
+    pub id: u64,
+}
+
+impl SvgBitmap {
+    pub fn new(rgba: Vec<u8>, width: u32, height: u32) -> Self {
+        Self {
+            image: peniko::ImageData {
+                data: peniko::Blob::from(rgba),
+                format: peniko::ImageFormat::Rgba8,
+                alpha_type: peniko::ImageAlphaType::Alpha,
+                width,
+                height,
+            },
+            id: BITMAP_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+}
+
+impl std::fmt::Debug for SvgBitmap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SvgBitmap({}x{})", self.image.width, self.image.height)
+    }
+}
+
+/// The images a document refers to, by the `href` it writes them under.
+#[derive(Clone, Debug, Default)]
+pub struct SvgImages(pub Arc<Vec<(String, Arc<SvgBitmap>)>>);
+
+/// A raster image, drawn into a `width` x `height` box at the origin.
+#[derive(Debug)]
+pub struct SvgImage {
+    pub bitmap: Arc<SvgBitmap>,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// A clip path, already flattened to one outline in the clipped group's
@@ -386,11 +427,71 @@ fn convert_mask(mask: &usvg::Mask) -> SvgMask {
     }
 }
 
+thread_local! {
+    /// The caller's images, by index, while a document is converted.
+    static PARSING_IMAGES: std::cell::RefCell<Vec<Arc<SvgBitmap>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Bytes that read as a PNG header of `width` x `height`, which is all `usvg`
+/// looks at, ending in the index of the caller's image they stand for.
+fn stand_in_png(width: u32, height: u32, index: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(STAND_IN_LEN);
+    out.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    out.extend_from_slice(&13u32.to_be_bytes());
+    out.extend_from_slice(b"IHDR");
+    out.extend_from_slice(&width.to_be_bytes());
+    out.extend_from_slice(&height.to_be_bytes());
+    out.extend_from_slice(&[8, 6, 0, 0, 0, 0, 0, 0, 0]); // depth, colour type, ..., CRC
+    out.extend_from_slice(b"treimg");
+    out.extend_from_slice(&(index as u32).to_le_bytes());
+    out
+}
+
+const STAND_IN_LEN: usize = 8 + 25 + 6 + 4;
+
+/// The index inside a `stand_in_png`, or `None` for any other bytes.
+fn stand_in_index(data: &[u8]) -> Option<usize> {
+    if data.len() != STAND_IN_LEN || &data[33..39] != b"treimg" {
+        return None;
+    }
+    Some(u32::from_le_bytes(data[39..43].try_into().ok()?) as usize)
+}
+
+/// A raster `<image>` the caller supplied pixels for, drawn scaled into the
+/// image's own box.
+fn convert_raster(image: &usvg::Image, data: &[u8], mode: Mode) -> Option<SvgImage> {
+    // A mask or a shadow made of a picture would need its pixels converted.
+    if !matches!(mode, Mode::Normal) || !image.is_visible() {
+        return None;
+    }
+    let index = stand_in_index(data)?;
+    let bitmap = PARSING_IMAGES.with(|slot| slot.borrow().get(index).cloned())?;
+    Some(SvgImage {
+        bitmap,
+        width: f64::from(image.size().width()),
+        height: f64::from(image.size().height()),
+    })
+}
+
 /// A nested SVG `<image>`, drawn scaled into the image's own box and clipped
 /// to it. A raster one is not drawn.
 fn convert_image(image: &usvg::Image, mode: Mode) -> Option<SvgGroup> {
-    let usvg::ImageKind::SVG(tree) = image.kind() else {
-        return None;
+    let tree = match image.kind() {
+        usvg::ImageKind::SVG(tree) => tree,
+        usvg::ImageKind::PNG(data) => {
+            let raster = convert_raster(image, data, mode)?;
+            return Some(SvgGroup {
+                transform: Affine::IDENTITY,
+                opacity: 1.0,
+                clip: None,
+                blur: None,
+                shadow: None,
+                mask: None,
+                children: vec![SvgNode::Image(Box::new(raster))],
+            });
+        }
+        _ => return None,
     };
     if !image.is_visible() || tree.size().width() <= 0.0 || tree.size().height() <= 0.0 {
         return None;
@@ -459,6 +560,7 @@ fn convert_group(group: &usvg::Group, mode: Mode) -> SvgGroup {
 }
 
 static REVISION: AtomicU64 = AtomicU64::new(1);
+static BITMAP_ID: AtomicU64 = AtomicU64::new(1);
 
 impl SvgDocument {
     /// Parses an SVG (or gzip-compressed SVGZ) document, shaping its text
@@ -474,19 +576,56 @@ impl SvgDocument {
         fonts: &SvgFonts,
         color: Option<Color>,
     ) -> Result<Arc<Self>, String> {
+        Self::parse_full(data, fonts, color, &SvgImages::default())
+    }
+
+    /// `parse_tinted`, with the raster images the document refers to by
+    /// `href`, already decoded by the caller (the engine decodes no image
+    /// formats). An `<image>` whose `href` is not in `images` is not drawn,
+    /// and nothing is ever read from disk.
+    pub fn parse_full(
+        data: &[u8],
+        fonts: &SvgFonts,
+        color: Option<Color>,
+        images: &SvgImages,
+    ) -> Result<Arc<Self>, String> {
         let tinted = color.and_then(|c| tint(data, c));
         let data = tinted.as_deref().unwrap_or(data);
+        let lookup = images.clone();
+        // A string `href` is looked up among the caller's images, never opened
+        // as a file. The raster kind it returns is a stand-in only usvg reads
+        // (for the size) and `convert_image` recognises (for the index).
+        let resolve_string: usvg::ImageHrefStringResolverFn<'_> = Box::new(move |href, _| {
+            let index = lookup.0.iter().position(|(name, _)| name == href)?;
+            let image = &lookup.0[index].1.image;
+            Some(usvg::ImageKind::PNG(Arc::new(stand_in_png(
+                image.width,
+                image.height,
+                index,
+            ))))
+        });
         let options = usvg::Options {
             fontdb: fonts.0.clone(),
             font_family: "Roboto".to_string(),
+            image_href_resolver: usvg::ImageHrefResolver {
+                resolve_string,
+                ..usvg::ImageHrefResolver::default()
+            },
             ..usvg::Options::default()
         };
-        let tree = usvg::Tree::from_data(data, &options).map_err(|e| e.to_string())?;
+        let tree = usvg::Tree::from_data(data, &options).map_err(|e| e.to_string());
+        let tree = tree?;
         let size = tree.size();
+        let root = PARSING_IMAGES.with(|slot| {
+            *slot.borrow_mut() = images.0.iter().map(|(_, b)| b.clone()).collect();
+            let root = convert_group(tree.root(), Mode::Normal);
+            slot.borrow_mut().clear();
+            root
+        });
         Ok(Arc::new(Self {
             width: f64::from(size.width()),
             height: f64::from(size.height()),
-            root: convert_group(tree.root(), Mode::Normal),
+            root,
             revision: REVISION.fetch_add(1, Ordering::Relaxed),
             has_text: tree.has_text_nodes(),
         }))
@@ -608,6 +747,8 @@ pub struct SvgState {
     pub source_is_text: bool,
     /// What `currentColor` resolves to; `None` leaves the document's own.
     pub color: Option<Color>,
+    /// The raster images the caller decoded, by `href`.
+    pub images: SvgImages,
 }
 
 impl SvgState {
@@ -618,6 +759,7 @@ impl SvgState {
             source: Arc::new(Vec::new()),
             source_is_text: true,
             color: None,
+            images: SvgImages::default(),
         }
     }
 }

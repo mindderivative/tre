@@ -343,3 +343,62 @@ def test_svg_text_uses_system_fonts_only_when_they_are_on_and_is_hermetic_otherw
         tre.set_system_fonts(False)
     if with_system == hermetic:
         pytest.skip("this machine has no system font for these scripts")
+
+
+# 0.5.4 (#147): raster images are the framework's to decode. `svg_images` hands
+# the engine already-decoded RGBA8 pixels, keyed by the href the document uses.
+
+PHOTO = '<image href="photo.png" x="0" y="0" width="100" height="100" preserveAspectRatio="none"/>'
+# 2x2: red | blue, twice.
+RED_BLUE = bytes([255, 0, 0, 255, 0, 0, 255, 255] * 2)
+
+
+def test_a_supplied_image_is_drawn_scaled_into_its_box():
+    # 4x1: red, green, blue, white. Sampled at the middle of each texel (the
+    # right edge is avoided: `image` nodes blend their last texel there too).
+    four = bytes([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255])
+    window, node = shown(svg(PHOTO), svg_images={"photo.png": (four, 4, 1)})
+    assert pixel(window, 10, 50) == RED
+    assert pixel(window, 37, 50) == (0, 255, 0, 255)
+    assert pixel(window, 62, 50) == BLUE
+    assert node.get("svg_images") == {"photo.png": (four, 4, 1)}
+
+
+def test_an_image_the_framework_did_not_supply_is_not_drawn_and_no_file_is_read(tmp_path):
+    inner = tmp_path / "other.svg"
+    inner.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="#ff0000"/></svg>')
+    window, _ = shown(svg(f'<image href="{inner}" width="100" height="100"/>' + PHOTO))
+    assert pixel(window, 50, 50)[3] == 0, "neither the missing image nor a file on disk is drawn"
+
+
+def test_images_can_arrive_after_the_document_and_are_kept_across_new_ones():
+    window, node = shown(svg(PHOTO))
+    assert pixel(window, 10, 50)[3] == 0
+    node.set(svg_images={"photo.png": (RED_BLUE, 2, 2)})
+    assert pixel(window, 10, 50) == RED
+    node.set(svg=svg(PHOTO + '<rect x="45" y="45" width="10" height="10" fill="#00ff00"/>'))
+    assert pixel(window, 10, 50) == RED, "the images stay until they are changed"
+    assert pixel(window, 50, 50) == (0, 255, 0, 255)
+    node.set(svg_images={})
+    assert pixel(window, 10, 50)[3] == 0
+
+
+def test_a_half_transparent_pixel_stays_straight_alpha():
+    half = bytes([255, 0, 0, 128] * 4)
+    window, _ = shown(svg(PHOTO), svg_images={"photo.png": (half, 2, 2)})
+    r, g, b, a = pixel(window, 50, 50)
+    assert abs(a - 128) <= 2 and r >= 250 and g == 0 and b == 0
+
+
+def test_svg_images_are_checked():
+    window = Window(width=20, height=20)
+    for bad, match in [
+        ({"a": (b"\0" * 3, 1, 1)}, "needs 4"),
+        ({"a": b"nope"}, "href -> "),
+        ([("a", (b"\0" * 4, 1, 1))], "href -> "),
+        ({1: (b"\0" * 4, 1, 1)}, "keyed by str"),
+    ]:
+        with pytest.raises(ValueError, match=match):
+            window.create("svg", svg=svg(""), svg_images=bad, width=10, height=10)
+    with pytest.raises(ValueError, match="applies only to an svg"):
+        window.create("box").set(svg_images={})

@@ -93,10 +93,30 @@ that is a single Gaussian blur or a single drop shadow (`feDropShadow`).
   then kept only where the mask's shapes are (a luminance mask's colours are
   converted to their luminance first). It costs one extra layer per mask.
 
-Dropped without an error: raster `<image>`s (PNG, JPEG, GIF, WebP: the engine
-decodes no image formats, here or anywhere), every filter but a lone blur or
-drop shadow, and blend modes. The rest of the document still draws. A pattern
+Dropped without an error: raster `<image>`s the framework did not supply (below),
+every filter but a lone blur or drop shadow, and blend modes. The rest of the document still draws. A pattern
 that would need more than 2500 tiles is skipped.
+
+**Pictures inside a document.** Tesserae Engine decodes no image format, here as
+everywhere, so **a framework building on it is responsible for decoding the raster
+images (PNG, JPEG, GIF, WebP) an SVG refers to, and handing over pixels.** It reads the
+document for its `<image href="...">`s, decodes each with its own imaging library, and
+passes straight-alpha RGBA8 pixels keyed by the `href` exactly as the document writes it:
+
+```python
+photo = decode_png("assets/photo.png")          # your imaging library: (rgba, width, height)
+node = window.create("svg", svg=text, width=240,
+                     svg_images={"assets/photo.png": photo})
+node.set(svg_images={**node.get("svg_images"), "other.jpg": other})   # or add later
+```
+
+An `<image>` whose `href` is not in `svg_images` is not drawn. The engine never opens a
+file, so a document cannot make it read one, and a `data:` URL holding a raster picture
+is not looked at either: a framework that wants those drawn rewrites the `href` to a key
+of its own and supplies the pixels. A nested SVG is drawn only from a `data:` URL; one referenced by path is not loaded.
+Each entry is checked like an `image` node's `rgba` (length, and a side of at
+most 8192), the images are uploaded once as GPU textures, `svg_images` read back gives
+what was set, and it stays across new `svg` documents until you change it.
 
 `get("svg")` returns the source as it was
 given (a `str` or `bytes`), and `svg_size` the document's size.

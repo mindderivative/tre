@@ -741,6 +741,19 @@ impl Tree {
         })
     }
 
+    /// 0.5.4 (#147): every raster image the tree's SVG nodes were given, for
+    /// the renderer to upload as textures.
+    pub fn svg_bitmaps(&self) -> Vec<std::sync::Arc<crate::svg::SvgBitmap>> {
+        self.nodes
+            .values()
+            .filter_map(|node| match &node.kind {
+                NodeKind::Svg(state) => Some(state.images.0.iter().map(|(_, b)| b.clone())),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
     /// 0.5.1 (#68): whether giving `id` `shader` would make a shader depend
     /// on itself. A shader's inputs are nodes; an input that is not an image
     /// node is sampled through its own shader, which has inputs in turn.

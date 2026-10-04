@@ -56,8 +56,8 @@ pub use shader::{
     FRAME_BLOCK_SIZE, Shader, ShaderError, ShaderMode, UniformKind, UniformValue, frame_block,
 };
 pub use svg::{
-    SvgClip, SvgDocument, SvgFill, SvgFonts, SvgGroup, SvgMask, SvgNode, SvgPaint, SvgPath,
-    SvgPattern, SvgShadow, SvgState, SvgStroke,
+    SvgBitmap, SvgClip, SvgDocument, SvgFill, SvgFonts, SvgGroup, SvgImage, SvgImages, SvgMask,
+    SvgNode, SvgPaint, SvgPath, SvgPattern, SvgShadow, SvgState, SvgStroke,
 };
 pub use tree::{
     FocusDirection, KEY_SCROLL_LINE, Tree, from_access_id, node_id_as_u64, to_access_id,

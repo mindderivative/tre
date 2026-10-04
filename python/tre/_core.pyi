@@ -337,11 +337,14 @@ class Window:
         `"scroll_view"`, `"virtual_list"`, or `"terminal"` -- and applies `props`
         atomically, as `Node.set` does. Required: `text` for a text,
         `rgba`/`pixel_width`/`pixel_height` for an image, `data` for a
-        path, `svg` (a `str` or `bytes` document; also read, with `svg_size` and
-        `svg_color`, what `currentColor` is) for an svg, `draw` for a canvas, `item_count`, `materialize`, and one of
+        path, `svg` (a `str` or `bytes` document) for an svg, `draw` for a
+        canvas, `item_count`, `materialize`, and one of
         `item_extent`/`size_hint` for a virtual list, and `shell`, `cols`,
         `rows` for a terminal (which also takes `scrollback_lines`, at
-        creation only). Attach it with `add_child`; until it's attached it
+        creation only). An svg also takes `svg_color` (what `currentColor`
+        is) and `svg_images` (`{href: (rgba, width, height)}`, the raster
+        pictures the document refers to: the framework decodes them, the
+        engine never does). Attach it with `add_child`; until it's attached it
         is freed once no handle points into it. Raises `ValueError` for an
         unknown kind or a bad property, creating nothing. See the
         Properties reference for every property.

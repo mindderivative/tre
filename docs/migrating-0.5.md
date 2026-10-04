@@ -247,6 +247,8 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   reads the source back, and a node sized on one side takes the other from the
   document. Masks and drop shadows are drawn too, and an SVG's text follows
   `set_system_fonts` and registered fonts.
+  Raster pictures inside an SVG are the framework's to decode: pass the pixels
+  as `svg_images`, keyed by `href`.
 - **Click-through windows.** `window.set(click_through=True)` makes the whole
   window ignore the pointer, so clicks reach what is behind it; see
   [Transparent windows](reference/window.md). Off by default.

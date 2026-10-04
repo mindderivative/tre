@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 31] = [
+pub(crate) const KIND_PROPS: [&str; 32] = [
     "text",
     "font_family",
     "font_weight",
@@ -48,6 +48,7 @@ pub(crate) const KIND_PROPS: [&str; 31] = [
     "svg",
     "svg_size",
     "svg_color",
+    "svg_images",
 ];
 
 const TEXT_ALIGN: [(&str, TextAlign); 3] = [
@@ -107,11 +108,85 @@ fn parse_svg_color(value: &Bound<'_, PyAny>) -> PyResult<Option<Color>> {
     parse_color(value, "svg_color").map(Some)
 }
 
+fn parse_svg_images(value: &Bound<'_, PyAny>) -> PyResult<engine_core::SvgImages> {
+    let expected = "a dict of href -> (rgba bytes, width, height)";
+    let dict = value
+        .cast::<PyDict>()
+        .map_err(|_| invalid("svg_images", expected))?;
+    let mut images = Vec::new();
+    for (href, entry) in dict.iter() {
+        let href: String = href
+            .extract()
+            .map_err(|_| invalid("svg_images", "keyed by str hrefs"))?;
+        let (rgba, width, height): (Vec<u8>, u32, u32) = entry
+            .extract()
+            .map_err(|_| invalid("svg_images", expected))?;
+        validate_rgba_frame_len(
+            &format!("node property `svg_images` entry {href:?}"),
+            rgba.len(),
+            width,
+            height,
+        )?;
+        images.push((
+            href,
+            std::sync::Arc::new(engine_core::SvgBitmap::new(rgba, width, height)),
+        ));
+    }
+    Ok(engine_core::SvgImages(std::sync::Arc::new(images)))
+}
+
+/// `svg`, `svg_color` and `svg_images`: whichever comes first in the call
+/// parses the document with the new value of each one given, and the node's
+/// current value of each one not.
+fn svg_properties(name: &str, kind: &NodeKind, props: &Bound<'_, PyDict>) -> PyResult<KindChange> {
+    let owner = ["svg", "svg_color", "svg_images"]
+        .into_iter()
+        .find(|n| props.contains(*n).unwrap_or(false));
+    if owner != Some(name) {
+        return change(|_| {});
+    }
+    let current = match kind {
+        NodeKind::Svg(state) => Some(state),
+        _ => None,
+    };
+    let (source, is_text) = match props.get_item("svg")? {
+        Some(value) => match value.extract::<String>() {
+            Ok(text) => (text.into_bytes(), true),
+            Err(_) => (
+                value
+                    .extract::<Vec<u8>>()
+                    .map_err(|_| invalid("svg", "an SVG document as a str or bytes"))?,
+                false,
+            ),
+        },
+        None => match current {
+            Some(state) => (state.source.to_vec(), state.source_is_text),
+            None => return change(|_| {}),
+        },
+    };
+    let color = match props.get_item("svg_color")? {
+        Some(v) => parse_svg_color(&v)?,
+        None => current.and_then(|state| state.color),
+    };
+    let images = match props.get_item("svg_images")? {
+        Some(v) => parse_svg_images(&v)?,
+        None => current
+            .map(|state| state.images.clone())
+            .unwrap_or_default(),
+    };
+    svg_change(source, is_text, color, images)
+}
+
 /// Parses `source` (raising for a bad document) into a change that installs
 /// it, and the aspect ratio the node should follow.
-fn svg_change(source: Vec<u8>, is_text: bool, color: Option<Color>) -> PyResult<KindChange> {
-    let document =
-        engine_core::SvgDocument::parse_tinted(&source, &svg_fonts(), color).map_err(|reason| {
+fn svg_change(
+    source: Vec<u8>,
+    is_text: bool,
+    color: Option<Color>,
+    images: engine_core::SvgImages,
+) -> PyResult<KindChange> {
+    let document = engine_core::SvgDocument::parse_full(&source, &svg_fonts(), color, &images)
+        .map_err(|reason| {
             PyValueError::new_err(format!("node property `svg` isn't a valid SVG: {reason}"))
         })?;
     let ratio = document.width / document.height;
@@ -122,6 +197,7 @@ fn svg_change(source: Vec<u8>, is_text: bool, color: Option<Color>) -> PyResult<
                 source: std::sync::Arc::new(source),
                 source_is_text: is_text,
                 color,
+                images,
             };
         }
     })?;
@@ -129,8 +205,6 @@ fn svg_change(source: Vec<u8>, is_text: bool, color: Option<Color>) -> PyResult<
     Ok(kind_change)
 }
 
-/// The fonts an SVG's text is shaped with: the engine's own, rebuilt only
-/// when a font is registered.
 /// An SVG's text is outlined when its document is parsed, so when the fonts
 /// have changed since `seen` (a font registered, system fonts turned on or
 /// off) every document with text is parsed again. One atomic load when
@@ -146,10 +220,12 @@ pub(crate) fn refresh_svg_text(
     seen.set(generation);
     let fonts = svg_fonts();
     tree.borrow_mut().reparse_svgs(|state| {
-        engine_core::SvgDocument::parse_tinted(&state.source, &fonts, state.color).ok()
+        engine_core::SvgDocument::parse_full(&state.source, &fonts, state.color, &state.images).ok()
     });
 }
 
+/// The fonts an SVG's text is shaped with: the engine's own, rebuilt only
+/// when a font is registered.
 pub(crate) fn svg_fonts() -> engine_core::SvgFonts {
     use std::sync::Mutex;
     static CACHE: Mutex<Option<(u64, engine_core::SvgFonts)>> = Mutex::new(None);
@@ -279,7 +355,7 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         }
         "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
-        "svg" | "svg_size" | "svg_color" => ("an svg", svg),
+        "svg" | "svg_size" | "svg_color" | "svg_images" => ("an svg", svg),
         "orientation" | "scroll_offset" => ("a scroll_view", scroll_view),
         "item_count" | "item_extent" => ("a virtual_list", virtual_list),
         _ => ("a terminal", terminal),
@@ -316,40 +392,10 @@ fn parse_known(
         "svg_size" => Err(PyValueError::new_err(
             "node property `svg_size` is read-only",
         )),
-        // 0.5.4 (#141): a document, as text or bytes (gzip-compressed SVGZ
-        // included). It parses here, once, so a bad one raises at `set`.
-        "svg" => {
-            let (source, is_text) = match value.extract::<String>() {
-                Ok(text) => (text.into_bytes(), true),
-                Err(_) => (
-                    value
-                        .extract::<Vec<u8>>()
-                        .map_err(|_| invalid(name, "an SVG document as a str or bytes"))?,
-                    false,
-                ),
-            };
-            // `svg_color` in the same call wins over the node's current one.
-            let color = match props.get_item("svg_color")? {
-                Some(v) => parse_svg_color(&v)?,
-                None => match kind {
-                    NodeKind::Svg(state) => state.color,
-                    _ => None,
-                },
-            };
-            svg_change(source, is_text, color)
-        }
-        // 0.5.4 (#144): what `currentColor` is. Re-parses the document it
-        // already has, unless a new one comes in the same call.
-        "svg_color" => {
-            let color = parse_svg_color(value)?;
-            if props.contains("svg")? {
-                return change(|_| {});
-            }
-            let NodeKind::Svg(state) = kind else {
-                return change(|_| {});
-            };
-            svg_change(state.source.to_vec(), state.source_is_text, color)
-        }
+        // 0.5.4 (#141, #144, #147): the document, what `currentColor` is, and
+        // the decoded images it refers to. They parse together, once, so the
+        // first of them in a call does it all with the others' new values.
+        "svg" | "svg_color" | "svg_images" => svg_properties(name, kind, props),
         "text" => {
             let text = string(value, name)?;
             change(move |node| match &mut node.kind {
@@ -871,6 +917,21 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
             to_py(String::from_utf8_lossy(&s.source).into_owned(), py)
         }
         ("svg", NodeKind::Svg(s)) => to_py(pyo3::types::PyBytes::new(py, &s.source), py),
+        ("svg_images", NodeKind::Svg(s)) => {
+            let out = PyDict::new(py);
+            for (href, bitmap) in s.images.0.iter() {
+                let image = &bitmap.image;
+                out.set_item(
+                    href,
+                    (
+                        pyo3::types::PyBytes::new(py, image.data.data()),
+                        image.width,
+                        image.height,
+                    ),
+                )?;
+            }
+            to_py(out, py)
+        }
         ("svg_color", NodeKind::Svg(s)) => match s.color {
             Some(c) => color_to_py(c, py),
             None => Ok(py.None()),
