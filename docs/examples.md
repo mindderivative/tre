@@ -26,6 +26,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `effects.py` | `blur`, `backdrop_blur` (frosted glass, animating) and `blend_mode` over a striped background |
 | `languages.py` | `set_system_fonts`: Latin, CJK, Hebrew, Indic, Thai and colour emoji in one window |
 | `rich_text.py` | `spans` (colour, weight, italic, underline, strikethrough) and `selectable` text |
+| `touch.py` | `tap`, `long_press`, `pan` and `pinch`, driven by simulated fingers (or real ones with `--watch`) |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |

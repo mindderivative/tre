@@ -109,10 +109,21 @@ pub(crate) enum EventType {
     /// 0.5.0 M3 (issue #28): the press was taken to move or resize the
     /// window -- no `pointer_up` or `click` will follow it.
     PointerCancel,
+    /// 0.5.4 (#113): a finger touched, moved on, left or was taken from the
+    /// screen; each carries `pointer_id`.
+    TouchStart,
+    TouchMove,
+    TouchEnd,
+    TouchCancel,
+    /// 0.5.4: recognized gestures.
+    Tap,
+    LongPress,
+    Pan,
+    Pinch,
 }
 
 impl EventType {
-    const ALL: [EventType; 18] = [
+    const ALL: [EventType; 26] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -131,6 +142,14 @@ impl EventType {
         Self::Dismiss,
         Self::Scroll,
         Self::PointerCancel,
+        Self::TouchStart,
+        Self::TouchMove,
+        Self::TouchEnd,
+        Self::TouchCancel,
+        Self::Tap,
+        Self::LongPress,
+        Self::Pan,
+        Self::Pinch,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -153,6 +172,14 @@ impl EventType {
             Self::Dismiss => "dismiss",
             Self::Scroll => "scroll",
             Self::PointerCancel => "pointer_cancel",
+            Self::TouchStart => "touch_start",
+            Self::TouchMove => "touch_move",
+            Self::TouchEnd => "touch_end",
+            Self::TouchCancel => "touch_cancel",
+            Self::Tap => "tap",
+            Self::LongPress => "long_press",
+            Self::Pan => "pan",
+            Self::Pinch => "pinch",
         }
     }
 

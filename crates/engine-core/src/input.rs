@@ -120,6 +120,21 @@ pub struct Modifiers {
 /// (keeping `Clone`) needed no call-site rewrites.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputEvent {
+    /// 0.5.4 (#113): one finger on a touch screen. `id` tells fingers apart for
+    /// as long as they are down. `Tree::dispatch` does nothing with it: the
+    /// window's gesture recognizer and event delivery do (`engine-py`).
+    Touch {
+        id: u64,
+        phase: crate::TouchPhase,
+        position: Point,
+    },
+    /// 0.5.4 (#113): a trackpad's pinch (macOS and iOS report one directly, as a
+    /// magnification step: `1.0 + delta` is the scale to apply).
+    TrackpadPinch {
+        delta: f64,
+        phase: crate::TouchPhase,
+        position: Point,
+    },
     PointerMoved {
         position: Point,
     },

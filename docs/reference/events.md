@@ -24,6 +24,11 @@ listing the valid ones.
 | `click` | Primary press and release on the same node, or keyboard activation | yes |
 | `secondary_click` | Secondary press and release on the same node | yes |
 | `wheel` | A wheel or trackpad scroll | yes |
+| `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | A finger touches the screen, moves, lifts, or is taken away by the system; each carries `pointer_id`, and a finger's events all go to the node it landed on (0.5.4) | yes |
+| `tap` | A quick touch and release in place; `count` is 2 for a second tap close to the first (0.5.4) | yes |
+| `long_press` | A touch held in place for half a second (0.5.4) | yes |
+| `pan` | One finger dragging past a small slop; `phase` is `"began"`, `"changed"`, `"ended"` or `"cancelled"` (0.5.4) | yes |
+| `pinch` | Two fingers moving together or apart, or a trackpad pinch; carries `scale` and `scale_delta` (0.5.4) | yes |
 | `key_down`, `key_up` | A key is pressed or released while the node, or a descendant, has focus (the root gets keys when nothing is focused) | yes |
 | `input` | Committed text arrives for the focused text field | yes |
 | `focus`, `unfocus` | A node gains or loses keyboard focus | yes |
@@ -154,6 +159,13 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `window_x`, `window_y` | pointer and wheel events — in the window |
 | `button` | pointer events and pointer clicks — `"primary"`, `"secondary"`, `"middle"`, or the mouse's side buttons `"back"` and `"forward"` (0.4.1; they make no `click`) |
 | `delta_x`, `delta_y` | `wheel` — pixels, positive scrolling right and down; with Shift held, a wheel with no horizontal part arrives as `delta_x` (0.4.3) |
+| `pointer_id` | `touch_*` — which finger |
+| `phase` | `pan`, `pinch` — `"began"`, `"changed"`, `"ended"`, `"cancelled"` |
+| `count` | `tap` — 1, or 2 for a double tap |
+| `scale`, `scale_delta` | `pinch` — the distance between fingers over what it was at the start, and over what it was at the last event |
+| `delta_x`, `delta_y` | (also) `pan`, `pinch` — how far the point (a pan's finger, a pinch's midpoint) moved since the last event |
+| `total_x`, `total_y` | `pan`, `pinch` — how far it has moved in all |
+| `velocity_x`, `velocity_y` | `pan` when it ends — the speed the finger lifted at, in pixels a second |
 | `key`, `repeat` | `key_down`, `key_up` |
 | `shift`, `ctrl`, `alt`, `meta` | pointer, wheel, key, and click events |
 | `text` | `input` |
@@ -194,6 +206,8 @@ window.simulate("resize", width=800, height=600)
 | `pointer_move`, `pointer_enter`, `click`, `secondary_click` | `node` and/or `x`, `y` |
 | `wheel` | `node` and/or `x`, `y`; `delta_x`, `delta_y` |
 | `pointer_leave` | — (the pointer leaves the window) |
+| `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | `node` and/or `x`, `y`; `id` (default 0) tells fingers apart |
+| `trackpad_pinch` | `node` and/or `x`, `y`; `delta` (a magnification step, `1 + delta` the scale to apply), `phase` (`"started"`, `"moved"` — the default — `"ended"`, `"cancelled"`) |
 | `key_down`, `key_up` | `key`; `repeat` |
 | `input` | `text` |
 | `focus`, `unfocus` | `node` |

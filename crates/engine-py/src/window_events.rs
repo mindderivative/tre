@@ -40,12 +40,17 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 26] = [
+const SIMULATED_EVENTS: [&str; 31] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
     "pointer_enter",
     "pointer_leave",
+    "touch_start",
+    "touch_move",
+    "touch_end",
+    "touch_cancel",
+    "trackpad_pinch",
     "click",
     "secondary_click",
     "wheel",
@@ -117,6 +122,10 @@ impl<'py> Fields<'py> {
 
     fn bool(&mut self, name: &str) -> PyResult<Option<bool>> {
         self.typed(name, "a bool")
+    }
+
+    fn u64(&mut self, name: &str) -> PyResult<Option<u64>> {
+        self.typed(name, "a non-negative int")
     }
 
     fn string(&mut self, name: &str) -> PyResult<Option<String>> {
@@ -1057,15 +1066,26 @@ impl PyWindow {
         let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
         let (_, completed) = tree.borrow_mut().tick_all(now);
         run_completions(&self.handles.completions, completed, py);
-        node_callbacks::layout(&tree, root, self.available(), &handlers, py);
-        listeners::fire_scroll_changes(
-            &NodeContext {
-                tree: &tree,
-                handlers: &handlers,
-                completions: &self.handles.completions,
+        // 0.5.4 (#113): time passing can make a held touch a long press.
+        let ctx = NodeContext {
+            tree: &tree,
+            handlers: &handlers,
+            completions: &self.handles.completions,
+        };
+        crate::touch::poll(
+            &ctx,
+            &WindowIo {
+                dock: &self.handles.dock,
+                listeners: &self.handles.window_listeners,
+                terminals: &self.handles.terminals,
+                window: &self.handles,
             },
+            root,
+            now,
             py,
         );
+        node_callbacks::layout(&tree, root, self.available(), &handlers, py);
+        listeners::fire_scroll_changes(&ctx, py);
         Ok(())
     }
 
@@ -1156,6 +1176,61 @@ impl PyWindow {
                         process_input(&ctx, &io, root, input, py);
                     }
                 });
+            }
+            // 0.5.4 (#113): a finger. `id` tells fingers apart (default 0).
+            "touch_start" | "touch_move" | "touch_end" | "touch_cancel" => {
+                let (x, y) = (f.f64("x")?, f.f64("y")?);
+                let position = pointer_point(&tree.borrow(), node_id, x, y, event)?;
+                let id = f.u64("id")?.unwrap_or(0);
+                f.done()?;
+                let phase = match event {
+                    "touch_start" => engine_core::TouchPhase::Started,
+                    "touch_move" => engine_core::TouchPhase::Moved,
+                    "touch_end" => engine_core::TouchPhase::Ended,
+                    _ => engine_core::TouchPhase::Cancelled,
+                };
+                process_input(
+                    &ctx,
+                    &io,
+                    root,
+                    &InputEvent::Touch {
+                        id,
+                        phase,
+                        position,
+                    },
+                    py,
+                );
+            }
+            // 0.5.4 (#113): a trackpad pinch (what macOS reports), `delta` a
+            // magnification step and `phase` `"started"`, `"moved"`, `"ended"`
+            // or `"cancelled"` (default `"moved"`).
+            "trackpad_pinch" => {
+                let (x, y) = (f.f64("x")?, f.f64("y")?);
+                let position = pointer_point(&tree.borrow(), node_id, x, y, event)?;
+                let delta = f.f64("delta")?.unwrap_or(0.0);
+                let phase = match f.string("phase")?.as_deref().unwrap_or("moved") {
+                    "started" => engine_core::TouchPhase::Started,
+                    "moved" => engine_core::TouchPhase::Moved,
+                    "ended" => engine_core::TouchPhase::Ended,
+                    "cancelled" => engine_core::TouchPhase::Cancelled,
+                    other => {
+                        return Err(PyValueError::new_err(format!(
+                            "`trackpad_pinch` `phase` must be \"started\", \"moved\", \"ended\" or \"cancelled\", got {other:?}"
+                        )));
+                    }
+                };
+                f.done()?;
+                process_input(
+                    &ctx,
+                    &io,
+                    root,
+                    &InputEvent::TrackpadPinch {
+                        delta,
+                        phase,
+                        position,
+                    },
+                    py,
+                );
             }
             "pointer_leave" => {
                 f.done()?;

@@ -138,6 +138,22 @@ class Event:
     technology (or programmatically, after keyboard input), `False` after
     a pointer press -- whether to show a focus indicator."""
     side: str | None
+    pointer_id: int | None
+    """`touch_start`/`touch_move`/`touch_end`/`touch_cancel`: which finger."""
+    phase: str | None
+    """`pan` and `pinch`: `"began"`, `"changed"`, `"ended"` or `"cancelled"`."""
+    count: int | None
+    """`tap`: 1, or 2 for a double tap."""
+    scale: float | None
+    """`pinch`: the distance between fingers over what it was at the start."""
+    scale_delta: float | None
+    """`pinch`: `scale` over the previous event's -- the step to apply."""
+    total_x: float | None
+    """`pan`, `pinch`: how far the gesture has moved in all."""
+    total_y: float | None
+    velocity_x: float | None
+    """`pan` ending: the speed the finger lifted at, pixels a second."""
+    velocity_y: float | None
     """`dock_target`/`dock_drop`: the dock zone under the pointer
     (`"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`), or `None`
     when it's over no zone."""

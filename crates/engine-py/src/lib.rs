@@ -29,6 +29,7 @@ mod shaper;
 mod terminal;
 mod thread_bound;
 mod thread_handle;
+mod touch;
 mod window;
 mod window_docking;
 mod window_events;

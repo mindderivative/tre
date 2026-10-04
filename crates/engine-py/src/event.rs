@@ -168,6 +168,31 @@ pub struct Event {
     /// M99: `dock_drop`: the panel whose drag ended.
     #[pyo3(get)]
     pub(crate) panel: Option<Py<Node>>,
+    /// 0.5.4 (#113): `touch_*`: which finger.
+    #[pyo3(get)]
+    pub(crate) pointer_id: Option<u64>,
+    /// 0.5.4: `pan`/`pinch`: `"began"`, `"changed"`, `"ended"` or `"cancelled"`.
+    #[pyo3(get)]
+    pub(crate) phase: Option<String>,
+    /// 0.5.4: `tap`: 1, or 2 for a double tap.
+    #[pyo3(get)]
+    pub(crate) count: Option<u32>,
+    /// 0.5.4: `pinch`: the distance between fingers over what it was at the start.
+    #[pyo3(get)]
+    pub(crate) scale: Option<f64>,
+    /// 0.5.4: `pinch`: `scale` over the previous event's, the step to apply.
+    #[pyo3(get)]
+    pub(crate) scale_delta: Option<f64>,
+    /// 0.5.4: `pan`/`pinch`: how far the gesture has moved in all.
+    #[pyo3(get)]
+    pub(crate) total_x: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) total_y: Option<f64>,
+    /// 0.5.4: `pan` ending: the speed the finger lifted at, pixels a second.
+    #[pyo3(get)]
+    pub(crate) velocity_x: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) velocity_y: Option<f64>,
     pub(crate) stopped: bool,
     pub(crate) cancelled: bool,
     pub(crate) cancellable: bool,
@@ -257,6 +282,15 @@ impl Event {
             focus_visible: None,
             side: None,
             panel: None,
+            pointer_id: None,
+            phase: None,
+            count: None,
+            scale: None,
+            scale_delta: None,
+            total_x: None,
+            total_y: None,
+            velocity_x: None,
+            velocity_y: None,
             stopped: false,
             cancelled: false,
             cancellable: false,

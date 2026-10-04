@@ -61,6 +61,41 @@ handle.on("pointer_move", lambda e: resize_to(e.window_x))
 
 Capture ends when the button is released, or on `release_pointer()`.
 
+## Touch and gestures
+
+A touch screen (0.5.4) delivers each finger as `touch_start`, `touch_move`,
+`touch_end` and `touch_cancel`, with `event.pointer_id` telling fingers apart.
+A finger's events all go to the node it landed on, wherever it moves, so a drag
+that leaves a node keeps reporting to it. The engine also recognizes four
+gestures from the fingers and delivers them as events:
+
+| Event | When | Fields |
+| --- | --- | --- |
+| `tap` | a quick touch and release in place | `count` (2 for a double tap) |
+| `long_press` | a touch held in place half a second | position |
+| `pan` | one finger dragging past a 10 pixel slop | `phase`, `delta_x`/`delta_y` (since the last event), `total_x`/`total_y`, and on `"ended"` `velocity_x`/`velocity_y` in pixels a second |
+| `pinch` | two fingers moving together or apart; also a trackpad pinch | `phase`, `scale` (against the start), `scale_delta` (against the last event), `delta_x`/`delta_y` and `total_x`/`total_y` of the midpoint |
+
+```python
+canvas.on("pinch", lambda e: view.zoom_by(e.scale_delta, around=(e.window_x, e.window_y)))
+canvas.on("pan", lambda e: view.pan_by(e.delta_x, e.delta_y))
+photo.on("long_press", lambda: show_menu(photo))
+```
+
+The first finger on the screen is also the pointer, so an app written for a mouse
+works under a finger: a tap is a `click`, and a touch hovers what it is over while
+it is down. When that finger starts to pan, the press is cancelled instead
+(`pointer_cancel`, no `click`), and the pan scrolls the scroll view or virtual
+list under it, content following the finger. If a `pan` listener sits on the node
+under the finger or an ancestor, the app has taken the pan and nothing scrolls.
+A second finger is a pinch's, not a second pointer. Each touch event comes first,
+then the pointer events it stands for, then the gesture it completes.
+
+Limits: a pan's velocity is reported but nothing keeps scrolling after the
+finger lifts (no momentum); there is no rotation gesture; and the engine's touch
+handling was written and tested with simulated touches (`window.simulate`),
+not on a touch screen.
+
 ## Focus and the keyboard
 
 A node takes keyboard focus once it's `focusable=True`; text inputs and

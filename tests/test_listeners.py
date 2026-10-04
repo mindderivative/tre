@@ -35,7 +35,7 @@ def test_on_rejects_an_unknown_event_listing_the_valid_ones() -> None:
     w = window()
     node = add(w, "box", fill=BLACK, width=10, height=10)
     with pytest.raises(ValueError, match="valid events: pointer_enter"):
-        node.on("tap", lambda: None)
+        node.on("swipe", lambda: None)
 
 
 def test_off_removes_a_listener() -> None:

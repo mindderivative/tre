@@ -20,6 +20,24 @@ pub(crate) fn to_logical(event: InputEvent, scale: f64) -> InputEvent {
     }
     let point = |p: Point| Point::new(p.x / scale, p.y / scale);
     match event {
+        InputEvent::Touch {
+            id,
+            phase,
+            position,
+        } => InputEvent::Touch {
+            id,
+            phase,
+            position: point(position),
+        },
+        InputEvent::TrackpadPinch {
+            delta,
+            phase,
+            position,
+        } => InputEvent::TrackpadPinch {
+            delta,
+            phase,
+            position: point(position),
+        },
         InputEvent::PointerMoved { position } => InputEvent::PointerMoved {
             position: point(position),
         },
@@ -149,6 +167,41 @@ mod tests {
         assert_eq!(to_physical(333.0, 1.5), 500); // 499.5 rounds up
         assert_eq!(to_physical(100.0, 1.25), 125);
         assert_eq!(to_physical(-5.0, 2.0), 0);
+    }
+
+    #[test]
+    fn touches_and_trackpad_pinches_are_divided_by_the_scale() {
+        use engine_core::TouchPhase;
+        assert_eq!(
+            to_logical(
+                InputEvent::Touch {
+                    id: 3,
+                    phase: TouchPhase::Moved,
+                    position: Point::new(300.0, 150.0),
+                },
+                1.5
+            ),
+            InputEvent::Touch {
+                id: 3,
+                phase: TouchPhase::Moved,
+                position: Point::new(200.0, 100.0)
+            }
+        );
+        assert_eq!(
+            to_logical(
+                InputEvent::TrackpadPinch {
+                    delta: 0.1,
+                    phase: TouchPhase::Started,
+                    position: Point::new(40.0, 80.0),
+                },
+                2.0
+            ),
+            InputEvent::TrackpadPinch {
+                delta: 0.1,
+                phase: TouchPhase::Started,
+                position: Point::new(20.0, 40.0)
+            }
+        );
     }
 
     #[test]

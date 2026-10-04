@@ -21,6 +21,7 @@ mod access;
 mod animation;
 mod canvas;
 mod dock;
+mod gesture;
 mod gradient;
 mod input;
 mod node;
@@ -33,6 +34,9 @@ pub use access::{AccessNodeData, AccessStates, AccessValue, Action, ActionData, 
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
+pub use gesture::{
+    Gesture, GestureConfig, GestureKind, GesturePhase, GestureRecognizer, TouchPhase,
+};
 pub use gradient::{Gradient, GradientShape, GradientStop};
 pub use input::{
     ChangedValue, DispatchOutcome, InputEvent, Key, Modifiers, PointerButton, ScrollDelta,

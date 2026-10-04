@@ -955,6 +955,25 @@ impl App {
 
                 let now = crate::clock::now(&runtime.handles.tree);
                 let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                // 0.5.4 (#113): a finger held down becomes a long press as time
+                // passes, and the loop keeps running until it does.
+                crate::touch::poll(
+                    &crate::event::NodeContext {
+                        tree: &runtime.handles.tree,
+                        handlers: &runtime.handles.handlers,
+                        completions: &runtime.handles.completions,
+                    },
+                    &WindowIo {
+                        dock: &runtime.handles.dock,
+                        listeners: &runtime.handles.window_listeners,
+                        terminals: &runtime.handles.terminals,
+                        window: &runtime.handles,
+                    },
+                    runtime.handles.root,
+                    now,
+                    py,
+                );
+                let any_active = any_active || runtime.handles.touch.borrow().needs_frames();
                 // 0.5.1 (#70): a shader's time is the window's clock; and a
                 // window drawing an `animated` shader keeps running -- a frame
                 // per display refresh, repainting just that node -- exactly
@@ -1314,6 +1333,19 @@ impl App {
                     &mut runtime.text_drag,
                     &mut runtime.terminal_drag,
                 );
+                // 0.5.4 (#113): the pointer events a finger stood in for reach
+                // text inputs the way a mouse's do.
+                let emulated = std::mem::take(&mut runtime.handles.touch.borrow_mut().emulated);
+                for pointer in &emulated {
+                    text_pointer_input(
+                        pointer,
+                        &runtime.handles.tree,
+                        runtime.handles.root,
+                        runtime.gpu.renderer.text(),
+                        &mut runtime.text_drag,
+                        &mut runtime.terminal_drag,
+                    );
+                }
                 match event {
                     // A real OS appearance change: tre themes nothing
                     // itself (M99), so it only tells the framework.

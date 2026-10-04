@@ -153,6 +153,8 @@ pub(crate) struct WindowHandles {
     /// (`pointer_cancel`), so its release, if the platform delivers one at
     /// all, reaches no listener. The next press clears it.
     pub(crate) press_cancelled: Rc<Cell<bool>>,
+    /// 0.5.4 (#113): this window's fingers and gesture recognizer.
+    pub(crate) touch: Rc<RefCell<crate::touch::TouchRouter>>,
     /// 0.5.0 M3: how many pixels along each edge resize an undecorated
     /// window; 0 for none.
     pub(crate) resize_border: Rc<Cell<f64>>,
@@ -281,6 +283,7 @@ impl PyWindow {
                 min_size: Rc::new(Cell::new((0.0, 0.0))),
                 icon: Rc::new(RefCell::new(None)),
                 press_cancelled: Rc::new(Cell::new(false)),
+                touch: Rc::new(RefCell::new(crate::touch::TouchRouter::default())),
                 resize_border: Rc::new(Cell::new(0.0)),
                 last_drag_press: Rc::new(Cell::new(None)),
                 system_menu: Rc::new(Cell::new(false)),

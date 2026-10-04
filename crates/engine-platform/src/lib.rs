@@ -187,6 +187,16 @@ fn translate_clipboard_shortcut(logical_key: &WinitKey, shift: bool) -> Option<I
 /// collapsing it. `PixelDelta`'s own `PhysicalPosition<f64>` -> plain
 /// `(f64, f64)` is a field copy, the same "no unit conversion needed"
 /// shape `CursorMoved`'s own translation already uses.
+/// 0.5.4 (#113): `winit`'s touch phase as the engine's.
+fn translate_touch_phase(phase: winit::event::TouchPhase) -> engine_core::TouchPhase {
+    match phase {
+        winit::event::TouchPhase::Started => engine_core::TouchPhase::Started,
+        winit::event::TouchPhase::Moved => engine_core::TouchPhase::Moved,
+        winit::event::TouchPhase::Ended => engine_core::TouchPhase::Ended,
+        winit::event::TouchPhase::Cancelled => engine_core::TouchPhase::Cancelled,
+    }
+}
+
 fn translate_scroll_delta(delta: MouseScrollDelta) -> ScrollDelta {
     match delta {
         MouseScrollDelta::LineDelta(x, y) => ScrollDelta::Lines(f64::from(x), f64::from(y)),
@@ -1078,6 +1088,32 @@ where
                 // event actually changed anything worth a repaint --
                 // `Tree`'s own dirty flag, Phase 1, already makes an
                 // extra request here free if it turns out nothing did).
+                win.request_redraw();
+            }
+            // 0.5.4 (#113): a finger on the screen. Positions are the
+            // window's pixels, as the pointer's are.
+            WindowEvent::Touch(touch) => {
+                let position = Point::new(touch.location.x, touch.location.y);
+                on_input(
+                    window_id,
+                    InputEvent::Touch {
+                        id: touch.id,
+                        phase: translate_touch_phase(touch.phase),
+                        position,
+                    },
+                );
+                win.request_redraw();
+            }
+            // 0.5.4 (#113): a trackpad pinch (macOS, iOS), at the cursor.
+            WindowEvent::PinchGesture { delta, phase, .. } => {
+                on_input(
+                    window_id,
+                    InputEvent::TrackpadPinch {
+                        delta,
+                        phase: translate_touch_phase(phase),
+                        position: win.last_cursor_position,
+                    },
+                );
                 win.request_redraw();
             }
             WindowEvent::ModifiersChanged(modifiers) => {

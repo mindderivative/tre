@@ -196,3 +196,10 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   selectable text](guide/text.md#rich-text-and-selectable-text). Both are off by
   default. A selectable text claims pointer events over its box; plain text still
   never does.
+- **Touch and gestures.** Fingers arrive as `touch_start`, `touch_move`,
+  `touch_end` and `touch_cancel`; `tap`, `long_press`, `pan` and `pinch` are
+  recognized from them (a trackpad pinch too), the first finger also drives the
+  pointer so existing click and hover code works, and a pan scrolls what is under
+  it; see [Touch and gestures](guide/events-and-input.md#touch-and-gestures).
+  Nothing changes on a machine with no touch screen. Written against simulated
+  touches; not yet checked on touch hardware.

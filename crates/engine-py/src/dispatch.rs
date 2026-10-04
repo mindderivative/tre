@@ -390,6 +390,15 @@ pub(crate) fn process_input(
     event: &InputEvent,
     py: Python<'_>,
 ) -> DispatchOutcome {
+    // 0.5.4 (#113): fingers and trackpad pinches have a pipeline of their own,
+    // which feeds the pointer events back through this one.
+    if matches!(
+        event,
+        InputEvent::Touch { .. } | InputEvent::TrackpadPinch { .. }
+    ) {
+        crate::touch::process(ctx, io, root, event, py);
+        return DispatchOutcome::None;
+    }
     if send_to_focused_terminal(ctx, io, event) {
         return DispatchOutcome::None;
     }

@@ -332,6 +332,15 @@ What a listener receives when it takes one argument; never constructed directly.
 | `related_target` | `Node \| None` | The node on the other side of a `focus` / `unfocus` move. |
 | `focus_visible` | `bool \| None` | Whether `focus` arrived by keyboard. |
 | `side` | `str \| None` | The dock zone under the pointer, or `None`. |
+| `pointer_id` | `int \| None` |  |
+| `phase` | `str \| None` |  |
+| `count` | `int \| None` |  |
+| `scale` | `float \| None` |  |
+| `scale_delta` | `float \| None` |  |
+| `total_x` | `float \| None` |  |
+| `total_y` | `float \| None` |  |
+| `velocity_x` | `float \| None` |  |
+| `velocity_y` | `float \| None` |  |
 | `panel` | `Node \| None` | The dragged panel on `dock_drop`. |
 
 **Methods:**
