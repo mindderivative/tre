@@ -118,6 +118,10 @@ pub struct Tree {
     scanned_at: Option<u64>,
     scroll_view_count: usize,
     virtual_list_count: usize,
+    /// 0.5.4 (#150): how many `Image` and `Svg` nodes the tree holds, so a
+    /// per-frame consumer of them can skip scanning a tree that has none.
+    image_count: usize,
+    svg_count: usize,
     /// M94: the node holding pointer capture (`set_pointer_capture`).
     pointer_capture: Option<NodeId>,
     /// M96: detached subtree roots that are freed once nothing outside the
@@ -168,6 +172,8 @@ impl Tree {
             dirty: true,
             scroll_view_count: 0,
             virtual_list_count: 0,
+            image_count: 0,
+            svg_count: 0,
             pointer_capture: None,
             collectible: HashSet::new(),
         }
@@ -259,6 +265,8 @@ impl Tree {
         match &kind {
             NodeKind::ScrollView(_) => self.scroll_view_count += 1,
             NodeKind::VirtualList(_) => self.virtual_list_count += 1,
+            NodeKind::Image(_) => self.image_count += 1,
+            NodeKind::Svg(_) => self.svg_count += 1,
             _ => {}
         }
         let taffy_node = self
@@ -590,6 +598,8 @@ impl Tree {
         match &node.kind {
             NodeKind::ScrollView(_) => self.scroll_view_count -= 1,
             NodeKind::VirtualList(_) => self.virtual_list_count -= 1,
+            NodeKind::Image(_) => self.image_count -= 1,
+            NodeKind::Svg(_) => self.svg_count -= 1,
             _ => {}
         }
 
@@ -755,6 +765,30 @@ impl Tree {
     /// real `render()` call, without `engine-render` ever reaching
     /// into this `Tree`'s own private `nodes` map directly (§4's
     /// crate-boundary rule).
+    /// 0.5.4 (#150): whether the tree holds any `Image` node.
+    pub fn has_images(&self) -> bool {
+        debug_assert_eq!(
+            self.image_count > 0,
+            self.nodes
+                .values()
+                .any(|n| matches!(n.kind, NodeKind::Image(_))),
+            "a node's kind was changed after it was made: the tree counts nodes by kind"
+        );
+        self.image_count > 0
+    }
+
+    /// 0.5.4 (#150): whether the tree holds any `Svg` node.
+    pub fn has_svgs(&self) -> bool {
+        debug_assert_eq!(
+            self.svg_count > 0,
+            self.nodes
+                .values()
+                .any(|n| matches!(n.kind, NodeKind::Svg(_))),
+            "a node's kind was changed after it was made: the tree counts nodes by kind"
+        );
+        self.svg_count > 0
+    }
+
     pub fn image_nodes(&self) -> impl Iterator<Item = (NodeId, &ImageState)> {
         self.nodes.iter().filter_map(|(id, node)| match &node.kind {
             NodeKind::Image(state) => Some((id, state)),

@@ -6981,3 +6981,30 @@ mod sticky {
         assert_eq!(tree.absolute_position(label).0, 0.0);
     }
 }
+
+/// 0.5.4 (#150): `has_images`/`has_svgs` let a per-frame consumer skip a scan,
+/// so they must follow insertions and removals, including a removed subtree's.
+#[test]
+fn image_and_svg_counters_follow_insert_and_remove() {
+    let paint = || PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
+    let mut tree = Tree::new();
+    assert!(!tree.has_images() && !tree.has_svgs());
+    let parent = tree.insert(NodeKind::Container, Style::default(), paint());
+    let image = tree.insert(
+        NodeKind::Image(ImageState::blank()),
+        Style::default(),
+        paint(),
+    );
+    let svg = tree.insert(
+        NodeKind::Svg(crate::SvgState::empty()),
+        Style::default(),
+        paint(),
+    );
+    tree.add_child(parent, image);
+    tree.add_child(parent, svg);
+    assert!(tree.has_images() && tree.has_svgs());
+    // Removing the parent removes both, counted once each.
+    tree.remove(parent);
+    assert!(!tree.has_images() && !tree.has_svgs());
+    assert_eq!((tree.image_count, tree.svg_count), (0, 0));
+}

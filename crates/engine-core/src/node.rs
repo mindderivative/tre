@@ -1375,6 +1375,8 @@ pub struct Node {
     /// M96: paint and hit-test order among siblings -- higher paints later,
     /// on top; equal values keep child order.
     pub z_index: i32,
+    /// What the node is. Set it when the node is made (`Tree::insert`): the tree
+    /// counts nodes by kind, and a kind changed afterwards is not counted.
     pub kind: NodeKind,
     pub layout_style: Style,
     pub paint: PaintProperties,

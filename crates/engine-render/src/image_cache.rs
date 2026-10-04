@@ -103,6 +103,17 @@ impl ImageTextureCache {
     /// states: "a texture with the given `TextureId` must be supplied
     /// at render time").
     pub fn sync(&mut self, tree: &Tree, device: &wgpu::Device, queue: &wgpu::Queue) {
+        // 0.5.4 (#150): a tree with no image nodes and no texture to free has
+        // nothing to scan for, which on most frames of most windows is so.
+        if tree.has_images() || !self.textures.is_empty() {
+            self.sync_nodes(tree, device, queue);
+        }
+        if tree.has_svgs() || !self.svg_textures.is_empty() {
+            self.sync_svg_images(tree, device, queue);
+        }
+    }
+
+    fn sync_nodes(&mut self, tree: &Tree, device: &wgpu::Device, queue: &wgpu::Queue) {
         let current: HashSet<NodeId> = tree.image_nodes().map(|(id, _)| id).collect();
 
         for (id, state) in tree.image_nodes() {
@@ -184,8 +195,6 @@ impl ImageTextureCache {
 
             self.uploaded.insert(id, blob_id);
         }
-
-        self.sync_svg_images(tree, device, queue);
 
         // Real, confirmed bug found in review: this loop above was
         // purely additive -- a node's own uploaded GPU texture (and
