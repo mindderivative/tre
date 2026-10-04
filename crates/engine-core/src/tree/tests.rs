@@ -6409,6 +6409,67 @@ mod active_ticking {
         assert!(!tree.tick_all(t0 + SECOND * 6).0);
     }
 
+    /// 0.5.4 (review): a new animation used to be found by a pass over every
+    /// node, which counted every node as touched and sent the damage walk
+    /// down its full path for that frame.
+    #[test]
+    fn starting_an_animation_touches_only_the_nodes_it_could_have_started_on() {
+        let mut tree = Tree::new();
+        let ids = many(&mut tree, 400);
+        let t0 = Instant::now();
+        assert!(!tree.tick_all(t0).0, "a first tick settles the scan");
+        tree.take_touched();
+        tree.get_mut(ids[123]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0,
+        );
+        tree.take_touched();
+        let (active, _) = tree.tick_all(t0 + SECOND / 2);
+        assert!(active);
+        let touched = tree.take_touched();
+        assert!(!touched.all, "no pass over the whole tree");
+        assert_eq!(touched.ids, vec![ids[123]], "only the animating node");
+        let o = tree.get(ids[123]).unwrap().paint.opacity.current;
+        assert!((o - 0.5).abs() < 0.01, "and it advanced: {o}");
+        // A tick with nothing new touches only what still animates.
+        tree.take_touched();
+        tree.tick_all(t0 + SECOND * 3 / 4);
+        assert_eq!(tree.take_touched().ids, vec![ids[123]]);
+        // Once it has finished, ticks touch nothing at all.
+        tree.tick_all(t0 + SECOND * 2);
+        tree.take_touched();
+        assert!(!tree.tick_all(t0 + SECOND * 3).0);
+        let touched = tree.take_touched();
+        assert!(!touched.all && touched.ids.is_empty());
+    }
+
+    /// A node animating through two different nodes' starts in one frame, and
+    /// a start on a node inserted after the last scan, are both found.
+    #[test]
+    fn nodes_inserted_and_animated_between_ticks_are_found() {
+        let mut tree = Tree::new();
+        let _ = many(&mut tree, 20);
+        let t0 = Instant::now();
+        tree.tick_all(t0);
+        let fresh = many(&mut tree, 2);
+        for id in &fresh {
+            tree.get_mut(*id).unwrap().paint.opacity.animate_to(
+                0.0,
+                SECOND,
+                MotionCurve::Linear,
+                t0,
+            );
+        }
+        assert!(tree.tick_all(t0 + SECOND / 2).0);
+        for id in &fresh {
+            let o = tree.get(*id).unwrap().paint.opacity.current;
+            assert!((o - 0.5).abs() < 0.01, "{o}");
+        }
+        assert!(!tree.tick_all(t0 + SECOND * 2).0);
+    }
+
     #[test]
     fn a_finished_animation_is_not_ticked_again() {
         let mut tree = Tree::new();
@@ -7709,8 +7770,25 @@ fn image_and_svg_counters_follow_insert_and_remove() {
     tree.add_child(parent, image);
     tree.add_child(parent, svg);
     assert!(tree.has_images() && tree.has_svgs());
+    // The sets the per-frame sync walks hold exactly those nodes, among many.
+    for _ in 0..500 {
+        tree.insert(NodeKind::Rect, Style::default(), paint());
+    }
+    let more = tree.insert(
+        NodeKind::Image(ImageState::blank()),
+        Style::default(),
+        paint(),
+    );
+    let ids: Vec<NodeId> = tree.image_nodes().map(|(id, _)| id).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&image) && ids.contains(&more));
+    tree.remove(more);
+    assert_eq!(tree.image_nodes().count(), 1);
     // Removing the parent removes both, counted once each.
     tree.remove(parent);
     assert!(!tree.has_images() && !tree.has_svgs());
     assert_eq!((tree.image_count, tree.svg_count), (0, 0));
+    assert_eq!(tree.image_nodes().count(), 0);
+    assert!(tree.svg_bitmaps().is_empty());
+    assert!(tree.image_ids.is_empty() && tree.svg_ids.is_empty());
 }

@@ -141,8 +141,10 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - **Animations cost what they run, not what the tree holds.** Each frame used to
   visit every node to advance its animations (0.6 to 1.3 ms at 9,000 nodes, even
   with one card animating). The tree now ticks only the nodes known to be
-  animating, and looks at every node once only when a new animation has started:
-  75 ns per frame in the same case. Nothing to change in an app.
+  animating, plus the nodes a new animation could have started on (the ones
+  changed since the last tick), never a pass over the whole tree: 75 ns per frame
+  in the same case. Image and SVG nodes are likewise tracked, not searched for each
+  frame. Nothing to change in an app.
 - **Scrolling a big view redraws less.** A scroll that moves a whole view of
   200 nodes or more is carried by copying the kept pixels, with only the strip
   it uncovers and the scrollbar redrawn; see [Window](reference/window.md).

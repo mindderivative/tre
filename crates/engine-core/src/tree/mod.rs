@@ -125,6 +125,11 @@ pub struct Tree {
     /// per-frame consumer of them can skip scanning a tree that has none.
     image_count: usize,
     svg_count: usize,
+    /// 0.5.4 (review): which nodes those are, kept as nodes are added and
+    /// removed, so the per-frame image and SVG sync visits them and not every
+    /// node of the tree. A node's kind never changes after it is inserted.
+    image_ids: std::collections::BTreeSet<NodeId>,
+    svg_ids: std::collections::BTreeSet<NodeId>,
     /// M94: the node holding pointer capture (`set_pointer_capture`).
     pointer_capture: Option<NodeId>,
     /// M96: detached subtree roots that are freed once nothing outside the
@@ -178,6 +183,8 @@ impl Tree {
             virtual_list_count: 0,
             image_count: 0,
             svg_count: 0,
+            image_ids: Default::default(),
+            svg_ids: Default::default(),
             pointer_capture: None,
             collectible: HashSet::new(),
         }
@@ -294,6 +301,15 @@ impl Tree {
             z_index: 0,
         });
         self.taffy_nodes.insert(id, taffy_node);
+        match &self.nodes[id].kind {
+            NodeKind::Image(_) => {
+                self.image_ids.insert(id);
+            }
+            NodeKind::Svg(_) => {
+                self.svg_ids.insert(id);
+            }
+            _ => {}
+        }
         id
     }
 
@@ -602,8 +618,14 @@ impl Tree {
         match &node.kind {
             NodeKind::ScrollView(_) => self.scroll_view_count -= 1,
             NodeKind::VirtualList(_) => self.virtual_list_count -= 1,
-            NodeKind::Image(_) => self.image_count -= 1,
-            NodeKind::Svg(_) => self.svg_count -= 1,
+            NodeKind::Image(_) => {
+                self.image_count -= 1;
+                self.image_ids.remove(&id);
+            }
+            NodeKind::Svg(_) => {
+                self.svg_count -= 1;
+                self.svg_ids.remove(&id);
+            }
             _ => {}
         }
 
@@ -702,23 +724,43 @@ impl Tree {
     pub fn tick_all(&mut self, now: Instant) -> (bool, Vec<CompletionHandle>) {
         let mut completed = Vec::new();
         let started = crate::animation::animations_started();
-        let full = self.scanned_at != Some(started);
+        let started_new = self.scanned_at != Some(started);
+        // What was reached mutably since the last tick: an animation can only
+        // have been started on one of these. Drained every tick so it cannot
+        // pile up while nothing starts.
+        let (all_reached, reached) = self.nodes.take_animation_candidates();
         let mut still = Vec::new();
-        if full {
+        if started_new && all_reached {
+            // Every node may be new to us (or too many to say which): look at
+            // all of them.
             for (id, node) in &mut self.nodes {
                 if Self::tick_node(node, now, &mut completed) {
                     still.push(id);
                 }
             }
+            // That pass reached every node; do not let it count as the next
+            // tick's reason to do it again.
+            let _ = self.nodes.take_animation_candidates();
             self.scanned_at = Some(started);
         } else {
-            for &id in &self.animating {
+            // The nodes known to be animating, and, when an animation has
+            // started, the ones it could have started on.
+            let mut ids = std::mem::take(&mut self.animating);
+            if started_new {
+                ids.extend(reached);
+                self.scanned_at = Some(started);
+            }
+            ids.sort_unstable();
+            ids.dedup();
+            for id in ids {
                 if let Some(node) = self.nodes.get_mut(id)
                     && Self::tick_node(node, now, &mut completed)
                 {
                     still.push(id);
                 }
             }
+            // Ticking noted those nodes; they are known already.
+            let _ = self.nodes.take_animation_candidates();
         }
         self.animating = still;
         let any_active = !self.animating.is_empty();
@@ -799,18 +841,20 @@ impl Tree {
     }
 
     pub fn image_nodes(&self) -> impl Iterator<Item = (NodeId, &ImageState)> {
-        self.nodes.iter().filter_map(|(id, node)| match &node.kind {
-            NodeKind::Image(state) => Some((id, state)),
-            _ => None,
-        })
+        self.image_ids
+            .iter()
+            .filter_map(|&id| match &self.nodes.get(id)?.kind {
+                NodeKind::Image(state) => Some((id, state)),
+                _ => None,
+            })
     }
 
     /// 0.5.4 (#147): every raster image the tree's SVG nodes were given, for
     /// the renderer to upload as textures.
     pub fn svg_bitmaps(&self) -> Vec<std::sync::Arc<crate::svg::SvgBitmap>> {
-        self.nodes
-            .values()
-            .filter_map(|node| match &node.kind {
+        self.svg_ids
+            .iter()
+            .filter_map(|&id| match &self.nodes.get(id)?.kind {
                 NodeKind::Svg(state) => Some(state.images.0.iter().map(|(_, b)| b.clone())),
                 _ => None,
             })

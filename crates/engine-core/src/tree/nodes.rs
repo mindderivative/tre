@@ -36,6 +36,13 @@ pub(super) struct Nodes {
     // shared reference to the tree; every write to them is through `&mut self`.
     touched: RefCell<Vec<NodeId>>,
     all_touched: Cell<bool>,
+    // 0.5.4 (review): the nodes reached mutably since the last
+    // `take_animation_candidates`. An animation can only be started through a
+    // mutable access, so these are the only nodes `tick_all` need look at
+    // when one has started. Kept apart from `touched`: the damage walk drains
+    // that one on its own schedule.
+    candidates: Vec<NodeId>,
+    candidates_all: bool,
 }
 
 impl Nodes {
@@ -44,10 +51,33 @@ impl Nodes {
             map: SlotMap::with_key(),
             touched: RefCell::new(Vec::new()),
             all_touched: Cell::new(false),
+            // A new tree has never been scanned for animations.
+            candidates: Vec::new(),
+            candidates_all: true,
         }
     }
 
+    fn note_candidate(&mut self, id: NodeId) {
+        if self.candidates_all {
+            return;
+        }
+        if self.candidates.len() >= MAX_TOUCHED {
+            self.candidates.clear();
+            self.candidates_all = true;
+        } else {
+            self.candidates.push(id);
+        }
+    }
+
+    /// Hands over the nodes reached mutably since the last call: `(true, _)`
+    /// when that was every node (or too many to list), else the list.
+    pub(super) fn take_animation_candidates(&mut self) -> (bool, Vec<NodeId>) {
+        let all = std::mem::replace(&mut self.candidates_all, false);
+        (all, std::mem::take(&mut self.candidates))
+    }
+
     fn note(&mut self, id: NodeId) {
+        self.note_candidate(id);
         if *self.all_touched.get_mut() {
             return;
         }
@@ -61,6 +91,8 @@ impl Nodes {
     }
 
     fn note_all(&mut self) {
+        self.candidates.clear();
+        self.candidates_all = true;
         self.touched.get_mut().clear();
         *self.all_touched.get_mut() = true;
     }
@@ -74,7 +106,9 @@ impl Nodes {
     }
 
     pub(super) fn insert_with_key(&mut self, f: impl FnOnce(NodeId) -> Node) -> NodeId {
-        self.map.insert_with_key(f)
+        let id = self.map.insert_with_key(f);
+        self.note_candidate(id);
+        id
     }
 
     pub(super) fn remove(&mut self, id: NodeId) -> Option<Node> {
