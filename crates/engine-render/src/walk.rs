@@ -51,6 +51,14 @@ pub(crate) trait Visitor<'t> {
 
     /// After the children of a node `enter` accepted.
     fn leave(&mut self, _visit: &Visit<'t>) {}
+
+    /// Whether to pass over `child` and its subtree without reaching it at
+    /// all (0.5.4, #149): asked before the walk works out where it is, so a
+    /// walk that only wants the nodes near some damage does not pay for the
+    /// ones far from it. Whatever is skipped is as if `enter` had said no.
+    fn skip(&mut self, _child: NodeId) -> bool {
+        false
+    }
 }
 
 /// Walks `root`'s tree within `visible`, calling `visitor` at each node.
@@ -104,6 +112,9 @@ fn descend<'t>(tree: &'t Tree, here: &Visit<'t>, visitor: &mut impl Visitor<'t>)
     }
     let child_visible = child_visible(here);
     for (index, &child) in tree.children_in_paint_order(here.id).iter().enumerate() {
+        if visitor.skip(child) {
+            continue;
+        }
         visit(
             tree,
             child,

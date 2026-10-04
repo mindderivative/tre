@@ -260,6 +260,7 @@ impl WindowRenderer {
                 width,
                 height,
                 rects,
+                self.tracker.extents(),
                 &shaders,
                 self.scale,
                 self.frame_renderer.resources_mut(),

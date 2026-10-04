@@ -3,6 +3,8 @@
 
 use std::time::Instant;
 
+mod support;
+
 use engine_core::{NodeId, NodeKind, PaintProperties, Tree};
 use engine_render::{Damage, DamageTracker, TextRenderer};
 use peniko::Color;
@@ -72,5 +74,70 @@ fn damage_walk_cost() {
             "{n} nodes: {per:?} per frame ({:?} per node)",
             per / n as u32
         );
+    }
+}
+
+/// 0.5.4 (#149): what building a partial redraw's scene costs as the tree
+/// grows, with the damage tracker's subtree extents (the paint walk skips
+/// what misses the damage) and without them (it visits every node).
+/// `cargo test -p engine-render --release --test damage_cost -- --ignored --nocapture`
+#[test]
+#[ignore = "timing, not correctness"]
+fn scene_cost_follows_the_damage() {
+    use engine_render::{FrameRenderer, GeometryCache, ShaderTextures, build_tree_scene_shaded};
+    use vello_gpu::RenderTargetConfig;
+    let (device, _queue) = pollster::block_on(support::device("scene cost"));
+    for n in [2_304usize, 9_216] {
+        let (mut tree, root, ids) = grid(n);
+        let (w, h) = (960u16, ((n / 96 + 1) * 10) as u16);
+        let mut text = TextRenderer::new();
+        let mut geometry = GeometryCache::new();
+        let mut frames = FrameRenderer::new(
+            &device,
+            &RenderTargetConfig {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                width: w,
+                height: h,
+            },
+        );
+        let mut tracker = DamageTracker::new();
+        let _ = tracker.damage(&tree, root, w, h, &mut text);
+        tree.get_mut(ids[n / 2]).unwrap().paint.background.current =
+            Color::from_rgba8(1, 2, 3, 255);
+        let Damage::Rects(rects) = tracker.damage(&tree, root, w, h, &mut text) else {
+            panic!("one node changed");
+        };
+        for with_extents in [true, false] {
+            let runs = 200;
+            let start = Instant::now();
+            for _ in 0..runs {
+                let _ = build_tree_scene_shaded(
+                    &tree,
+                    root,
+                    w,
+                    h,
+                    Some(&rects),
+                    if with_extents {
+                        tracker.extents()
+                    } else {
+                        None
+                    },
+                    &ShaderTextures::none(),
+                    1.0,
+                    frames.resources_mut(),
+                    &mut text,
+                    &mut geometry,
+                );
+            }
+            println!(
+                "{n} nodes, {}: {:?} to build the scene",
+                if with_extents {
+                    "skipping what misses the damage"
+                } else {
+                    "visiting every node           "
+                },
+                start.elapsed() / runs
+            );
+        }
     }
 }

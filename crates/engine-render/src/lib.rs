@@ -43,7 +43,7 @@ use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Rect, RoundedRect, Shape, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
-pub use damage::{Damage, DamageTracker, MAX_RECTS, SCROLL_BLIT_MIN_NODES, Shift};
+pub use damage::{Damage, DamageTracker, Extents, MAX_RECTS, SCROLL_BLIT_MIN_NODES, Shift};
 pub use fonts::{
     NoFontFacesFound, all_fonts, generation as font_generation, register_font, set_system_fonts,
     system_fonts,
@@ -165,6 +165,7 @@ pub fn build_tree_scene(
         width,
         height,
         None,
+        None,
         &ShaderTextures::none(),
         None,
         1.0,
@@ -196,6 +197,7 @@ pub fn build_tree_scene_in(
         width,
         height,
         Some(rects),
+        None,
         &ShaderTextures::none(),
         None,
         1.0,
@@ -217,6 +219,7 @@ pub fn build_tree_scene_shaded(
     width: u16,
     height: u16,
     rects: Option<&[Rect]>,
+    extents: Option<Extents<'_>>,
     shaders: &ShaderTextures,
     scale: f64,
     resources: &mut Resources,
@@ -224,7 +227,7 @@ pub fn build_tree_scene_shaded(
     geometry: &mut GeometryCache,
 ) -> Scene {
     build_scene(
-        tree, root, width, height, rects, shaders, None, scale, resources, text, geometry,
+        tree, root, width, height, rects, extents, shaders, None, scale, resources, text, geometry,
     )
 }
 
@@ -250,6 +253,7 @@ pub(crate) fn build_effect_content(
         width,
         height,
         None,
+        None,
         shaders,
         Some(node),
         scale,
@@ -266,6 +270,7 @@ fn build_scene(
     width: u16,
     height: u16,
     rects: Option<&[Rect]>,
+    extents: Option<Extents<'_>>,
     shaders: &ShaderTextures,
     effect_root: Option<NodeId>,
     scale: f64,
@@ -292,6 +297,7 @@ fn build_scene(
     let mut painter = Painter {
         tree,
         rects,
+        extents,
         shaders,
         effect_root,
         scene: &mut scene,
@@ -474,6 +480,9 @@ struct Painter<'a> {
     tree: &'a Tree,
     /// A partial redraw's damage rects; `None` paints everything.
     rects: Option<&'a [Rect]>,
+    /// 0.5.4 (#149): what each subtree paints, to skip those that miss `rects`
+    /// without visiting them.
+    extents: Option<Extents<'a>>,
     /// 0.5.1 (#67): the nodes whose fill shader ran this frame.
     shaders: &'a ShaderTextures,
     /// 0.5.1 (#69): the effect node whose content this scene is. It draws
@@ -534,6 +543,7 @@ impl Painter<'_> {
         let mut behind = Painter {
             tree: self.tree,
             rects: None,
+            extents: None,
             shaders: self.shaders,
             effect_root: None,
             scene: &mut *self.scene,
@@ -556,6 +566,15 @@ impl Painter<'_> {
 }
 
 impl<'t> walk::Visitor<'t> for Painter<'_> {
+    fn skip(&mut self, child: NodeId) -> bool {
+        match (self.rects, &self.extents) {
+            (Some(rects), Some(extents)) => extents
+                .of(child)
+                .is_some_and(|extent| !rects.iter().any(|r| extent.overlaps(*r))),
+            _ => false,
+        }
+    }
+
     fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
         let node = v.node;
         // A backdrop pass draws what is behind its node, and nothing else.
@@ -572,6 +591,14 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
         // rect. A node that clips its children confines its whole subtree to
         // that extent, so missing skips the subtree; any other node's children
         // may overflow it, and still decide for themselves.
+        // 0.5.4 (#149): a subtree whose whole extent misses every damage rect
+        // is not visited, so the cost follows the damage, not the tree.
+        if let (Some(rects), Some(extents)) = (self.rects, &self.extents)
+            && let Some(extent) = extents.of(v.id)
+            && !rects.iter().any(|r| extent.overlaps(*r))
+        {
+            return false;
+        }
         let draw_self = match self.rects {
             None => true,
             Some(rects) => {

@@ -782,3 +782,169 @@ fn scrolled_frame_cost() {
         }
     }
 }
+
+// 0.5.4 (#149): a partial redraw's paint walk skips every subtree whose
+// extent misses the damage. The extent has to cover what the subtree paints,
+// including children that overflow their parent, or a change out there would
+// never be drawn.
+
+fn boxed(tree: &mut Tree, parent: NodeId, x: f32, y: f32, w: f32, h: f32, color: Color) -> NodeId {
+    let id = tree.insert(
+        NodeKind::Rect,
+        placed(x, y, w, h),
+        PaintProperties::new(color, 0.0, 1.0),
+    );
+    tree.add_child(parent, id);
+    id
+}
+
+#[test]
+fn a_child_far_outside_its_parent_is_still_redrawn() {
+    let gpu = Gpu::new();
+    let mut tree = Tree::new();
+    let root = tree.insert(
+        NodeKind::Container,
+        placed(0.0, 0.0, W, H),
+        PaintProperties::new(Color::from_rgba8(25, 25, 30, 255), 0.0, 1.0),
+    );
+    let parent = boxed(&mut tree, root, 10.0, 10.0, 30.0, 30.0, shade(1));
+    let child = boxed(&mut tree, parent, 150.0, 90.0, 40.0, 40.0, shade(2));
+    let grandchild = boxed(&mut tree, child, -60.0, 30.0, 20.0, 20.0, shade(3));
+    layout(&mut tree, root);
+    let mut window = Window::new(&gpu, 1.0);
+    window.frame(&gpu, &tree, root, true);
+    for (step, id) in [child, grandchild, child, grandchild]
+        .into_iter()
+        .enumerate()
+    {
+        tree.get_mut(id).unwrap().paint.background.current =
+            Color::from_rgba8(255, (step * 50) as u8, 0, 255);
+        layout(&mut tree, root);
+        let damage = window.frame(&gpu, &tree, root, true);
+        assert_same(
+            &window.pixels(&gpu),
+            &fresh(&gpu, 1.0, &tree, root),
+            window.width.into(),
+            &format!("step {step}, damage {damage:?}"),
+        );
+        assert!(area(&damage) < 5000.0, "only the changed box: {damage:?}");
+    }
+    // And moving the grandchild further out, past everything.
+    tree.get_mut(grandchild)
+        .unwrap()
+        .paint
+        .node_transform
+        .translate_x
+        .current = 200.0;
+    layout(&mut tree, root);
+    let damage = window.frame(&gpu, &tree, root, true);
+    assert_same(
+        &window.pixels(&gpu),
+        &fresh(&gpu, 1.0, &tree, root),
+        window.width.into(),
+        &format!("moved out, damage {damage:?}"),
+    );
+}
+
+#[test]
+fn random_tree_edits_match_a_full_draw() {
+    for seed in 1..=16u64 {
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut next = move |n: u64| {
+            state ^= state >> 12;
+            state ^= state << 25;
+            state ^= state >> 27;
+            state.wrapping_mul(0x2545_F491_4F6C_DD1D) % n
+        };
+        let gpu = Gpu::new();
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Container,
+            placed(0.0, 0.0, W, H),
+            PaintProperties::new(Color::from_rgba8(25, 25, 30, 255), 0.0, 1.0),
+        );
+        let mut nodes = vec![root];
+        for _ in 0..40 {
+            let parent = nodes[next(nodes.len() as u64) as usize];
+            // Some far outside any parent: nothing clips them.
+            let id = boxed(
+                &mut tree,
+                parent,
+                next(260) as f32 - 40.0,
+                next(180) as f32 - 40.0,
+                10.0 + next(60) as f32,
+                10.0 + next(50) as f32,
+                shade(next(40) as usize),
+            );
+            nodes.push(id);
+        }
+        layout(&mut tree, root);
+        let mut window = Window::new(&gpu, 1.0);
+        window.frame(&gpu, &tree, root, true);
+        for step in 0..60 {
+            let mut what = Vec::new();
+            for _ in 0..1 + next(3) {
+                let id = nodes[1 + next(nodes.len() as u64 - 1) as usize];
+                if tree.get(id).is_none() {
+                    continue;
+                }
+                match next(9) {
+                    0 | 1 => {
+                        tree.get_mut(id).unwrap().paint.background.current = Color::from_rgba8(
+                            next(256) as u8,
+                            next(256) as u8,
+                            next(256) as u8,
+                            255,
+                        );
+                        what.push("colour");
+                    }
+                    2 => {
+                        let t = &mut tree.get_mut(id).unwrap().paint.node_transform;
+                        t.translate_x.current = next(120) as f64 - 60.0;
+                        t.translate_y.current = next(120) as f64 - 60.0;
+                        what.push("move");
+                    }
+                    3 => {
+                        let node = tree.get_mut(id).unwrap();
+                        node.visible = !node.visible;
+                        what.push("visible");
+                    }
+                    4 => {
+                        tree.get_mut(id).unwrap().paint.opacity.current =
+                            [1.0, 0.5, 0.0][next(3) as usize];
+                        what.push("opacity");
+                    }
+                    5 => {
+                        let node = tree.get_mut(id).unwrap();
+                        node.paint.clip_children = !node.paint.clip_children;
+                        what.push("clip");
+                    }
+                    6 => {
+                        let node = tree.get_mut(id).unwrap();
+                        node.layout_style.size.width = length(10.0 + next(70) as f32);
+                        node.layout_style.size.height = length(10.0 + next(60) as f32);
+                        what.push("resize");
+                    }
+                    7 => {
+                        let node = tree.get_mut(id).unwrap();
+                        node.paint.corner_radius.current = next(14) as f64;
+                        node.paint.border_width.current = next(4) as f64;
+                        what.push("shape");
+                    }
+                    _ => {
+                        tree.get_mut(id).unwrap().z_index = next(3) as i32 - 1;
+                        what.push("z");
+                    }
+                }
+            }
+            layout(&mut tree, root);
+            let damage = window.frame(&gpu, &tree, root, true);
+            assert_same(
+                &window.pixels(&gpu),
+                &fresh(&gpu, 1.0, &tree, root),
+                window.width.into(),
+                &format!("seed {seed}, step {step}, {what:?}, damage {damage:?}"),
+            );
+        }
+    }
+}

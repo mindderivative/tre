@@ -38,6 +38,15 @@
 //! was and is, and the old pixels of anything inside that did not move with
 //! the rest). Any doubt returns `None` and the changes are ordinary damage.
 //!
+//! **Subtree extents** (0.5.4, #149). Each record also keeps the extent of its
+//! whole subtree: a rect nothing it or its descendants paint falls outside.
+//! The paint walk asks for them (`DamageTracker::extents`) and passes over any
+//! child, before even placing it, whose extent misses every damage rect, so
+//! building a partial redraw's scene costs the damage, not the tree (9,216
+//! nodes, one changed: 515 us down to 27 us). An extent may be wider than the
+//! exact union (it only grows while a node is passed through), never
+//! narrower; verification checks that against the full walk's.
+//!
 //! `TRE_DAMAGE_VERIFY=1` (or `DamageTracker::with_verification`) runs both on
 //! every call and panics if the incremental result misses anything the full
 //! walk finds, or leaves a record that differs from it; CI runs the suites
@@ -124,6 +133,11 @@ pub struct Shift {
 #[derive(Clone, Copy)]
 struct Snap {
     painted: Rect,
+    /// What the node and everything under it paint (see `Record::extent`).
+    extent: Rect,
+    /// The node's `z_index`: a change moves its whole subtree among its
+    /// siblings, not just the node.
+    z_index: i32,
     /// How far a scroller was scrolled (0 for anything else).
     offset: f64,
     composed: Affine,
@@ -144,6 +158,12 @@ struct Change {
 struct Record {
     painted: Rect,
     fingerprint: u64,
+    /// 0.5.4 (#149): what the node and everything under it paint, together: a
+    /// rect no pixel of the subtree falls outside, so a damage rect that
+    /// misses it misses the whole subtree. After a change deep in the tree it
+    /// may stay wider than the exact union until the node is walked again.
+    extent: Rect,
+    z_index: i32,
     /// How far a scroller was scrolled (0 for anything else).
     offset: f64,
     /// The node's box in window pixels, before margins and clipping.
@@ -179,6 +199,8 @@ impl Record {
     fn snap(&self) -> Snap {
         Snap {
             painted: self.painted,
+            extent: self.extent,
+            z_index: self.z_index,
             offset: self.offset,
             composed: self.composed,
             content: self.content,
@@ -357,6 +379,14 @@ impl DamageTracker {
         self.scroll_blit_min_nodes = nodes;
     }
 
+    /// 0.5.4 (#149): what each node and its subtree paint, as of the last
+    /// `damage` call, for a paint walk to skip a subtree that misses the damage.
+    /// `None` when that cannot be trusted: nothing walked yet, or the tree has
+    /// a shader or backdrop blur, which paint from other nodes.
+    pub fn extents(&self) -> Option<Extents<'_>> {
+        (!self.special && !self.records.is_empty()).then_some(Extents(&self.records))
+    }
+
     /// The scroll shift the last `damage` call found, if any: apply it to the
     /// kept frame before redrawing that call's damage (which is `Rects`
     /// whenever this is `Some`).
@@ -434,6 +464,12 @@ impl DamageTracker {
                     return Some(format!(
                         "{id:?} has no record; full walk: {:?}",
                         theirs.painted
+                    ));
+                }
+                Some(mine) if !mine.extent.contains_rect(theirs.extent) => {
+                    return Some(format!(
+                        "{id:?} has the subtree extent {:?} here, which misses the full walk's {:?}",
+                        mine.extent, theirs.extent
                     ));
                 }
                 Some(mine) if !mine.same_pixels(theirs) => {
@@ -738,13 +774,27 @@ impl DamageTracker {
             if moved.contains(&change.id) {
                 continue;
             }
+            // (A node that changed its z_index changed its whole subtree.)
+            let reordered = matches!(
+                (&change.before, &change.after),
+                (Some(b), Some(a)) if b.z_index != a.z_index
+            );
             if let Some(after) = &change.after {
-                rects.push(after.painted);
+                rects.push(if reordered {
+                    after.extent
+                } else {
+                    after.painted
+                });
             }
             // The copy puts the old pixels of a node that did not move with
             // the rest where the rest went.
             if let Some(before) = &change.before {
-                let ghost = (before.painted + peniko::kurbo::Vec2::new(dx, dy)).intersect(view);
+                let was = if reordered {
+                    before.extent
+                } else {
+                    before.painted
+                };
+                let ghost = (was + peniko::kurbo::Vec2::new(dx, dy)).intersect(view);
                 if ghost.width() > 0.0 && ghost.height() > 0.0 {
                     rects.push(ghost);
                 }
@@ -849,6 +899,17 @@ impl DamageTracker {
     }
 }
 
+/// Each node's subtree extent (see `DamageTracker::extents`).
+#[derive(Clone, Copy)]
+pub struct Extents<'a>(&'a SecondaryMap<NodeId, Record>);
+
+impl Extents<'_> {
+    /// A rect that everything `id` and its descendants paint lies within.
+    pub(crate) fn of(&self, id: NodeId) -> Option<Rect> {
+        self.0.get(id).map(|r| r.extent)
+    }
+}
+
 /// One call's incremental walk: reads the last frame's records, collects the
 /// changes, and leaves applying them to the caller (so a `Bail` loses nothing).
 struct Pass<'a> {
@@ -889,7 +950,8 @@ impl Pass<'_> {
         }
     }
 
-    /// Whether `id` was reached: it has a record now.
+    /// What `id` and everything under it paint, if it was reached: it has a
+    /// record now.
     #[allow(clippy::too_many_arguments)]
     fn node(
         &mut self,
@@ -900,7 +962,7 @@ impl Pass<'_> {
         parent: Option<NodeId>,
         order: usize,
         force: bool,
-    ) -> Result<bool, Bail> {
+    ) -> Result<Option<Rect>, Bail> {
         let context = context_hash(parent_transform, visible, parent_opacity, parent, order);
         let old = self.old.get(id);
         let again = force
@@ -911,9 +973,9 @@ impl Pass<'_> {
             || (self.registered.contains(&id) && !self.plain(id, old));
         if !again {
             if self.registered.contains(&id) {
-                self.pass_through(id)?;
+                return Ok(Some(self.pass_through(id)?));
             }
-            return Ok(true);
+            return Ok(old.map(|o| o.extent));
         }
         self.visited += 1;
         let Some(v) = walk::resolve(
@@ -928,17 +990,20 @@ impl Pass<'_> {
             if old.is_some() {
                 self.remove_subtree(id)?;
             }
-            return Ok(false);
+            return Ok(None);
         };
         if is_special(v.node) {
             return Err(Bail);
         }
         let (hasher, content, scroll, offset) = record_hasher(self.tree, self.time, &v);
+        let painted = round_out(painted_rect(
+            self.text, v.id, v.node, v.composed, v.w, v.h, v.bounds, v.visible,
+        ));
         let mut record = Record {
-            painted: round_out(painted_rect(
-                self.text, v.id, v.node, v.composed, v.w, v.h, v.bounds, v.visible,
-            )),
+            painted,
             fingerprint: hasher.finish(),
+            extent: painted,
+            z_index: v.node.z_index,
             offset,
             bounds: v.bounds,
             content,
@@ -972,7 +1037,7 @@ impl Pass<'_> {
         let children = self.tree.children_in_paint_order(id);
         record.sorted = has_z_order(self.tree, v.node);
         for (index, &child) in children.iter().enumerate() {
-            if self.node(
+            if let Some(extent) = self.node(
                 child,
                 record.composed,
                 record.child_visible,
@@ -982,6 +1047,7 @@ impl Pass<'_> {
                 force_children,
             )? {
                 record.children.push(child);
+                record.extent = record.extent.union(extent);
             }
         }
         if let Some(before) = old
@@ -1001,8 +1067,9 @@ impl Pass<'_> {
                 }
             }
         }
+        let extent = record.extent;
         self.updates.push((id, record));
-        Ok(true)
+        Ok(Some(extent))
     }
 
     /// Whether the children of `id` paint in their own order, and so none of
@@ -1021,12 +1088,12 @@ impl Pass<'_> {
 
     /// A node nothing changed in itself, with changed nodes below it: walks
     /// down to just those, placing them under its own record.
-    fn pass_through(&mut self, id: NodeId) -> Result<(), Bail> {
+    fn pass_through(&mut self, id: NodeId) -> Result<Rect, Bail> {
         let Some(own) = self.old.get(id) else {
             return Err(Bail);
         };
         let Some(dirty) = self.dirty.get(&id) else {
-            return Ok(());
+            return Ok(own.extent);
         };
         // `plain` held when this node was judged to need no more than its
         // dirty children, so paint order is the child order.
@@ -1061,6 +1128,9 @@ impl Pass<'_> {
         // Which of the dirty children were reached before is whether they
         // have a record; the list is only copied if that changes.
         let mut reached: Option<Vec<NodeId>> = None;
+        // Only ever grows here (the unchanged children are not looked at, so
+        // the exact union is not known): still a rect nothing falls outside.
+        let mut extent = own.extent;
         for (index, child) in targets {
             let had = self.old.contains_key(child);
             let now = self.node(
@@ -1072,21 +1142,27 @@ impl Pass<'_> {
                 index,
                 false,
             )?;
-            if now != had {
+            if let Some(child_extent) = now {
+                extent = extent.union(child_extent);
+            }
+            if now.is_some() != had {
                 let list = reached.get_or_insert_with(|| own.children.clone());
-                if now {
+                if now.is_some() {
                     list.push(child);
                 } else {
                     list.retain(|c| *c != child);
                 }
             }
         }
-        if let Some(children) = reached {
+        if reached.is_some() || extent != own.extent {
             let mut record = own.clone();
-            record.children = children;
+            if let Some(children) = reached {
+                record.children = children;
+            }
+            record.extent = extent;
             self.updates.push((id, record));
         }
-        Ok(())
+        Ok(extent)
     }
 
     /// `id` is no longer painted: its rect, and every node below it that was.
@@ -1115,23 +1191,34 @@ impl Pass<'_> {
 }
 
 /// Every change's old and new painted rect (once, when it did not move).
+/// A node whose `z_index` changed paints its whole subtree in a new place among
+/// its siblings, so its rects are the subtrees' extents: its children can
+/// overflow it, and nothing about them changed to say so.
 fn plain_rects(changes: &[Change]) -> Vec<Rect> {
     let mut rects = Vec::new();
     for change in changes {
-        match (&change.before, &change.after) {
-            (Some(before), Some(after)) => {
-                // A change in place (a colour, a glyph) needs its rect once,
-                // not twice toward the `MAX_TRACKED` cap.
-                if before.painted != after.painted {
-                    rects.push(before.painted);
-                }
-                rects.push(after.painted);
-            }
-            (Some(only), None) | (None, Some(only)) => rects.push(only.painted),
-            (None, None) => {}
-        }
+        change_rects(change, &mut rects);
     }
     rects
+}
+
+fn change_rects(change: &Change, rects: &mut Vec<Rect>) {
+    match (&change.before, &change.after) {
+        (Some(before), Some(after)) if before.z_index != after.z_index => {
+            rects.push(before.extent);
+            rects.push(after.extent);
+        }
+        (Some(before), Some(after)) => {
+            // A change in place (a colour, a glyph) needs its rect once, not
+            // twice toward the `MAX_TRACKED` cap.
+            if before.painted != after.painted {
+                rects.push(before.painted);
+            }
+            rects.push(after.painted);
+        }
+        (Some(only), None) | (None, Some(only)) => rects.push(only.painted),
+        (None, None) => {}
+    }
 }
 
 /// Where a scroller's scrollbar thumb is, in window pixels, with its offset
@@ -1298,6 +1385,22 @@ fn record_hasher(
 }
 
 impl<'t> walk::Visitor<'t> for Recorder<'_> {
+    /// The subtree is recorded: its extent is the node's own painted rect and
+    /// its children's extents together.
+    fn leave(&mut self, v: &walk::Visit<'t>) {
+        let Some(own) = self.records.get(v.id) else {
+            return;
+        };
+        let (mut extent, count) = (own.painted, own.children.len());
+        for i in 0..count {
+            let child = self.records[v.id].children[i];
+            if let Some(record) = self.records.get(child) {
+                extent = extent.union(record.extent);
+            }
+        }
+        self.records[v.id].extent = extent;
+    }
+
     /// Records every node the paint walk reaches -- the same `walk`, so
     /// the two can't disagree about which nodes are drawn.
     fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
@@ -1341,6 +1444,8 @@ impl<'t> walk::Visitor<'t> for Recorder<'_> {
             Record {
                 painted,
                 fingerprint: hasher.finish(),
+                extent: painted,
+                z_index: v.node.z_index,
                 offset,
                 bounds: v.bounds,
                 content,
