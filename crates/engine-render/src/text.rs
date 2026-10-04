@@ -115,6 +115,26 @@ pub struct FontSpec<'a> {
     pub options: &'a TextOptions,
 }
 
+/// 0.5.4 (#111): a node's family followed by every registered family, so a glyph
+/// the node's family lacks (CJK in Roboto text, say) is taken from a registered
+/// font that has it -- hermetic, unlike the system's fallback. With nothing
+/// registered it is the one family, as before.
+fn family_stack<'a>(primary: &'a str, registered: &'a [String]) -> FontFamily<'a> {
+    if registered.is_empty() {
+        return FontFamily::named(primary);
+    }
+    let names: Vec<parley::FontFamilyName<'a>> = std::iter::once(primary)
+        .chain(
+            registered
+                .iter()
+                .map(String::as_str)
+                .filter(|n| *n != primary),
+        )
+        .map(parley::FontFamilyName::named)
+        .collect();
+    FontFamily::List(std::borrow::Cow::Owned(names))
+}
+
 /// Shapes `content` with every style pushed, before line breaking.
 fn shape_text(
     font_cx: &mut FontContext,
@@ -125,7 +145,11 @@ fn shape_text(
     default_color: Color,
 ) -> parley::Layout<[u8; 4]> {
     let mut builder = layout_cx.ranged_builder(font_cx, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::named(font.family)));
+    let fallback = fonts::fallback_families();
+    builder.push_default(StyleProperty::FontFamily(family_stack(
+        font.family,
+        &fallback,
+    )));
     builder.push_default(StyleProperty::FontWeight(FontWeight::new(font.weight)));
     builder.push_default(StyleProperty::FontSize(font.size));
     // M62 Phase 1 (§7.1, §16.3): `None` pushes nothing, keeping `parley`'s
@@ -322,6 +346,11 @@ pub struct TextRenderer {
     /// append-only, so the next sync only needs the ones past this).
     font_generation: u64,
     registered_font_count: usize,
+    /// 0.5.4 (#111): the faces this renderer was built with, and whether its
+    /// collection reads the system's fonts -- to rebuild the collection when
+    /// `fonts::set_system_fonts` changes.
+    bundled: Vec<Blob<u8>>,
+    system_fonts: bool,
 }
 
 impl Default for TextRenderer {
@@ -345,17 +374,13 @@ impl TextRenderer {
     /// family, to prove a later `fonts::register_font` is what supplies
     /// it. Every font already in the M86 registry is registered too.
     fn with_bundled_fonts(bundled: &[&[u8]]) -> Self {
-        let mut collection = Collection::new(CollectionOptions {
-            shared: false,
-            system_fonts: false,
-        });
-        for bytes in bundled {
-            collection.register_fonts(Blob::new(Arc::new(bytes.to_vec())), None);
-        }
+        let bundled: Vec<Blob<u8>> = bundled
+            .iter()
+            .map(|bytes| Blob::new(Arc::new(bytes.to_vec())))
+            .collect();
+        let system_fonts = fonts::system_fonts();
         let (font_generation, registered_font_count, registered) = fonts::registered_since(0);
-        for blob in registered {
-            collection.register_fonts(blob, None);
-        }
+        let collection = Self::collection(&bundled, &registered, system_fonts);
         Self {
             font_cx: FontContext {
                 collection,
@@ -367,7 +392,22 @@ impl TextRenderer {
             terminal_run_cache: HashMap::new(),
             font_generation,
             registered_font_count,
+            bundled,
+            system_fonts,
         }
+    }
+
+    /// A collection of the bundled faces and the registered ones, reading
+    /// the system's installed fonts too when `system_fonts`.
+    fn collection(bundled: &[Blob<u8>], registered: &[Blob<u8>], system_fonts: bool) -> Collection {
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts,
+        });
+        for blob in bundled.iter().chain(registered) {
+            collection.register_fonts(blob.clone(), None);
+        }
+        collection
     }
 
     /// M86: registers any fonts added to the process-global registry
@@ -380,13 +420,24 @@ impl TextRenderer {
         if fonts::generation() == self.font_generation {
             return false;
         }
-        let (font_generation, registered_font_count, new_blobs) =
-            fonts::registered_since(self.registered_font_count);
-        for blob in new_blobs {
-            self.font_cx.collection.register_fonts(blob, None);
+        let system_fonts = fonts::system_fonts();
+        if system_fonts != self.system_fonts {
+            // The set of fonts a collection reads from is fixed when it is
+            // made: build another, with everything registered so far.
+            let (font_generation, registered_font_count, all) = fonts::registered_since(0);
+            self.font_cx.collection = Self::collection(&self.bundled, &all, system_fonts);
+            self.system_fonts = system_fonts;
+            self.font_generation = font_generation;
+            self.registered_font_count = registered_font_count;
+        } else {
+            let (font_generation, registered_font_count, new_blobs) =
+                fonts::registered_since(self.registered_font_count);
+            for blob in new_blobs {
+                self.font_cx.collection.register_fonts(blob, None);
+            }
+            self.font_generation = font_generation;
+            self.registered_font_count = registered_font_count;
         }
-        self.font_generation = font_generation;
-        self.registered_font_count = registered_font_count;
         self.layout_cache.clear();
         self.monospace_cell_cache.clear();
         self.terminal_run_cache.clear();
@@ -502,6 +553,8 @@ impl TextRenderer {
             terminal_run_cache: _,
             font_generation: _,
             registered_font_count: _,
+            bundled: _,
+            system_fonts: _,
         } = self;
         if stale {
             let font = FontSpec {
@@ -772,7 +825,11 @@ impl TextRenderer {
         let mut builder = self
             .layout_cx
             .ranged_builder(&mut self.font_cx, content, 1.0, true);
-        builder.push_default(StyleProperty::FontFamily(FontFamily::named(font_family)));
+        let fallback = fonts::fallback_families();
+        builder.push_default(StyleProperty::FontFamily(family_stack(
+            font_family,
+            &fallback,
+        )));
         builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
         builder.push_default(StyleProperty::FontSize(font_size));
         let mut layout = builder.build(content);

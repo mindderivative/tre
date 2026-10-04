@@ -435,5 +435,7 @@ A shader's source or names are wrong, positioned in the WGSL you gave.
 | Name | Description |
 | --- | --- |
 | `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded. |
+| `set_system_fonts(enabled: bool) -> None` | Lets text use the fonts installed on this machine: for the glyphs the bundled and registered fonts lack (CJK, Hebrew, Indic… |
+| `system_fonts() -> bool` | Whether system fonts are on (`set_system_fonts`). |
 | `MONOSPACE_FONT_FAMILY` | The bundled monospace family a terminal always shapes with. |
 | `Color` | A type alias: an `(r, g, b, a)` tuple of ints, 0–255, straight alpha. |

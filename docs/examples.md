@@ -24,6 +24,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `snapshot.py` | `window.snapshot()` and `tre.write_png`: a window's pixels at 1x and 2x, with no display |
 | `gradients.py` | `Gradient.linear`, `.radial` and `.sweep` fills, one animating between two gradients |
 | `effects.py` | `blur`, `backdrop_blur` (frosted glass, animating) and `blend_mode` over a striped background |
+| `languages.py` | `set_system_fonts`: Latin, CJK, Hebrew, Indic, Thai and colour emoji in one window |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |

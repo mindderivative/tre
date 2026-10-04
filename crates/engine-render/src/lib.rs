@@ -44,7 +44,7 @@ use peniko::kurbo::{Affine, BezPath, Circle, Rect, RoundedRect, Shape, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use damage::{Damage, DamageTracker, MAX_RECTS};
-pub use fonts::{NoFontFacesFound, register_font};
+pub use fonts::{NoFontFacesFound, register_font, set_system_fonts, system_fonts};
 pub use geometry_cache::GeometryCache;
 pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;

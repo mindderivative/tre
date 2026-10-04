@@ -42,6 +42,8 @@ __all__ = [
     "Shader",
     "ShaderError",
     "register_font",
+    "set_system_fonts",
+    "system_fonts",
 ]
 
 Color = tuple[int, int, int, int]
@@ -802,6 +804,23 @@ def register_font(data: bytes) -> list[str]:
     node's `font_family` must use to resolve to it.
     Registering identical bytes twice is a no-op that still returns the
     names. A window already running picks the font up on its next frame.
+    (0.5.4) A registered font also fills in glyphs that a node's own
+    `font_family` lacks: the registered families follow it in the node's
+    family stack, so one call per script is enough.
     Raises `ValueError` if `data` holds no parseable font face.
     """
+    ...
+
+def set_system_fonts(enabled: bool) -> None:
+    """(0.5.4) Lets text use the fonts installed on this machine: for the
+    glyphs the bundled and registered fonts lack (CJK, Hebrew, Indic, colour
+    emoji) and for family names that aren't registered. Off by default, so
+    text is the same on every machine -- turn it on for an app that must show
+    any language, and ship fonts with `register_font` where the same pixels
+    everywhere matter. Applies to every window in this process, live: open
+    windows repaint their text on their next frame."""
+    ...
+
+def system_fonts() -> bool:
+    """(0.5.4) Whether system fonts are on (`set_system_fonts`)."""
     ...

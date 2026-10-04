@@ -27,6 +27,8 @@ from tre._core import (
     ShaderError,
     Window,
     register_font,
+    set_system_fonts,
+    system_fonts,
 )
 from tre.snapshot import png_bytes, write_png
 
@@ -50,6 +52,8 @@ __all__ = [
     "Window",
     "png_bytes",
     "register_font",
+    "set_system_fonts",
+    "system_fonts",
     "write_png",
 ]
 

@@ -62,6 +62,8 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Shader>()?;
     m.add("ShaderError", m.py().get_type::<shader::ShaderError>())?;
     m.add_function(wrap_pyfunction!(register_font, m)?)?;
+    m.add_function(wrap_pyfunction!(set_system_fonts, m)?)?;
+    m.add_function(wrap_pyfunction!(system_fonts, m)?)?;
     Ok(())
 }
 
@@ -76,4 +78,20 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 fn register_font(data: &[u8]) -> PyResult<Vec<String>> {
     engine_render::register_font(data.to_vec())
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+}
+
+/// 0.5.4 (#111): lets text use the fonts installed on this machine, for the
+/// glyphs the bundled and registered fonts lack (CJK, Hebrew, Indic, colour
+/// emoji) and for family names that aren't registered. Off by default, so text
+/// is the same on every machine; it applies to every window in this process,
+/// live.
+#[pyfunction]
+fn set_system_fonts(enabled: bool) {
+    engine_render::set_system_fonts(enabled);
+}
+
+/// Whether system fonts are on (`set_system_fonts`).
+#[pyfunction]
+fn system_fonts() -> bool {
+    engine_render::system_fonts()
 }

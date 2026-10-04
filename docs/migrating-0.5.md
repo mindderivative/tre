@@ -184,3 +184,9 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   inside its box) and `blend_mode` (CSS `mix-blend-mode`); see
   [Blur, frosted glass, and blend modes](reference/paint.md#blur-frosted-glass-and-blend-modes).
   All are off by default and change nothing for existing nodes.
+- **Text in any language, opt-in.** `tre.set_system_fonts(True)` lets text use
+  the machine's installed fonts for the glyphs the bundled fonts lack (CJK,
+  Hebrew, Indic, Thai, colour emoji), and the text guide has a recipe for
+  shipping fonts instead (see [Other languages and
+  emoji](guide/text.md#other-languages-and-emoji)). It is off by default, so
+  nothing changes unless you turn it on.

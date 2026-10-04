@@ -46,7 +46,7 @@ pixel above it. Percentage and `auto` widths, and every other kind of node
 ## Fonts
 
 Tesserae Engine bundles Roboto (regular and medium), Noto Sans Arabic, and Hack Nerd
-Font Mono, and never loads system fonts, so text renders the same on every
+Font Mono, and by default never loads system fonts, so text renders the same on every
 machine. `tre.MONOSPACE_FONT_FAMILY` names the monospace face, which
 terminals use — use it for anything that must line up with one, such as an
 editor's line numbers.
@@ -64,6 +64,46 @@ families = tre.register_font(Path("fonts/Inter-Regular.ttf").read_bytes())
 Registration is for the whole process: every window sees the font, and one
 already running picks it up on its next frame. Until a family is registered,
 a `font_family` naming it falls back to a bundled face.
+
+## Other languages and emoji
+
+The bundled fonts cover Latin, Cyrillic, Greek and Arabic. Hebrew, CJK, Indic
+scripts, Thai, colour emoji and the rest have no bundled font, so text in them
+draws as missing-glyph boxes or nothing. There are two ways to supply them.
+
+**Use the machine's fonts (0.5.4).** One switch lets text fall back to whatever
+is installed, for exactly the glyphs the bundled and registered fonts lack:
+
+```python
+tre.set_system_fonts(True)     # for every window in this process, live
+```
+
+A node whose text mixes scripts then needs no special handling: with
+`font_family="Roboto"`, Latin comes from Roboto and the rest from a system font
+chosen for its script, so `"Hello 漢字 😀 שלום"` shows all of it. Colour emoji
+(including the COLR and bitmap formats) draw in colour, and a right-to-left
+paragraph (Arabic, Hebrew) lays out right to left and aligns its start on the
+right. The switch is off by default because it makes text depend on the machine:
+the same app shows different pixels where different fonts are installed, and
+where no installed font has a script it still shows boxes. Text the bundled
+fonts cover is unaffected either way, and turning the switch off again returns
+to the exact same frames.
+
+**Ship the fonts with the app.** For the same pixels everywhere, register
+font files you bundle, such as subsets of [Noto](https://fonts.google.com/noto):
+
+```python
+from importlib.resources import files
+import tre
+
+for name in ("NotoSansJP-Regular.otf", "NotoSansHebrew-Regular.ttf", "NotoEmoji-Regular.ttf"):
+    tre.register_font(files("myapp.fonts").joinpath(name).read_bytes())
+```
+
+Registered fonts take part in fallback too: a glyph that `font_family` lacks is
+taken from any registered font that has it, so one call per script is enough and
+no node needs to name them. Subset a font to the glyphs you need
+(`pyftsubset`) to keep an app small; a full CJK font is many megabytes.
 
 ## Text input
 
