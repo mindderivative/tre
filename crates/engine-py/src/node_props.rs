@@ -26,10 +26,11 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 47] = [
+const SETTABLE: [&str; 48] = [
     "visible",
     "z_index",
     "clip_children",
+    "sticky",
     "translate_x",
     "translate_y",
     "scale",
@@ -140,6 +141,8 @@ pub(crate) enum Change {
     Visible(bool),
     ZIndex(i32),
     ClipChildren(bool),
+    /// 0.5.4 (#139): `sticky`, an inset from the scroller's start edge, or `None`.
+    Sticky(Option<f64>),
     TranslateX(f64),
     TranslateY(f64),
     Scale(f64),
@@ -589,6 +592,16 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             Change::ZIndex(required(value, name, "an int")?)
         }
         "clip_children" => Change::ClipChildren(boolean(value, name)?),
+        "sticky" => Change::Sticky(if value.is_none() {
+            None
+        } else if value.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(invalid(name, "a non-negative number of pixels, or None"));
+        } else {
+            Some(
+                parse_non_negative(value, name)
+                    .map_err(|_| invalid(name, "a non-negative number of pixels, or None"))?,
+            )
+        }),
         "translate_x" => Change::TranslateX(number("a number")?),
         "translate_y" => Change::TranslateY(number("a number")?),
         "scale" => Change::Scale(parse_non_negative(value, name)?),
@@ -953,6 +966,7 @@ impl Node {
                     .into_pyobject(py)?
                     .to_owned()
                     .into_any()),
+                "sticky" => node.sticky.into_pyobject(py)?.into_any().into(),
                 "layout_x" | "layout_y" | "layout_width" | "layout_height" => {
                     drop(tree);
                     let (x, y, w, h) = self.layout_box(py);
@@ -1212,6 +1226,7 @@ impl Node {
                 }
                 Change::ZIndex(z) => node.z_index = z,
                 Change::ClipChildren(clip) => node.paint.clip_children = clip,
+                Change::Sticky(inset) => node.sticky = inset,
                 Change::TranslateX(v) => node.paint.node_transform.translate_x = Animated::new(v),
                 Change::TranslateY(v) => node.paint.node_transform.translate_y = Animated::new(v),
                 Change::Scale(v) => node.paint.node_transform.scale = Animated::new(v),

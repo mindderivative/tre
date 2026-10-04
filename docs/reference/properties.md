@@ -102,6 +102,7 @@ Every node.
 | `visible` | `False` hides the node and its subtree: not painted, not hit, no layout space, not in the accessibility tree or tab order |
 | `z_index` | Paint and hit order among siblings: higher is on top; equal values keep child order |
 | `clip_children` | `True` clips children to the node's rounded box |
+| `sticky` | (0.5.4) a number of pixels, or `None`: holds that far from the start edge of the scroll view it is in ([Sticky headers](../guide/nodes-and-layout.md#sticky-headers)) |
 
 Each transform part animates on its own, so easing one never disturbs another.
 

@@ -232,3 +232,6 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   damped spring that lasts until it settles and, on a number, carries on the speed of
   the animation it interrupts; see [Springs](guide/animation.md#springs). Existing
   easings are unchanged.
+- **Sticky headers.** `node.set(sticky=inset)` holds a node at the start edge of
+  its scroll view while its parent scrolls past, like CSS `position: sticky`; see
+  [Sticky headers](guide/nodes-and-layout.md#sticky-headers). Off by default.

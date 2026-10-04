@@ -6776,3 +6776,208 @@ mod momentum {
         relayout(&mut tree, view);
     }
 }
+
+/// 0.5.4 (#139): sticky positioning.
+mod sticky {
+    use super::*;
+
+    /// A 100 px tall vertical scroll view over four 100 px sections, each with
+    /// a 20 px sticky header at its top and a body under it.
+    fn sections() -> (Tree, NodeId, Vec<NodeId>) {
+        let mut tree = Tree::new();
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(false)),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        let content = tree.insert(
+            NodeKind::Container,
+            Style {
+                flex_direction: FlexDirection::Column,
+                size: Size {
+                    width: length(100.0),
+                    height: length(400.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        tree.add_child(view, content);
+        let mut headers = Vec::new();
+        for _ in 0..4 {
+            let section = tree.insert(
+                NodeKind::Container,
+                Style {
+                    flex_direction: FlexDirection::Column,
+                    flex_shrink: 0.0,
+                    size: Size {
+                        width: length(100.0),
+                        height: length(100.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+            );
+            tree.add_child(content, section);
+            let (k, mut s, p) = leaf(100.0, 20.0);
+            s.flex_shrink = 0.0;
+            let header = tree.insert(k, s, p);
+            tree.add_child(section, header);
+            tree.set_sticky(header, Some(0.0));
+            headers.push(header);
+            let (k, mut s, p) = leaf(100.0, 80.0);
+            s.flex_shrink = 0.0;
+            let body = tree.insert(k, s, p);
+            tree.add_child(section, body);
+        }
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        (tree, view, headers)
+    }
+
+    fn scroll_to(tree: &mut Tree, view: NodeId, offset: f64) {
+        tree.scroll_scroll_view_by(view, -1000.0);
+        tree.scroll_scroll_view_by(view, offset);
+    }
+
+    /// Where `id` is on screen, vertically.
+    fn y(tree: &Tree, id: NodeId) -> f64 {
+        tree.absolute_position(id).1
+    }
+
+    #[test]
+    fn a_header_holds_the_edge_while_the_next_has_not_arrived() {
+        let (mut tree, view, headers) = sections();
+        scroll_to(&mut tree, view, 0.0);
+        assert_eq!((y(&tree, headers[0]), y(&tree, headers[1])), (0.0, 100.0));
+        // Scrolled 60: the first header would be at -60; it sticks at 0. The
+        // second is at 100 - 60 = 40, not there yet.
+        scroll_to(&mut tree, view, 60.0);
+        assert_eq!(y(&tree, headers[0]), 0.0);
+        assert_eq!(y(&tree, headers[1]), 40.0);
+    }
+
+    #[test]
+    fn a_stuck_header_leaves_with_its_section() {
+        let (mut tree, view, headers) = sections();
+        // At 90 the section ends at 10 on screen: its header (20 tall) can be
+        // no lower than touching that, so it is at -10, pushed up; the next
+        // header is at 10.
+        scroll_to(&mut tree, view, 90.0);
+        assert_eq!(y(&tree, headers[0]), -10.0);
+        assert_eq!(y(&tree, headers[1]), 10.0);
+        // At 150 the first is long gone and the second holds the edge.
+        scroll_to(&mut tree, view, 150.0);
+        assert_eq!(y(&tree, headers[0]), -70.0);
+        assert_eq!(y(&tree, headers[1]), 0.0);
+        // At the end, the last header is at the edge.
+        scroll_to(&mut tree, view, 300.0);
+        assert_eq!(y(&tree, headers[3]), 0.0);
+    }
+
+    #[test]
+    fn an_inset_holds_it_that_far_from_the_edge() {
+        let (mut tree, view, headers) = sections();
+        tree.set_sticky(headers[0], Some(12.0));
+        scroll_to(&mut tree, view, 40.0);
+        assert_eq!(y(&tree, headers[0]), 12.0);
+        // Even barely scrolled, the first header (natural 0) is already inside
+        // the inset, so it is pushed down to hold it.
+        scroll_to(&mut tree, view, 5.0);
+        assert_eq!(y(&tree, headers[0]), 12.0);
+        // The second (natural 100) only reaches the inset at a scroll of 88.
+        scroll_to(&mut tree, view, 50.0);
+        assert_eq!(y(&tree, headers[1]), 50.0);
+        tree.set_sticky(headers[1], Some(12.0));
+        scroll_to(&mut tree, view, 88.0);
+        assert_eq!(y(&tree, headers[1]), 12.0);
+    }
+
+    #[test]
+    fn a_pointer_over_the_stuck_header_hits_it() {
+        let (mut tree, view, headers) = sections();
+        scroll_to(&mut tree, view, 60.0);
+        // As in CSS, content that paints later covers a stuck header unless the
+        // header is above it: give it a z_index.
+        let covered = tree.hit_test_local(view, Point::new(10.0, 5.0));
+        assert_ne!(
+            covered.map(|(id, _)| id),
+            Some(headers[0]),
+            "the body paints over it"
+        );
+        tree.get_mut(headers[0]).unwrap().z_index = 1;
+        let hit = tree.hit_test_local(view, Point::new(10.0, 5.0));
+        assert_eq!(hit.map(|(id, _)| id), Some(headers[0]));
+        // Where the header was before it stuck is the body under the edge now.
+        let below = tree.hit_test_local(view, Point::new(10.0, 30.0));
+        assert_ne!(below.map(|(id, _)| id), Some(headers[0]));
+    }
+
+    #[test]
+    fn making_it_ordinary_again_scrolls_it_with_the_content() {
+        let (mut tree, view, headers) = sections();
+        tree.set_sticky(headers[0], None);
+        scroll_to(&mut tree, view, 60.0);
+        assert_eq!(y(&tree, headers[0]), -60.0);
+    }
+
+    #[test]
+    fn a_direct_child_of_the_scroller_or_a_node_outside_one_does_not_stick() {
+        let (mut tree, view, _) = sections();
+        let content = tree.get(view).unwrap().children[0];
+        tree.set_sticky(content, Some(0.0));
+        scroll_to(&mut tree, view, 60.0);
+        assert_eq!(y(&tree, content), -60.0, "it IS the content");
+
+        let (k, s, p) = leaf(10.0, 10.0);
+        let lone = tree.insert(k, s, p);
+        tree.set_sticky(lone, Some(0.0));
+        assert_eq!(tree.scroll_shift(lone), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_horizontal_scroller_sticks_along_x() {
+        let mut tree = Tree::new();
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(true)),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(50.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        let (k, mut s, p) = leaf(400.0, 50.0);
+        s.flex_direction = FlexDirection::Row;
+        let strip = tree.insert(k, s, p);
+        tree.add_child(view, strip);
+        let (k, s, p) = leaf(30.0, 50.0);
+        let label = tree.insert(k, s, p);
+        tree.add_child(strip, label);
+        tree.set_sticky(label, Some(0.0));
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+        tree.scroll_scroll_view_by(view, 120.0);
+        // Natural x 0; scrolled 120 it would be at -120; it sticks at 0 -- but is
+        // bounded by its parent (the 400 px strip): 400 - 30 = 370 room.
+        assert_eq!(tree.absolute_position(label).0, 0.0);
+    }
+}

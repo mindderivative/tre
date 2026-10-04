@@ -1373,6 +1373,12 @@ pub struct Node {
     /// is a true no-op -- only `Tree::set_hit_testable(id, false)`
     /// changes anything.
     pub hit_testable: bool,
+    /// 0.5.4 (#139): `Some(inset)` makes the node stick: inside a scrolling
+    /// ancestor it stays `inset` pixels from the scroller's start edge once
+    /// scrolled there, until its own parent's box scrolls away (see
+    /// `Tree::scroll_shift`). `None`, the default, is a node that scrolls with
+    /// its content.
+    pub sticky: Option<f64>,
     /// M94: the pointer shape shown over this node; `None` inherits the
     /// nearest ancestor's, and the default arrow when none sets one.
     pub cursor: Option<Cursor>,

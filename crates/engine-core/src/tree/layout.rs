@@ -271,10 +271,13 @@ impl Tree {
     /// if unscrolled, so scrolling never invalidates it. Every reader of a
     /// node's position goes through here.
     pub fn scroll_shift(&self, id: NodeId) -> (f64, f64) {
-        let Some(parent) = self.nodes.get(id).and_then(|n| n.parent) else {
+        let Some(node) = self.nodes.get(id) else {
             return (0.0, 0.0);
         };
-        match self.nodes.get(parent).map(|n| &n.kind) {
+        let Some(parent) = node.parent else {
+            return (0.0, 0.0);
+        };
+        let (mut dx, mut dy) = match self.nodes.get(parent).map(|n| &n.kind) {
             Some(NodeKind::ScrollView(state)) => {
                 let offset = state.scroll.current;
                 if state.horizontal {
@@ -285,6 +288,69 @@ impl Tree {
             }
             Some(NodeKind::VirtualList(state)) => (0.0, -state.scroll_offset.current),
             _ => (0.0, 0.0),
+        };
+        // 0.5.4 (#139): a sticky node also holds itself in view.
+        if let Some(inset) = node.sticky {
+            let (sx, sy) = self.sticky_shift(id, inset);
+            dx += sx;
+            dy += sy;
+        }
+        (dx, dy)
+    }
+
+    /// 0.5.4 (#139): how far sticky node `id` moves, along the nearest scroller's
+    /// axis, to stay `inset` pixels inside that scroller's start edge: how far
+    /// its natural place (in the scrolled content) has gone past the edge,
+    /// no further than keeps it inside its own parent's box -- CSS's `position:
+    /// sticky`. `(0, 0)` with no scroller around it, for a direct child of the
+    /// scroller (it IS the content), or while it has not reached the edge.
+    /// Transforms between the node and the scroller are not accounted for, and a
+    /// sticky node inside another sticky one ignores the outer's shift.
+    fn sticky_shift(&self, id: NodeId, inset: f64) -> (f64, f64) {
+        // The node's place along the axis in the scroller's content, summed up
+        // the chain to the scroller.
+        let mut chain = Vec::new();
+        let mut current = Some(id);
+        let (horizontal, offset) = loop {
+            let Some(at) = current else {
+                return (0.0, 0.0);
+            };
+            let Some(node) = self.nodes.get(at) else {
+                return (0.0, 0.0);
+            };
+            match &node.kind {
+                NodeKind::ScrollView(state) if at != id => {
+                    break (state.horizontal, state.scroll.current);
+                }
+                NodeKind::VirtualList(state) if at != id => {
+                    break (false, state.scroll_offset.current);
+                }
+                _ => {}
+            }
+            chain.push(at);
+            current = node.parent;
+        };
+        // `chain` runs from the node up to the scroller's direct child.
+        if chain.len() < 2 {
+            return (0.0, 0.0);
+        }
+        let axis = |id: NodeId| {
+            let layout = self.layout(id);
+            if horizontal {
+                (f64::from(layout.location.x), f64::from(layout.size.width))
+            } else {
+                (f64::from(layout.location.y), f64::from(layout.size.height))
+            }
+        };
+        let natural: f64 = chain.iter().map(|&n| axis(n).0).sum();
+        let (local, extent) = axis(id);
+        let parent_extent = axis(chain[1]).1;
+        let room = (parent_extent - (local + extent)).max(0.0);
+        let shift = (offset + inset - natural).clamp(0.0, room);
+        if horizontal {
+            (shift, 0.0)
+        } else {
+            (0.0, shift)
         }
     }
 

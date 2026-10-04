@@ -266,6 +266,7 @@ impl Tree {
             paint,
             access: AccessNodeData::default(),
             hit_testable: true,
+            sticky: None,
             cursor: None,
             window_region: crate::node::WindowRegion::Default,
             shader: None,
@@ -618,6 +619,16 @@ impl Tree {
     /// last one (`animations_started`); otherwise only the nodes that pass
     /// found animating are ticked, so the cost follows the animations, not
     /// the tree's size (0.5.4, #103).
+    /// 0.5.4 (#139): makes `id` sticky, `inset` pixels from the start edge of the
+    /// scroller it sits in, or ordinary again with `None`. A no-op for a missing
+    /// node. See `Node::sticky`.
+    pub fn set_sticky(&mut self, id: NodeId, inset: Option<f64>) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.sticky = inset;
+            self.dirty = true;
+        }
+    }
+
     /// 0.5.4 (#116): how many nodes the tree holds.
     pub fn node_count(&self) -> usize {
         self.nodes.len()

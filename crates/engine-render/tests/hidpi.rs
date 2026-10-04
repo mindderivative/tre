@@ -530,3 +530,94 @@ fn partial_redraw_on_a_transparent_background_matches_a_full_redraw() {
     // And the old place really is empty: alpha zero.
     assert_eq!(live.at(20, 30), [0, 0, 0, 0]);
 }
+
+/// 0.5.4 (#139): a scroll view over three 60 px sections, each with a 12 px
+/// sticky header above its body.
+fn sticky_window() -> (Window, NodeId) {
+    use engine_core::ScrollViewState;
+    let mut w = Window::new((60.0, 60.0), 1.0);
+    let root = w.root;
+    let view = w.add(
+        root,
+        NodeKind::ScrollView(ScrollViewState::new(false)),
+        style(0.0, 0.0, 60.0, 60.0),
+        PaintProperties::new(BG, 0.0, 1.0),
+    );
+    let mut column = style(0.0, 0.0, 60.0, 180.0);
+    column.position = taffy::prelude::Position::Relative;
+    column.flex_direction = taffy::FlexDirection::Column;
+    let content = w.add(
+        view,
+        NodeKind::Container,
+        column,
+        PaintProperties::new(BG, 0.0, 1.0),
+    );
+    let colors = [RED, BLUE, Color::from_rgba8(0x20, 0xC0, 0x40, 0xFF)];
+    for color in colors {
+        let mut section_style = style(0.0, 0.0, 60.0, 60.0);
+        section_style.position = taffy::prelude::Position::Relative;
+        section_style.flex_direction = taffy::FlexDirection::Column;
+        section_style.flex_shrink = 0.0;
+        let section = w.add(
+            content,
+            NodeKind::Container,
+            section_style,
+            PaintProperties::new(BG, 0.0, 1.0),
+        );
+        let mut header_style = style(0.0, 0.0, 60.0, 12.0);
+        header_style.position = taffy::prelude::Position::Relative;
+        header_style.flex_shrink = 0.0;
+        let header = w.add(
+            section,
+            NodeKind::Rect,
+            header_style,
+            PaintProperties::new(Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF), 0.0, 1.0),
+        );
+        w.tree.set_sticky(header, Some(0.0));
+        w.tree.get_mut(header).unwrap().z_index = 1;
+        let mut body_style = style(0.0, 0.0, 60.0, 48.0);
+        body_style.position = taffy::prelude::Position::Relative;
+        body_style.flex_shrink = 0.0;
+        w.add(
+            section,
+            NodeKind::Rect,
+            body_style,
+            PaintProperties::new(color, 0.0, 1.0),
+        );
+    }
+    (w, view)
+}
+
+#[test]
+fn a_sticky_header_paints_where_it_sticks_and_partial_redraw_follows_it() {
+    let (mut live, view) = sticky_window();
+    live.frame();
+    for step in [25.0, 20.0, 30.0, 40.0] {
+        live.tree.scroll_scroll_view_by(view, step);
+        live.frame();
+    }
+    // Scrolled 115: the second section ends 5 px down, so its header has been
+    // pushed up to touch that (at -7); the third header (natural 120) is at 5.
+    let (mut fresh, fview) = sticky_window();
+    fresh.frame(); // lay it out, so there is something to scroll
+    fresh.tree.scroll_scroll_view_by(fview, 115.0);
+    fresh.frame();
+    assert_eq!(
+        differing(&live.pixels(), &fresh.pixels(), 0),
+        0,
+        "scrolling frame by frame equals jumping there"
+    );
+    // Scrolled 115: the second section ends 5 px down, so its header has been
+    // pushed up to touch that (at -7); the third header (natural 120) is at 5.
+    assert_eq!(live.at(30, 3), [255, 255, 255, 255], "the pushed-up header");
+    assert_eq!(
+        live.at(30, 10),
+        [255, 255, 255, 255],
+        "the next header, arriving"
+    );
+    assert_eq!(
+        live.at(30, 30),
+        [0x20, 0xC0, 0x40, 255],
+        "the third section's body"
+    );
+}

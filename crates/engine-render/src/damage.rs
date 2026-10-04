@@ -436,6 +436,9 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId, nod
         // Accessibility, hit testing, and the pointer shape paint nothing.
         access: _,
         hit_testable: _,
+        // 0.5.4 (#139): where a sticky node is reaches paint through its composed
+        // transform, which is hashed above.
+        sticky: _,
         cursor: _,
         // 0.5.0 M3: which presses move the window; paints nothing.
         window_region: _,
