@@ -806,10 +806,19 @@ impl Tree {
         if self.scroll_view_count == 0 {
             return changes;
         }
-        for (id, node) in &mut self.nodes {
-            if let NodeKind::ScrollView(state) = &mut node.kind
-                && state.scroll.current != state.reported
-            {
+        // Found with a read-only pass: iterating `&mut self.nodes` counts every
+        // node as touched, which sent the damage tracker down its full walk on
+        // every frame of any tree that has a scroll view.
+        let moved: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| {
+                matches!(&node.kind, NodeKind::ScrollView(s) if s.scroll.current != s.reported)
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in moved {
+            if let NodeKind::ScrollView(state) = &mut self.nodes[id].kind {
                 changes.push((id, state.reported, state.scroll.current));
                 state.reported = state.scroll.current;
             }

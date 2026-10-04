@@ -640,6 +640,11 @@ impl Tree {
         if self.hovered == Some(id) {
             self.hovered = None;
         }
+        // 0.5.4 (#131, #153): a removed text node keeps no selection or lines.
+        self.text_lines.remove(&id);
+        if self.static_selection.involves(id) {
+            self.clear_text_selection();
+        }
 
         true
     }

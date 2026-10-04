@@ -266,7 +266,11 @@ class Node:
         `focus`, `unfocus`, `change`, `a11y_action`, `dismiss` (a layer
         asked to close), `scroll`, and (0.5.0) `pointer_cancel` -- the press
         was taken to move or resize the window, and no `pointer_up` or
-        `click` will follow it. All but `pointer_enter`/`pointer_leave`/
+        `click` will follow it. (0.5.4) Also `touch_start`, `touch_move`,
+        `touch_end`, `touch_cancel`, `tap`, `long_press`, `pan`, `pinch`,
+        `file_hover`, `file_hover_cancel`, `file_drop` and `link` (a click on
+        a text span's link); see the events reference for each one's fields.
+        All but `pointer_enter`/`pointer_leave`/
         `change`/`dismiss`/`scroll` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises

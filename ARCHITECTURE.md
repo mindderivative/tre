@@ -376,7 +376,7 @@ tre/
 | Tool | Notes |
 |---|---|
 | Rust 1.90+ (`rustup`) | The MSRV is `rust-version` in `Cargo.toml`, checked by CI's `msrv` job; `rust-toolchain.toml` pins the development toolchain. Raise the MSRV with any dependency bump that raises the floor |
-| Python 3.9+ | With `maturin` |
+| Python 3.12+ | With `maturin` |
 | Linux | `libxkbcommon`, Wayland or X11 headers, a Vulkan driver |
 | macOS | Xcode command-line tools |
 | Windows | MSVC build tools |

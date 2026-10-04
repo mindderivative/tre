@@ -1601,6 +1601,7 @@ impl App {
                 // text come from the window's text renderer, which needs the
                 // runtime mutably; if something already holds it, the update is
                 // built without them (one run per link segment).
+                let mut lines_fresh = false;
                 if let Ok(mut runtimes) = runtimes_for_access.try_borrow_mut() {
                     let runtime = runtimes
                         .get_mut(&window_id)
@@ -1612,11 +1613,21 @@ impl App {
                         .tree
                         .borrow_mut()
                         .set_text_access_lines(lines);
+                    lines_fresh = true;
                 }
                 let runtimes = runtimes_for_access.borrow();
                 let runtime = runtimes
                     .get(&window_id)
                     .expect("build_access_update requested for a window with no runtime state");
+                if !lines_fresh {
+                    // Without a renderer to ask, drop the last frame's lines (they
+                    // may not fit the text any more) so the one-run shape applies.
+                    runtime
+                        .handles
+                        .tree
+                        .borrow_mut()
+                        .set_text_access_lines(Default::default());
+                }
                 // 0.5.4 (#102): bounds in physical pixels, like the window.
                 runtime
                     .handles
@@ -1923,9 +1934,12 @@ impl App {
                 );
                 // 0.5.4 (#151): a screen reader following a link, or selecting
                 // text, in a text node.
-                if let Some(engine_core::TextPart::Link { owner, href, .. }) =
-                    tree_rc.borrow().resolve_text_part(request.target_node)
-                {
+                // Looked up in its own statement: held in the `if let`'s
+                // scrutinee, the tree's `Ref` would still be alive while the
+                // listener runs, and a listener that changes the tree would
+                // panic on its `borrow_mut` (as the pointer path's did).
+                let text_part = tree_rc.borrow().resolve_text_part(request.target_node);
+                if let Some(engine_core::TextPart::Link { owner, href, .. }) = text_part {
                     if request.action == engine_core::Action::Click {
                         listeners::deliver(
                             &NodeContext {

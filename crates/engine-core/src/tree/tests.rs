@@ -6023,6 +6023,46 @@ fn scroll_into_view_aligns_a_node_longer_than_its_view_to_its_start() {
     assert_eq!(offset_of(&tree, view), 250.0);
 }
 
+/// 0.5.4 (review): asking for scroll changes, and laying out, must not count a
+/// scroll view that did not move as touched -- it sent the damage tracker down
+/// its full walk on every frame of any tree that has one.
+#[test]
+fn an_idle_scroll_view_is_not_touched_by_scroll_changes_or_layout() {
+    let (mut tree, view, _) = scrollable_view(false);
+    tree.take_touched();
+    assert!(tree.take_scroll_changes().is_empty());
+    let touched = tree.take_touched();
+    assert!(
+        !touched.all && touched.ids.is_empty(),
+        "a quiet check touches nothing"
+    );
+    tree.compute_layout(
+        view,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    tree.take_touched();
+    tree.compute_layout(
+        view,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    let touched = tree.take_touched();
+    assert!(
+        !touched.all,
+        "a repeated layout of an unmoved view is not a full re-walk"
+    );
+    // A move is still reported, and then the node is touched.
+    tree.scroll_by_key(view, Key::ArrowDown);
+    tree.take_touched();
+    assert_eq!(tree.take_scroll_changes().len(), 1);
+    assert!(tree.take_touched().ids.contains(&view));
+}
+
 #[test]
 fn take_scroll_changes_reports_each_move_once() {
     let (mut tree, view, _) = scrollable_view(false);
@@ -7175,6 +7215,56 @@ mod static_selection {
         assert_eq!(
             tree.static_selected_text().as_deref(),
             Some("ha\nbravo\nch")
+        );
+    }
+
+    #[test]
+    fn removing_a_selected_text_releases_the_selection_and_its_lines() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.select_across((a, 1), (c, 2));
+        tree.remove(a);
+        assert_eq!(tree.static_selected_text(), None, "the start node is gone");
+        assert!(tree.static_selection_ends().is_none());
+        assert_eq!((range_of(&tree, b), range_of(&tree, c)), (None, None));
+        // Removing an unrelated node leaves a selection alone.
+        tree.select_across((b, 0), (c, 2));
+        let (_, [other, ..]) = paragraphs(&mut tree);
+        tree.remove(other);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("bravo\nch"));
+    }
+
+    #[test]
+    fn word_starts_past_255_characters_are_left_out_not_wrapped() {
+        let mut tree = Tree::new();
+        let words = "ab ".repeat(150);
+        let id = text(&mut tree, &words);
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.selectable = true;
+        }
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        let update = tree.build_access_update(id);
+        let run = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == accesskit::Role::TextRun)
+            .unwrap();
+        let starts = run.1.word_starts();
+        assert!(!starts.is_empty());
+        assert!(
+            starts.windows(2).all(|w| w[0] < w[1]),
+            "still sorted, nothing wrapped: {starts:?}"
+        );
+        assert_eq!(
+            *starts.last().unwrap(),
+            255,
+            "the last word that fits in a u8"
         );
     }
 

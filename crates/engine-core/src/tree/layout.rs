@@ -145,7 +145,11 @@ impl Tree {
             // real scrollable extent must not leave a stale offset
             // pointing past the new real end.
             let clamped = state.scroll.current.clamp(0.0, max_scroll);
-            if let NodeKind::ScrollView(state) = &mut self.nodes[view].kind {
+            // Only when it moved: a write through `&mut self.nodes[view]` counts
+            // the scroll view as touched, which re-walks it and its content.
+            if state.scroll.current != clamped
+                && let NodeKind::ScrollView(state) = &mut self.nodes[view].kind
+            {
                 state.scroll.current = clamped;
             }
 

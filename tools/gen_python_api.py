@@ -145,6 +145,7 @@ NODE_KINDS = [
     ("`\"scroll_view\"`", "—", "Clips and scrolls one child."),
     ("`\"virtual_list\"`", "`item_count`, `materialize`", "Builds only the rows its viewport shows."),
     ("`\"terminal\"`", "`shell`, `cols`, `rows`", "A PTY-backed terminal emulator."),
+    ("`\"svg\"`", "`svg`, `svg_color`, `svg_images`", "A whole SVG document, fitted into the node's box (0.5.4)."),
 ]
 NODE_EVENTS = [
     ("`pointer_enter`, `pointer_leave`", "no", "The pointer enters or leaves the node's subtree."),
@@ -159,6 +160,11 @@ NODE_EVENTS = [
     ("`scroll`", "no", "A scroll view's offset changed, once a frame."),
     ("`dismiss`", "no", "An outside press or Escape asked a layer to close."),
     ("`a11y_action`", "yes", "Assistive technology asked for an action (increment, expand, set value…)."),
+    ("`touch_start`, `touch_move`, `touch_end`, `touch_cancel`", "yes", "A finger touches, moves, lifts or is taken away (0.5.4); `pointer_id`."),
+    ("`tap`, `long_press`", "yes", "A quick touch and release in place (`count`), or one held half a second (0.5.4)."),
+    ("`pan`, `pinch`", "yes", "A dragging or pinching gesture (0.5.4); `phase`, deltas, `scale`."),
+    ("`file_hover`, `file_hover_cancel`, `file_drop`", "yes", "Files dragged from the OS over, away from, or dropped on the node (0.5.4); `paths`."),
+    ("`link`", "yes", "A click on a text span that has a `link` (0.5.4); `href`."),
 ]
 WINDOW_PROPERTIES = [
     ("`width`, `height`", "get", "The client area's size (change it with `resize`)."),
@@ -177,6 +183,12 @@ WINDOW_PROPERTIES = [
     ("`titlebar_inset`, `native_controls`", "get", "macOS traffic-light area; whether the OS shows its controls."),
     ("`gpu_watchdog`", "set, get", "Seconds before a stuck frame fires `gpu_stalled`; `None` is off."),
     ("`present_mode`", "set, get", "`\"vsync\"` (default) paces frames to the display; `\"low_latency\"` shows the newest frame at once."),
+    ("`dpi_scaling`", "set, get", "Layout in logical pixels, drawn at the display's scale (0.5.4); off by default."),
+    ("`glyph_cache`", "set, get", "Draw text from the glyph cache: about 4x cheaper, edge pixels differ slightly (0.5.4); off by default."),
+    ("`profile_nodes`", "set, get", "Time each node the paint walk reaches, for `frame_stats()` (0.5.4)."),
+    ("`transparent`, `transparent_active`", "set, get / get", "A see-through window background, and whether it took effect (0.5.4)."),
+    ("`blur_behind`, `click_through`", "set, get", "Ask the compositor to blur behind a transparent window; ignore the pointer entirely (0.5.4)."),
+    ("`reduced_motion`, `high_contrast`", "get", "The OS's motion and contrast preferences (0.5.4)."),
 ]
 WINDOW_EVENTS = [
     ("`resize`", "`width`, `height`", "The client area changed size."),
@@ -190,6 +202,9 @@ WINDOW_EVENTS = [
     ("`gpu_lost`", "`reason`, `message`", "The GPU was lost; the run is ending."),
     ("`gpu_error`", "`message`", "The GPU reported an error; the draw was skipped."),
     ("`gpu_stalled`", "`seconds`", "A submitted frame has not completed after `gpu_watchdog` seconds."),
+    ("`file_hover`, `file_hover_cancel`, `file_drop`", "`paths`, `path`", "Files dragged over, away from, or dropped on the window (0.5.4)."),
+    ("`reduced_motion`, `high_contrast`", "`reduced_motion`, `high_contrast`", "The OS's motion or contrast preference changed (0.5.4)."),
+    ("`frame`", "`stats`", "A frame was drawn and presented; `stats` holds its costs (0.5.4)."),
 ]
 EVENT_FIELDS = {
     "type": "The event's name; on every event.",

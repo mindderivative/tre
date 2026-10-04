@@ -730,6 +730,15 @@ pub(super) struct StaticSelection {
     nodes: Vec<NodeId>,
 }
 
+impl StaticSelection {
+    /// Whether `id` is an end of the selection or holds a range of it.
+    pub(super) fn involves(&self, id: NodeId) -> bool {
+        self.nodes.contains(&id)
+            || self.anchor.is_some_and(|(n, _)| n == id)
+            || self.focus.is_some_and(|(n, _)| n == id)
+    }
+}
+
 /// 0.5.4 (#112): selection in static text (`TextOptions::selectable`).
 impl Tree {
     fn text_len(&self, id: NodeId) -> Option<usize> {

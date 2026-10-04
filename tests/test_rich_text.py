@@ -290,3 +290,16 @@ def test_ctrl_shift_arrows_move_the_selection_by_word_and_shift_arrows_cross_tex
     assert second.get("selection") == (0, 0)
     window.simulate("key_down", key="arrow_right", shift=True)
     assert second.get("selection") == (0, 1)
+
+
+def test_ctrl_a_selects_the_selected_static_text_even_when_a_button_has_focus():
+    window = Window(width=300, height=120)
+    window.root.set(fill=WHITE, padding=0)
+    label = window.create("text", text="alpha beta", width=200, height=30, selectable=True)
+    button = window.create("box", width=60, height=30, focusable=True)
+    window.root.add_child(label)
+    window.root.add_child(button)
+    label.set(selection=(2, 2))
+    button.focus()
+    window.simulate("key_down", key="a", ctrl=True)
+    assert label.get("selection") == (0, 10)

@@ -359,7 +359,14 @@ impl Tree {
                 .flatten()
                 .collect();
             if !starts.is_empty() {
-                run.set_word_starts(starts.into_iter().map(|i| i as u8).collect::<Vec<u8>>());
+                // u8 indices: a word further in than 255 characters is left out
+                // rather than reported at a wrapped (wrong) place.
+                run.set_word_starts(
+                    starts
+                        .into_iter()
+                        .filter_map(|i| u8::try_from(i).ok())
+                        .collect::<Vec<u8>>(),
+                );
             }
             runs.push((piece.start, piece.end, run_id));
             out.push((run_id, run));
