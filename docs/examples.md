@@ -31,6 +31,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `accessibility_preferences.py` | `get("reduced_motion")`, `get("high_contrast")` and their events: snap instead of ease, swap to a high-contrast palette |
 | `frame_stats.py` | `window.frame_stats()`: stage times, redraw kind, fps and percentiles for a window that animates |
 | `transparent_window.py` | `transparent=True`: a rounded, undecorated card on the desktop, with a close button |
+| `spring.py` | `easing=("spring", bounce)`: overshoot, and a retarget that keeps its speed |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |

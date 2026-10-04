@@ -228,3 +228,7 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   format first, which has two bits of alpha), and `snapshot()` now returns
   true straight alpha, as documented (it had returned the renderer's
   premultiplied pixels, so translucent pixels were too dark).
+- **Spring animation.** `easing="spring"` or `("spring", bounce)` animates with a
+  damped spring that lasts until it settles and, on a number, carries on the speed of
+  the animation it interrupts; see [Springs](guide/animation.md#springs). Existing
+  easings are unchanged.

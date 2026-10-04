@@ -148,7 +148,7 @@ impl Node {
     ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
         let now = crate::clock::now(&self.tree);
-        let curve = parse_easing(easing.as_ref())?;
+        let curve = parse_easing(easing.as_ref(), duration)?;
         // 0.4.3 M15: a scroll view eases to the real end, not past it --
         // layout would clamp it there each frame, stalling the curve.
         let scroll_max = if property == "scroll_offset" {
@@ -494,27 +494,46 @@ impl Node {
 /// M95: `animate`'s `easing` -- `None` or `"linear"`, or a cubic bezier
 /// `(x1, y1, x2, y2)` with `x1` and `x2` in `0.0..=1.0`, as CSS
 /// `cubic-bezier()` takes them.
-fn parse_easing(easing: Option<&Bound<'_, PyAny>>) -> PyResult<MotionCurve> {
-    let expected = "easing must be \"linear\" or a cubic bezier (x1, y1, x2, y2) with x1 and x2 \
+fn parse_easing(easing: Option<&Bound<'_, PyAny>>, duration: Duration) -> PyResult<MotionCurve> {
+    let expected = "easing must be \"linear\", \"spring\", (\"spring\", bounce) with bounce from \
+                    -1 to 1 (exclusive), or a cubic bezier (x1, y1, x2, y2) with x1 and x2 \
                     from 0.0 to 1.0";
+    let invalid = || pyo3::exceptions::PyValueError::new_err(expected);
     let Some(easing) = easing else {
         return Ok(MotionCurve::Linear);
     };
     if easing.is_none() {
         return Ok(MotionCurve::Linear);
     }
-    if let Ok(name) = easing.extract::<String>() {
-        return if name == "linear" {
-            Ok(MotionCurve::Linear)
+    // 0.5.4 (#138): a spring takes `duration` as its period and bounce for how
+    // much it overshoots; a zero duration still snaps.
+    let spring = |bounce: f64| -> PyResult<MotionCurve> {
+        if !(bounce > -1.0 && bounce < 1.0) {
+            return Err(invalid());
+        }
+        Ok(if duration.is_zero() {
+            MotionCurve::Linear
         } else {
-            Err(pyo3::exceptions::PyValueError::new_err(expected))
+            MotionCurve::spring_for(duration, bounce)
+        })
+    };
+    if let Ok(name) = easing.extract::<String>() {
+        return match name.as_str() {
+            "linear" => Ok(MotionCurve::Linear),
+            "spring" => spring(0.2),
+            _ => Err(invalid()),
         };
     }
-    let (x1, y1, x2, y2): (f64, f64, f64, f64) = easing
-        .extract()
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err(expected))?;
+    if let Ok((name, bounce)) = easing.extract::<(String, f64)>() {
+        return if name == "spring" {
+            spring(bounce)
+        } else {
+            Err(invalid())
+        };
+    }
+    let (x1, y1, x2, y2): (f64, f64, f64, f64) = easing.extract().map_err(|_| invalid())?;
     if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
-        return Err(pyo3::exceptions::PyValueError::new_err(expected));
+        return Err(invalid());
     }
     Ok(MotionCurve::Bezier(x1, y1, x2, y2))
 }

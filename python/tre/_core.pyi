@@ -191,14 +191,17 @@ class Node:
         property: str,
         to: float | Color | Gradient | Sequence[float] | Sequence[Any] | str,
         duration_ms: int = 0,
-        easing: str | tuple[float, float, float, float] | None = None,
+        easing: str | tuple[float, float, float, float] | tuple[str, float] | None = None,
         on_complete: Callable[[], object] | None = None,
     ) -> None:
         """Starts (or retargets) an animation on one property, from its
         current value. Returns immediately -- never blocks.
         `duration_ms=0` snaps instantly on the next tick rather than
         easing. `easing` is `"linear"` (the default) or a cubic bezier
-        `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it. Animatable:
+        `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it, or (0.5.4) a
+        spring: `"spring"` or `("spring", bounce)`, `bounce` from -1 to 1
+        (exclusive) -- `duration_ms` is its period and it lasts until it settles,
+        carrying the speed of a number's animation it interrupts. Animatable:
         `fill`, `stroke_color`, `stroke_width`, `opacity`, `blur`, `backdrop_blur`,
         `corner_radius` (a number or a 4-tuple), `shadows`, the transform
         parts `translate_x`/`translate_y`/`scale`/`rotation_deg`, a
