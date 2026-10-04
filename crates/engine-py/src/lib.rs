@@ -14,6 +14,7 @@ mod dock;
 mod error;
 mod event;
 mod files;
+mod frame_stats;
 mod gradient;
 mod grid;
 mod listeners;

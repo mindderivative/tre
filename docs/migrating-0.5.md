@@ -212,3 +212,7 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   `reduced_motion` and `high_contrast` window events report changes; see
   [Window properties](reference/events.md#window-properties). The engine only
   reports them; honouring them is the app's.
+- **Frame statistics.** `window.frame_stats()` reports what a window's frames cost
+  (stage times, redraw kind, damage, nodes, recent fps and percentiles), and a
+  `frame` window event fires per frame; see [frame_stats](reference/window.md#frame_stats).
+  Always on, a few clock reads a frame.

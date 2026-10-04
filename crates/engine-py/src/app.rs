@@ -27,6 +27,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use std::time::Instant;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{
@@ -953,6 +954,8 @@ impl App {
                     return false;
                 }
 
+                // 0.5.4 (#116): this pass's start, for the frame statistics.
+                let frame_began = Instant::now();
                 let now = crate::clock::now(&runtime.handles.tree);
                 let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
                 // 0.5.4 (#113): a finger held down becomes a long press as time
@@ -1097,8 +1100,10 @@ impl App {
                 // still gets the kept frame presented again -- the surface
                 // image may have lost it -- where there is a kept frame.
                 if !changed && !(os_requested && runtime.gpu.renderer.has_persistent_target()) {
+                    runtime.handles.frame_stats.borrow_mut().skipped_one();
                     return any_active;
                 }
+                let after_tick = Instant::now();
 
                 // M96: also builds virtual lists' newly visible rows.
                 crate::node_callbacks::layout(
@@ -1129,6 +1134,8 @@ impl App {
                         .resize(runtime.handles.width.get(), runtime.handles.height.get());
                 }
 
+                let after_layout = Instant::now();
+
                 // 0.4.0 M5: what changed since the last frame
                 // (`WindowRenderer::prepare`). A newly registered font can
                 // reshape text no node's state records, so it redraws
@@ -1153,6 +1160,7 @@ impl App {
                         &gpu.queue,
                     )
                 };
+                let after_prepare = Instant::now();
                 tracing::trace!(?damage, os_requested, "frame damage");
                 // 0.4.0 M6: nothing to show that isn't already shown, only
                 // this loop asked, and nothing is animating -- no image to
@@ -1160,9 +1168,11 @@ impl App {
                 // is kept: its wait for the display is what paces the loop,
                 // which would otherwise spin through unchanged frames.
                 if damage == engine_render::Damage::None && !os_requested && !any_active {
+                    runtime.handles.frame_stats.borrow_mut().skipped_one();
                     return any_active;
                 }
 
+                let acquire_began = Instant::now();
                 let gpu = &mut runtime.gpu;
                 let (output, reconfigure) = match gpu.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(output) => (output, false),
@@ -1189,6 +1199,7 @@ impl App {
                         return any_active || retry;
                     }
                 };
+                let draw_began = Instant::now();
                 let view = output
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1230,13 +1241,44 @@ impl App {
                     // The overlay submits its own work.
                     gpu.watch.submitted(&gpu.queue);
                 }
+                let present_began = Instant::now();
                 runtime.gpu.queue.present(output);
+                let frame_ended = Instant::now();
                 if reconfigure {
                     runtime
                         .gpu
                         .surface
                         .configure(&runtime.gpu.device, &runtime.gpu.surface_config);
                 }
+                // 0.5.4 (#116): this frame's costs, by stage.
+                let record = crate::frame_stats::FrameRecord {
+                    index: 0,
+                    at: frame_began,
+                    tick: after_tick.saturating_duration_since(frame_began),
+                    layout: after_layout.saturating_duration_since(after_tick),
+                    prepare: after_prepare.saturating_duration_since(after_layout),
+                    acquire: draw_began.saturating_duration_since(acquire_began),
+                    draw: present_began.saturating_duration_since(draw_began),
+                    present: frame_ended.saturating_duration_since(present_began),
+                    total: frame_ended.saturating_duration_since(frame_began),
+                    redraw: match &damage {
+                        engine_render::Damage::None => crate::frame_stats::Redraw::Nothing,
+                        engine_render::Damage::Full => crate::frame_stats::Redraw::Full,
+                        engine_render::Damage::Rects(rects) => {
+                            crate::frame_stats::Redraw::Partial {
+                                rects: rects.len(),
+                                area: rects.iter().map(|r| r.area()).sum::<f64>()
+                                    / (f64::from(width) * f64::from(height)).max(1.0),
+                            }
+                        }
+                    },
+                    shader_passes: runtime.gpu.renderer.shader_pass_count(),
+                    nodes: runtime.handles.tree.borrow().node_count(),
+                    size: (u32::from(width), u32::from(height)),
+                };
+                let record = runtime.handles.frame_stats.borrow_mut().drew(record);
+                // A listener on the window's `frame` event hears each one.
+                crate::frame_stats::announce(&runtime.handles, &record, py);
                 any_active
             },
             // §14 step 7: every window this framework opens reports a

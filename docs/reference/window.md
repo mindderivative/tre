@@ -264,6 +264,49 @@ root's layout box follows. It fires no `resize` event — that reports a
 change the user made; `simulate("resize", width=, height=)` stands in for
 one.
 
+## `frame_stats`
+
+**`frame_stats(reset=False)`** (0.5.4) says what the window's frames cost, so an app or
+a framework can find its own bottlenecks. It is always on and costs a few clock reads
+a frame. It returns a dict:
+
+```python
+stats = window.frame_stats()
+stats["frames"]      # frames drawn since the window opened
+stats["skipped"]     # passes that found nothing to draw (the loop slept through them)
+stats["last"]        # the last frame, or None
+stats["recent"]      # the last 240 frames
+```
+
+A frame (`last`, and each `frame` event's `stats`) has, in milliseconds, `tick_ms`
+(animations and timers), `layout_ms`, `prepare_ms` (working out what changed),
+`acquire_ms` (waiting for the swapchain to hand over an image), `draw_ms` (building
+the scene, rendering and submitting), `present_ms` and `total_ms`, plus `cpu_ms`
+(`total_ms` without `acquire_ms` and `present_ms`: the app's own cost), `redraw`
+(`"nothing"` when the kept frame was shown again, `"full"`, or `"partial"`),
+`damage_rects` and `damage_area` (the fraction of the window redrawn), `shader_passes`,
+`nodes` and `width`/`height`.
+
+`recent` gives `count`, `fps` (frames a second over those frames), `total_ms` and
+`cpu_ms` each as `mean`, `p95` and `max`, `stage_ms` (each stage's mean), and
+`redraws`, how many of the frames were `nothing`, `full` or `partial`.
+
+```python
+r = window.frame_stats()["recent"]
+print(f"{r['fps']:.0f} fps, {r['cpu_ms']['p95']:.2f} ms cpu at p95, "
+      f"{r['redraws']['partial']} of {r['count']} frames partial")
+```
+
+Read the stages with the display in mind: with vsync on (the default, see
+`present_mode`), `acquire_ms` is the loop waiting for the next refresh, so a frame's
+`total_ms` is near the refresh interval even when `cpu_ms` is a small part of it.
+`cpu_ms` is the number to watch against a frame budget. `reset=True` clears the
+history after reading it, for measuring one interaction. Nothing is recorded before
+`App.run()` opens the window.
+
+For every frame as it happens, `window.on("frame", handler)` (`event.stats` is that
+frame's dict); it fires each frame, so keep the handler cheap.
+
 ## `snapshot`
 
 **`snapshot(width=None, height=None, scale=None, time=0.0)`** (0.5.4) returns

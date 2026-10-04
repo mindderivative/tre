@@ -108,6 +108,7 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | --- | --- | --- |
 | `resize` | The window's client area changed size | `width`, `height` |
 | `color_scheme` | The OS switched between light and dark | `dark` |
+| `frame` | A frame was drawn and presented (0.5.4); fires every frame, so keep the handler cheap | `stats` |
 | `reduced_motion` | The OS's reduce-motion preference changed (0.5.4) | `reduced_motion` |
 | `high_contrast` | The OS's increased-contrast preference changed (0.5.4) | `high_contrast` |
 | `scale_factor` | The window moved to a display with a different scale factor | `scale_factor` |
@@ -206,6 +207,7 @@ hardware; the Windows and macOS code is compiled for those targets and untested.
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
 | `reduced_motion` / `high_contrast` | `reduced_motion` / `high_contrast` — the new preference |
+| `stats` | `frame` — the frame's costs, the same dict as `window.frame_stats()["last"]` |
 | `maximized` / `active` | `maximized` / `active` — the window's new state |
 | `path`, `paths` | `file_hover`, `file_drop` — the dragged files' paths as `str`s; `path` is the first |
 | `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |

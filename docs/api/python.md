@@ -94,6 +94,7 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `close() -> None` | Closes the window as if the user had: `close_requested` fires first, and a listener that cancels it keeps the window open. |
 | `create(kind: str, **props: Any) -> Node` | Makes a detached node of a kind; attach it with `add_child`. |
 | `dock_panel(side: str, panel: Node) -> None` | Docks `panel` into `side`'s zone and shows it. |
+| `frame_stats(reset: bool=False) -> dict[str, Any]` | What this window's frames cost, as a dict: `frames` (drawn since the window opened), `skipped` (passes that found nothing to… |
 | `hide_layer(node: Node) -> None` | Hides a layer, detaching it, and returns focus to where it was. |
 | `maximize() -> None` | Maximizes the window — or opens it maximized. |
 | `measure_text(text, font_family, font_size, font_weight, font_style, letter_spacing, line_height, max_width, wrap, max_lines, overflow) -> tuple[float, float]` | Returns the `(width, height)` a text node with these properties would take. |
@@ -322,6 +323,7 @@ What a listener receives when it takes one argument; never constructed directly.
 | `width` | `float \| None` | New size on `resize`. |
 | `height` | `float \| None` | New size on `resize`. |
 | `dark` | `bool \| None` | New appearance on `color_scheme`. |
+| `stats` | `dict[str, Any] \| None` |  |
 | `reduced_motion` | `bool \| None` |  |
 | `high_contrast` | `bool \| None` |  |
 | `maximized` | `bool \| None` | New state on `maximized`. |

@@ -251,10 +251,12 @@ pub(crate) enum WindowEventType {
     /// 0.5.4 (#115): the OS's reduced-motion or increased-contrast preference changed.
     ReducedMotion,
     HighContrast,
+    /// 0.5.4 (#116): a frame was drawn and presented; `stats` has its costs.
+    Frame,
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 18] = [
+    const ALL: [WindowEventType; 19] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -273,6 +275,7 @@ impl WindowEventType {
         Self::FileDrop,
         Self::ReducedMotion,
         Self::HighContrast,
+        Self::Frame,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -295,6 +298,7 @@ impl WindowEventType {
             Self::FileDrop => "file_drop",
             Self::ReducedMotion => "reduced_motion",
             Self::HighContrast => "high_contrast",
+            Self::Frame => "frame",
         }
     }
 

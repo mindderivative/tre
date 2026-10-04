@@ -136,6 +136,9 @@ pub struct Event {
     /// 0.5.4 (#115): `high_contrast` -- whether the OS now asks for more contrast.
     #[pyo3(get)]
     pub(crate) high_contrast: Option<bool>,
+    /// 0.5.4 (#116): `frame` -- the frame's costs, as `Window.frame_stats()`'s `last`.
+    #[pyo3(get)]
+    pub(crate) stats: Option<Py<PyAny>>,
     /// 0.5.0 M2: the window's `maximized` event -- whether it now is.
     #[pyo3(get)]
     pub(crate) maximized: Option<bool>,
@@ -285,6 +288,7 @@ impl Event {
             dark: None,
             reduced_motion: None,
             high_contrast: None,
+            stats: None,
             maximized: None,
             active: None,
             titlebar_inset: None,

@@ -1108,6 +1108,24 @@ impl PyWindow {
         Ok(())
     }
 
+    /// 0.5.4 (#116): what this window's frames cost, as a dict: `frames`
+    /// (drawn since the window opened), `skipped` (passes that found nothing to
+    /// draw), `last` (the last frame's stages, redraw and node count, or
+    /// `None`) and `recent` (the last 240 frames: `fps`, `total_ms` and `cpu_ms`
+    /// as `mean`/`p95`/`max`, `stage_ms` per stage, and how many `redraws` were
+    /// `nothing`, `full` or `partial`). `reset=True` clears the history after
+    /// reading it. Nothing is drawn, so nothing is recorded, before
+    /// `App.run()` opens the window.
+    #[pyo3(signature = (reset=false))]
+    fn frame_stats<'py>(&self, py: Python<'py>, reset: bool) -> PyResult<Bound<'py, PyDict>> {
+        let mut stats = self.handles.frame_stats.borrow_mut();
+        let dict = crate::frame_stats::stats_dict(py, &stats)?;
+        if reset {
+            stats.reset();
+        }
+        Ok(dict)
+    }
+
     /// Delivers a synthetic `event` exactly as real input would -- for
     /// headless tests. Pointer events aim at `node`'s center, at `x`/`y`
     /// local to `node`, or at window-space `x`/`y`; `shift`/`ctrl`/`alt`/

@@ -111,6 +111,8 @@ class Event:
     """`resize`: the window's new width."""
     height: float | None
     dark: bool | None
+    stats: dict[str, Any] | None
+    """`frame`: the frame's costs, as `Window.frame_stats()`'s `last`."""
     reduced_motion: bool | None
     """`reduced_motion`: whether the OS now asks for less motion."""
     high_contrast: bool | None
@@ -541,6 +543,18 @@ class Window:
         and layout at the new time -- headless tests, where `App.run()`
         renders no frames. The first call pins the window's clock at the
         real current time; `App.run()` returns it to the real clock."""
+        ...
+    def frame_stats(self, reset: bool = False) -> dict[str, Any]:
+        """(0.5.4) What this window's frames cost, as a dict: `frames` (drawn
+        since the window opened), `skipped` (passes that found nothing to draw),
+        `last` (the last frame's stages, redraw kind and node count, or `None`)
+        and `recent` (the last 240 frames: `fps`, `total_ms` and `cpu_ms` as
+        `mean`/`p95`/`max`, `stage_ms` per stage -- `tick`, `layout`, `prepare`,
+        `acquire`, `draw`, `present` -- and how many `redraws` were `nothing`,
+        `full` or `partial`). `acquire` and `present` are where the loop waits
+        for the display; `cpu_ms` is a frame without them. `reset=True` clears
+        the history after reading it. Nothing is recorded before `App.run()`
+        opens the window."""
         ...
     def snapshot(
         self,

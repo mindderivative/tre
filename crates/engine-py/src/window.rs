@@ -157,6 +157,8 @@ pub(crate) struct WindowHandles {
     pub(crate) touch: Rc<RefCell<crate::touch::TouchRouter>>,
     /// 0.5.4 (#114): files being dragged over, or just dropped on, this window.
     pub(crate) files: Rc<RefCell<crate::files::FileDrops>>,
+    /// 0.5.4 (#116): this window's recent frames' costs.
+    pub(crate) frame_stats: Rc<RefCell<crate::frame_stats::FrameStats>>,
     /// 0.5.0 M3: how many pixels along each edge resize an undecorated
     /// window; 0 for none.
     pub(crate) resize_border: Rc<Cell<f64>>,
@@ -287,6 +289,7 @@ impl PyWindow {
                 press_cancelled: Rc::new(Cell::new(false)),
                 touch: Rc::new(RefCell::new(crate::touch::TouchRouter::default())),
                 files: Rc::new(RefCell::new(crate::files::FileDrops::default())),
+                frame_stats: Rc::new(RefCell::new(crate::frame_stats::FrameStats::default())),
                 resize_border: Rc::new(Cell::new(0.0)),
                 last_drag_press: Rc::new(Cell::new(None)),
                 system_menu: Rc::new(Cell::new(false)),

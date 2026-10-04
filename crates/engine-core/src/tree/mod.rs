@@ -612,6 +612,11 @@ impl Tree {
     /// last one (`animations_started`); otherwise only the nodes that pass
     /// found animating are ticked, so the cost follows the animations, not
     /// the tree's size (0.5.4, #103).
+    /// 0.5.4 (#116): how many nodes the tree holds.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
     pub fn tick_all(&mut self, now: Instant) -> (bool, Vec<CompletionHandle>) {
         let mut completed = Vec::new();
         let started = crate::animation::animations_started();
