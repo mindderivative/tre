@@ -30,6 +30,7 @@ mod scale;
 mod shader;
 mod shaper;
 mod terminal;
+mod text_interaction;
 mod thread_bound;
 mod thread_handle;
 mod touch;
