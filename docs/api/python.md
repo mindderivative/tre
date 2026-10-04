@@ -357,6 +357,7 @@ What a listener receives when it takes one argument; never constructed directly.
 | `side` | `str \| None` | The dock zone under the pointer, or `None`. |
 | `path` | `str \| None` |  |
 | `paths` | `list[str] \| None` |  |
+| `href` | `str \| None` |  |
 | `pointer_id` | `int \| None` |  |
 | `phase` | `str \| None` |  |
 | `count` | `int \| None` |  |

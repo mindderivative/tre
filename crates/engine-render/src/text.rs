@@ -257,6 +257,15 @@ fn shape_text(
             };
             builder.push(StyleProperty::FontStyle(style), range.clone());
         }
+        if let Some(size) = span.font_size {
+            builder.push(StyleProperty::FontSize(size), range.clone());
+        }
+        if let Some(family) = &span.font_family {
+            builder.push(
+                StyleProperty::FontFamily(family_stack(family, &fallback)),
+                range.clone(),
+            );
+        }
         if span.underline {
             builder.push(StyleProperty::Underline(true), range.clone());
         }
@@ -1107,6 +1116,74 @@ impl TextRenderer {
             &state.options,
         );
         Cursor::from_point(layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index()
+    }
+
+    /// 0.5.4 (#131): the layout `draw` paints for a static text node, for the
+    /// point queries below.
+    fn static_layout(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: &TextPlacement,
+    ) -> &parley::Layout<[u8; 4]> {
+        self.shaped_layout(
+            node_id,
+            &state.content,
+            &state.font_family,
+            state.font_weight,
+            state.font_size,
+            at.max_width,
+            state.align,
+            state.line_height,
+            &[],
+            at.color,
+            &state.options,
+        )
+    }
+
+    /// 0.5.4 (#131): the byte offset of the character *under* `point` (a local
+    /// point in the node), or `None` when the point is past the text. Unlike
+    /// `hit_test_text`, which returns the nearest caret position (the right
+    /// half of a character is the offset after it), this is for asking what was
+    /// clicked: a link's last character.
+    pub fn text_offset_under(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+        point: Point,
+    ) -> Option<usize> {
+        let layout = self.static_layout(node_id, state, &at);
+        let (x, y) = ((point.x - at.x) as f32, (point.y - at.y) as f32);
+        if x < 0.0 || y < 0.0 || y > layout.height() {
+            return None;
+        }
+        let (cluster, _) = parley::Cluster::from_point(layout, x, y)?;
+        // `from_point` clamps to the nearest cluster on the line; past the
+        // end of the line is not "on" it.
+        let line = cluster.path().line(layout)?;
+        (x <= line.metrics().offset + line.metrics().advance).then(|| cluster.text_range().start)
+    }
+
+    /// 0.5.4 (#131): the bytes of the word (`lines == false`) or the visual
+    /// line (`lines == true`) at `point`, for a double or triple click.
+    pub fn text_range_at(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+        point: Point,
+        line: bool,
+    ) -> (usize, usize) {
+        let layout = self.static_layout(node_id, state, &at);
+        let (x, y) = ((point.x - at.x) as f32, (point.y - at.y) as f32);
+        let selection = if line {
+            Selection::line_from_point(layout, x, y)
+        } else {
+            Selection::word_from_point(layout, x, y)
+        };
+        let range = selection.text_range();
+        (range.start, range.end)
     }
 
     /// M15 Phase 1 (§5, §16.7): `draw`'s own real editable-field

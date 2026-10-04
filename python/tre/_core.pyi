@@ -150,6 +150,8 @@ class Event:
     """`file_hover`/`file_drop`: the first dragged file's path."""
     paths: list[str] | None
     """`file_hover`/`file_drop`: every dragged file's path."""
+    href: str | None
+    """`link`: the `link` string of the clicked text span."""
     pointer_id: int | None
     """`touch_start`/`touch_move`/`touch_end`/`touch_cancel`: which finger."""
     phase: str | None

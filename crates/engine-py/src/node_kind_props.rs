@@ -588,7 +588,8 @@ fn parse_known(
         }
         "spans" => {
             let expected = "a list of (start, end, style) tuples, each style a dict with any of \
-                            color, weight, italic, underline, strikethrough";
+                            color, weight, italic, underline, strikethrough, font_size, \
+                            font_family, link";
             let items: Vec<Bound<'_, PyAny>> =
                 value.extract().map_err(|_| invalid(name, expected))?;
             let mut spans = Vec::with_capacity(items.len());
@@ -619,12 +620,33 @@ fn parse_known(
                         "italic" => span.italic = Some(boolean(&v, name)?),
                         "underline" => span.underline = boolean(&v, name)?,
                         "strikethrough" => span.strikethrough = boolean(&v, name)?,
+                        "font_size" => {
+                            not_bool(&v, name, "a font size above 0")?;
+                            span.font_size = Some(
+                                v.extract::<f32>()
+                                    .ok()
+                                    .filter(|s| s.is_finite() && *s > 0.0)
+                                    .ok_or_else(|| invalid(name, "a font size above 0"))?,
+                            );
+                        }
+                        "font_family" => {
+                            span.font_family = Some(
+                                v.extract::<String>()
+                                    .map_err(|_| invalid(name, "a font family name (a str)"))?,
+                            );
+                        }
+                        "link" => {
+                            span.link = Some(
+                                v.extract::<String>()
+                                    .map_err(|_| invalid(name, "a link target (a str)"))?,
+                            );
+                        }
                         other => {
                             return Err(invalid(
                                 name,
                                 &format!(
-                                    "spans styled with color, weight, italic, underline or \
-                                     strikethrough, not {other:?}"
+                                    "spans styled with color, weight, italic, underline, \
+                                     strikethrough, font_size, font_family or link, not {other:?}"
                                 ),
                             ));
                         }
@@ -885,6 +907,15 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
                 }
                 if span.strikethrough {
                     style.set_item("strikethrough", true)?;
+                }
+                if let Some(size) = span.font_size {
+                    style.set_item("font_size", f64::from(size))?;
+                }
+                if let Some(family) = &span.font_family {
+                    style.set_item("font_family", family)?;
+                }
+                if let Some(link) = &span.link {
+                    style.set_item("link", link)?;
                 }
                 out.push((span.start, span.end, style));
             }

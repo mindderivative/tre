@@ -157,3 +157,100 @@ def test_the_selection_and_spans_are_in_the_text_nodes_snapshot_repeatably():
     window, node = text_window()
     node.set(selectable=True, selection=(0, 5), spans=[(0, 5, {"color": RED, "underline": True})])
     assert window.snapshot() == window.snapshot()
+
+
+# 0.5.4 (#131): links, per-span size and family, keyboard selection.
+
+
+def test_size_family_and_link_spans_read_back():
+    _, node = text_window()
+    spans = [
+        (0, 5, {"font_size": 40.0, "font_family": "Hack Nerd Font Mono"}),
+        (6, 11, {"link": "https://example.com", "underline": True}),
+    ]
+    node.set(spans=spans)
+    assert node.get("spans") == spans
+
+
+def test_bad_size_family_and_link_values_are_refused():
+    _, node = text_window()
+    for style in ({"font_size": 0}, {"font_size": -3}, {"font_size": True},
+                  {"font_size": "big"}, {"font_family": 3}, {"link": 3}):
+        with pytest.raises(ValueError):
+            node.set(spans=[(0, 5, style)])
+    assert node.get("spans") == []
+    with pytest.raises(ValueError, match="font_size, font_family or link"):
+        node.set(spans=[(0, 5, {"sparkle": True})])
+
+
+def test_a_size_span_changes_the_picture_and_a_link_alone_does_not():
+    window, node = text_window()
+    before = window.snapshot()
+    node.set(spans=[(0, 5, {"link": "x"})])
+    assert window.snapshot() == before
+    node.set(spans=[(0, 11, {"font_size": 14})])
+    assert ink(window) < ink(text_window()[0]) // 2
+
+
+def test_a_size_span_makes_its_line_taller():
+    window = Window(width=300, height=200)
+    window.root.set(fill=WHITE, padding=0, align_items="start")
+    node = window.create("text", text="Hello world", font_size=14, fill=(0, 0, 0, 255))
+    window.root.add_child(node)
+
+    def lowest_ink():
+        rgba, width, height = window.snapshot()
+        rows = [y for y in range(height) if any(
+            rgba[(y * width + x) * 4] < 128 for x in range(width))]
+        return max(rows)
+
+    small = lowest_ink()
+    node.set(spans=[(0, 5, {"font_size": 60})])
+    assert lowest_ink() > small + 20
+
+
+def test_a_link_event_reaches_listeners_with_its_href():
+    window, node = text_window()
+    node.set(spans=[(6, 11, {"link": "https://example.com/docs"})])
+    seen = []
+    node.on("link", lambda event: seen.append((event.type, event.href, event.target)))
+    window.simulate("link", node=node, href="https://example.com/docs")
+    assert len(seen) == 1
+    assert seen[0][:2] == ("link", "https://example.com/docs")
+    assert seen[0][2] == node
+
+
+def test_a_link_event_bubbles_to_a_container_and_needs_an_href():
+    window, node = text_window()
+    heard = []
+    window.root.on("link", lambda event: heard.append(event.href))
+    window.simulate("link", node=node, href="a")
+    assert heard == ["a"]
+    with pytest.raises(ValueError):
+        window.simulate("link", node=node)
+
+
+def test_href_is_none_on_other_events():
+    window = Window(width=100, height=100)
+    node = window.create("box", width=50, height=50)
+    window.root.add_child(node)
+    seen = []
+    node.on("click", lambda event: seen.append(event.href))
+    window.simulate("click", node=node)
+    assert seen == [None]
+
+
+def test_ctrl_a_and_shift_arrows_work_on_selected_static_text():
+    window, node = text_window("abcdef", selectable=True)
+    node.set(selection=(2, 2))
+    window.simulate("key_down", key="arrow_right", shift=True)
+    window.simulate("key_down", key="arrow_right", shift=True)
+    assert node.get("selection") == (2, 4)
+    window.simulate("key_down", key="arrow_left", shift=True)
+    assert node.get("selection") == (2, 3)
+    window.simulate("key_down", key="end", shift=True)
+    assert node.get("selection") == (2, 6)
+    window.simulate("key_down", key="home", shift=True)
+    assert node.get("selection") == (2, 0)
+    window.simulate("key_down", key="a", ctrl=True)
+    assert node.get("selection") == (0, 6)

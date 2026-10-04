@@ -187,6 +187,14 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   path's or text node's `fill`, by `stroke_color` (borders and path strokes) and
   by a canvas painter's `fill_rect`, `fill_circle` and `stroke_path`, each over
   the shape's own bounds.
+- **Links, per-span size and family, and more static-text selection.** A text
+  span takes `link` (a click fires a bubbling `link` event with `href`),
+  `font_size` and `font_family`; selectable text selects a word on double-click and
+  a line on triple-click, Ctrl+A and Shift+arrows work on it, and the pointer is an
+  I-beam over it and a hand over a link; see
+  [Rich text and selectable text](guide/text.md#rich-text-and-selectable-text).
+  Nothing changes for text with no link and no new span fields, except the I-beam
+  over selectable text.
 - **Colour filters.** `tre.Shader.filter(grayscale=1.0, ...)` is a ready-made
   effect shader for the CSS filter functions `saturate`, `brightness`, `contrast`,
   `grayscale`, `hue_rotate`, `invert` and `sepia`, applied in the order given; see

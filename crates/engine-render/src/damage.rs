@@ -1883,6 +1883,9 @@ fn options_fingerprint(h: &mut impl Hasher, options: &TextOptions) {
             italic,
             underline,
             strikethrough,
+            font_size,
+            font_family,
+            link,
         } = span;
         start.hash(h);
         end.hash(h);
@@ -1897,6 +1900,10 @@ fn options_fingerprint(h: &mut impl Hasher, options: &TextOptions) {
         italic.hash(h);
         underline.hash(h);
         strikethrough.hash(h);
+        font_size.map(f32::to_bits).hash(h);
+        font_family.hash(h);
+        // A link changes how the text answers a press, not how it looks.
+        let _ = link;
     }
 }
 

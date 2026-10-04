@@ -122,7 +122,8 @@ label.set(spans=[
 ```
 
 A style may set any of `color`, `weight` (an OpenType weight, 100 to 950),
-`italic`, `underline` and `strikethrough`; what it leaves out stays the node's
+`italic`, `underline`, `strikethrough`, `font_size` (pixels), `font_family` and
+`link`; what it leaves out stays the node's
 own, and a later span wins where two overlap. Offsets past the text, or inside a
 multi-byte character, are clamped, so a span survives a shorter `text`. Spans
 change the shape of the text (a heavier weight is wider), so the node's width
@@ -138,8 +139,28 @@ help_text.get("selection")              # (start, end) or None; equal ends are a
 help_text.set(selection=(0, 5))         # select from code; None clears
 ```
 
-Selected text shows the text colour at 30% behind it. One text holds a
-selection at a time, and a press anywhere else clears it. A selectable text
+**Links** (0.5.4). A span with a `link` makes its range clickable. A click (press
+and release on it, with no selection made between) fires a `link` event on the
+text node, which bubbles, and `event.href` is the span's `link` string. tre opens
+nothing and styles nothing: colour and underline the span yourself, and decide
+in the listener what `href` means. The pointer shows as a hand over a link
+(unless the node sets its own `cursor`), and text with a link takes pointer
+events, as selectable text does.
+
+```python
+label.set(spans=[(10, 14, {"link": "docs", "color": BLUE, "underline": True})])
+label.on("link", lambda event: open_page(event.href))
+```
+
+A span's `font_size` makes its line taller when it is larger than the rest, and
+`font_family` picks another face for the range.
+
+Selected text shows the text colour at 30% behind it. Double-click selects a
+word and triple-click a line. With a selection showing, Ctrl+A selects all of
+that text, and Shift+Left, Shift+Right, Shift+Home and Shift+End move the end
+of the selection a character, or to the start or end of the text. The pointer
+is an I-beam over selectable text, unless the node sets a `cursor`. One text
+holds a selection at a time, and a press anywhere else clears it. A selectable text
 claims the pointer events over its box, which plain text never does (so a label
 inside a button doesn't swallow the button's clicks): turn it on for text that
 stands alone. A text input's own selection is separate, and Copy takes the

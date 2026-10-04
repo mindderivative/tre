@@ -208,6 +208,9 @@ pub struct Event {
     pub(crate) path: Option<String>,
     #[pyo3(get)]
     pub(crate) paths: Option<Vec<String>>,
+    /// 0.5.4 (#131): `link`: the clicked span's `link` string.
+    #[pyo3(get)]
+    pub(crate) href: Option<String>,
     pub(crate) stopped: bool,
     pub(crate) cancelled: bool,
     pub(crate) cancellable: bool,
@@ -311,6 +314,7 @@ impl Event {
             velocity_y: None,
             path: None,
             paths: None,
+            href: None,
             stopped: false,
             cancelled: false,
             cancellable: false,

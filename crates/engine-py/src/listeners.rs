@@ -124,10 +124,12 @@ pub(crate) enum EventType {
     FileHover,
     FileHoverCancel,
     FileDrop,
+    /// 0.5.4 (#131): a click on a text span with a `link`; carries `href`.
+    Link,
 }
 
 impl EventType {
-    const ALL: [EventType; 29] = [
+    const ALL: [EventType; 30] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -157,6 +159,7 @@ impl EventType {
         Self::FileHover,
         Self::FileHoverCancel,
         Self::FileDrop,
+        Self::Link,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -190,6 +193,7 @@ impl EventType {
             Self::FileHover => "file_hover",
             Self::FileHoverCancel => "file_hover_cancel",
             Self::FileDrop => "file_drop",
+            Self::Link => "link",
         }
     }
 

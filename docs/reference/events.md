@@ -25,6 +25,7 @@ listing the valid ones.
 | `secondary_click` | Secondary press and release on the same node | yes |
 | `wheel` | A wheel or trackpad scroll | yes |
 | `file_hover`, `file_hover_cancel`, `file_drop` | Files dragged from the OS over, away from, or dropped on the node under the pointer; `paths` (0.5.4) | yes |
+| `link` | A click (press and release) on a text span that has a `link`; `href` is the span's link string. Not fired when the press became a selection (0.5.4) | yes |
 | `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | A finger touches the screen, moves, lifts, or is taken away by the system; each carries `pointer_id`, and a finger's events all go to the node it landed on (0.5.4) | yes |
 | `tap` | A quick touch and release in place; `count` is 2 for a second tap close to the first (0.5.4) | yes |
 | `long_press` | A touch held in place for half a second (0.5.4) | yes |
@@ -210,6 +211,7 @@ hardware; the Windows and macOS code is compiled for those targets and untested.
 | `stats` | `frame` — the frame's costs, the same dict as `window.frame_stats()["last"]` |
 | `maximized` / `active` | `maximized` / `active` — the window's new state |
 | `path`, `paths` | `file_hover`, `file_drop` — the dragged files' paths as `str`s; `path` is the first |
+| `href` | `link` — the clicked span's `link` string |
 | `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |
 | `panel` | `dock_drop` — the dragged panel |
 
@@ -242,6 +244,7 @@ window.simulate("resize", width=800, height=600)
 | `wheel` | `node` and/or `x`, `y`; `delta_x`, `delta_y` |
 | `pointer_leave` | — (the pointer leaves the window) |
 | `file_hover`, `file_drop` | `paths` (a list of str) or `path`; `node` and/or `x`, `y` for where they are over |
+| `link` | `node` and `href` (a `str`); delivers the event as a click on a link would |
 | `file_hover_cancel` | — |
 | `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | `node` and/or `x`, `y`; `id` (default 0) tells fingers apart |
 | `trackpad_pinch` | `node` and/or `x`, `y`; `delta` (a magnification step, `1 + delta` the scale to apply), `phase` (`"started"`, `"moved"` — the default — `"ended"`, `"cancelled"`) |

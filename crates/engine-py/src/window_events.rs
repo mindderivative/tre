@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 36] = [
+const SIMULATED_EVENTS: [&str; 37] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -54,6 +54,7 @@ const SIMULATED_EVENTS: [&str; 36] = [
     "file_hover",
     "file_hover_cancel",
     "file_drop",
+    "link",
     "click",
     "secondary_click",
     "wheel",
@@ -1553,6 +1554,15 @@ impl PyWindow {
                 }
                 listeners::deliver_a11y_action(&ctx, id, &action, value, py);
                 listeners::fire_scroll_changes(&ctx, py);
+            }
+            "link" => {
+                let id = need_node(&f)?;
+                let href = f.string("href")?;
+                let href = f.required("href", href)?;
+                f.done()?;
+                listeners::deliver(&ctx, py, listeners::EventType::Link, id, None, |e| {
+                    e.href = Some(href);
+                });
             }
             "change" => {
                 return Err(PyValueError::new_err(

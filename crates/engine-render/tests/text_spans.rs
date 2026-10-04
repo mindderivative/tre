@@ -306,3 +306,79 @@ fn a_selection_does_not_reshape_the_text() {
     };
     assert!(!a.same_layout(&c), "spans are layout");
 }
+
+/// The rightmost column with ink.
+fn right_edge(s: &engine_render::Snapshot) -> u32 {
+    (0..s.width)
+        .rev()
+        .find(|&x| (0..s.height).any(|y| s.rgba[((y * s.width + x) * 4 + 3) as usize] > 128))
+        .unwrap_or(0)
+}
+
+#[test]
+fn a_size_span_resizes_its_range() {
+    let plain = render("Hello world", vec![]);
+    let small = render(
+        "Hello world",
+        vec![TextSpan {
+            font_size: Some(14.0),
+            ..span(0, 11)
+        }],
+    );
+    let (plain_ink, _) = ink_in(&plain, 0, W);
+    let (small_ink, _) = ink_in(&small, 0, W);
+    assert!(small_ink * 2 < plain_ink, "{small_ink} vs {plain_ink}");
+    // And only its range: a small word followed by full-size ones.
+    let part = render(
+        "Hello world",
+        vec![TextSpan {
+            font_size: Some(14.0),
+            ..span(0, 5)
+        }],
+    );
+    let (all, _) = ink_in(&part, 0, W);
+    assert!(
+        all < plain_ink && all * 2 > plain_ink,
+        "{all} vs {plain_ink}"
+    );
+}
+
+#[test]
+fn a_family_span_changes_the_face_of_its_range() {
+    let text = "iiiiii iiiiii";
+    let plain = render(text, vec![]);
+    let mono = render(
+        text,
+        vec![TextSpan {
+            font_family: Some("Hack Nerd Font Mono".to_string()),
+            ..span(7, 13)
+        }],
+    );
+    // Monospaced 'i's are as wide as any glyph; Roboto's are narrow.
+    assert!(right_edge(&mono) > right_edge(&plain) + 15);
+}
+
+#[test]
+fn a_size_or_family_change_damages_the_text_and_a_link_does_not() {
+    let (mut tree, root) = tree("Hello world", vec![span(0, 5)]);
+    let mut text = TextRenderer::new();
+    let mut tracker = DamageTracker::new();
+    let (w, h) = (W as u16, H as u16);
+    assert_eq!(tracker.damage(&tree, root, w, h, &mut text), Damage::Full);
+    assert_eq!(tracker.damage(&tree, root, w, h, &mut text), Damage::None);
+    let set = |tree: &mut Tree, f: &dyn Fn(&mut TextSpan)| {
+        let NodeKind::Text(state) = &mut tree.get_mut(root).unwrap().kind else {
+            unreachable!()
+        };
+        f(&mut state.options.spans[0]);
+    };
+    set(&mut tree, &|s| s.font_size = Some(40.0));
+    assert_ne!(tracker.damage(&tree, root, w, h, &mut text), Damage::None);
+    set(&mut tree, &|s| {
+        s.font_family = Some("Hack Nerd Font Mono".into())
+    });
+    assert_ne!(tracker.damage(&tree, root, w, h, &mut text), Damage::None);
+    // A link changes nothing that is drawn.
+    set(&mut tree, &|s| s.link = Some("https://example.com".into()));
+    assert_eq!(tracker.damage(&tree, root, w, h, &mut text), Damage::None);
+}

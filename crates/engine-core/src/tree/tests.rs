@@ -6609,6 +6609,150 @@ mod static_selection {
     }
 
     #[test]
+    fn select_all_takes_the_whole_text_of_the_selected_node() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "héllo world");
+        assert!(!tree.select_all_static_text(), "nothing is selected yet");
+        tree.set_text_selection(id, 2, 2);
+        assert!(tree.select_all_static_text());
+        assert_eq!(tree.static_selected_text().as_deref(), Some("héllo world"));
+    }
+
+    #[test]
+    fn shift_arrows_home_and_end_move_the_focus_end_by_character() {
+        use crate::Key;
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "aéb");
+        tree.set_text_selection(id, 1, 1);
+        assert!(tree.extend_static_selection(Key::ArrowRight));
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("é"),
+            "a two-byte char at once"
+        );
+        assert!(tree.extend_static_selection(Key::ArrowRight));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("éb"));
+        assert!(
+            tree.extend_static_selection(Key::ArrowRight),
+            "at the end it stays"
+        );
+        assert_eq!(tree.static_selected_text().as_deref(), Some("éb"));
+        assert!(tree.extend_static_selection(Key::ArrowLeft));
+        assert!(tree.extend_static_selection(Key::ArrowLeft));
+        assert_eq!(tree.static_selected_text(), None, "back to the anchor");
+        tree.extend_static_selection(Key::ArrowLeft);
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("a"),
+            "past it, the other way"
+        );
+        tree.extend_static_selection(Key::End);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("éb"));
+        tree.extend_static_selection(Key::Home);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("a"));
+        assert!(
+            !tree.extend_static_selection(Key::ArrowUp),
+            "other keys are not ours"
+        );
+    }
+
+    #[test]
+    fn a_shifted_arrow_key_event_extends_the_selection_unless_an_input_is_focused() {
+        use crate::{InputEvent, Key};
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "abcdef");
+        tree.set_text_selection(id, 2, 2);
+        let key = |tree: &mut Tree, shift| {
+            tree.dispatch(
+                id,
+                InputEvent::KeyPressed {
+                    key: Key::ArrowRight,
+                    shift,
+                },
+                Instant::now(),
+            )
+        };
+        key(&mut tree, false);
+        assert_eq!(tree.static_selected_text(), None, "no shift, no extension");
+        key(&mut tree, true);
+        key(&mut tree, true);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("cd"));
+    }
+
+    #[test]
+    fn a_link_is_found_by_offset_and_the_last_overlapping_one_wins() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "Visit the docs now");
+        let link = |start, end, href: &str| crate::TextSpan {
+            start,
+            end,
+            link: Some(href.to_string()),
+            ..Default::default()
+        };
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.spans = vec![
+                link(0, 14, "outer"),
+                link(10, 14, "inner"),
+                crate::TextSpan {
+                    start: 5,
+                    end: 8,
+                    ..Default::default()
+                },
+            ];
+        }
+        assert_eq!(tree.text_link_at(id, 2), Some("outer"));
+        assert_eq!(tree.text_link_at(id, 10), Some("inner"));
+        assert_eq!(tree.text_link_at(id, 13), Some("inner"));
+        assert_eq!(tree.text_link_at(id, 14), None, "the end is exclusive");
+        assert_eq!(
+            tree.text_link_at(id, 6),
+            Some("outer"),
+            "a styling span adds no link of its own"
+        );
+    }
+
+    #[test]
+    fn text_with_a_link_takes_hits_and_plain_text_does_not() {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(60.0),
+                },
+                flex_direction: taffy::FlexDirection::Column,
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
+        );
+        let (linked, plain) = (text(&mut tree, "link"), text(&mut tree, "plain"));
+        tree.add_child(root, linked);
+        tree.add_child(root, plain);
+        if let NodeKind::Text(state) = &mut tree.get_mut(linked).unwrap().kind {
+            state.options.spans = vec![crate::TextSpan {
+                start: 0,
+                end: 4,
+                link: Some("x".into()),
+                ..Default::default()
+            }];
+        }
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(60.0),
+            },
+        );
+        assert_eq!(tree.hit_test(root, Point::new(5.0, 5.0)), Some(linked));
+        assert_eq!(
+            tree.hit_test(root, Point::new(5.0, 25.0)),
+            Some(root),
+            "plain text is decoration"
+        );
+    }
+
+    #[test]
     fn a_non_text_node_is_refused_and_a_selection_set_directly_can_be_adopted() {
         let mut tree = Tree::new();
         let (kind, style, paint) = leaf(10.0, 10.0);

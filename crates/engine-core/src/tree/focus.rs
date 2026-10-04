@@ -120,9 +120,11 @@ impl Tree {
                 // unaffected, a distinct `NodeKind` with its own real
                 // click-to-focus need.
                 // 0.5.4 (#112): unless it opted in to being selected, which
-                // needs the press to reach it.
+                // needs the press to reach it; (#131) or it holds a link.
                 NodeKind::Text(state) => {
-                    state.options.selectable && rect_contains(layout, local_point)
+                    (state.options.selectable
+                        || state.options.spans.iter().any(|s| s.link.is_some()))
+                        && rect_contains(layout, local_point)
                 }
                 _ => rect_contains(layout, local_point),
             }

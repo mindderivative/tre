@@ -182,12 +182,110 @@ fn terminal_hit_cell(
     }
 }
 
+/// The placement `draw_own` paints a text node's glyphs at (inside its padding).
+fn text_placement(tree: &Tree, id: NodeId) -> TextPlacement {
+    let layout = tree.layout(id);
+    let pad = layout.padding;
+    TextPlacement {
+        x: f64::from(pad.left),
+        y: f64::from(pad.top),
+        max_width: (layout.size.width - pad.left - pad.right).max(0.0),
+        color: peniko::Color::TRANSPARENT,
+    }
+}
+
+/// 0.5.4 (#131): the link under `local_point` in text node `hit`, if it has
+/// link spans and the point is on a character of one.
+fn link_under(
+    tree: &Rc<RefCell<Tree>>,
+    text_renderer: &mut TextRenderer,
+    hit: NodeId,
+    local_point: Point,
+) -> Option<String> {
+    let tree = tree.borrow();
+    let node = tree.get(hit)?;
+    let NodeKind::Text(state) = &node.kind else {
+        return None;
+    };
+    if !state.options.spans.iter().any(|s| s.link.is_some()) {
+        return None;
+    }
+    let at = text_placement(&tree, hit);
+    let offset = text_renderer.text_offset_under(hit, state, at, local_point)?;
+    tree.text_link_at(hit, offset).map(str::to_owned)
+}
+
+/// 0.5.4 (#131): the pointer shape text asks for under `position`: a pointer
+/// over a link, an I-beam over selectable text, else `None` (the node's own
+/// `cursor`, if it set one, is checked first by the caller).
+fn text_cursor_at(
+    tree: &Rc<RefCell<Tree>>,
+    text_renderer: &mut TextRenderer,
+    root: NodeId,
+    position: Point,
+) -> Option<Cursor> {
+    let (hit, local) = tree.borrow().hit_test_local(root, position)?;
+    let (own, selectable) = {
+        let tree = tree.borrow();
+        let node = tree.get(hit)?;
+        let NodeKind::Text(state) = &node.kind else {
+            return None;
+        };
+        (node.cursor, state.options.selectable)
+    };
+    if own.is_some() {
+        return None;
+    }
+    if link_under(tree, text_renderer, hit, local).is_some() {
+        return Some(Cursor::Pointer);
+    }
+    selectable.then_some(Cursor::Text)
+}
+
+/// A click that landed on a link span (0.5.4, #131).
+pub(crate) struct LinkClick {
+    pub(crate) node: NodeId,
+    pub(crate) href: String,
+    pub(crate) position: Point,
+}
+
+/// What `text_pointer_input` remembers between events about links and
+/// multi-clicks (0.5.4, #131).
+#[derive(Default)]
+pub(crate) struct TextClicks {
+    /// The link a primary press landed on, until its release.
+    link_press: Option<(NodeId, String)>,
+    /// The last primary press: when and where, and how many in a row.
+    last: Option<(std::time::Instant, Point, u8)>,
+}
+
+impl TextClicks {
+    /// Counts a primary press at `position`: 1, or 2 and 3 for presses in
+    /// quick succession on the same spot, then back to 1.
+    fn register(&mut self, now: std::time::Instant, position: Point) -> u8 {
+        const WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
+        const SLOP: f64 = 4.0;
+        let count = match self.last {
+            Some((at, was, n))
+                if now.saturating_duration_since(at) <= WINDOW
+                    && (position - was).hypot() <= SLOP =>
+            {
+                n % 3 + 1
+            }
+            _ => 1,
+        };
+        self.last = Some((now, position, count));
+        count
+    }
+}
+
 /// A real pointer press, move, or release over a text field or a terminal:
 /// click-to-position, drag-to-select, and the end of a drag. Needs the text
 /// renderer's font metrics, which `process_input` doesn't have, so it runs
 /// here, after it. Takes the tree, the root, and the two drag trackers
 /// rather than the whole window runtime, so a test can drive it without a
 /// window.
+#[allow(clippy::too_many_arguments)]
 fn text_pointer_input(
     event: &InputEvent,
     tree: &Rc<RefCell<Tree>>,
@@ -195,7 +293,10 @@ fn text_pointer_input(
     text: &mut TextRenderer,
     text_drag: &mut Option<NodeId>,
     terminal_drag: &mut Option<NodeId>,
-) {
+    clicks: &mut TextClicks,
+    now: std::time::Instant,
+) -> Option<LinkClick> {
+    let mut link_click = None;
     match *event {
         InputEvent::PointerPressed {
             position,
@@ -216,10 +317,22 @@ fn text_pointer_input(
             if !on_selectable {
                 tree.borrow_mut().clear_text_selection();
             }
+            let count = clicks.register(now, position);
+            clicks.link_press = hit
+                .and_then(|(id, point)| link_under(tree, text, id, point).map(|href| (id, href)));
             if let Some((hit, local_point)) = hit {
                 if let Some(offset) = static_text_hit_offset(tree, text, hit, local_point) {
-                    tree.borrow_mut().set_text_selection(hit, offset, offset);
-                    *text_drag = Some(hit);
+                    // 0.5.4 (#131): a double click selects the word, a triple
+                    // click the line; a single press starts a drag.
+                    if count >= 2 {
+                        let (start, end) =
+                            static_text_range(tree, text, hit, local_point, count >= 3)
+                                .unwrap_or((offset, offset));
+                        tree.borrow_mut().set_text_selection(hit, start, end);
+                    } else {
+                        tree.borrow_mut().set_text_selection(hit, offset, offset);
+                        *text_drag = Some(hit);
+                    }
                 } else if let Some(offset) = text_field_hit_offset(tree, text, hit, local_point) {
                     tree.borrow_mut().set_text_field_cursor(hit, offset);
                     // M18 Phase 2 (§8, §10): a real press
@@ -310,9 +423,45 @@ fn text_pointer_input(
             // selection_start`/`end` are untouched here),
             // only the drag-tracking itself ends.
             *terminal_drag = None;
+            // 0.5.4 (#131): a release on the link the press landed on is a
+            // click on it (a drag that selected text across it is not).
+            if let InputEvent::PointerReleased { position, .. } = *event
+                && let Some((node, href)) = clicks.link_press.take()
+            {
+                let still = tree.borrow().hit_test_local(root, position);
+                if let Some((hit, point)) = still
+                    && hit == node
+                    && link_under(tree, text, hit, point).as_deref() == Some(href.as_str())
+                    && tree.borrow().text_selected_text(node).is_none()
+                {
+                    link_click = Some(LinkClick {
+                        node,
+                        href,
+                        position,
+                    });
+                }
+            }
         }
         _ => {}
     }
+    link_click
+}
+
+/// 0.5.4 (#131): the word (or, `line`, the line) at `local_point` in selectable
+/// static text, as a byte range.
+fn static_text_range(
+    tree: &Rc<RefCell<Tree>>,
+    text_renderer: &mut TextRenderer,
+    hit: NodeId,
+    local_point: Point,
+    line: bool,
+) -> Option<(usize, usize)> {
+    let tree = tree.borrow();
+    let NodeKind::Text(state) = &tree.get(hit)?.kind else {
+        return None;
+    };
+    let at = text_placement(&tree, hit);
+    Some(text_renderer.text_range_at(hit, state, at, local_point, line))
 }
 
 struct GpuState {
@@ -747,6 +896,8 @@ struct WindowRuntime {
     /// `engine-render` can do (§4) -- `engine-core` structurally can't
     /// own this drag's own per-frame tracking.
     text_drag: Option<NodeId>,
+    /// 0.5.4 (#131): links pressed and the multi-click count, for static text.
+    text_clicks: TextClicks,
     /// M32 Phase 6 (§4, §5, §8): `text_drag`'s own real `Terminal`
     /// sibling -- which terminal (if any) a real press-and-drag is
     /// currently extending a real cell-range selection in. A separate
@@ -949,6 +1100,7 @@ impl App {
                         gpu,
                         opened: crate::clock::now(&setup.handles.tree),
                         text_drag: None,
+                        text_clicks: TextClicks::default(),
                         terminal_drag: None,
                         cursor: Cursor::Default,
                     },
@@ -1449,6 +1601,20 @@ impl App {
                     // 0.5.0 M3: the resize border's cursors come first.
                     let wanted = crate::dispatch::border_direction(&runtime.handles, *position)
                         .map(border_cursor)
+                        .or_else(|| {
+                            // 0.5.4 (#131): text asks for a pointer over a link and
+                            // an I-beam over selectable text, unless its node (or
+                            // a pointer capture) says otherwise.
+                            if runtime.handles.tree.borrow().pointer_capture().is_some() {
+                                return None;
+                            }
+                            text_cursor_at(
+                                &runtime.handles.tree,
+                                runtime.gpu.renderer.text(),
+                                runtime.handles.root,
+                                *position,
+                            )
+                        })
                         .unwrap_or_else(|| {
                             cursor_at(
                                 &runtime.handles.tree.borrow(),
@@ -1465,25 +1631,45 @@ impl App {
                 }
                 // Text-field and terminal pointer handling that needs the
                 // text renderer, which `process_input` has no access to.
-                text_pointer_input(
+                let mut link_clicks = Vec::new();
+                link_clicks.extend(text_pointer_input(
                     &event,
                     &runtime.handles.tree,
                     runtime.handles.root,
                     runtime.gpu.renderer.text(),
                     &mut runtime.text_drag,
                     &mut runtime.terminal_drag,
-                );
+                    &mut runtime.text_clicks,
+                    std::time::Instant::now(),
+                ));
                 // 0.5.4 (#113): the pointer events a finger stood in for reach
                 // text inputs the way a mouse's do.
                 let emulated = std::mem::take(&mut runtime.handles.touch.borrow_mut().emulated);
                 for pointer in &emulated {
-                    text_pointer_input(
+                    link_clicks.extend(text_pointer_input(
                         pointer,
                         &runtime.handles.tree,
                         runtime.handles.root,
                         runtime.gpu.renderer.text(),
                         &mut runtime.text_drag,
                         &mut runtime.terminal_drag,
+                        &mut runtime.text_clicks,
+                        std::time::Instant::now(),
+                    ));
+                }
+                // 0.5.4 (#131): the `link` events, after the click itself.
+                for click in link_clicks {
+                    listeners::deliver(
+                        &NodeContext {
+                            tree: &runtime.handles.tree,
+                            handlers: &runtime.handles.handlers,
+                            completions: &runtime.handles.completions,
+                        },
+                        py,
+                        listeners::EventType::Link,
+                        click.node,
+                        Some(click.position),
+                        |e| e.href = Some(click.href),
                     );
                 }
                 match event {
@@ -1941,7 +2127,16 @@ mod tests {
         drags: &mut (Option<engine_core::NodeId>, Option<engine_core::NodeId>),
     ) {
         let mut text = engine_render::TextRenderer::new();
-        super::text_pointer_input(&event, tree, root, &mut text, &mut drags.0, &mut drags.1);
+        super::text_pointer_input(
+            &event,
+            tree,
+            root,
+            &mut text,
+            &mut drags.0,
+            &mut drags.1,
+            &mut super::TextClicks::default(),
+            std::time::Instant::now(),
+        );
     }
 
     fn press(position: Point) -> engine_core::InputEvent {
@@ -2089,6 +2284,244 @@ mod tests {
             selectable,
             plain,
         )
+    }
+
+    /// 0.5.4 (#131): a 300x40 selectable text "Visit the docs now" whose
+    /// "docs" (bytes 10..14) is a link, and a plain one under it.
+    fn link_scene() -> (
+        std::rc::Rc<std::cell::RefCell<Tree>>,
+        engine_core::NodeId,
+        engine_core::NodeId,
+        engine_core::NodeId,
+    ) {
+        let (tree, root, linked, plain) = static_text_scene();
+        if let Some(NodeKind::Text(state)) = tree.borrow_mut().get_mut(linked).map(|n| &mut n.kind)
+        {
+            state.content = "Visit the docs now".to_string();
+            state.options.spans = vec![engine_core::TextSpan {
+                start: 10,
+                end: 14,
+                link: Some("https://example.com/docs".to_string()),
+                ..Default::default()
+            }];
+        }
+        (tree, root, linked, plain)
+    }
+
+    /// Runs `events` through `text_pointer_input` with one renderer and one
+    /// click tracker, returning the link clicks.
+    fn run(
+        events: &[engine_core::InputEvent],
+        tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
+        root: engine_core::NodeId,
+        clicks: &mut super::TextClicks,
+        drags: &mut (Option<engine_core::NodeId>, Option<engine_core::NodeId>),
+        start: std::time::Instant,
+    ) -> Vec<(engine_core::NodeId, String)> {
+        let mut text = engine_render::TextRenderer::new();
+        let mut out = Vec::new();
+        for (i, event) in events.iter().enumerate() {
+            let now = start + std::time::Duration::from_millis(10 * i as u64);
+            if let Some(click) = super::text_pointer_input(
+                event,
+                tree,
+                root,
+                &mut text,
+                &mut drags.0,
+                &mut drags.1,
+                clicks,
+                now,
+            ) {
+                out.push((click.node, click.href));
+            }
+        }
+        out
+    }
+
+    fn release(position: Point) -> engine_core::InputEvent {
+        engine_core::InputEvent::PointerReleased {
+            position,
+            button: engine_core::PointerButton::Primary,
+        }
+    }
+
+    /// Where "docs" is: a point inside it, found by the renderer itself.
+    fn on_docs(tree: &std::rc::Rc<std::cell::RefCell<Tree>>, id: engine_core::NodeId) -> Point {
+        let mut text = engine_render::TextRenderer::new();
+        (0..300)
+            .map(|x| Point::new(f64::from(x), 10.0))
+            .find(|p| super::link_under(tree, &mut text, id, *p).is_some())
+            .map(|p| Point::new(p.x + 3.0, p.y))
+            .expect("the link is somewhere on the line")
+    }
+
+    #[test]
+    fn a_press_and_release_on_a_link_clicks_it() {
+        let (tree, root, linked, _) = link_scene();
+        let at = on_docs(&tree, linked);
+        let clicks = run(
+            &[press(at), release(at)],
+            &tree,
+            root,
+            &mut super::TextClicks::default(),
+            &mut (None, None),
+            std::time::Instant::now(),
+        );
+        assert_eq!(
+            clicks,
+            vec![(linked, "https://example.com/docs".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_press_off_the_link_or_released_away_from_it_is_not_a_click() {
+        let (tree, root, linked, _) = link_scene();
+        let at = on_docs(&tree, linked);
+        let off = Point::new(2.0, 10.0);
+        let mut state = (super::TextClicks::default(), (None, None));
+        let now = std::time::Instant::now();
+        let a = run(
+            &[press(off), release(off)],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            now,
+        );
+        let b = run(
+            &[press(at), release(off)],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            now,
+        );
+        let c = run(
+            &[press(off), release(at)],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            now,
+        );
+        assert!(
+            a.is_empty() && b.is_empty() && c.is_empty(),
+            "{a:?} {b:?} {c:?}"
+        );
+    }
+
+    #[test]
+    fn dragging_a_selection_across_a_link_does_not_click_it() {
+        let (tree, root, linked, _) = link_scene();
+        let at = on_docs(&tree, linked);
+        let from = Point::new(2.0, 10.0);
+        let mut state = (super::TextClicks::default(), (None, None));
+        // Press on the link, drag left over text, release on the link.
+        let clicks = run(
+            &[
+                press(at),
+                engine_core::InputEvent::PointerMoved { position: from },
+                engine_core::InputEvent::PointerMoved { position: at },
+                release(at),
+            ],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            std::time::Instant::now(),
+        );
+        // The drag returned to where it started, so nothing is selected and
+        // it is a click; moving it somewhere else selects, which is not.
+        assert_eq!(clicks.len(), 1);
+        let clicks = run(
+            &[
+                press(at),
+                engine_core::InputEvent::PointerMoved { position: from },
+                release(at),
+            ],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        );
+        assert!(clicks.is_empty(), "a selection was made: {clicks:?}");
+        assert!(selection_of(&tree, linked).is_some());
+    }
+
+    #[test]
+    fn a_double_click_selects_a_word_and_a_triple_click_the_line() {
+        let (tree, root, linked, _) = link_scene();
+        let at = on_docs(&tree, linked);
+        let mut state = (super::TextClicks::default(), (None, None));
+        let now = std::time::Instant::now();
+        run(
+            &[press(at), release(at), press(at)],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            now,
+        );
+        let (a, b) = selection_of(&tree, linked).expect("a word is selected");
+        let content = "Visit the docs now";
+        assert_eq!(&content[a.min(b)..a.max(b)], "docs");
+        run(
+            &[release(at), press(at)],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            now + std::time::Duration::from_millis(30),
+        );
+        let (a, b) = selection_of(&tree, linked).expect("the line is selected");
+        assert_eq!((a.min(b), a.max(b)), (0, content.len()));
+    }
+
+    #[test]
+    fn clicks_far_apart_or_slow_count_from_one_again() {
+        let mut clicks = super::TextClicks::default();
+        let now = std::time::Instant::now();
+        let ms = std::time::Duration::from_millis;
+        let p = Point::new(10.0, 10.0);
+        assert_eq!(clicks.register(now, p), 1);
+        assert_eq!(clicks.register(now + ms(100), p), 2);
+        assert_eq!(clicks.register(now + ms(200), p), 3);
+        assert_eq!(clicks.register(now + ms(300), p), 1, "a fourth starts over");
+        assert_eq!(
+            clicks.register(now + ms(400), Point::new(60.0, 10.0)),
+            1,
+            "moved"
+        );
+        assert_eq!(
+            clicks.register(now + ms(2000), Point::new(60.0, 10.0)),
+            1,
+            "slow"
+        );
+    }
+
+    #[test]
+    fn text_asks_for_a_pointer_over_a_link_and_an_i_beam_over_selectable_text() {
+        let (tree, root, linked, plain) = link_scene();
+        let mut text = engine_render::TextRenderer::new();
+        let on_link = on_docs(&tree, linked);
+        let cursor = |p: Point, text: &mut engine_render::TextRenderer| {
+            super::text_cursor_at(&tree, text, root, p)
+        };
+        assert_eq!(
+            cursor(on_link, &mut text),
+            Some(engine_core::Cursor::Pointer)
+        );
+        assert_eq!(
+            cursor(Point::new(2.0, 10.0), &mut text),
+            Some(engine_core::Cursor::Text)
+        );
+        // The plain, unselectable text asks for nothing.
+        let _ = plain;
+        assert_eq!(cursor(Point::new(2.0, 50.0), &mut text), None);
+        // A node's own cursor wins.
+        tree.borrow_mut().get_mut(linked).unwrap().cursor = Some(engine_core::Cursor::Help);
+        assert_eq!(cursor(on_link, &mut text), None);
     }
 
     fn selection_of(

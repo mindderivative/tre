@@ -236,6 +236,20 @@ impl Tree {
                 outcome
             }
             InputEvent::KeyPressed { key, shift } => {
+                // 0.5.4 (#131): Shift+arrows, Home and End extend a selection
+                // in static text, unless a text input has the keys.
+                if shift
+                    && matches!(key, Key::ArrowLeft | Key::ArrowRight | Key::Home | Key::End)
+                    && !self.focused.is_some_and(|f| {
+                        matches!(
+                            self.nodes.get(f).map(|n| &n.kind),
+                            Some(NodeKind::TextField(_))
+                        )
+                    })
+                    && self.extend_static_selection(key)
+                {
+                    return DispatchOutcome::None;
+                }
                 // M15 Phase 2 (§8, §10): a focused `TextField` gets
                 // first refusal on most keys -- its own real "Enter"/
                 // "Space" meaning (insert a character) is genuinely

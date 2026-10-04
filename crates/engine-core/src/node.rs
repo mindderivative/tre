@@ -1014,6 +1014,15 @@ pub struct TextSpan {
     pub italic: Option<bool>,
     pub underline: bool,
     pub strikethrough: bool,
+    /// 0.5.4 (#131): the font size in pixels, for this range. A larger one
+    /// makes its line taller.
+    pub font_size: Option<f32>,
+    /// 0.5.4 (#131): the font family for this range.
+    pub font_family: Option<String>,
+    /// 0.5.4 (#131): makes the range a link: a click on it fires a `link`
+    /// event carrying this string. It adds no styling of its own: colour and
+    /// underline it with the other fields.
+    pub link: Option<String>,
 }
 
 impl Default for TextOptions {

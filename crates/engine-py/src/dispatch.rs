@@ -803,6 +803,9 @@ fn shortcuts(
             let focused = ctx.tree.borrow().focused();
             if let Some(field) = focused {
                 ctx.tree.borrow_mut().select_all_text_field(field);
+            } else {
+                // 0.5.4 (#131): with no input focused, the selected static text.
+                ctx.tree.borrow_mut().select_all_static_text();
             }
         }
         InputEvent::TerminalCopyRequested => {

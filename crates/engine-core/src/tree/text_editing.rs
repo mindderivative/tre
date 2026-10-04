@@ -784,6 +784,64 @@ impl Tree {
         self.dirty = true;
     }
 
+    /// 0.5.4 (#131): the link at byte `offset` of text node `id` (the last
+    /// span covering it that has one), if any.
+    pub fn text_link_at(&self, id: NodeId, offset: usize) -> Option<&str> {
+        let NodeKind::Text(state) = &self.nodes.get(id)?.kind else {
+            return None;
+        };
+        state
+            .options
+            .spans
+            .iter()
+            .rev()
+            .find(|s| s.link.is_some() && s.start <= offset && offset < s.end)
+            .and_then(|s| s.link.as_deref())
+    }
+
+    /// 0.5.4 (#131): Ctrl+A in static text: selects all of the text node that
+    /// owns the selection. `false` if none does.
+    pub fn select_all_static_text(&mut self) -> bool {
+        let Some(owner) = self.static_selection else {
+            return false;
+        };
+        let len = match self.nodes.get(owner).map(|n| &n.kind) {
+            Some(NodeKind::Text(state)) => state.content.len(),
+            _ => return false,
+        };
+        self.set_text_selection(owner, 0, len)
+    }
+
+    /// 0.5.4 (#131): Shift+Left, Shift+Right, Shift+Home or Shift+End in
+    /// static text: moves the selection's focus end one character (or to the
+    /// start or end of the text), keeping its anchor. `false` if no text node
+    /// owns a selection.
+    pub fn extend_static_selection(&mut self, key: crate::Key) -> bool {
+        let Some(owner) = self.static_selection else {
+            return false;
+        };
+        let Some(NodeKind::Text(state)) = self.nodes.get(owner).map(|n| &n.kind) else {
+            return false;
+        };
+        let content = &state.content;
+        let (anchor, focus) = state.options.selection.unwrap_or((0, 0));
+        let focus = Self::char_boundary(content, focus);
+        let moved = match key {
+            crate::Key::ArrowLeft => content[..focus]
+                .char_indices()
+                .next_back()
+                .map_or(0, |(i, _)| i),
+            crate::Key::ArrowRight => content[focus..]
+                .chars()
+                .next()
+                .map_or(focus, |c| focus + c.len_utf8()),
+            crate::Key::Home => 0,
+            crate::Key::End => content.len(),
+            _ => return false,
+        };
+        self.set_text_selection(owner, anchor, moved)
+    }
+
     /// The text a Copy of the static selection would take: `None` for no
     /// selection or an empty one.
     pub fn static_selected_text(&self) -> Option<String> {
