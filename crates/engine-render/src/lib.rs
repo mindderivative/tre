@@ -803,10 +803,7 @@ fn paint_shader_texture(
             region,
             true,
         ),
-        sampler: peniko::ImageSampler {
-            quality: peniko::ImageQuality::Medium,
-            ..Default::default()
-        },
+        sampler: image_sampler(),
     });
     scene.set_paint_transform(transform);
     scene.fill_rect(&Rect::new(0.0, 0.0, w, h));
@@ -1309,10 +1306,7 @@ fn draw_own(
                         source_region,
                         true,
                     ),
-                    sampler: peniko::ImageSampler {
-                        quality: peniko::ImageQuality::Medium,
-                        ..Default::default()
-                    },
+                    sampler: image_sampler(),
                 });
                 scene.set_paint_transform(transform);
                 scene.fill_rect(&transform.transform_rect_bbox(region));
@@ -1351,6 +1345,24 @@ fn draw_own(
             }
             scene.set_transform(composed);
         }
+    }
+}
+
+/// How every image and texture is sampled: bilinear, extended by *reflecting*.
+/// The renderer's bilinear sampler (`external_bilinear_sample`) takes its
+/// coordinates after `Pad` has clamped them to the last texel's index, then
+/// moves them half a texel back to find the texel centres, so the last
+/// column and row always blend with their neighbours (a 4x1 red, green, blue,
+/// white image ended in a 50/50 mix of white and blue). Reflecting leaves a
+/// coordinate inside the image as it is, so the edge is exact; every image
+/// is drawn only over its own rectangle, so no coordinate is ever outside it.
+/// (#148; remove once vello fixes `Pad`.)
+fn image_sampler() -> peniko::ImageSampler {
+    peniko::ImageSampler {
+        x_extend: peniko::Extend::Reflect,
+        y_extend: peniko::Extend::Reflect,
+        quality: peniko::ImageQuality::Medium,
+        ..Default::default()
     }
 }
 
@@ -1505,10 +1517,7 @@ fn paint_svg_image(image: &engine_core::SvgImage, scene: &mut Scene) {
     );
     scene.set_paint(vello_common::paint::Image {
         image: source,
-        sampler: peniko::ImageSampler {
-            quality: peniko::ImageQuality::Medium,
-            ..Default::default()
-        },
+        sampler: image_sampler(),
     });
     scene.set_paint_transform(Affine::scale_non_uniform(
         image.width / f64::from(bw),

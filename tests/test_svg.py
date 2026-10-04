@@ -354,13 +354,13 @@ RED_BLUE = bytes([255, 0, 0, 255, 0, 0, 255, 255] * 2)
 
 
 def test_a_supplied_image_is_drawn_scaled_into_its_box():
-    # 4x1: red, green, blue, white. Sampled at the middle of each texel (the
-    # right edge is avoided: `image` nodes blend their last texel there too).
+    # 4x1: red, green, blue, white.
     four = bytes([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255])
     window, node = shown(svg(PHOTO), svg_images={"photo.png": (four, 4, 1)})
     assert pixel(window, 10, 50) == RED
     assert pixel(window, 37, 50) == (0, 255, 0, 255)
     assert pixel(window, 62, 50) == BLUE
+    assert pixel(window, 90, 50) == (255, 255, 255, 255), "the last texel is not blended (#148)"
     assert node.get("svg_images") == {"photo.png": (four, 4, 1)}
 
 
