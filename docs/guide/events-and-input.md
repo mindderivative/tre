@@ -91,10 +91,20 @@ under the finger or an ancestor, the app has taken the pan and nothing scrolls.
 A second finger is a pinch's, not a second pointer. Each touch event comes first,
 then the pointer events it stands for, then the gesture it completes.
 
-Limits: a pan's velocity is reported but nothing keeps scrolling after the
-finger lifts (no momentum); there is no rotation gesture; and the engine's touch
-handling was written and tested with simulated touches (`window.simulate`),
-not on a touch screen.
+When the finger lifts mid-flick, the scroller it was dragging coasts on (0.5.4):
+its offset eases to rest on an exponential decay from the release velocity,
+stopping at the end of the content, and a finger landing on it, a wheel notch or
+a thumb drag catches it where it is. A flick slower than about 150 pixels a second
+does not coast, and an app that takes the pan with its own `pan` listener gets no
+coast either (its own code decides what a lift means; the `ended` event carries
+`velocity_x` and `velocity_y`). A trackpad or wheel with inertia of its own
+already sends its own steady stream of scroll events, so those are left alone.
+There is no overscroll bounce.
+
+Limits: there is no rotation gesture; and the engine's touch handling was written
+and tested with simulated touches (`window.simulate`), not on a touch screen, so
+the coast's friction is a considered default (a 0.35 second decay constant) that
+real fingers may want tuned.
 
 ## Files dragged from the OS
 

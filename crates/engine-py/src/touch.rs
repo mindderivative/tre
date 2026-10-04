@@ -127,6 +127,10 @@ fn touch(
         let mut r = router.borrow_mut();
         if phase == TouchPhase::Started {
             let target = hit(ctx, root, position);
+            // A finger landing on content that is coasting catches it.
+            if let Some(node) = target {
+                ctx.tree.borrow_mut().stop_scroll_animation(node);
+            }
             if r.targets.is_empty() {
                 r.primary = Some(id);
             }
@@ -352,6 +356,13 @@ fn deliver_gestures(
                     );
                     // The pan scrolls what is under the finger, unless the app
                     // listens for `pan` there and does its own thing.
+                    // Lifting the finger mid-flick lets the content coast on.
+                    if gesture.phase == GesturePhase::Ended && !listens_for_pan(ctx, target) {
+                        let now = crate::clock::now(ctx.tree);
+                        ctx.tree
+                            .borrow_mut()
+                            .fling_scroll(target, gesture.velocity, now);
+                    }
                     if matches!(gesture.phase, GesturePhase::Began | GesturePhase::Changed)
                         && !listens_for_pan(ctx, target)
                     {

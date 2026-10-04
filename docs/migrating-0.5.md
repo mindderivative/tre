@@ -216,3 +216,7 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   (stage times, redraw kind, damage, nodes, recent fps and percentiles), and a
   `frame` window event fires per frame; see [frame_stats](reference/window.md#frame_stats).
   Always on, a few clock reads a frame.
+- **Flicked scrollers coast.** Lifting a finger mid-flick on a scroll view or
+  virtual list lets it coast to rest (see [Touch and
+  gestures](guide/events-and-input.md#touch-and-gestures)), and an animation of
+  a scroll offset is now stopped by a manual scroll instead of fighting it.

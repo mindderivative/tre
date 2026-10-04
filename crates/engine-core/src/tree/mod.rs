@@ -604,6 +604,12 @@ impl Tree {
         {
             active = true;
         }
+        // 0.5.4 (#136): a virtual list's offset animates too (a fling).
+        if let NodeKind::VirtualList(state) = &mut node.kind
+            && state.scroll_offset.tick(now, completed)
+        {
+            active = true;
+        }
         active
     }
 

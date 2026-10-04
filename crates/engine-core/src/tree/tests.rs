@@ -6623,3 +6623,156 @@ mod static_selection {
         assert_eq!(tree.static_selected_text().as_deref(), Some("ab"));
     }
 }
+
+/// 0.5.4 (#136): momentum scrolling.
+mod momentum {
+    use super::*;
+    use crate::tree::scroll::fling_plan;
+    use std::time::Duration;
+
+    fn relayout(tree: &mut Tree, view: NodeId) {
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+    }
+
+    #[test]
+    fn a_plan_starts_at_the_flick_speed_and_ends_at_rest() {
+        let (distance, duration, k) = fling_plan(1000.0, 0.0, 1e9).expect("a fast flick coasts");
+        assert!(distance > 0.0);
+        // Initial speed of distance * f(x) with f(x) = (1 - e^-kx)/(1 - e^-k):
+        // f'(0) = k / (1 - e^-k), per second: / duration.
+        let initial = distance * (k / (1.0 - (-k).exp())) / duration.as_secs_f64();
+        assert!(
+            (initial - 1000.0).abs() < 1.0,
+            "starts at the flick speed: {initial}"
+        );
+        // Ends at the stop speed.
+        let end = distance * (k * (-k).exp() / (1.0 - (-k).exp())) / duration.as_secs_f64();
+        assert!((end - 30.0).abs() < 1.0, "ends at the stop speed: {end}");
+        assert!(duration > Duration::from_millis(500) && duration < Duration::from_secs(3));
+        // A faster flick goes further and lasts longer; direction is the sign.
+        let (faster, longer, _) = fling_plan(3000.0, 0.0, 1e9).unwrap();
+        assert!(faster > distance && longer > duration);
+        let (back, ..) = fling_plan(-1000.0, 5000.0, 1e9).unwrap();
+        assert_eq!(back, -distance);
+    }
+
+    #[test]
+    fn a_slow_flick_or_one_with_no_room_does_not_coast() {
+        assert!(
+            fling_plan(100.0, 0.0, 1000.0).is_none(),
+            "below the minimum"
+        );
+        assert!(fling_plan(f64::NAN, 0.0, 1000.0).is_none());
+        assert!(
+            fling_plan(1000.0, 500.0, 500.0).is_none(),
+            "already at the end"
+        );
+        assert!(
+            fling_plan(-1000.0, 0.0, 500.0).is_none(),
+            "already at the start"
+        );
+    }
+
+    #[test]
+    fn a_coast_that_would_pass_the_end_stops_there_sooner() {
+        let free = fling_plan(1000.0, 0.0, 1e9).unwrap();
+        let (distance, duration, _) = fling_plan(1000.0, 0.0, 100.0).unwrap();
+        assert!((distance - 100.0).abs() < 1e-9, "only the room there is");
+        assert!(duration < free.1, "and in less time");
+    }
+
+    #[test]
+    fn a_fling_animates_a_scroll_view_and_it_comes_to_rest_at_the_target() {
+        let (mut tree, view, _) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        let content = tree.get(view).unwrap().children[0];
+        let t0 = Instant::now();
+        // The finger moves up at 800 px/s: the content follows, toward the end.
+        assert!(tree.fling_scroll(content, peniko::kurbo::Vec2::new(0.0, -800.0), t0));
+        let offset = |tree: &Tree| match &tree.get(view).unwrap().kind {
+            NodeKind::ScrollView(state) => state.scroll.current,
+            _ => unreachable!(),
+        };
+        assert_eq!(offset(&tree), 0.0, "it has not moved yet");
+        tree.tick_all(t0 + Duration::from_millis(100));
+        let early = offset(&tree);
+        assert!(early > 20.0, "fast at first: {early}");
+        tree.tick_all(t0 + Duration::from_millis(300));
+        let later = offset(&tree);
+        assert!(later > early);
+        let (still, _) = tree.tick_all(t0 + Duration::from_secs(10));
+        assert!(!still, "it stops");
+        let rest = offset(&tree);
+        assert!(
+            rest > later && rest <= 300.0,
+            "at rest within the content: {rest}"
+        );
+    }
+
+    #[test]
+    fn a_fling_slows_down() {
+        let (mut tree, view, _) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        let content = tree.get(view).unwrap().children[0];
+        let t0 = Instant::now();
+        tree.fling_scroll(content, peniko::kurbo::Vec2::new(0.0, -1500.0), t0);
+        let at = |tree: &mut Tree, ms| {
+            tree.tick_all(t0 + Duration::from_millis(ms));
+            match &tree.get(view).unwrap().kind {
+                NodeKind::ScrollView(state) => state.scroll.current,
+                _ => unreachable!(),
+            }
+        };
+        let (a, b, c) = (at(&mut tree, 50), at(&mut tree, 100), at(&mut tree, 150));
+        assert!(b - a > c - b, "each step covers less than the one before");
+    }
+
+    #[test]
+    fn a_hand_on_the_content_stops_a_fling_where_it_is() {
+        let (mut tree, view, _) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        let content = tree.get(view).unwrap().children[0];
+        let t0 = Instant::now();
+        tree.fling_scroll(content, peniko::kurbo::Vec2::new(0.0, -1500.0), t0);
+        tree.tick_all(t0 + Duration::from_millis(100));
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            unreachable!()
+        };
+        let caught = state.scroll.current;
+        tree.stop_scroll_animation(content);
+        let (active, _) = tree.tick_all(t0 + Duration::from_millis(400));
+        assert!(!active);
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            unreachable!()
+        };
+        assert_eq!(
+            state.scroll.current, caught,
+            "it stayed where it was caught"
+        );
+
+        // A manual scroll also stops one in flight.
+        tree.fling_scroll(
+            content,
+            peniko::kurbo::Vec2::new(0.0, -1500.0),
+            t0 + Duration::from_secs(1),
+        );
+        tree.scroll_scroll_view_by(view, 5.0);
+        assert!(!tree.tick_all(t0 + Duration::from_secs(5)).0);
+    }
+
+    #[test]
+    fn nothing_scrolls_when_nothing_can_and_a_flick_toward_a_blocked_end_is_refused() {
+        let (mut tree, view, boxes) = view_over_boxes(&[100.0]);
+        let t0 = Instant::now();
+        // At the start, a finger moving down (content toward the start) can't scroll.
+        assert!(!tree.fling_scroll(boxes[0], peniko::kurbo::Vec2::new(0.0, 900.0), t0));
+        // A node that is in no scroller.
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let lone = tree.insert(kind, style, paint);
+        assert!(!tree.fling_scroll(lone, peniko::kurbo::Vec2::new(0.0, -900.0), t0));
+        relayout(&mut tree, view);
+    }
+}

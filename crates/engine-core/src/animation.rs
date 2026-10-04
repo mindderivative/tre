@@ -137,6 +137,12 @@ pub enum MotionCurve {
     /// M95: any CSS-style cubic bezier `(x1, y1, x2, y2)` -- the curve a
     /// framework passes as `easing`.
     Bezier(f64, f64, f64, f64),
+    /// 0.5.4 (#136): exponential decay, the shape of a flick coming to rest:
+    /// fast at the start, easing out with no overshoot. `k` is how many
+    /// time constants the animation spans: `(1 - e^(-k t)) / (1 - e^(-k))`
+    /// on `t` in `0..=1`, so a larger `k` is a harder stop. Only the engine
+    /// builds it (momentum scrolling); `k` must be above 0.
+    Decay(f64),
 }
 
 impl MotionCurve {
@@ -146,6 +152,7 @@ impl MotionCurve {
             MotionCurve::Bezier(x1, y1, x2, y2) => {
                 CubicSegment::standard(x1, y1, x2, y2).solve_y_for_x(t)
             }
+            MotionCurve::Decay(k) => (1.0 - (-k * t).exp()) / (1.0 - (-k).exp()),
         }
     }
 }
