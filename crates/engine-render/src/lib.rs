@@ -25,10 +25,12 @@
 mod damage;
 mod fonts;
 mod geometry_cache;
+mod gpu_timer;
 mod gpu_watch;
 mod image_cache;
 mod persistent_target;
 mod present;
+mod profile;
 mod shader_pass;
 mod snapshot;
 mod text;
@@ -49,10 +51,12 @@ pub use fonts::{
     system_fonts,
 };
 pub use geometry_cache::GeometryCache;
+pub use gpu_timer::{GpuTimer, required_features as gpu_timer_features};
 pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
 pub use present::{PresentChoice, linear_surface_format, transparent_alpha_mode};
+pub use profile::{FrameProfile, KindCost, NodeCost, SLOWEST as PROFILE_SLOWEST};
 pub use shader_pass::{ShaderPasses, ShaderTextures};
 pub use snapshot::{Snapshot, snapshot};
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
@@ -166,6 +170,7 @@ pub fn build_tree_scene(
         height,
         None,
         None,
+        None,
         &ShaderTextures::none(),
         None,
         1.0,
@@ -198,6 +203,7 @@ pub fn build_tree_scene_in(
         height,
         Some(rects),
         None,
+        None,
         &ShaderTextures::none(),
         None,
         1.0,
@@ -220,6 +226,7 @@ pub fn build_tree_scene_shaded(
     height: u16,
     rects: Option<&[Rect]>,
     extents: Option<Extents<'_>>,
+    profile: Option<&mut FrameProfile>,
     shaders: &ShaderTextures,
     scale: f64,
     resources: &mut Resources,
@@ -227,7 +234,8 @@ pub fn build_tree_scene_shaded(
     geometry: &mut GeometryCache,
 ) -> Scene {
     build_scene(
-        tree, root, width, height, rects, extents, shaders, None, scale, resources, text, geometry,
+        tree, root, width, height, rects, extents, profile, shaders, None, scale, resources, text,
+        geometry,
     )
 }
 
@@ -254,6 +262,7 @@ pub(crate) fn build_effect_content(
         height,
         None,
         None,
+        None,
         shaders,
         Some(node),
         scale,
@@ -271,6 +280,7 @@ fn build_scene(
     height: u16,
     rects: Option<&[Rect]>,
     extents: Option<Extents<'_>>,
+    profile: Option<&mut FrameProfile>,
     shaders: &ShaderTextures,
     effect_root: Option<NodeId>,
     scale: f64,
@@ -313,7 +323,19 @@ fn build_scene(
         depth: 0,
     };
     let base = Affine::scale(scale);
-    if effect_root.is_some() {
+    if let Some(profile) = profile {
+        // 0.5.4 (#135): the same walk, timing each node.
+        let mut timed = Profiled {
+            painter: &mut painter,
+            profile,
+            spent: Vec::new(),
+        };
+        if effect_root.is_some() {
+            walk::walk_root(tree, root, base, &mut timed);
+        } else {
+            walk::walk(tree, root, base, visible, &mut timed);
+        }
+    } else if effect_root.is_some() {
         walk::walk_root(tree, root, base, &mut painter);
     } else {
         walk::walk(tree, root, base, visible, &mut painter);
@@ -322,6 +344,43 @@ fn build_scene(
         scene.pop_layer();
     }
     scene
+}
+
+/// The paint walk with each node's own time added to a [`FrameProfile`]
+/// (0.5.4, #135): what it spends in `enter` and `leave`, which is the node's
+/// work without its children's.
+struct Profiled<'p, 'a> {
+    painter: &'p mut Painter<'a>,
+    profile: &'p mut FrameProfile,
+    /// The time each node entered and not yet left spent entering.
+    spent: Vec<std::time::Duration>,
+}
+
+impl<'t> walk::Visitor<'t> for Profiled<'_, '_> {
+    fn skip(&mut self, child: NodeId) -> bool {
+        self.painter.skip(child)
+    }
+
+    fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
+        let began = std::time::Instant::now();
+        let descend = self.painter.enter(v);
+        let took = began.elapsed();
+        if descend {
+            self.spent.push(took);
+        } else {
+            // Not entered, so never left: its time is complete.
+            self.profile.add(v.id, v.node.kind.name(), false, took);
+        }
+        descend
+    }
+
+    fn leave(&mut self, v: &walk::Visit<'t>) {
+        let drew = self.painter.open.last().is_some_and(|open| open.2);
+        let began = std::time::Instant::now();
+        self.painter.leave(v);
+        let took = began.elapsed() + self.spent.pop().unwrap_or_default();
+        self.profile.add(v.id, v.node.kind.name(), drew, took);
+    }
 }
 
 /// CSS Backgrounds and Borders Module Level 3's own real conversion,

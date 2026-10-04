@@ -10,6 +10,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | --- | --- |
 | [`App`](#app) | Opens and drives one or more windows together in one blocking `run()`. |
 | [`LoopHandle`](#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s loop. |
+| [`StatsHandle`](#statshandle) | Reads a window's frame statistics from any thread, without waiting for the loop. |
 | [`Window`](#window) | Owns a node tree and its size and title; creates nodes, shows layers, docks panels. |
 | [`Node`](#node) | A handle to one node in a window's tree: properties, animation, events, structure. |
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
@@ -48,6 +49,20 @@ The one thread-safe object: queues a callable onto a running `App`'s loop.
 | Method | Description |
 | --- | --- |
 | `call_soon(callback: Callable[[], object]) -> None` | Queues `callback` (called with no arguments) to run on the `App`'s event-loop thread, and wakes the loop. |
+
+**Events:** none.
+
+## StatsHandle { #statshandle }
+
+Reads a window's frame statistics from any thread, without waiting for the loop.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [StatsHandle reference](../reference/window.md#frame_stats)
+
+**Methods:**
+
+| Method | Description |
+| --- | --- |
+| `read(reset: bool=False) -> dict[str, Any]` | The dict `Window.frame_stats()` returns, except that `profile` is always `None` (it names `Node`s, which belong to the loop's… |
 
 **Events:** none.
 
@@ -105,12 +120,15 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `read_clipboard() -> str \| None` | Returns the OS clipboard's text, or `None` when there is none or it can't be reached. |
 | `resize(width: int, height: int) -> None` | Sets the window's size from code; the root's layout box follows. |
 | `restore() -> None` | Restores a minimized or maximized window to its normal size; before `App.run()`, undoes `minimize()`/`maximize()`. |
-| `set(*, title, partial_redraw, show_damage, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, dpi_scaling, transparent, blur_behind, click_through) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
+| `set(*, title, partial_redraw, show_damage, profile_nodes, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, dpi_scaling, transparent, blur_behind, click_through) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
 | `set_active_panel(side: str, index: int) -> None` | Shows the `index`th panel docked in `side`'s zone (was `set_active_tab`). |
 | `show_layer(node, anchor, placement, modal, dismissible) -> None` | Shows `node` over the window's content, above every layer already open. |
 | `simulate(event: str, node: Node \| None=None, **fields: Any) -> None` | Delivers a synthetic event as real input would, for tests with no display. |
 | `snapshot(width, height, scale, time) -> tuple[bytes, int, int]` | What the window draws, as `(rgba, width, height)`: straight-alpha RGBA8 bytes, `width * height * 4` of them, top row first. |
 | `start_panel_drag(panel: Node) -> None` | Starts dragging `panel`, a docked panel. |
+| `start_trace(path: str) -> None` | Writes every frame this window draws from now on to `path` as a Chrome / Perfetto trace (open it at ui.perfetto.dev or… |
+| `stats_handle() -> StatsHandle` | A handle any thread can use to read this window's frame statistics (`handle.read()`) without waiting for the event loop. |
+| `stop_trace() -> int` | Closes the trace `start_trace` opened and returns how many frames it holds (`0` if none is running). |
 | `undock_panel(panel: Node) -> None` | Takes `panel` out of docking. |
 | `write_clipboard(text: str) -> bool` | Puts `text` on the OS clipboard; `False` when it can't be reached (logged, never raised). |
 

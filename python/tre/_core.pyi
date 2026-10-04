@@ -40,6 +40,7 @@ __all__ = [
     "CursorImage",
     "Gradient",
     "LoopHandle",
+    "StatsHandle",
     "Shader",
     "ShaderError",
     "register_font",
@@ -397,6 +398,7 @@ class Window:
         title: str = ...,
         partial_redraw: bool = ...,
         show_damage: bool = ...,
+        profile_nodes: bool = ...,
         decorations: bool = ...,
         fullscreen: bool = ...,
         min_width: float = ...,
@@ -418,7 +420,10 @@ class Window:
         warning logged, whatever this says. (0.4.1) `show_damage`: `True`
         tints what each presented frame redrew -- its damage rects in
         magenta, a full redraw outlined in orange -- over the image, never
-        the kept frame; off by default. (0.5.0) `decorations`: whether the
+        the kept frame; off by default. (0.5.4) `profile_nodes`: `True` times each
+        node the paint walk reaches, so `frame_stats()['profile']` can say where
+        the scene-building time went; off by default (it costs two clock reads a
+        node). (0.5.0) `decorations`: whether the
         OS draws the title bar and borders, live on an open window;
         `fullscreen`: borderless on the window's monitor; `min_width` and
         `min_height`: the smallest size the user can resize it to, 0 for
@@ -474,6 +479,7 @@ class Window:
         self,
         name: Literal[
             "show_damage",
+            "profile_nodes",
             "decorations",
             "maximized",
             "minimized",
@@ -578,7 +584,27 @@ class Window:
         `full` or `partial`). `acquire` and `present` are where the loop waits
         for the display; `cpu_ms` is a frame without them. `reset=True` clears
         the history after reading it. Nothing is recorded before `App.run()`
-        opens the window."""
+        opens the window. Also (0.5.4): `gpu_timing` (whether the adapter can time
+        the GPU), a frame's `gpu_ms` (measured on one frame in sixteen and read back a few
+        frames later, so `None` for the rest) and `recent["gpu_ms"]` (their mean), and `profile`: with
+        `window.set(profile_nodes=True)`, the last frame's scene-building time by
+        node kind and its slowest nodes (else `None`)."""
+        ...
+    def stats_handle(self) -> StatsHandle:
+        """(0.5.4) A handle any thread can use to read this window's frame
+        statistics (`handle.read()`) without waiting for the event loop. Make
+        it on the loop's thread, then pass it on."""
+        ...
+    def start_trace(self, path: str) -> None:
+        """(0.5.4) Writes every frame this window draws from now on to `path` as a
+        Chrome / Perfetto trace (open it at ui.perfetto.dev or `chrome://tracing`):
+        a slice for each frame with its stages inside, and the GPU's time on a
+        second track once it is read back. Raises `OSError` if the file can't be
+        created and `ValueError` if a trace is already running."""
+        ...
+    def stop_trace(self) -> int:
+        """(0.5.4) Closes the trace `start_trace` opened and returns how many frames
+        it holds (`0` if none is running). Raises `OSError` if writing failed."""
         ...
     def snapshot(
         self,
@@ -698,6 +724,18 @@ class App:
         be set up (no adapter, no device, or an unsupported surface), or
         if no window was added.
         """
+        ...
+
+@final
+class StatsHandle:
+    """(0.5.4) A thread-safe reader of one window's frame statistics, from
+    `Window.stats_handle()`. Like `LoopHandle`, an object a background thread may
+    hold."""
+
+    def read(self, reset: bool = False) -> dict[str, Any]:
+        """The dict `Window.frame_stats()` returns, except that `profile` is always
+        `None` (it names `Node`s, which belong to the loop's thread). Does not
+        wait for the event loop. `reset=True` clears the history after reading."""
         ...
 
 @final

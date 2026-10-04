@@ -362,6 +362,57 @@ history after reading it, for measuring one interaction. Nothing is recorded bef
 For every frame as it happens, `window.on("frame", handler)` (`event.stats` is that
 frame's dict); it fires each frame, so keep the handler cheap.
 
+### GPU time
+
+Where the adapter supports timestamp queries (`stats["gpu_timing"]` says), the GPU's time
+is measured on one frame in sixteen (timing every frame costs the CPU about 0.3 ms a frame,
+as much as a small frame's whole cost): `gpu_ms` on those frames (`None` on the rest), and
+`recent["gpu_ms"]` as the mean over the frames that have it. The numbers are read back a few frames after the frame was drawn,
+without waiting for the GPU, so the newest frame's `gpu_ms` is `None` until its result
+arrives, and a frame that found every slot still in flight goes unmeasured rather than
+stall the loop. It times the frame's own submission (the scene's render, the copy to the
+screen, a scroll shift); a shader pass or an effect's offscreen render is submitted
+separately and is not in it.
+
+### Where the time went
+
+`window.set(profile_nodes=True)` times each node the paint walk reaches, so
+`stats["profile"]` can say where the scene-building time of the last frame went:
+
+```python
+window.set(profile_nodes=True)
+...
+p = window.frame_stats()["profile"]
+p["ms"], p["reached"]                       # all the nodes' time, and how many were reached
+p["by_kind"]["text"]                        # {"reached": 30, "drawn": 4, "ms": 0.42}
+for s in p["slowest"]:                      # the ten slowest nodes, slowest first
+    print(s["kind"], s["ms"], s["node"])    # the Node itself (None if it has since gone)
+```
+
+A node's time is its own (the walk's decision, its layers and its drawing, not its
+children's, which are nodes of their own). `drawn` counts those that drew themselves; the
+others were reached but fell outside what a partial redraw repaints. It is the CPU work of
+encoding the scene, not the GPU's, and costs two clock reads a node, so it is off by
+default; `stats["profile"]` is `None` while it is.
+
+### A trace for other tools
+
+`window.start_trace(path)` writes every frame the window draws from then on to `path`
+in the Chrome Trace Event Format, until `window.stop_trace()` (which returns how many
+frames it holds). Open the file at [ui.perfetto.dev](https://ui.perfetto.dev) or
+`chrome://tracing`: each frame is a slice with its stages (tick, layout, prepare,
+acquire, draw, present) inside it on the loop's track, and the GPU's time is a slice on a
+second track. The file is written as it goes, so a viewer can read one a crash cut short.
+`start_trace` raises `OSError` if the file can't be created and `ValueError` if a trace
+is already running.
+
+### From another thread
+
+A `Window` belongs to the thread that made it. `window.stats_handle()` (made on that
+thread) returns a `StatsHandle` that any thread can hold: `handle.read()` returns the same
+dict as `frame_stats()`, except that `profile` is always `None` (it names `Node`s). It
+does not wait for the event loop, so it works while the loop is busy.
+
 ## `snapshot`
 
 **`snapshot(width=None, height=None, scale=None, time=0.0)`** (0.5.4) returns

@@ -585,19 +585,7 @@ pub(crate) fn validate_rgba_frame_len(
 /// M97: `get("kind")` -- a node's kind by the name `window.create` takes
 /// it under.
 pub(crate) fn kind_id(kind: &NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Rect => "box",
-        NodeKind::Container => "container",
-        NodeKind::Text(_) => "text",
-        NodeKind::VirtualList(_) => "virtual_list",
-        NodeKind::Canvas(_) => "canvas",
-        NodeKind::TextField(_) => "text_input",
-        NodeKind::Image(_) => "image",
-        NodeKind::Path(_) => "path",
-        NodeKind::Svg(_) => "svg",
-        NodeKind::Terminal(_) => "terminal",
-        NodeKind::ScrollView(_) => "scroll_view",
-    }
+    kind.name()
 }
 
 fn type_name_of(value: &Bound<'_, PyAny>) -> String {

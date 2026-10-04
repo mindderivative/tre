@@ -13,6 +13,7 @@ the statistics are empty). See docs/reference/window.md.
 from tre import App, Window
 
 window = Window(width=320, height=200, title="tre -- frame stats")
+window.set(profile_nodes=True)
 card = window.create("box", width=120, height=80, x=100, y=60, position="absolute",
                      fill=(0x67, 0x50, 0xA4, 0xFF), corner_radius=16)
 window.root.add_child(card)
@@ -32,4 +33,10 @@ else:
           f"max {r['cpu_ms']['max']:.2f} ms")
     print("  stages (ms):", {k: round(v, 3) for k, v in r["stage_ms"].items()})
     print("  redraws:", r["redraws"], "| nodes:", stats["last"]["nodes"])
+    # GPU time (where the adapter can measure it) and, with profile_nodes on, where the
+    # scene-building time went.
+    print("  gpu (ms, mean):", stats["recent"]["gpu_ms"], "| timed:", stats["gpu_timing"])
+    profile = stats["profile"]
+    if profile:
+        print("  by node kind:", {k: round(v["ms"], 3) for k, v in profile["by_kind"].items()})
 print("frame_stats.py: exited cleanly")

@@ -122,6 +122,7 @@ fn scene_cost_follows_the_damage() {
                     } else {
                         None
                     },
+                    None,
                     &ShaderTextures::none(),
                     1.0,
                     frames.resources_mut(),

@@ -109,6 +109,9 @@ pub(crate) struct WindowHandles {
     /// 0.4.1 M8: `window.set(show_damage=True)` -- each presented frame
     /// shows what it redrew. Read every frame, like `partial_redraw`.
     pub(crate) show_damage: Rc<Cell<bool>>,
+    /// 0.5.4 (#135): `window.set(profile_nodes=True)` -- time each node the
+    /// paint walk reaches, for `frame_stats()['profile']`.
+    pub(crate) profile_nodes: Rc<Cell<bool>>,
     /// 0.5.0 M2 (issue #28): whether the OS draws the window's title bar
     /// and borders -- `Window(decorations=False)` or a live `set` turns them
     /// off for the framework to draw its own.
@@ -169,7 +172,7 @@ pub(crate) struct WindowHandles {
     /// 0.5.4 (#114): files being dragged over, or just dropped on, this window.
     pub(crate) files: Rc<RefCell<crate::files::FileDrops>>,
     /// 0.5.4 (#116): this window's recent frames' costs.
-    pub(crate) frame_stats: Rc<RefCell<crate::frame_stats::FrameStats>>,
+    pub(crate) frame_stats: crate::frame_stats::SharedStats,
     /// 0.5.0 M3: how many pixels along each edge resize an undecorated
     /// window; 0 for none.
     pub(crate) resize_border: Rc<Cell<f64>>,
@@ -284,6 +287,7 @@ impl PyWindow {
                 partial_redraw: Rc::new(Cell::new(true)),
                 surface_partial: Rc::new(Cell::new(None)),
                 show_damage: Rc::new(Cell::new(false)),
+                profile_nodes: Rc::new(Cell::new(false)),
                 decorations: Rc::new(Cell::new(decorations)),
                 transparent: Rc::new(Cell::new(false)),
                 transparent_active: Rc::new(Cell::new(None)),
@@ -305,7 +309,7 @@ impl PyWindow {
                 press_cancelled: Rc::new(Cell::new(false)),
                 touch: Rc::new(RefCell::new(crate::touch::TouchRouter::default())),
                 files: Rc::new(RefCell::new(crate::files::FileDrops::default())),
-                frame_stats: Rc::new(RefCell::new(crate::frame_stats::FrameStats::default())),
+                frame_stats: Default::default(),
                 resize_border: Rc::new(Cell::new(0.0)),
                 last_drag_press: Rc::new(Cell::new(None)),
                 system_menu: Rc::new(Cell::new(false)),

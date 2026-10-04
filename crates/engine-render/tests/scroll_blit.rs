@@ -948,3 +948,49 @@ fn random_tree_edits_match_a_full_draw() {
         }
     }
 }
+
+// 0.5.4 (#135): the paint walk can time each node it reaches.
+
+#[test]
+fn profiling_attributes_the_scene_time_by_kind_and_changes_no_pixel() {
+    let gpu = Gpu::new();
+    let world = scroll_world(12, Color::from_rgba8(20, 20, 24, 255), true);
+    let mut plain = Window::new(&gpu, 1.0);
+    plain.frame(&gpu, &world.tree, world.root, true);
+    let mut timed = Window::new(&gpu, 1.0);
+    timed.renderer.set_profiling(true);
+    timed.frame(&gpu, &world.tree, world.root, true);
+    assert_same(
+        &timed.pixels(&gpu),
+        &plain.pixels(&gpu),
+        plain.width.into(),
+        "profiling is only a clock",
+    );
+    let profile = timed.renderer.take_profile().expect("profiled");
+    let kinds: Vec<&str> = profile.by_kind.iter().map(|(k, _)| *k).collect();
+    for kind in ["container", "scroll_view", "box", "text"] {
+        assert!(kinds.contains(&kind), "{kind} in {kinds:?}");
+    }
+    let texts = profile
+        .by_kind
+        .iter()
+        .find(|(k, _)| *k == "text")
+        .unwrap()
+        .1;
+    assert!(texts.reached >= 4, "the visible rows' labels: {texts:?}");
+    assert!(profile.time > std::time::Duration::ZERO);
+    assert_eq!(
+        profile
+            .by_kind
+            .iter()
+            .map(|(_, c)| c.reached)
+            .sum::<usize>(),
+        profile.reached
+    );
+    assert!(profile.slowest.len() <= engine_render::PROFILE_SLOWEST);
+    assert!(profile.slowest.windows(2).all(|w| w[0].time >= w[1].time));
+    // Off again, a frame leaves no profile.
+    timed.renderer.set_profiling(false);
+    timed.frame(&gpu, &world.tree, world.root, true);
+    assert!(timed.renderer.take_profile().is_none());
+}

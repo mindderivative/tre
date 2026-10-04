@@ -62,6 +62,18 @@ is a complete one that polls with `os.stat`; an event-driven watcher
 (`watchfiles`, `watchdog`) calls `call_soon` from its own callback the same
 way.
 
+## Reading statistics from a thread
+
+`call_soon` is the way to *change* things from another thread. To *read* how the window is
+doing, `window.stats_handle()` (called on the loop's thread) returns a `StatsHandle`
+whose `read()` returns the dict `frame_stats()` does, from any thread, without waiting
+for the loop:
+
+```python
+stats = window.stats_handle()
+threading.Thread(target=lambda: print(stats.read()["recent"]["fps"]), daemon=True).start()
+```
+
 ## The rule, and what enforces it
 
 Using a `Window`, `Node`, or `App` from any thread but its own raises

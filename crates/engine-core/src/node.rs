@@ -97,6 +97,26 @@ pub enum NodeKind {
     ScrollView(ScrollViewState),
 }
 
+impl NodeKind {
+    /// The kind's name as `window.create` takes it (0.5.4, #135: one list, for
+    /// `get("kind")` and for statistics by kind).
+    pub fn name(&self) -> &'static str {
+        match self {
+            NodeKind::Rect => "box",
+            NodeKind::Container => "container",
+            NodeKind::Text(_) => "text",
+            NodeKind::VirtualList(_) => "virtual_list",
+            NodeKind::Canvas(_) => "canvas",
+            NodeKind::TextField(_) => "text_input",
+            NodeKind::Image(_) => "image",
+            NodeKind::Path(_) => "path",
+            NodeKind::Svg(_) => "svg",
+            NodeKind::Terminal(_) => "terminal",
+            NodeKind::ScrollView(_) => "scroll_view",
+        }
+    }
+}
+
 /// M30 Phase 9 Step 4 (§5, §8, §10): one real, already-VT-interpreted
 /// terminal cell -- a single real character plus its own real
 /// foreground/background color and bold attribute, the identical real

@@ -8,7 +8,17 @@
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
+
+/// A window's statistics, shared so that a handle on another thread can read
+/// them (0.5.4, #135) while the loop writes: every writer is the loop's own
+/// thread, one short lock a frame.
+pub(crate) type SharedStats = Arc<Mutex<FrameStats>>;
+
+pub(crate) fn lock(stats: &SharedStats) -> MutexGuard<'_, FrameStats> {
+    stats.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// How many drawn frames are kept for the summary.
 pub(crate) const KEPT: usize = 240;
@@ -54,6 +64,10 @@ pub(crate) struct FrameRecord {
     pub(crate) nodes: usize,
     /// The surface's size in pixels.
     pub(crate) size: (u32, u32),
+    /// 0.5.4 (#135): how long the GPU took on the frame's main submission,
+    /// where the adapter can say. It is read back a few frames later, so a
+    /// record has `None` until `FrameStats::set_gpu` fills it in.
+    pub(crate) gpu: Option<Duration>,
 }
 
 impl FrameRecord {
@@ -86,6 +100,8 @@ pub(crate) struct Summary {
     pub(crate) acquire_ms: f64,
     pub(crate) draw_ms: f64,
     pub(crate) present_ms: f64,
+    /// Mean GPU time over the kept frames that have it; `None` if none do.
+    pub(crate) gpu_ms: Option<f64>,
     pub(crate) redrew_nothing: usize,
     pub(crate) redrew_full: usize,
     pub(crate) redrew_partial: usize,
@@ -99,6 +115,13 @@ pub(crate) struct FrameStats {
     drawn: u64,
     /// Passes of the loop that drew nothing: nothing changed, no image taken.
     skipped: u64,
+    /// Whether the adapter can time the GPU (it does not change on reset).
+    gpu_timing: bool,
+    /// 0.5.4 (#135): the last profiled frame's node costs, and which frame.
+    profile: Option<(u64, engine_render::FrameProfile)>,
+    /// 0.5.4 (#135): a trace being written, and why one stopped on its own.
+    trace: Option<crate::trace::Trace>,
+    trace_error: Option<String>,
 }
 
 fn ms(d: Duration) -> f64 {
@@ -131,6 +154,11 @@ impl FrameStats {
             self.kept.pop_front();
         }
         self.kept.push_back(record);
+        if let Some(trace) = &mut self.trace
+            && let Err(why) = trace.frame(&record)
+        {
+            self.trace_failed(why);
+        }
         record
     }
 
@@ -147,7 +175,73 @@ impl FrameStats {
     }
 
     pub(crate) fn reset(&mut self) {
-        *self = Self::default();
+        *self = Self {
+            gpu_timing: self.gpu_timing,
+            // A trace goes on across a reset of the numbers.
+            trace: self.trace.take(),
+            trace_error: self.trace_error.take(),
+            ..Self::default()
+        };
+    }
+
+    pub(crate) fn set_gpu_timing(&mut self, available: bool) {
+        self.gpu_timing = available;
+    }
+
+    pub(crate) fn gpu_timing(&self) -> bool {
+        self.gpu_timing
+    }
+
+    /// Starts a trace on `out`. `false` if one is already running.
+    pub(crate) fn start_trace(
+        &mut self,
+        out: Box<dyn std::io::Write + Send>,
+    ) -> std::io::Result<bool> {
+        if self.trace.is_some() {
+            return Ok(false);
+        }
+        self.trace = Some(crate::trace::Trace::begin(out)?);
+        self.trace_error = None;
+        Ok(true)
+    }
+
+    /// Ends the trace: the frames it holds, or why it stopped earlier.
+    pub(crate) fn stop_trace(&mut self) -> std::io::Result<u64> {
+        if let Some(why) = self.trace_error.take() {
+            return Err(std::io::Error::other(why));
+        }
+        match self.trace.take() {
+            Some(trace) => trace.finish(),
+            None => Ok(0),
+        }
+    }
+
+    /// A write to the trace failed: it stops, and `stop_trace` says why.
+    fn trace_failed(&mut self, why: std::io::Error) {
+        self.trace = None;
+        self.trace_error = Some(why.to_string());
+    }
+
+    pub(crate) fn set_profile(&mut self, frame: u64, profile: engine_render::FrameProfile) {
+        self.profile = Some((frame, profile));
+    }
+
+    pub(crate) fn profile(&self) -> Option<&(u64, engine_render::FrameProfile)> {
+        self.profile.as_ref()
+    }
+
+    /// The GPU time of frame `index`, once it has been read back. A frame that
+    /// has left the kept history, or been reset away, is ignored.
+    pub(crate) fn set_gpu(&mut self, index: u64, gpu: Duration) {
+        if let Some(record) = self.kept.iter_mut().rev().find(|r| r.index == index) {
+            record.gpu = Some(gpu);
+            let record = *record;
+            if let Some(trace) = &mut self.trace
+                && let Err(why) = trace.gpu(&record, gpu)
+            {
+                self.trace_failed(why);
+            }
+        }
     }
 
     pub(crate) fn summary(&self) -> Summary {
@@ -175,7 +269,10 @@ impl FrameStats {
                 Redraw::Partial { .. } => partial += 1,
             }
         }
+        let gpus: Vec<f64> = self.kept.iter().filter_map(|r| r.gpu).map(ms).collect();
+        let gpu_ms = (!gpus.is_empty()).then(|| gpus.iter().sum::<f64>() / gpus.len() as f64);
         Summary {
+            gpu_ms,
             count: n,
             fps,
             total_ms: spread(self.kept.iter().map(|r| ms(r.total)).collect()),
@@ -193,6 +290,38 @@ impl FrameStats {
     }
 }
 
+/// 0.5.4 (#135): the way to read a window's statistics from another thread.
+/// `Window.stats_handle()` makes one on the loop's thread; any thread can then
+/// call `read()`, which does not wait for the loop (the statistics are shared
+/// and each frame takes one short lock to add itself). Like `LoopHandle` it is
+/// the one kind of `tre` object a background thread may hold.
+#[pyclass(frozen, name = "StatsHandle")]
+pub struct StatsHandle {
+    stats: SharedStats,
+}
+
+impl StatsHandle {
+    pub(crate) fn new(stats: SharedStats) -> Self {
+        Self { stats }
+    }
+}
+
+#[pymethods]
+impl StatsHandle {
+    /// The same dict as `Window.frame_stats()`, except that `profile` is always
+    /// `None` here: it names `Node`s, which belong to the loop's thread (read it
+    /// there). `reset=True` clears the history after reading it.
+    #[pyo3(signature = (reset=false))]
+    fn read<'py>(&self, py: Python<'py>, reset: bool) -> PyResult<Bound<'py, PyDict>> {
+        let mut stats = lock(&self.stats);
+        let dict = stats_dict(py, &stats)?;
+        if reset {
+            stats.reset();
+        }
+        Ok(dict)
+    }
+}
+
 /// A frame's costs as a Python dict, in milliseconds.
 pub(crate) fn record_dict<'py>(py: Python<'py>, r: &FrameRecord) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
@@ -205,6 +334,7 @@ pub(crate) fn record_dict<'py>(py: Python<'py>, r: &FrameRecord) -> PyResult<Bou
     d.set_item("present_ms", ms(r.present))?;
     d.set_item("total_ms", ms(r.total))?;
     d.set_item("cpu_ms", ms(r.cpu()))?;
+    d.set_item("gpu_ms", r.gpu.map(ms))?;
     let (redraw, rects, area) = match r.redraw {
         Redraw::Nothing => ("nothing", 0, 0.0),
         Redraw::Full => ("full", 1, 1.0),
@@ -234,6 +364,8 @@ pub(crate) fn stats_dict<'py>(py: Python<'py>, stats: &FrameStats) -> PyResult<B
     let d = PyDict::new(py);
     d.set_item("frames", stats.drawn())?;
     d.set_item("skipped", stats.skipped())?;
+    d.set_item("gpu_timing", stats.gpu_timing())?;
+    d.set_item("profile", py.None())?;
     match stats.last() {
         Some(last) => d.set_item("last", record_dict(py, last)?)?,
         None => d.set_item("last", py.None())?,
@@ -244,6 +376,7 @@ pub(crate) fn stats_dict<'py>(py: Python<'py>, stats: &FrameStats) -> PyResult<B
     recent.set_item("fps", s.fps)?;
     recent.set_item("total_ms", spread_dict(py, s.total_ms)?)?;
     recent.set_item("cpu_ms", spread_dict(py, s.cpu_ms)?)?;
+    recent.set_item("gpu_ms", s.gpu_ms)?;
     let stages = PyDict::new(py);
     stages.set_item("tick", s.tick_ms)?;
     stages.set_item("layout", s.layout_ms)?;
@@ -258,6 +391,56 @@ pub(crate) fn stats_dict<'py>(py: Python<'py>, stats: &FrameStats) -> PyResult<B
     redraws.set_item("partial", s.redrew_partial)?;
     recent.set_item("redraws", redraws)?;
     d.set_item("recent", recent)?;
+    Ok(d)
+}
+
+/// The last profiled frame as a Python dict (0.5.4, #135): the frame's number,
+/// how many nodes the paint walk reached and the time in them, the time
+/// `by_kind` and the `slowest` nodes, each as the `Node` itself while it is
+/// still in the tree.
+pub(crate) fn profile_dict<'py>(
+    py: Python<'py>,
+    handles: &crate::window::WindowHandles,
+    frame: u64,
+    profile: &engine_render::FrameProfile,
+) -> PyResult<Bound<'py, PyDict>> {
+    use crate::node::{Node, NodeState};
+    let d = PyDict::new(py);
+    d.set_item("frame", frame)?;
+    d.set_item("reached", profile.reached)?;
+    d.set_item("ms", ms(profile.time))?;
+    let kinds = PyDict::new(py);
+    for (kind, cost) in &profile.by_kind {
+        let k = PyDict::new(py);
+        k.set_item("reached", cost.reached)?;
+        k.set_item("drawn", cost.drawn)?;
+        k.set_item("ms", ms(cost.time))?;
+        kinds.set_item(kind, k)?;
+    }
+    d.set_item("by_kind", kinds)?;
+    let slowest = pyo3::types::PyList::empty(py);
+    for cost in &profile.slowest {
+        let n = PyDict::new(py);
+        let alive = handles.tree.borrow().get(cost.id).is_some();
+        if alive {
+            n.set_item(
+                "node",
+                Node::from(NodeState {
+                    id: cost.id,
+                    tree: handles.tree.clone(),
+                    handlers: handles.handlers.clone(),
+                    completions: handles.completions.clone(),
+                }),
+            )?;
+        } else {
+            n.set_item("node", py.None())?;
+        }
+        n.set_item("kind", cost.kind)?;
+        n.set_item("drawn", cost.drawn)?;
+        n.set_item("ms", ms(cost.time))?;
+        slowest.append(n)?;
+    }
+    d.set_item("slowest", slowest)?;
     Ok(d)
 }
 
@@ -304,6 +487,7 @@ mod tests {
             shader_passes: 0,
             nodes: 10,
             size: (100, 100),
+            gpu: None,
         }
     }
 

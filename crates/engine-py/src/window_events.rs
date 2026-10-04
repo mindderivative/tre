@@ -247,7 +247,7 @@ impl PyWindow {
 }
 
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
-const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
+const SETTABLE: &str = "title, partial_redraw, show_damage, profile_nodes, decorations, fullscreen, \
     min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
     dpi_scaling, transparent, blur_behind, click_through";
 
@@ -646,6 +646,7 @@ impl PyWindow {
         let mut title = None;
         let mut partial_redraw = None;
         let mut show_damage = None;
+        let mut profile_nodes = None;
         let mut decorations = None;
         let mut fullscreen = None;
         let (mut min_width, mut min_height) = (None, None);
@@ -675,6 +676,11 @@ impl PyWindow {
                     "show_damage" => {
                         show_damage = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `show_damage` must be a bool")
+                        })?);
+                    }
+                    "profile_nodes" => {
+                        profile_nodes = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `profile_nodes` must be a bool")
                         })?);
                     }
                     "decorations" => {
@@ -749,6 +755,9 @@ impl PyWindow {
         }
         if let Some(on) = show_damage {
             self.handles.show_damage.set(on);
+        }
+        if let Some(on) = profile_nodes {
+            self.handles.profile_nodes.set(on);
         }
         if let Some(on) = decorations {
             if let Some(window) = self.handles.os_window.borrow().as_ref() {
@@ -1040,6 +1049,14 @@ impl PyWindow {
                 .to_owned()
                 .into_any()
                 .unbind(),
+            "profile_nodes" => self
+                .handles
+                .profile_nodes
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "partial_redraw_active" => self
                 .handles
                 .surface_partial
@@ -1081,7 +1098,7 @@ impl PyWindow {
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
-                     scale_factor, dark, reduced_motion, high_contrast, partial_redraw, partial_redraw_active, show_damage, \
+                     scale_factor, dark, reduced_motion, high_contrast, partial_redraw, partial_redraw_active, show_damage, profile_nodes, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
                      native_controls, gpu_watchdog, present_mode, dpi_scaling, transparent, \
@@ -1197,12 +1214,52 @@ impl PyWindow {
     /// `App.run()` opens the window.
     #[pyo3(signature = (reset=false))]
     fn frame_stats<'py>(&self, py: Python<'py>, reset: bool) -> PyResult<Bound<'py, PyDict>> {
-        let mut stats = self.handles.frame_stats.borrow_mut();
+        let mut stats = crate::frame_stats::lock(&self.handles.frame_stats);
         let dict = crate::frame_stats::stats_dict(py, &stats)?;
+        if let Some((frame, profile)) = stats.profile() {
+            dict.set_item(
+                "profile",
+                crate::frame_stats::profile_dict(py, &self.handles, *frame, profile)?,
+            )?;
+        }
         if reset {
             stats.reset();
         }
         Ok(dict)
+    }
+
+    /// 0.5.4 (#135): a handle any thread can use to read this window's frame
+    /// statistics (`handle.read()`, the dict `frame_stats()` returns) without
+    /// waiting for the event loop. Make it on the loop's thread, then pass it
+    /// on.
+    fn stats_handle(&self) -> crate::frame_stats::StatsHandle {
+        crate::frame_stats::StatsHandle::new(self.handles.frame_stats.clone())
+    }
+
+    /// 0.5.4 (#135): writes every frame this window draws from now on to `path`
+    /// as a Chrome / Perfetto trace (open it at ui.perfetto.dev or
+    /// `chrome://tracing`): a slice for each frame with its stages (tick,
+    /// layout, prepare, acquire, draw, present) inside, and the GPU's time on a
+    /// second track once the adapter has read it back. Raises `OSError` if
+    /// the file can't be created and `ValueError` if a trace is already
+    /// running. `stop_trace()` closes it.
+    fn start_trace(&self, path: &str) -> PyResult<()> {
+        let file = std::fs::File::create(path)?;
+        let started = crate::frame_stats::lock(&self.handles.frame_stats)
+            .start_trace(Box::new(std::io::BufWriter::new(file)))?;
+        if !started {
+            return Err(PyValueError::new_err(
+                "a trace is already running -- stop_trace() first",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Closes the trace `start_trace` opened and returns how many frames it
+    /// holds; `0` if none is running. Raises `OSError` if writing to the file
+    /// failed (the trace stopped when it did).
+    fn stop_trace(&self) -> PyResult<u64> {
+        Ok(crate::frame_stats::lock(&self.handles.frame_stats).stop_trace()?)
     }
 
     /// Delivers a synthetic `event` exactly as real input would -- for

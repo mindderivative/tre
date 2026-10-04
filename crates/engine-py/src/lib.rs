@@ -33,6 +33,7 @@ mod terminal;
 mod thread_bound;
 mod thread_handle;
 mod touch;
+mod trace;
 mod window;
 mod window_docking;
 mod window_events;
@@ -64,6 +65,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<cursor_image::PyCursorImage>()?;
     m.add_class::<Event>()?;
     m.add_class::<LoopHandle>()?;
+    m.add_class::<frame_stats::StatsHandle>()?;
     m.add_class::<Shader>()?;
     m.add("ShaderError", m.py().get_type::<shader::ShaderError>())?;
     m.add_function(wrap_pyfunction!(register_font, m)?)?;

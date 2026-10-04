@@ -343,6 +343,8 @@ struct GpuState {
     present_modes: Vec<wgpu::PresentMode>,
     /// 0.5.4 (#137): whether the surface blends with what is behind the window.
     transparent_active: bool,
+    /// 0.5.4 (#135): times each frame's GPU work, where the device can.
+    timer: Option<engine_render::GpuTimer>,
 }
 
 impl GpuState {
@@ -374,7 +376,8 @@ impl GpuState {
         .map_err(|err| format!("no GPU adapter available: {err}"))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("engine-py app device"),
-            required_features: wgpu::Features::empty(),
+            // 0.5.4 (#135): timestamp queries, where the adapter has them.
+            required_features: adapter.features() & engine_render::gpu_timer_features(),
             ..Default::default()
         }))
         .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
@@ -430,6 +433,7 @@ impl GpuState {
         }
         surface.configure(&device, &config);
         let renderer = WindowRenderer::new(&device, config.format, width, height, copyable);
+        let timer = engine_render::GpuTimer::new(&device, &queue);
 
         Ok(Self {
             instance,
@@ -443,6 +447,7 @@ impl GpuState {
             present,
             present_modes: capabilities.present_modes,
             transparent_active,
+            timer,
         })
     }
 
@@ -1142,7 +1147,7 @@ impl App {
                 // still gets the kept frame presented again -- the surface
                 // image may have lost it -- where there is a kept frame.
                 if !changed && !(os_requested && runtime.gpu.renderer.has_persistent_target()) {
-                    runtime.handles.frame_stats.borrow_mut().skipped_one();
+                    crate::frame_stats::lock(&runtime.handles.frame_stats).skipped_one();
                     return any_active;
                 }
                 let after_tick = Instant::now();
@@ -1189,6 +1194,10 @@ impl App {
                 if fonts_changed {
                     runtime.gpu.renderer.reset();
                 }
+                runtime
+                    .gpu
+                    .renderer
+                    .set_profiling(runtime.handles.profile_nodes.get());
                 let damage = {
                     let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;
@@ -1210,7 +1219,7 @@ impl App {
                 // is kept: its wait for the display is what paces the loop,
                 // which would otherwise spin through unchanged frames.
                 if damage == engine_render::Damage::None && !os_requested && !any_active {
-                    runtime.handles.frame_stats.borrow_mut().skipped_one();
+                    crate::frame_stats::lock(&runtime.handles.frame_stats).skipped_one();
                     return any_active;
                 }
 
@@ -1250,6 +1259,11 @@ impl App {
                     .gpu
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                let frame_number =
+                    crate::frame_stats::lock(&runtime.handles.frame_stats).drawn() + 1;
+                if let Some(timer) = &mut runtime.gpu.timer {
+                    timer.begin(&mut encoder, frame_number);
+                }
                 {
                     let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;
@@ -1266,8 +1280,21 @@ impl App {
                         &view,
                     );
                 }
+                if let Some(timer) = &mut runtime.gpu.timer {
+                    timer.end(&mut encoder);
+                }
                 runtime.gpu.queue.submit([encoder.finish()]);
                 runtime.gpu.watch.submitted(&runtime.gpu.queue);
+                // 0.5.4 (#135): GPU times of earlier frames that have arrived.
+                if let Some(timer) = &mut runtime.gpu.timer {
+                    timer.submitted();
+                    let finished = timer.collect(&runtime.gpu.device);
+                    let mut stats = crate::frame_stats::lock(&runtime.handles.frame_stats);
+                    stats.set_gpu_timing(true);
+                    for (frame, took) in finished {
+                        stats.set_gpu(frame, took);
+                    }
+                }
                 // 0.4.1 M8: what this frame redrew, over the image but never
                 // the kept frame; its own submit, after the frame's.
                 if runtime.handles.show_damage.get() {
@@ -1317,8 +1344,14 @@ impl App {
                     shader_passes: runtime.gpu.renderer.shader_pass_count(),
                     nodes: runtime.handles.tree.borrow().node_count(),
                     size: (u32::from(width), u32::from(height)),
+                    gpu: None,
                 };
-                let record = runtime.handles.frame_stats.borrow_mut().drew(record);
+                let mut stats = crate::frame_stats::lock(&runtime.handles.frame_stats);
+                let record = stats.drew(record);
+                if let Some(profile) = runtime.gpu.renderer.take_profile() {
+                    stats.set_profile(record.index, profile);
+                }
+                drop(stats);
                 // A listener on the window's `frame` event hears each one.
                 crate::frame_stats::announce(&runtime.handles, &record, py);
                 any_active

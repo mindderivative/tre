@@ -42,6 +42,10 @@ pub struct WindowRenderer {
     shift: Option<Shift>,
     /// The shift the last frame used, for statistics and tests.
     last_shift: Option<Shift>,
+    /// 0.5.4 (#135): whether to time each node the paint walk reaches, and the
+    /// last frame's result.
+    profiling: bool,
+    profile: Option<crate::FrameProfile>,
     /// 0.5.1 (#67): the window's clock, for shaders that read `frame.time`.
     time: f32,
     /// 0.5.4 (#102): the display scale. Layout is in logical pixels; this
@@ -83,6 +87,8 @@ impl WindowRenderer {
             tracker: DamageTracker::new(),
             shift: None,
             last_shift: None,
+            profiling: false,
+            profile: None,
             time: 0.0,
             scale: 1.0,
         }
@@ -191,6 +197,20 @@ impl WindowRenderer {
         self.tracker.set_scroll_blit_min_nodes(nodes);
     }
 
+    /// Turns the per-node timing of the paint walk on or off (default off:
+    /// it costs two clock reads a node).
+    pub fn set_profiling(&mut self, on: bool) {
+        self.profiling = on;
+        if !on {
+            self.profile = None;
+        }
+    }
+
+    /// What the last `draw` spent per node, when profiling was on for it.
+    pub fn take_profile(&mut self) -> Option<crate::FrameProfile> {
+        self.profile.take()
+    }
+
     /// The scroll shift the last `prepare` found and `draw` applied, if any.
     pub fn last_shift(&self) -> Option<Shift> {
         self.last_shift
@@ -251,6 +271,8 @@ impl WindowRenderer {
                 &mut self.geometry,
             ),
         };
+        // 0.5.4 (#135): when asked, time each node the paint walk reaches.
+        let mut profile = self.profiling.then(crate::FrameProfile::default);
         let scene = match damage {
             // Nothing changed: the kept frame is copied as it is.
             Damage::None => None,
@@ -261,6 +283,7 @@ impl WindowRenderer {
                 height,
                 rects,
                 self.tracker.extents(),
+                profile.as_mut(),
                 &shaders,
                 self.scale,
                 self.frame_renderer.resources_mut(),
@@ -268,6 +291,7 @@ impl WindowRenderer {
                 &mut self.geometry,
             )),
         };
+        self.profile = profile;
         let view = self
             .target
             .as_ref()
