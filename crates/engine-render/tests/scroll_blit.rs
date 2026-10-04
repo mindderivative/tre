@@ -994,3 +994,163 @@ fn profiling_attributes_the_scene_time_by_kind_and_changes_no_pixel() {
     timed.frame(&gpu, &world.tree, world.root, true);
     assert!(timed.renderer.take_profile().is_none());
 }
+
+// 0.5.4 (#127): text drawn from the glyph cache.
+
+/// A fresh renderer's full draw of `tree`, with the glyph cache on or off.
+fn fresh_cached(gpu: &Gpu, scale: f64, tree: &Tree, root: NodeId, cache: bool) -> Vec<u8> {
+    let mut window = Window::new(gpu, scale);
+    window.renderer.set_glyph_cache(cache);
+    window.frame(gpu, tree, root, false);
+    window.pixels(gpu)
+}
+
+/// Mean of each `block` x `block` square of the first channel's brightness
+/// (padding ignored): text blurred enough to compare where it is and not how
+/// its edges fell.
+fn blocks(pixels: &[u8], width: u32, height: u32, block: usize) -> Vec<f64> {
+    let stride = (width * 4).next_multiple_of(256) as usize;
+    let (w, h) = (width as usize / block, height as usize / block);
+    let mut out = Vec::with_capacity(w * h);
+    for by in 0..h {
+        for bx in 0..w {
+            let mut sum = 0.0;
+            for y in 0..block {
+                for x in 0..block {
+                    let i = (by * block + y) * stride + (bx * block + x) * 4;
+                    sum +=
+                        f64::from(pixels[i]) + f64::from(pixels[i + 1]) + f64::from(pixels[i + 2]);
+                }
+            }
+            out.push(sum / (3.0 * (block * block) as f64));
+        }
+    }
+    out
+}
+
+#[test]
+fn the_glyph_cache_draws_the_same_text_in_the_same_place_if_not_to_the_last_bit() {
+    let gpu = Gpu::new();
+    for scale in [1.0, 1.5, 2.0] {
+        let world = scroll_world_with(10, Color::from_rgba8(20, 20, 24, 255), true, 2);
+        let outline = fresh_cached(&gpu, scale, &world.tree, world.root, false);
+        let cached = fresh_cached(&gpu, scale, &world.tree, world.root, true);
+        let (w, h) = ((260.0 * scale) as u32, (180.0 * scale) as u32);
+        // Every channel of every pixel stays within what an antialiased edge can move.
+        let stride = (w * 4).next_multiple_of(256) as usize;
+        let mut worst = 0u8;
+        let mut differing = 0usize;
+        for y in 0..h as usize {
+            for x in 0..w as usize * 4 {
+                let d = outline[y * stride + x].abs_diff(cached[y * stride + x]);
+                worst = worst.max(d);
+                differing += usize::from(d > 0);
+            }
+        }
+        assert!(
+            worst <= 110,
+            "scale {scale}: an edge moved by {worst} of 255"
+        );
+        assert!(
+            differing > 0,
+            "scale {scale}: the cache should draw glyphs differently"
+        );
+        // Blurred over 8x8 blocks the two are the same picture.
+        let (a, b) = (blocks(&outline, w, h, 8), blocks(&cached, w, h, 8));
+        let worst_block = a
+            .iter()
+            .zip(&b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f64::max);
+        assert!(
+            worst_block < 14.0,
+            "scale {scale}: text moved or went missing ({worst_block})"
+        );
+    }
+}
+
+#[test]
+fn with_the_glyph_cache_on_partial_redraws_and_scrolls_still_match_a_full_draw() {
+    let gpu = Gpu::new();
+    for scale in [1.0, 2.0] {
+        let mut world = scroll_world(40, Color::from_rgba8(20, 20, 24, 255), true);
+        let mut window = Window::new(&gpu, scale);
+        window.renderer.set_glyph_cache(true);
+        window.renderer.set_scroll_blit_min_nodes(0);
+        window.frame(&gpu, &world.tree, world.root, true);
+        for (step, offset) in [4.0, 11.0, 30.0, 37.0, 90.0, 61.0].into_iter().enumerate() {
+            world
+                .tree
+                .get_mut(world.rows[step + 1])
+                .unwrap()
+                .paint
+                .background
+                .current = Color::from_rgba8(200, (step * 40) as u8, 40, 255);
+            scroll_to(&mut world, offset);
+            let damage = window.frame(&gpu, &world.tree, world.root, true);
+            // Glyph images are placed whole, so a copy or a redraw matches exactly.
+            assert_within(
+                &window.pixels(&gpu),
+                &fresh_cached(&gpu, scale, &world.tree, world.root, true),
+                window.width.into(),
+                1,
+                &format!("scale {scale}, step {step}, damage {damage:?}"),
+            );
+        }
+    }
+}
+
+#[test]
+fn switching_the_glyph_cache_redraws_the_whole_window() {
+    let gpu = Gpu::new();
+    let world = scroll_world(10, Color::from_rgba8(20, 20, 24, 255), true);
+    let mut window = Window::new(&gpu, 1.0);
+    window.frame(&gpu, &world.tree, world.root, true);
+    assert_eq!(
+        window.frame(&gpu, &world.tree, world.root, true),
+        Damage::None
+    );
+    window.renderer.set_glyph_cache(true);
+    assert_eq!(
+        window.frame(&gpu, &world.tree, world.root, true),
+        Damage::Full
+    );
+    // Setting it to what it already is changes nothing.
+    window.renderer.set_glyph_cache(true);
+    assert_eq!(
+        window.frame(&gpu, &world.tree, world.root, true),
+        Damage::None
+    );
+}
+
+#[test]
+fn many_sizes_and_glyphs_fill_the_cache_without_failing() {
+    let gpu = Gpu::new();
+    let mut tree = Tree::new();
+    let root = tree.insert(
+        NodeKind::Container,
+        placed(0.0, 0.0, W, H),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
+    );
+    for i in 0..60 {
+        let size = 6.0 + 1.37 * i as f32;
+        let label = tree.insert(
+            NodeKind::Text(TextState {
+                content: "The quick brown fox 0123456789 \u{e9}\u{f1}\u{fc}".into(),
+                font_family: "Roboto".into(),
+                font_weight: 400.0,
+                font_size: size,
+                align: Default::default(),
+                line_height: None,
+                options: Default::default(),
+            }),
+            placed(0.0, (i % 12) as f32 * 14.0, W, 14.0),
+            PaintProperties::new(Color::from_rgba8(255, 255, 255, 255), 0.0, 1.0),
+        );
+        tree.add_child(root, label);
+    }
+    layout(&mut tree, root);
+    let drawn = fresh_cached(&gpu, 1.0, &tree, root, true);
+    let lit = drawn.chunks(4).filter(|p| p[0] > 128).count();
+    assert!(lit > 500, "text was drawn: {lit} bright pixels");
+}

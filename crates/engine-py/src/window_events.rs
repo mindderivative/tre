@@ -247,7 +247,7 @@ impl PyWindow {
 }
 
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
-const SETTABLE: &str = "title, partial_redraw, show_damage, profile_nodes, decorations, fullscreen, \
+const SETTABLE: &str = "title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, \
     min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
     dpi_scaling, transparent, blur_behind, click_through";
 
@@ -647,6 +647,7 @@ impl PyWindow {
         let mut partial_redraw = None;
         let mut show_damage = None;
         let mut profile_nodes = None;
+        let mut glyph_cache = None;
         let mut decorations = None;
         let mut fullscreen = None;
         let (mut min_width, mut min_height) = (None, None);
@@ -681,6 +682,11 @@ impl PyWindow {
                     "profile_nodes" => {
                         profile_nodes = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `profile_nodes` must be a bool")
+                        })?);
+                    }
+                    "glyph_cache" => {
+                        glyph_cache = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `glyph_cache` must be a bool")
                         })?);
                     }
                     "decorations" => {
@@ -758,6 +764,11 @@ impl PyWindow {
         }
         if let Some(on) = profile_nodes {
             self.handles.profile_nodes.set(on);
+        }
+        if let Some(on) = glyph_cache {
+            self.handles.glyph_cache.set(on);
+            // The next frame is drawn again from the cache (or not).
+            self.handles.tree.borrow_mut().mark_dirty();
         }
         if let Some(on) = decorations {
             if let Some(window) = self.handles.os_window.borrow().as_ref() {
@@ -1049,6 +1060,14 @@ impl PyWindow {
                 .to_owned()
                 .into_any()
                 .unbind(),
+            "glyph_cache" => self
+                .handles
+                .glyph_cache
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "profile_nodes" => self
                 .handles
                 .profile_nodes
@@ -1098,7 +1117,7 @@ impl PyWindow {
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
-                     scale_factor, dark, reduced_motion, high_contrast, partial_redraw, partial_redraw_active, show_damage, profile_nodes, \
+                     scale_factor, dark, reduced_motion, high_contrast, partial_redraw, partial_redraw_active, show_damage, profile_nodes, glyph_cache, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
                      native_controls, gpu_watchdog, present_mode, dpi_scaling, transparent, \

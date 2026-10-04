@@ -1198,6 +1198,10 @@ impl App {
                     .gpu
                     .renderer
                     .set_profiling(runtime.handles.profile_nodes.get());
+                runtime
+                    .gpu
+                    .renderer
+                    .set_glyph_cache(runtime.handles.glyph_cache.get());
                 let damage = {
                     let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;

@@ -110,13 +110,14 @@ impl PyWindow {
             crate::scale::to_physical(w, scale),
             crate::scale::to_physical(h, scale),
         );
+        let glyph_cache = self.handles.glyph_cache.get();
         let result = DEVICE.with(|cell| {
             let mut slot = cell.borrow_mut();
             if slot.is_none() {
                 *slot = Some(headless_device()?);
             }
             let (device, queue) = slot.as_ref().expect("just made");
-            engine_render::snapshot(
+            engine_render::snapshot_with(
                 device,
                 queue,
                 &tree.borrow(),
@@ -125,6 +126,7 @@ impl PyWindow {
                 pixel_h,
                 scale,
                 time,
+                glyph_cache,
             )
         });
 

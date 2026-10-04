@@ -58,7 +58,7 @@ pub use persistent_target::PersistentTarget;
 pub use present::{PresentChoice, linear_surface_format, transparent_alpha_mode};
 pub use profile::{FrameProfile, KindCost, NodeCost, SLOWEST as PROFILE_SLOWEST};
 pub use shader_pass::{ShaderPasses, ShaderTextures};
-pub use snapshot::{Snapshot, snapshot};
+pub use snapshot::{Snapshot, snapshot, snapshot_with};
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 pub use window_renderer::WindowRenderer;
 

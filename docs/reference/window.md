@@ -230,6 +230,15 @@ logs a warning saying so; `get("partial_redraw")` reports the setting, and
 `get("partial_redraw_active")` whether it's in effect (`None` until
 `App.run()` opens the window).
 
+**`set(glyph_cache=True)`** (0.5.4) draws text from a glyph cache instead of
+drawing each glyph's outline every time. A label costs about a quarter as much to
+build (a 36-character label, 28 µs to 6 µs; a screen of labels, 18.8 ms to 5.8 ms),
+which matters for a window with hundreds of text nodes that redraw. It is not
+pixel-identical: edge pixels differ from the outline path by up to about 45 of 255
+(80 at a scale factor of 2), and the glyph cache is marked experimental upstream.
+So it is off by default, and `get("glyph_cache")` reports it. Switching it redraws
+the whole window once. `snapshot()` follows the window's setting.
+
 **Scrolling** (0.5.4) is the one change a partial redraw can carry as a block. When a
 scroll view or virtual list scrolls and nothing else changes in or over it, the window
 copies the view's kept pixels by the scroll distance and redraws only the strip the
@@ -311,7 +320,7 @@ monitor with a different scale.
 **`get(name)`** reads `width`, `height`, `title`, `scale_factor` (`1.0`
 until `App.run()` opens the window), `dark` — the OS's current appearance,
 or `None` where it can't say ([Window properties](events.md#window-properties))
-— `partial_redraw`, `partial_redraw_active`, `show_damage`, or the
+— `partial_redraw`, `partial_redraw_active`, `glyph_cache`, `show_damage`, or the
 [window's controls and state](#window-controls-and-state) above.
 
 **`resize(width, height)`** sets the window's size from code, and the

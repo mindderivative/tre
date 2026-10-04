@@ -197,6 +197,16 @@ impl WindowRenderer {
         self.tracker.set_scroll_blit_min_nodes(nodes);
     }
 
+    /// Draws text from the glyph cache (see `TextRenderer::set_glyph_cache`).
+    pub fn set_glyph_cache(&mut self, on: bool) {
+        if self.text.glyph_cache() != on {
+            self.text.set_glyph_cache(on);
+            // Every glyph draws differently now though nothing in the tree
+            // changed, so what the tracker kept says nothing: redraw it all.
+            self.tracker.reset();
+        }
+    }
+
     /// Turns the per-node timing of the paint walk on or off (default off:
     /// it costs two clock reads a node).
     pub fn set_profiling(&mut self, on: bool) {

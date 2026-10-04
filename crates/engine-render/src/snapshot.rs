@@ -34,6 +34,23 @@ pub fn snapshot(
     scale: f64,
     time: f32,
 ) -> Result<Snapshot, String> {
+    snapshot_with(device, queue, tree, root, width, height, scale, time, false)
+}
+
+/// `snapshot`, drawing text from the glyph cache when `glyph_cache` (0.5.4,
+/// #127), as a window that has it on does.
+#[allow(clippy::too_many_arguments)]
+pub fn snapshot_with(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    tree: &Tree,
+    root: NodeId,
+    width: u32,
+    height: u32,
+    scale: f64,
+    time: f32,
+    glyph_cache: bool,
+) -> Result<Snapshot, String> {
     let limit = device
         .limits()
         .max_texture_dimension_2d
@@ -64,6 +81,7 @@ pub fn snapshot(
     let mut renderer = WindowRenderer::new(device, FORMAT, width, height, true);
     renderer.set_scale(scale);
     renderer.set_time(time);
+    renderer.set_glyph_cache(glyph_cache);
     renderer.text().sync_registered_fonts();
     let (w, h) = (width as u16, height as u16);
     let damage = renderer.prepare(tree, root, w, h, true, device, queue);

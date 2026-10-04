@@ -395,6 +395,10 @@ fn build_text_layout(
 /// same headless-CI-safe discipline this codebase already applies to
 /// GPU/display absence (TRE v1 finding #261).
 pub struct TextRenderer {
+    /// 0.5.4 (#127): draw glyphs from the renderer's cache of rendered glyph
+    /// images instead of drawing each glyph's outline every frame. Cheaper
+    /// (see `set_glyph_cache`) and not pixel-identical; off by default.
+    glyph_cache: bool,
     font_cx: FontContext,
     layout_cx: LayoutContext<[u8; 4]>,
     /// M28 Phase 1 (review follow-through, §5/§6): one shaped `Layout`
@@ -469,6 +473,7 @@ impl TextRenderer {
         let (font_generation, registered_font_count, registered) = fonts::registered_since(0);
         let collection = Self::collection(&bundled, &registered, system_fonts);
         Self {
+            glyph_cache: false,
             font_cx: FontContext {
                 collection,
                 source_cache: Default::default(),
@@ -501,6 +506,21 @@ impl TextRenderer {
     /// when the set (and so every measured text) does.
     pub(crate) fn font_generation(&self) -> u64 {
         self.font_generation
+    }
+
+    /// 0.5.4 (#127): draws glyphs from a cache of rendered glyph images (the
+    /// renderer's glyph atlas) instead of drawing every glyph's outline every
+    /// frame. About four times cheaper to build (a 36-character label: 28 us ->
+    /// 6 us), but the images are rasterised once and then placed, so edge pixels
+    /// differ from drawing the outline (measured: up to about 45 of 255 on an
+    /// antialiased edge, 80 at 2x, the text in the same place) and the upstream
+    /// code calls itself experimental. Off by default.
+    pub fn set_glyph_cache(&mut self, on: bool) {
+        self.glyph_cache = on;
+    }
+
+    pub fn glyph_cache(&self) -> bool {
+        self.glyph_cache
     }
 
     /// M86: registers any fonts added to the process-global registry
@@ -639,6 +659,7 @@ impl TextRenderer {
                 || !cached.key.options.same_layout(options)
         });
         let Self {
+            glyph_cache: _,
             font_cx,
             layout_cx,
             layout_cache,
@@ -836,6 +857,7 @@ impl TextRenderer {
         at: TextPlacement,
         node_id: NodeId,
     ) {
+        let glyph_cache = self.glyph_cache;
         // M28 Phase 1: `shaped_layout` reuses the prior frame's
         // `Layout` unchanged whenever nothing about this node's real
         // shaping inputs moved -- see its own doc comment. The
@@ -917,7 +939,10 @@ impl TextRenderer {
                     let [r, g, b, a] = glyph_run.style().brush;
                     scene.set_paint(Color::from_rgba8(r, g, b, a));
                 }
-                let mut builder = scene.glyph_run(resources, font).font_size(font_size);
+                let mut builder = scene
+                    .glyph_run(resources, font)
+                    .font_size(font_size)
+                    .atlas_cache(glyph_cache);
                 // M96: italics with no italic face -- slanted by the angle
                 // font matching suggests (y-down, so the shear is negated;
                 // see `draw_terminal`'s own synthetic italic).
@@ -1349,6 +1374,7 @@ impl TextRenderer {
         show_caret: bool,
         node_id: NodeId,
     ) {
+        let glyph_cache = self.glyph_cache;
         let (cell_width, cell_height) =
             self.monospace_cell_size(&state.font_family, state.font_size);
         let cell_width = f64::from(cell_width);
@@ -1495,7 +1521,10 @@ impl TextRenderer {
                                 x: g.x + x0 as f32,
                                 y: g.y + y0 as f32,
                             });
-                            let mut builder = scene.glyph_run(resources, font).font_size(font_size);
+                            let mut builder = scene
+                                .glyph_run(resources, font)
+                                .font_size(font_size)
+                                .atlas_cache(glyph_cache);
                             if italic {
                                 // M39 Phase 4 (§5, §7): a real synthetic-
                                 // italic shear -- the bundled monospace

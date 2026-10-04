@@ -399,6 +399,7 @@ class Window:
         partial_redraw: bool = ...,
         show_damage: bool = ...,
         profile_nodes: bool = ...,
+        glyph_cache: bool = ...,
         decorations: bool = ...,
         fullscreen: bool = ...,
         min_width: float = ...,
@@ -423,7 +424,10 @@ class Window:
         the kept frame; off by default. (0.5.4) `profile_nodes`: `True` times each
         node the paint walk reaches, so `frame_stats()['profile']` can say where
         the scene-building time went; off by default (it costs two clock reads a
-        node). (0.5.0) `decorations`: whether the
+        node). (0.5.4) `glyph_cache`: `True` draws text from a cache of rendered glyph
+        images instead of each glyph's outline: about four times cheaper to build, but
+        the images are rasterised once and then placed, so edge pixels differ slightly
+        from the default (the text is in the same place); off by default. (0.5.0) `decorations`: whether the
         OS draws the title bar and borders, live on an open window;
         `fullscreen`: borderless on the window's monitor; `min_width` and
         `min_height`: the smallest size the user can resize it to, 0 for
@@ -480,6 +484,7 @@ class Window:
         name: Literal[
             "show_damage",
             "profile_nodes",
+            "glyph_cache",
             "decorations",
             "maximized",
             "minimized",

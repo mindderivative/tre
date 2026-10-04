@@ -112,6 +112,9 @@ pub(crate) struct WindowHandles {
     /// 0.5.4 (#135): `window.set(profile_nodes=True)` -- time each node the
     /// paint walk reaches, for `frame_stats()['profile']`.
     pub(crate) profile_nodes: Rc<Cell<bool>>,
+    /// 0.5.4 (#127): `window.set(glyph_cache=True)` -- draw text from the
+    /// glyph cache.
+    pub(crate) glyph_cache: Rc<Cell<bool>>,
     /// 0.5.0 M2 (issue #28): whether the OS draws the window's title bar
     /// and borders -- `Window(decorations=False)` or a live `set` turns them
     /// off for the framework to draw its own.
@@ -288,6 +291,7 @@ impl PyWindow {
                 surface_partial: Rc::new(Cell::new(None)),
                 show_damage: Rc::new(Cell::new(false)),
                 profile_nodes: Rc::new(Cell::new(false)),
+                glyph_cache: Rc::new(Cell::new(false)),
                 decorations: Rc::new(Cell::new(decorations)),
                 transparent: Rc::new(Cell::new(false)),
                 transparent_active: Rc::new(Cell::new(None)),

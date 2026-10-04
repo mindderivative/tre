@@ -261,3 +261,7 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - **Click-through windows.** `window.set(click_through=True)` makes the whole
   window ignore the pointer, so clicks reach what is behind it; see
   [Transparent windows](reference/window.md). Off by default.
+- **Cheaper text.** `window.set(glyph_cache=True)` draws text from a glyph cache,
+  about four times cheaper to build per label, at the price of edge pixels that
+  differ slightly from the default outline drawing (up to about 45 of 255); see
+  [Window](reference/window.md). Off by default, so nothing changes unless asked.
