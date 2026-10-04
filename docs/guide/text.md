@@ -164,8 +164,8 @@ holds a selection at a time, and a press anywhere else clears it. A selectable t
 claims the pointer events over its box, which plain text never does (so a label
 inside a button doesn't swallow the button's clicks): turn it on for text that
 stands alone. A text input's own selection is separate, and Copy takes the
-focused input's selection first. Static text exposes no selection to screen
-readers yet.
+focused input's selection first. A screen reader sees the selection (see
+[Text, selection and links](accessibility.md#text-selection-and-links)).
 
 ## Text input
 

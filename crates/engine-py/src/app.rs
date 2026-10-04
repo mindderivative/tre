@@ -1823,6 +1823,37 @@ impl App {
                     runtime.handles.tree.clone(),
                     runtime.handles.handlers.clone(),
                 );
+                // 0.5.4 (#151): a screen reader following a link, or selecting
+                // text, in a text node.
+                if let Some(engine_core::TextPart::Link { owner, href, .. }) =
+                    tree_rc.borrow().resolve_text_part(request.target_node)
+                {
+                    if request.action == engine_core::Action::Click {
+                        listeners::deliver(
+                            &NodeContext {
+                                tree: &tree_rc,
+                                handlers: &handlers,
+                                completions: &runtime.handles.completions,
+                            },
+                            py,
+                            listeners::EventType::Link,
+                            owner,
+                            None,
+                            |e| e.href = Some(href),
+                        );
+                    }
+                    return;
+                }
+                if request.action == engine_core::Action::SetTextSelection {
+                    if let Some(engine_core::ActionData::SetTextSelection(selection)) =
+                        &request.data
+                    {
+                        tree_rc
+                            .borrow_mut()
+                            .set_text_selection_from_access(selection);
+                    }
+                    return;
+                }
                 let node = from_access_id(request.target_node);
                 let mut tree = tree_rc.borrow_mut();
                 match request.action {

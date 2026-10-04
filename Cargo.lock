@@ -900,6 +900,7 @@ name = "engine-core"
 version = "0.5.4"
 dependencies = [
  "accesskit",
+ "accesskit_consumer",
  "flate2",
  "fontdb",
  "naga",

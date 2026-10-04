@@ -6752,6 +6752,217 @@ mod static_selection {
         );
     }
 
+    /// A selectable "Visit the docs now" with "docs" (10..14) a link.
+    fn linked(tree: &mut Tree) -> NodeId {
+        let id = text(tree, "Visit the docs now");
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.selectable = true;
+            state.options.spans = vec![crate::TextSpan {
+                start: 10,
+                end: 14,
+                link: Some("https://example.com/docs".into()),
+                ..Default::default()
+            }];
+        }
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        id
+    }
+
+    fn node_of(update: &accesskit::TreeUpdate, id: accesskit::NodeId) -> &accesskit::Node {
+        &update
+            .nodes
+            .iter()
+            .find(|(i, _)| *i == id)
+            .expect("in the update")
+            .1
+    }
+
+    #[test]
+    fn plain_text_makes_no_text_runs_and_keeps_its_role() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "plain");
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        let update = tree.build_access_update(id);
+        assert_eq!(update.nodes.len(), 1);
+        assert_eq!(
+            node_of(&update, to_access_id(id)).role(),
+            accesskit::Role::Unknown
+        );
+    }
+
+    #[test]
+    fn linked_text_is_a_label_of_runs_and_a_link_with_its_url() {
+        let mut tree = Tree::new();
+        let id = linked(&mut tree);
+        let update = tree.build_access_update(id);
+        let container = node_of(&update, to_access_id(id));
+        assert_eq!(container.role(), accesskit::Role::Label);
+        let kids = container.children().to_vec();
+        assert_eq!(kids.len(), 3, "before, the link, after");
+        let roles: Vec<_> = kids.iter().map(|k| node_of(&update, *k).role()).collect();
+        assert_eq!(
+            roles,
+            [
+                accesskit::Role::TextRun,
+                accesskit::Role::Link,
+                accesskit::Role::TextRun
+            ]
+        );
+        let link = node_of(&update, kids[1]);
+        assert_eq!(link.url(), Some("https://example.com/docs"));
+        assert!(link.supports_action(accesskit::Action::Click));
+        assert_eq!(link.label(), Some("docs"));
+        let inner = node_of(&update, link.children()[0]);
+        assert_eq!(inner.value(), Some("docs"));
+        assert_eq!(inner.character_lengths(), &[1u8, 1, 1, 1]);
+        // The runs cover the content.
+        let all: String = kids
+            .iter()
+            .map(|k| {
+                let n = node_of(&update, *k);
+                let run = if n.role() == accesskit::Role::Link {
+                    node_of(&update, n.children()[0])
+                } else {
+                    n
+                };
+                run.value().unwrap().to_string()
+            })
+            .collect();
+        assert_eq!(all, "Visit the docs now");
+    }
+
+    #[test]
+    fn a_selection_is_reported_as_run_positions_and_multibyte_text_counts_characters() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "héllo wörld");
+        tree.set_text_selection(id, 0, 0);
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.selectable = true;
+        }
+        // "héllo" is 6 bytes, 5 characters; select through the space.
+        tree.set_text_selection(id, 1, 7);
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        let update = tree.build_access_update(id);
+        let selection = *node_of(&update, to_access_id(id))
+            .text_selection()
+            .expect("a selection");
+        assert_eq!(selection.anchor.character_index, 1);
+        assert_eq!(
+            selection.focus.character_index, 6,
+            "byte 7 is the 7th character boundary after 'é'"
+        );
+        assert_eq!(selection.anchor.node, selection.focus.node);
+        let run = node_of(&update, selection.anchor.node);
+        assert_eq!(run.value(), Some("héllo wörld"));
+        assert_eq!(run.character_lengths()[1], 2, "é is two bytes");
+        assert!(
+            node_of(&update, to_access_id(id)).supports_action(accesskit::Action::SetTextSelection)
+        );
+    }
+
+    /// The tree as AccessKit's own consumer (what the platform adapters use)
+    /// reads it: positions must resolve or it panics.
+    #[test]
+    fn the_consumer_reads_the_selected_text_back() {
+        let mut tree = Tree::new();
+        let id = linked(&mut tree);
+        tree.set_text_selection(id, 6, 16);
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        let consumer = accesskit_consumer::Tree::new(tree.build_access_update(id), true);
+        let root = consumer.state().root();
+        let range = root.text_selection().expect("a selection");
+        // Across a link, from the plain run, through the link's, into the next.
+        assert_eq!(range.text(), "the docs n");
+        assert_eq!(root.document_range().text(), "Visit the docs now");
+    }
+
+    #[test]
+    fn the_ids_of_runs_and_links_resolve_and_real_ids_do_not() {
+        let mut tree = Tree::new();
+        let id = linked(&mut tree);
+        let update = tree.build_access_update(id);
+        let kids = node_of(&update, to_access_id(id)).children().to_vec();
+        assert_eq!(
+            tree.resolve_text_part(kids[1]),
+            Some(crate::TextPart::Link {
+                owner: id,
+                href: "https://example.com/docs".into(),
+                start: 10,
+                end: 14,
+            })
+        );
+        assert_eq!(
+            tree.resolve_text_part(kids[2]),
+            Some(crate::TextPart::Run {
+                owner: id,
+                start: 14,
+                end: 18
+            })
+        );
+        assert_eq!(
+            tree.resolve_text_part(to_access_id(id)),
+            None,
+            "a real node is not a part"
+        );
+        // Ids are unique across the update.
+        let mut ids: Vec<_> = update.nodes.iter().map(|(i, _)| *i).collect();
+        ids.sort();
+        let n = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), n);
+    }
+
+    #[test]
+    fn a_screen_readers_text_selection_selects_the_text() {
+        let mut tree = Tree::new();
+        let id = linked(&mut tree);
+        let update = tree.build_access_update(id);
+        let kids = node_of(&update, to_access_id(id)).children().to_vec();
+        let link_run = node_of(&update, kids[1]).children()[0];
+        let position = |node, character_index| accesskit::TextPosition {
+            node,
+            character_index,
+        };
+        // From the third character of "docs" to the first of " now".
+        let selection = accesskit::TextSelection {
+            anchor: position(link_run, 2),
+            focus: position(kids[2], 1),
+        };
+        assert!(tree.set_text_selection_from_access(&selection));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("cs "));
+        // A position in no text node refuses and changes nothing.
+        let bogus = accesskit::TextSelection {
+            anchor: position(to_access_id(id), 0),
+            focus: position(kids[2], 1),
+        };
+        assert!(!tree.set_text_selection_from_access(&bogus));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("cs "));
+    }
+
     #[test]
     fn a_non_text_node_is_refused_and_a_selection_set_directly_can_be_adopted() {
         let mut tree = Tree::new();

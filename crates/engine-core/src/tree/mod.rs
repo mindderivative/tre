@@ -40,6 +40,7 @@ use peniko::kurbo::BezPath;
 use peniko::kurbo::{Affine, ParamCurveNearest, Point, Rect};
 
 mod access;
+pub use access::TextPart;
 mod dispatch;
 mod focus;
 mod layers;

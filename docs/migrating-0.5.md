@@ -195,6 +195,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   [Rich text and selectable text](guide/text.md#rich-text-and-selectable-text).
   Nothing changes for text with no link and no new span fields, except the I-beam
   over selectable text.
+- **Text selection and links reach screen readers.** Selectable text and text with
+  link spans are exposed as text runs and link nodes with a text selection, and a
+  screen reader can follow a link or set the selection; see
+  [Text, selection and links](guide/accessibility.md#text-selection-and-links).
+  Other text is unchanged.
 - **Colour filters.** `tre.Shader.filter(grayscale=1.0, ...)` is a ready-made
   effect shader for the CSS filter functions `saturate`, `brightness`, `contrast`,
   `grayscale`, `hue_rotate`, `invert` and `sepia`, applied in the order given; see
