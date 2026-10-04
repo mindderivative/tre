@@ -20,6 +20,14 @@ pub(crate) fn to_logical(event: InputEvent, scale: f64) -> InputEvent {
     }
     let point = |p: Point| Point::new(p.x / scale, p.y / scale);
     match event {
+        InputEvent::FileHovered { path, position } => InputEvent::FileHovered {
+            path,
+            position: point(position),
+        },
+        InputEvent::FileDropped { path, position } => InputEvent::FileDropped {
+            path,
+            position: point(position),
+        },
         InputEvent::Touch {
             id,
             phase,
@@ -200,6 +208,23 @@ mod tests {
                 delta: 0.1,
                 phase: TouchPhase::Started,
                 position: Point::new(20.0, 40.0)
+            }
+        );
+    }
+
+    #[test]
+    fn file_positions_are_divided_by_the_scale() {
+        assert_eq!(
+            to_logical(
+                InputEvent::FileDropped {
+                    path: "/tmp/a".into(),
+                    position: Point::new(60.0, 30.0),
+                },
+                2.0
+            ),
+            InputEvent::FileDropped {
+                path: "/tmp/a".into(),
+                position: Point::new(30.0, 15.0)
             }
         );
     }

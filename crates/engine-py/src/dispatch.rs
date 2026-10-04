@@ -399,6 +399,16 @@ pub(crate) fn process_input(
         crate::touch::process(ctx, io, root, event, py);
         return DispatchOutcome::None;
     }
+    // 0.5.4 (#114): files are queued, and delivered together by `files::flush`.
+    if matches!(
+        event,
+        InputEvent::FileHovered { .. }
+            | InputEvent::FileHoverCancelled
+            | InputEvent::FileDropped { .. }
+    ) {
+        crate::files::queue(io, event);
+        return DispatchOutcome::None;
+    }
     if send_to_focused_terminal(ctx, io, event) {
         return DispatchOutcome::None;
     }

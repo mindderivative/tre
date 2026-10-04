@@ -448,6 +448,10 @@ impl Tree {
             // 0.5.4 (#113): touches and trackpad pinches are recognized and
             // delivered by the window (`engine-py`); the tree has nothing to do.
             InputEvent::Touch { .. } | InputEvent::TrackpadPinch { .. } => DispatchOutcome::None,
+            // 0.5.4 (#114): files are delivered by the window (`engine-py`).
+            InputEvent::FileHovered { .. }
+            | InputEvent::FileHoverCancelled
+            | InputEvent::FileDropped { .. } => DispatchOutcome::None,
             // 0.5.0 M2: plumbing only, like `ThemeChanged`.
             InputEvent::Focused { .. } => DispatchOutcome::None,
             // M32 Phase 2 (§4, §5): unlike `ThemeChanged`, a real

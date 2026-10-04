@@ -1116,6 +1116,23 @@ where
                 );
                 win.request_redraw();
             }
+            // 0.5.4 (#114): files dragged over and dropped on the window.
+            // `winit` gives them no position; the pointer's last is the best
+            // there is.
+            WindowEvent::HoveredFile(path) => {
+                let position = win.last_cursor_position;
+                on_input(window_id, InputEvent::FileHovered { path, position });
+                win.request_redraw();
+            }
+            WindowEvent::HoveredFileCancelled => {
+                on_input(window_id, InputEvent::FileHoverCancelled);
+                win.request_redraw();
+            }
+            WindowEvent::DroppedFile(path) => {
+                let position = win.last_cursor_position;
+                on_input(window_id, InputEvent::FileDropped { path, position });
+                win.request_redraw();
+            }
             WindowEvent::ModifiersChanged(modifiers) => {
                 win.modifiers = modifiers.state();
                 on_input(

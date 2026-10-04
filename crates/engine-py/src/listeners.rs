@@ -120,10 +120,14 @@ pub(crate) enum EventType {
     LongPress,
     Pan,
     Pinch,
+    /// 0.5.4 (#114): files dragged over, away from, or dropped on the node.
+    FileHover,
+    FileHoverCancel,
+    FileDrop,
 }
 
 impl EventType {
-    const ALL: [EventType; 26] = [
+    const ALL: [EventType; 29] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -150,6 +154,9 @@ impl EventType {
         Self::LongPress,
         Self::Pan,
         Self::Pinch,
+        Self::FileHover,
+        Self::FileHoverCancel,
+        Self::FileDrop,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -180,6 +187,9 @@ impl EventType {
             Self::LongPress => "long_press",
             Self::Pan => "pan",
             Self::Pinch => "pinch",
+            Self::FileHover => "file_hover",
+            Self::FileHoverCancel => "file_hover_cancel",
+            Self::FileDrop => "file_drop",
         }
     }
 
@@ -234,10 +244,14 @@ pub(crate) enum WindowEventType {
     DockTarget,
     /// M99: a panel drag ended.
     DockDrop,
+    /// 0.5.4 (#114): files dragged over the window, off it, or dropped on it.
+    FileHover,
+    FileHoverCancel,
+    FileDrop,
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 13] = [
+    const ALL: [WindowEventType; 16] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -251,6 +265,9 @@ impl WindowEventType {
         Self::GpuStalled,
         Self::DockTarget,
         Self::DockDrop,
+        Self::FileHover,
+        Self::FileHoverCancel,
+        Self::FileDrop,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -268,6 +285,9 @@ impl WindowEventType {
             Self::GpuStalled => "gpu_stalled",
             Self::DockTarget => "dock_target",
             Self::DockDrop => "dock_drop",
+            Self::FileHover => "file_hover",
+            Self::FileHoverCancel => "file_hover_cancel",
+            Self::FileDrop => "file_drop",
         }
     }
 

@@ -24,6 +24,7 @@ listing the valid ones.
 | `click` | Primary press and release on the same node, or keyboard activation | yes |
 | `secondary_click` | Secondary press and release on the same node | yes |
 | `wheel` | A wheel or trackpad scroll | yes |
+| `file_hover`, `file_hover_cancel`, `file_drop` | Files dragged from the OS over, away from, or dropped on the node under the pointer; `paths` (0.5.4) | yes |
 | `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | A finger touches the screen, moves, lifts, or is taken away by the system; each carries `pointer_id`, and a finger's events all go to the node it landed on (0.5.4) | yes |
 | `tap` | A quick touch and release in place; `count` is 2 for a second tap close to the first (0.5.4) | yes |
 | `long_press` | A touch held in place for half a second (0.5.4) | yes |
@@ -111,6 +112,9 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `close_requested` | The user asked to close the window; `event.cancel()` keeps it open | — |
 | `closed` | The window closed — by the user or by reaching `max_frames` | — |
 | `dock_target` | During a docking drag, the pointer moved into another dock zone, or out of every zone | `side` |
+| `file_hover` | Files are being dragged from the OS over the window (0.5.4); `paths` | — |
+| `file_hover_cancel` | The file drag left the window or was abandoned (0.5.4) | — |
+| `file_drop` | Files were dropped on the window (0.5.4); `paths` | — |
 | `dock_drop` | A docking drag ended with the primary button's release; the panel has moved to the zone there, if any | `panel`, `side` |
 | `maximized` | The window was maximized or restored (0.5.0) | `maximized` |
 | `active` | The window gained or lost the OS's focus (0.5.0) | `active` |
@@ -175,6 +179,7 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
 | `maximized` / `active` | `maximized` / `active` — the window's new state |
+| `path`, `paths` | `file_hover`, `file_drop` — the dragged files' paths as `str`s; `path` is the first |
 | `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |
 | `panel` | `dock_drop` — the dragged panel |
 
@@ -206,6 +211,8 @@ window.simulate("resize", width=800, height=600)
 | `pointer_move`, `pointer_enter`, `click`, `secondary_click` | `node` and/or `x`, `y` |
 | `wheel` | `node` and/or `x`, `y`; `delta_x`, `delta_y` |
 | `pointer_leave` | — (the pointer leaves the window) |
+| `file_hover`, `file_drop` | `paths` (a list of str) or `path`; `node` and/or `x`, `y` for where they are over |
+| `file_hover_cancel` | — |
 | `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | `node` and/or `x`, `y`; `id` (default 0) tells fingers apart |
 | `trackpad_pinch` | `node` and/or `x`, `y`; `delta` (a magnification step, `1 + delta` the scale to apply), `phase` (`"started"`, `"moved"` — the default — `"ended"`, `"cancelled"`) |
 | `key_down`, `key_up` | `key`; `repeat` |

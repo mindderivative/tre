@@ -193,6 +193,12 @@ pub struct Event {
     pub(crate) velocity_x: Option<f64>,
     #[pyo3(get)]
     pub(crate) velocity_y: Option<f64>,
+    /// 0.5.4 (#114): `file_hover`/`file_drop`: the files, as paths; `path` is
+    /// the first.
+    #[pyo3(get)]
+    pub(crate) path: Option<String>,
+    #[pyo3(get)]
+    pub(crate) paths: Option<Vec<String>>,
     pub(crate) stopped: bool,
     pub(crate) cancelled: bool,
     pub(crate) cancellable: bool,
@@ -291,6 +297,8 @@ impl Event {
             total_y: None,
             velocity_x: None,
             velocity_y: None,
+            path: None,
+            paths: None,
             stopped: false,
             cancelled: false,
             cancellable: false,

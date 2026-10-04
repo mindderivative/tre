@@ -96,6 +96,32 @@ finger lifts (no momentum); there is no rotation gesture; and the engine's touch
 handling was written and tested with simulated touches (`window.simulate`),
 not on a touch screen.
 
+## Files dragged from the OS
+
+Dragging files from a file manager over the window and dropping them (0.5.4)
+fires `file_hover` (with `paths`), then `file_drop` (with `paths`) or
+`file_hover_cancel` if the drag leaves. Each goes to the node under the pointer,
+bubbling, and to the window's own listener:
+
+```python
+drop_zone.on("file_hover", lambda e: drop_zone.set(stroke_color=ACCENT, stroke_width=2))
+drop_zone.on("file_hover_cancel", lambda: drop_zone.set(stroke_width=0))
+drop_zone.on("file_drop", lambda e: open_files(e.paths))
+
+window.on("file_drop", lambda e: print("dropped anywhere:", e.paths))
+```
+
+`e.paths` is a list of path strings and `e.path` its first. A drop of several files
+is one event, not one per file. The engine only reports the paths: reading the files
+is yours.
+
+Limits: the OS gives a file drag no position of its own while it is over the window,
+so the node is the one under the pointer's last known position, which on some
+platforms is where it was when the drag entered; for a full-window drop target,
+listen on the window. File drag and drop works on Windows, macOS and X11. It does not
+on Wayland (`winit` 0.30 doesn't implement it there), so a Wayland session never
+fires these events; `simulate` does.
+
 ## Focus and the keyboard
 
 A node takes keyboard focus once it's `focusable=True`; text inputs and

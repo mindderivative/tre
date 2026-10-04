@@ -973,6 +973,25 @@ impl App {
                     now,
                     py,
                 );
+                // 0.5.4 (#114): files dragged over or dropped since the last frame.
+                if runtime.handles.files.borrow().pending() {
+                    let handles = &runtime.handles;
+                    crate::files::flush(
+                        &crate::event::NodeContext {
+                            tree: &handles.tree,
+                            handlers: &handles.handlers,
+                            completions: &handles.completions,
+                        },
+                        &WindowIo {
+                            dock: &handles.dock,
+                            listeners: &handles.window_listeners,
+                            terminals: &handles.terminals,
+                            window: handles,
+                        },
+                        handles.root,
+                        py,
+                    );
+                }
                 let any_active = any_active || runtime.handles.touch.borrow().needs_frames();
                 // 0.5.1 (#70): a shader's time is the window's clock; and a
                 // window drawing an `animated` shader keeps running -- a frame

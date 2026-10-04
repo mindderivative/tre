@@ -203,3 +203,7 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   it; see [Touch and gestures](guide/events-and-input.md#touch-and-gestures).
   Nothing changes on a machine with no touch screen. Written against simulated
   touches; not yet checked on touch hardware.
+- **Files dragged from the OS.** `file_hover`, `file_hover_cancel` and `file_drop`
+  events (with `paths`) reach the node under the pointer and the window; see
+  [Files dragged from the OS](guide/events-and-input.md#files-dragged-from-the-os).
+  They work on Windows, macOS and X11, not Wayland.

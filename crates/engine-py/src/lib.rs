@@ -13,6 +13,7 @@ mod dispatch;
 mod dock;
 mod error;
 mod event;
+mod files;
 mod gradient;
 mod grid;
 mod listeners;

@@ -138,6 +138,10 @@ class Event:
     technology (or programmatically, after keyboard input), `False` after
     a pointer press -- whether to show a focus indicator."""
     side: str | None
+    path: str | None
+    """`file_hover`/`file_drop`: the first dragged file's path."""
+    paths: list[str] | None
+    """`file_hover`/`file_drop`: every dragged file's path."""
     pointer_id: int | None
     """`touch_start`/`touch_move`/`touch_end`/`touch_cancel`: which finger."""
     phase: str | None

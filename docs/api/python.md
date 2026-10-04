@@ -332,6 +332,8 @@ What a listener receives when it takes one argument; never constructed directly.
 | `related_target` | `Node \| None` | The node on the other side of a `focus` / `unfocus` move. |
 | `focus_visible` | `bool \| None` | Whether `focus` arrived by keyboard. |
 | `side` | `str \| None` | The dock zone under the pointer, or `None`. |
+| `path` | `str \| None` |  |
+| `paths` | `list[str] \| None` |  |
 | `pointer_id` | `int \| None` |  |
 | `phase` | `str \| None` |  |
 | `count` | `int \| None` |  |

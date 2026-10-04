@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 31] = [
+const SIMULATED_EVENTS: [&str; 34] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -51,6 +51,9 @@ const SIMULATED_EVENTS: [&str; 31] = [
     "touch_end",
     "touch_cancel",
     "trackpad_pinch",
+    "file_hover",
+    "file_hover_cancel",
+    "file_drop",
     "click",
     "secondary_click",
     "wheel",
@@ -1231,6 +1234,43 @@ impl PyWindow {
                     },
                     py,
                 );
+            }
+            // 0.5.4 (#114): files dragged from the OS. `paths` is a list of
+            // paths (or `path` for one), aimed like a pointer event.
+            "file_hover" | "file_drop" => {
+                let (x, y) = (f.f64("x")?, f.f64("y")?);
+                let position = pointer_point(&tree.borrow(), node_id, x, y, event)?;
+                let mut paths: Vec<std::path::PathBuf> = match f.take("paths") {
+                    Some(paths) => paths.extract().map_err(|_| {
+                        PyValueError::new_err(format!(
+                            "simulate({event:?}): `paths` must be a list of str paths"
+                        ))
+                    })?,
+                    None => Vec::new(),
+                };
+                if let Some(path) = f.string("path")? {
+                    paths.push(path.into());
+                }
+                if paths.is_empty() {
+                    return Err(PyValueError::new_err(format!(
+                        "simulate({event:?}) needs `paths` or `path`"
+                    )));
+                }
+                f.done()?;
+                for path in paths {
+                    let input = if event == "file_hover" {
+                        InputEvent::FileHovered { path, position }
+                    } else {
+                        InputEvent::FileDropped { path, position }
+                    };
+                    process_input(&ctx, &io, root, &input, py);
+                }
+                crate::files::flush(&ctx, &io, root, py);
+            }
+            "file_hover_cancel" => {
+                f.done()?;
+                process_input(&ctx, &io, root, &InputEvent::FileHoverCancelled, py);
+                crate::files::flush(&ctx, &io, root, py);
             }
             "pointer_leave" => {
                 f.done()?;

@@ -120,6 +120,20 @@ pub struct Modifiers {
 /// (keeping `Clone`) needed no call-site rewrites.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputEvent {
+    /// 0.5.4 (#114): the OS is dragging a file over the window. The platform
+    /// reports one per file; `position` is where the pointer last was, since
+    /// `winit` gives a file drag no position of its own.
+    FileHovered {
+        path: std::path::PathBuf,
+        position: Point,
+    },
+    /// 0.5.4: the drag left the window or was abandoned.
+    FileHoverCancelled,
+    /// 0.5.4: a file was dropped on the window (one per file).
+    FileDropped {
+        path: std::path::PathBuf,
+        position: Point,
+    },
     /// 0.5.4 (#113): one finger on a touch screen. `id` tells fingers apart for
     /// as long as they are down. `Tree::dispatch` does nothing with it: the
     /// window's gesture recognizer and event delivery do (`engine-py`).
