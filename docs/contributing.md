@@ -51,6 +51,15 @@ Every real engine capability has its own headless, GPU-backed pixel test
 under `crates/engine-render/tests/`, proving it actually paints what it
 claims to, not just that the code compiles.
 
+## Checking transparent windows on a new platform
+
+Transparency, blur-behind and click-through depend on the OS and compositor, and
+the test suite can only prove them on the machine it runs on. On Windows, macOS,
+GNOME or any other desktop, run `python tools/check_transparency.py`: it opens
+a frameless transparent window, steps through three phases (normal,
+click-through, normal) and prints a report to paste into the issue. The lines
+marked LOOK need your eyes.
+
 ## Building this documentation site
 
 ```bash
