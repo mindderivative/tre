@@ -122,6 +122,10 @@ jobs:
 
       - name: Test workspace
         run: cargo test --workspace
+        env:
+          # 0.5.4 (#125): the damage walk that visits only changed nodes also
+          # runs the full walk and panics if they disagree.
+          TRE_DAMAGE_VERIFY: "1"
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -180,6 +184,8 @@ jobs:
 
       - name: Python FFI test suite
         run: python -m pytest tests/ -v
+        env:
+          TRE_DAMAGE_VERIFY: "1"
 
       - name: Run every example
         run: |

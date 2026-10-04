@@ -33,8 +33,9 @@ its Python surface is the one stability contract. `engine-platform` and
 4. **Layout** runs through `taffy`'s cache — paint-only changes never
    dirty it — and virtual lists build their visible rows.
 5. **Paint** walks the tree into a `vello_gpu` scene, culling what's off
-   screen. A damage tracker compares the frame with the last one, and only
-   the changed rects (at most four, or the whole window) are rendered into
+   screen. A damage tracker finds what changed since the last frame by
+   re-checking only the nodes written to, so its cost follows the changes, not
+   the size of the tree, and only the changed rects (at most four, or the whole window) are rendered into
    the window's persistent target, which is then copied to the screen.
    `window.set(partial_redraw=False)` redraws in full, and
    `show_damage=True` tints what was redrawn. The **AccessKit** tree is

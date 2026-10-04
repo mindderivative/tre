@@ -64,6 +64,7 @@ impl Tree {
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed");
             self.last_layout = Some(asked);
+            self.layout_epoch += 1;
         }
         // M36 Phase 1 (§5, §7, §11.7): the identical real "container-
         // level state drives one real child's own real layout_style,
@@ -77,6 +78,7 @@ impl Tree {
             self.taffy
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (scroll view sync pass)");
+            self.layout_epoch += 1;
         }
         // M37 (§5, §7, §11.7): the real fix for the hit-test-after-
         // scroll bug M36's own investigation found in `VirtualList` --
@@ -88,12 +90,14 @@ impl Tree {
             self.taffy
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (virtual list sync pass)");
+            self.layout_epoch += 1;
         }
         // M96: anchored layers go where they fit, once their sizes are known.
         if self.place_layers(root) {
             self.taffy
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (layer placement pass)");
+            self.layout_epoch += 1;
         }
     }
 

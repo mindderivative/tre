@@ -497,6 +497,12 @@ impl TextRenderer {
         collection
     }
 
+    /// 0.5.4 (#125): which fonts this renderer has synced to; it changes
+    /// when the set (and so every measured text) does.
+    pub(crate) fn font_generation(&self) -> u64 {
+        self.font_generation
+    }
+
     /// M86: registers any fonts added to the process-global registry
     /// (`fonts::register_font`) since this renderer last synced.
     /// Returns `true` when something new was registered -- every shaping

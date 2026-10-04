@@ -27,6 +27,14 @@ python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
 mkdocs build --strict
 ```
 
+The damage tracker walks only the nodes that changed (see
+`crates/engine-render/src/damage.rs`). `TRE_DAMAGE_VERIFY=1` makes every
+tracker also walk the whole tree and panic if the two disagree, so run the
+suites that way after touching anything that writes to a node, the layout or
+the tracker, and CI does: `TRE_DAMAGE_VERIFY=1 cargo test --workspace`. The
+randomised `damage_incremental` tests drive it with thousands of edits.
+`TRE_DAMAGE_FULL=1` turns the shortcut off, to compare timings.
+
 `stubtest` compares the type stub with the built extension, so run it after
 `maturin develop`; CI runs it and `mypy --strict` on Linux.
 

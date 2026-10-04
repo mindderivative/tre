@@ -102,11 +102,7 @@ fn descend<'t>(tree: &'t Tree, here: &Visit<'t>, visitor: &mut impl Visitor<'t>)
     if !visitor.enter(here) {
         return;
     }
-    let child_visible = if clips_children(here.node) {
-        here.visible.intersect(here.bounds)
-    } else {
-        here.visible
-    };
+    let child_visible = child_visible(here);
     for (index, &child) in tree.children_in_paint_order(here.id).iter().enumerate() {
         visit(
             tree,
@@ -133,9 +129,37 @@ fn visit<'t>(
     order: usize,
     visitor: &mut impl Visitor<'t>,
 ) {
-    let Some(node) = tree.get(id) else { return };
-    if !node.visible {
+    let Some(here) = resolve(
+        tree,
+        id,
+        parent_transform,
+        visible,
+        parent_opacity,
+        parent,
+        order,
+    ) else {
         return;
+    };
+    descend(tree, &here, visitor);
+}
+
+/// The rules of the walk applied to one node: where it is under its
+/// parent's transform, and `None` when they skip it (hidden, off the visible
+/// rect, fully transparent). 0.5.4 (#125): split out so the damage tracker
+/// can reach a node without walking down to it from the root.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve<'t>(
+    tree: &'t Tree,
+    id: NodeId,
+    parent_transform: Affine,
+    visible: Rect,
+    parent_opacity: f64,
+    parent: Option<NodeId>,
+    order: usize,
+) -> Option<Visit<'t>> {
+    let node = tree.get(id)?;
+    if !node.visible {
+        return None;
     }
     let layout = tree.layout(id);
     let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
@@ -147,13 +171,13 @@ fn visit<'t>(
     let composed = composed_transform(parent_transform, position, node, w, h);
     let bounds = transformed_bounds(composed, Rect::new(0.0, 0.0, w, h));
     if !bounds.overlaps(visible) {
-        return;
+        return None;
     }
     let opacity = node.paint.opacity.current;
     if opacity <= 0.0 {
-        return;
+        return None;
     }
-    let here = Visit {
+    Some(Visit {
         id,
         node,
         composed,
@@ -164,6 +188,15 @@ fn visit<'t>(
         opacity: parent_opacity * opacity,
         parent,
         order,
-    };
-    descend(tree, &here, visitor);
+    })
+}
+
+/// What a node leaves visible to its children: its own visible rect, narrowed
+/// to its box when it clips them.
+pub(crate) fn child_visible(here: &Visit<'_>) -> Rect {
+    if clips_children(here.node) {
+        here.visible.intersect(here.bounds)
+    } else {
+        here.visible
+    }
 }

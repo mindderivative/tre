@@ -1,15 +1,36 @@
 //! 0.4.0 M4: which parts of a window changed since the last frame.
 //!
-//! **Compare, don't instrument.** Pixels change through `Tree::get_mut`,
-//! direct field writes inside `Tree`, animation ticks, layout, and
-//! tree-level state such as focus. Hooking every one of those paths would
-//! make any missed one a stale-pixel bug, and partial redraw is on by
-//! default. Instead `DamageTracker` walks the tree with the paint walk's
-//! own traversal (`walk`: the same visibility, culling, composed
-//! transforms, and clips, written once) and records, per node, its
-//! *painted rect* in window pixels and a *fingerprint* of everything that
-//! decides its pixels. A node that's new, gone, or changed since the last
-//! frame contributes its old and new painted rects.
+//! **Compare what changed; instrument nothing that can be missed.** Pixels
+//! change through `Tree::get_mut`, direct field writes inside `Tree`,
+//! animation ticks, layout, and tree-level state such as focus. The tracker
+//! records, per node, its *painted rect* in window pixels and a *fingerprint*
+//! of everything that decides its pixels, and a node that is new, gone, or
+//! changed since the last frame contributes its old and new painted rects.
+//!
+//! Two ways of finding those nodes:
+//!
+//! - **The full walk** visits every node with the paint walk's own traversal
+//!   (`walk`: the same visibility, culling, composed transforms, and clips,
+//!   written once) and compares each against its last record. It trusts
+//!   nothing but the tree as it is now.
+//! - **The incremental walk** (0.5.4, #125) visits only the nodes written to
+//!   since the last call, and the nodes between them and the root, and keeps
+//!   every other record. What makes that safe is that a write cannot go
+//!   unnoticed: the tree's node map is private to `engine-core`'s `Tree` and
+//!   notes every mutable access (`tree/nodes.rs`), so no write path can skip
+//!   the note and still compile. Everything else a node's pixels follow from
+//!   is rechecked: where it is placed (layout counts its own computations,
+//!   and a new count means a full walk), what it is placed under (every node
+//!   reached has its parent's transform, visible rect, opacity and index
+//!   hashed and compared), focus, fonts, scale, size and the root. A shader or
+//!   a backdrop blur paints from other nodes and the clock, and anything
+//!   else that cannot be judged from the changed nodes alone, hands the call
+//!   over to the full walk. The cost follows the changes, not the tree.
+//!
+//! `TRE_DAMAGE_VERIFY=1` (or `DamageTracker::with_verification`) runs both on
+//! every call and panics if the incremental result misses anything the full
+//! walk finds, or leaves a record that differs from it; CI runs the suites
+//! that way. `TRE_DAMAGE_FULL=1` turns the incremental walk off.
 //!
 //! The fingerprint code destructures every state struct without `..`: a
 //! field added later won't compile until someone decides whether it
@@ -25,6 +46,7 @@
 //! the window, or on a first frame, a size change, or a `reset`, the answer
 //! is a full redraw.
 
+use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasher, Hash, Hasher};
 
 use engine_core::{
@@ -63,10 +85,60 @@ pub enum Damage {
     Rects(Vec<Rect>),
 }
 
-#[derive(Clone, Copy, PartialEq)]
+/// What the walk knows about one node as of the last frame.
+#[derive(Clone)]
 struct Record {
     painted: Rect,
     fingerprint: u64,
+    // 0.5.4 (#125): the rest is what reaching this node's children takes,
+    // without walking down to them from the root.
+    composed: Affine,
+    /// What the node leaves visible to its children.
+    child_visible: Rect,
+    /// The node's opacity times its ancestors'.
+    opacity: f64,
+    /// Hash of what the node was placed under: its parent's transform,
+    /// visible rect and opacity, the parent and its index. A different
+    /// value means the node must be walked again.
+    context: u64,
+    /// The children the walk reached, in paint order.
+    children: Vec<NodeId>,
+    /// The node's index among its parent's children when last walked: where
+    /// to look for it first.
+    order: usize,
+    /// Whether the node's children were painted in an order other than their
+    /// own (a nonzero `z_index` among them).
+    sorted: bool,
+}
+
+impl Record {
+    /// Whether the node paints the same as `other` did.
+    fn same_pixels(&self, other: &Record) -> bool {
+        self.painted == other.painted && self.fingerprint == other.fingerprint
+    }
+}
+
+/// What a node is placed under, for `Record::context`.
+fn context_hash(
+    transform: Affine,
+    visible: Rect,
+    opacity: f64,
+    parent: Option<NodeId>,
+    order: usize,
+) -> u64 {
+    let mut hasher = FINGERPRINT.build_hasher();
+    affine(&mut hasher, transform);
+    rect(&mut hasher, visible);
+    num(&mut hasher, opacity);
+    parent.hash(&mut hasher);
+    order.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Whether painting `node` depends on other nodes or on the clock, so it
+/// cannot be judged from its own state: a shader, or a backdrop blur.
+fn is_special(node: &Node) -> bool {
+    node.shader.is_some() || node.paint.backdrop_blur.current > 0.0
 }
 
 /// Remembers each node's painted rect and fingerprint from the last frame.
@@ -82,6 +154,23 @@ pub struct DamageTracker {
     /// 0.5.4 (#102): the display scale; layout is logical, the painted rects
     /// and the window physical.
     scale: f64,
+    /// 0.5.4 (#125): the state of the tree the records were made against, so
+    /// the next call can tell what else besides touched nodes moved.
+    layout_epoch: Option<u64>,
+    focused: Option<NodeId>,
+    fonts: u64,
+    root: Option<NodeId>,
+    /// The last full walk met a shader or a backdrop blur: such a tree is
+    /// walked in full, as those paint from other nodes and the clock.
+    special: bool,
+    /// Walk only the nodes that changed (default). Off, every call walks the
+    /// whole tree.
+    incremental: bool,
+    /// The nodes the last call walked.
+    visited: usize,
+    /// Debug aid: a second, full-walk tracker whose answer the incremental
+    /// one must cover. See `with_verification`.
+    verify: Option<Box<DamageTracker>>,
 }
 
 /// One frame's walk (`walk::Visitor`): the records it builds and what it
@@ -91,23 +180,79 @@ struct Recorder<'a> {
     time: f32,
     text: &'a mut TextRenderer,
     records: &'a mut SecondaryMap<NodeId, Record>,
+    /// `Record::context` of the root, which has no parent record to read.
+    root_context: u64,
+    special: bool,
+    visited: usize,
 }
 
 impl Default for DamageTracker {
     fn default() -> Self {
+        let mut tracker = Self::default_plain();
+        tracker.incremental = std::env::var_os("TRE_DAMAGE_FULL").is_none();
+        if std::env::var_os("TRE_DAMAGE_VERIFY").is_some() {
+            tracker.verify = Some(Box::new(Self::full_only()));
+        }
+        tracker
+    }
+}
+
+/// A call to the incremental walk that must hand over to the full one: it
+/// met something it cannot judge from the changed nodes alone.
+struct Bail;
+
+impl DamageTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A tracker that always walks the whole tree.
+    fn full_only() -> Self {
+        Self {
+            incremental: false,
+            verify: None,
+            ..Self::default_plain()
+        }
+    }
+
+    fn default_plain() -> Self {
         Self {
             records: SecondaryMap::new(),
             spare: SecondaryMap::new(),
             size: None,
             time: 0.0,
             scale: 1.0,
+            layout_epoch: None,
+            focused: None,
+            fonts: 0,
+            root: None,
+            special: false,
+            incremental: true,
+            visited: 0,
+            verify: None,
         }
     }
-}
 
-impl DamageTracker {
-    pub fn new() -> Self {
-        Self::default()
+    /// A tracker that also walks the whole tree on every call, and panics
+    /// when what the incremental walk reports misses a change the full walk
+    /// finds. Set `TRE_DAMAGE_VERIFY` to get one from `new`, to run the test
+    /// suites under it.
+    pub fn with_verification() -> Self {
+        Self {
+            verify: Some(Box::new(Self::full_only())),
+            ..Self::default_plain()
+        }
+    }
+
+    /// A tracker that walks the whole tree on every call (no shortcut), for
+    /// comparing against.
+    pub fn without_shortcuts() -> Self {
+        Self::full_only()
+    }
+
+    /// How many nodes the last `damage` call walked.
+    pub fn visited(&self) -> usize {
+        self.visited
     }
 
     /// Sets the time, in seconds, the next `damage` call sees: an animated
@@ -130,6 +275,9 @@ impl DamageTracker {
     pub fn reset(&mut self) {
         self.records.clear();
         self.size = None;
+        if let Some(shadow) = &mut self.verify {
+            shadow.reset();
+        }
     }
 
     /// What changed in `root`'s tree, painted into a `width` x `height`
@@ -142,15 +290,117 @@ impl DamageTracker {
         height: u16,
         text: &mut TextRenderer,
     ) -> Damage {
+        let result = self.damage_unverified(tree, root, width, height, text);
+        if let Some(mut shadow) = self.verify.take() {
+            shadow.time = self.time;
+            shadow.scale = self.scale;
+            let full = shadow.damage(tree, root, width, height, text);
+            assert!(
+                covers(&result, &full, f64::from(width), f64::from(height)),
+                "the incremental damage walk missed a change.\n  incremental: {result:?}\n  full walk:   {full:?}"
+            );
+            // The records themselves must agree too: a record the incremental
+            // walk left stale would only show up as a miss later.
+            if let Some(why) = self.records_differ(&shadow) {
+                panic!("the incremental damage walk's records differ from the full walk's: {why}");
+            }
+            self.verify = Some(shadow);
+        }
+        result
+    }
+
+    /// Why this tracker's records differ from `full`'s, if they do.
+    fn records_differ(&self, full: &DamageTracker) -> Option<String> {
+        for (id, theirs) in &full.records {
+            match self.records.get(id) {
+                None => {
+                    return Some(format!(
+                        "{id:?} has no record; full walk: {:?}",
+                        theirs.painted
+                    ));
+                }
+                Some(mine) if !mine.same_pixels(theirs) => {
+                    return Some(format!(
+                        "{id:?} paints {:?} here and {:?} in the full walk",
+                        mine.painted, theirs.painted
+                    ));
+                }
+                Some(_) => {}
+            }
+        }
+        self.records
+            .iter()
+            .find(|(id, _)| !full.records.contains_key(*id))
+            .map(|(id, mine)| {
+                format!(
+                    "{id:?} has a record ({:?}) the full walk does not",
+                    mine.painted
+                )
+            })
+    }
+
+    fn damage_unverified(
+        &mut self,
+        tree: &Tree,
+        root: NodeId,
+        width: u16,
+        height: u16,
+        text: &mut TextRenderer,
+    ) -> Damage {
         let window = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+        let epoch = tree.layout_epoch();
+        let fonts = text.font_generation();
+        let focused = tree.focused();
+        // Always drained, so what a full walk covers is not counted twice.
+        let touched = tree.take_touched();
+        let first = self.size != Some((width, height));
+        let usable = self.incremental
+            && !first
+            && !self.special
+            && !touched.all
+            && self.root == Some(root)
+            && self.layout_epoch == Some(epoch)
+            && self.fonts == fonts
+            && !self.records.is_empty();
+        let result = if usable {
+            self.incremental_walk(tree, root, window, &touched, focused, text)
+        } else {
+            Err(Bail)
+        };
+        let damage = match result {
+            Ok(damage) => damage,
+            Err(Bail) => self.full_walk(tree, root, window, width, height, text),
+        };
+        self.layout_epoch = Some(epoch);
+        self.focused = focused;
+        self.fonts = fonts;
+        self.root = Some(root);
+        damage
+    }
+
+    /// The whole tree, compared with the last frame's records.
+    fn full_walk(
+        &mut self,
+        tree: &Tree,
+        root: NodeId,
+        window: Rect,
+        width: u16,
+        height: u16,
+        text: &mut TextRenderer,
+    ) -> Damage {
         self.spare.clear();
         let mut recorder = Recorder {
             tree,
             time: self.time,
             text,
             records: &mut self.spare,
+            root_context: context_hash(Affine::scale(self.scale), window, 1.0, None, 0),
+            special: false,
+            visited: 0,
         };
         walk::walk(tree, root, Affine::scale(self.scale), window, &mut recorder);
+        self.special = recorder.special;
+        self.visited = recorder.visited;
 
         let first = self.size != Some((width, height));
         // `spare` is now this frame; `records` (the last) becomes the next
@@ -165,7 +415,7 @@ impl DamageTracker {
         let mut rects = Vec::new();
         for (id, now) in &self.records {
             match previous.get(id) {
-                Some(before) if before == now => {}
+                Some(before) if before.same_pixels(now) => {}
                 Some(before) => {
                     // A change in place (a colour, a glyph) needs its rect
                     // once, not twice toward the `MAX_TRACKED` cap.
@@ -184,25 +434,392 @@ impl DamageTracker {
         }
         merge(rects, window)
     }
+
+    /// 0.5.4 (#125): only the nodes that were written to since the last
+    /// call, and what stands between them and the root.
+    ///
+    /// Nothing else can have changed pixels, because a node's pixels follow
+    /// from its own state (reached only through the tree's node map, which
+    /// notes every mutable access), its place (layout, which counts its own
+    /// computations), what it is placed under (rechecked for every node
+    /// reached), and a few tree-wide things (focus, fonts, scale, size, the
+    /// root), all rechecked here. A shader or backdrop blur paints from other
+    /// nodes and the clock: meeting one hands over to the full walk. So does
+    /// anything else this cannot judge locally (`Bail`).
+    fn incremental_walk(
+        &mut self,
+        tree: &Tree,
+        root: NodeId,
+        window: Rect,
+        touched: &engine_core::Touched,
+        focused: Option<NodeId>,
+        text: &mut TextRenderer,
+    ) -> Result<Damage, Bail> {
+        let mut changed: HashSet<NodeId> = touched
+            .ids
+            .iter()
+            .copied()
+            .filter(|&id| tree.get(id).is_some())
+            .collect();
+        // The caret and cursor are drawn for the focused node only.
+        if self.focused != focused {
+            changed.extend(self.focused.into_iter().chain(focused));
+        }
+        let mut pass = Pass {
+            tree,
+            text,
+            time: self.time,
+            old: &self.records,
+            dirty: HashMap::new(),
+            registered: HashSet::new(),
+            changed,
+            updates: Vec::new(),
+            removed: Vec::new(),
+            rects: Vec::new(),
+            visited: 0,
+        };
+        pass.register();
+        let base = Affine::scale(self.scale);
+        pass.node(root, base, window, 1.0, None, 0, false)?;
+        let Pass {
+            updates,
+            removed,
+            rects,
+            visited,
+            ..
+        } = pass;
+        for id in removed {
+            self.records.remove(id);
+        }
+        for (id, record) in updates {
+            self.records.insert(id, record);
+        }
+        self.visited = visited;
+        Ok(merge(rects, window))
+    }
+}
+
+/// One call's incremental walk: reads the last frame's records, collects the
+/// changes, and leaves applying them to the caller (so a `Bail` loses nothing).
+struct Pass<'a> {
+    tree: &'a Tree,
+    text: &'a mut TextRenderer,
+    time: f32,
+    old: &'a SecondaryMap<NodeId, Record>,
+    /// For each node on the way down to a changed one, the children that
+    /// lead there.
+    dirty: HashMap<NodeId, Vec<NodeId>>,
+    /// Every node in `dirty`'s values, and the changed nodes.
+    registered: HashSet<NodeId>,
+    /// The nodes to walk again.
+    changed: HashSet<NodeId>,
+    updates: Vec<(NodeId, Record)>,
+    removed: Vec<NodeId>,
+    rects: Vec<Rect>,
+    visited: usize,
+}
+
+impl Pass<'_> {
+    /// Marks every changed node and its ancestors, so the walk can find the
+    /// changed ones from the root.
+    fn register(&mut self) {
+        let changed: Vec<NodeId> = self.changed.iter().copied().collect();
+        for id in changed {
+            let mut current = id;
+            if !self.registered.insert(current) {
+                continue;
+            }
+            while let Some(parent) = self.tree.get(current).and_then(|n| n.parent) {
+                self.dirty.entry(parent).or_default().push(current);
+                if !self.registered.insert(parent) {
+                    break;
+                }
+                current = parent;
+            }
+        }
+    }
+
+    /// Whether `id` was reached: it has a record now.
+    #[allow(clippy::too_many_arguments)]
+    fn node(
+        &mut self,
+        id: NodeId,
+        parent_transform: Affine,
+        visible: Rect,
+        parent_opacity: f64,
+        parent: Option<NodeId>,
+        order: usize,
+        force: bool,
+    ) -> Result<bool, Bail> {
+        let context = context_hash(parent_transform, visible, parent_opacity, parent, order);
+        let old = self.old.get(id);
+        let again = force
+            || self.changed.contains(&id)
+            || old.is_none_or(|o| o.context != context)
+            // A child with a z_index can reorder its siblings, and the order
+            // is part of what each one is: all of them are looked at.
+            || (self.registered.contains(&id) && !self.plain(id, old));
+        if !again {
+            if self.registered.contains(&id) {
+                self.pass_through(id)?;
+            }
+            return Ok(true);
+        }
+        self.visited += 1;
+        let Some(v) = walk::resolve(
+            self.tree,
+            id,
+            parent_transform,
+            visible,
+            parent_opacity,
+            parent,
+            order,
+        ) else {
+            if old.is_some() {
+                self.remove_subtree(id)?;
+            }
+            return Ok(false);
+        };
+        if is_special(v.node) {
+            return Err(Bail);
+        }
+        let mut record = Record {
+            painted: round_out(painted_rect(
+                self.text, v.id, v.node, v.composed, v.w, v.h, v.bounds, v.visible,
+            )),
+            fingerprint: {
+                let mut hasher = FINGERPRINT.build_hasher();
+                fingerprint_placement(&mut hasher, &v);
+                node_fingerprint(&mut hasher, self.tree, self.time, v.id, v.node);
+                hasher.finish()
+            },
+            composed: v.composed,
+            child_visible: walk::child_visible(&v),
+            opacity: v.opacity,
+            context,
+            children: Vec::new(),
+            order,
+            sorted: false,
+        };
+        match old {
+            Some(before) if before.same_pixels(&record) => {}
+            Some(before) => {
+                if before.painted != record.painted {
+                    self.rects.push(before.painted);
+                }
+                self.rects.push(record.painted);
+            }
+            None => self.rects.push(record.painted),
+        }
+        // A scroller's children are placed by its offset, which a child
+        // cannot see: they are all walked again. (Today a scroll also moves
+        // layout, so the layout epoch has already sent such a frame to the
+        // full walk; this holds if that ever stops being so.)
+        let force_children = force
+            || (self.changed.contains(&id)
+                && matches!(
+                    v.node.kind,
+                    NodeKind::ScrollView(_) | NodeKind::VirtualList(_)
+                ));
+        let children = self.tree.children_in_paint_order(id);
+        record.sorted = has_z_order(self.tree, v.node);
+        for (index, &child) in children.iter().enumerate() {
+            if self.node(
+                child,
+                record.composed,
+                record.child_visible,
+                record.opacity,
+                Some(id),
+                index,
+                force_children,
+            )? {
+                record.children.push(child);
+            }
+        }
+        if let Some(before) = old
+            && before.children != record.children
+        {
+            let now: HashSet<NodeId> = record.children.iter().copied().collect();
+            for &gone in &before.children {
+                if now.contains(&gone) {
+                    continue;
+                }
+                match self.tree.get(gone) {
+                    // Still here, under this node: its own visit dropped it.
+                    Some(node) if node.parent == Some(id) => {}
+                    // Moved elsewhere in the tree: not judged here.
+                    Some(_) => return Err(Bail),
+                    None => self.remove_subtree(gone)?,
+                }
+            }
+        }
+        self.updates.push((id, record));
+        Ok(true)
+    }
+
+    /// Whether the children of `id` paint in their own order, and so none of
+    /// the ones to look at has a z_index to reorder the others: only dirty
+    /// children can have changed theirs, so the check is theirs alone, and
+    /// the list is neither sorted nor scanned.
+    fn plain(&self, id: NodeId, old: Option<&Record>) -> bool {
+        let Some(own) = old else { return false };
+        !own.sorted
+            && self.dirty.get(&id).is_none_or(|dirty| {
+                dirty
+                    .iter()
+                    .all(|c| self.tree.get(*c).is_some_and(|n| n.z_index == 0))
+            })
+    }
+
+    /// A node nothing changed in itself, with changed nodes below it: walks
+    /// down to just those, placing them under its own record.
+    fn pass_through(&mut self, id: NodeId) -> Result<(), Bail> {
+        let Some(own) = self.old.get(id) else {
+            return Err(Bail);
+        };
+        let Some(dirty) = self.dirty.get(&id) else {
+            return Ok(());
+        };
+        // `plain` held when this node was judged to need no more than its
+        // dirty children, so paint order is the child order.
+        let children: std::borrow::Cow<'_, [NodeId]> = match self.tree.get(id) {
+            Some(node) => std::borrow::Cow::Borrowed(&node.children),
+            None => return Err(Bail),
+        };
+        let place = |child: NodeId, old: &SecondaryMap<NodeId, Record>| -> Option<usize> {
+            // Where it was last time, nearly always still right.
+            let hint = old.get(child).map(|r| r.order);
+            match hint {
+                Some(i) if children.get(i) == Some(&child) => Some(i),
+                _ => children.iter().position(|k| *k == child),
+            }
+        };
+        let mut targets: Vec<(usize, NodeId)> = if dirty.len() <= 16 {
+            dirty
+                .iter()
+                .filter_map(|c| place(*c, self.old).map(|i| (i, *c)))
+                .collect()
+        } else {
+            let wanted: HashSet<NodeId> = dirty.iter().copied().collect();
+            children
+                .iter()
+                .enumerate()
+                .filter(|(_, k)| wanted.contains(k))
+                .map(|(i, k)| (i, *k))
+                .collect()
+        };
+        targets.sort_by_key(|(i, _)| *i);
+        let (composed, child_visible, opacity) = (own.composed, own.child_visible, own.opacity);
+        // Which of the dirty children were reached before is whether they
+        // have a record; the list is only copied if that changes.
+        let mut reached: Option<Vec<NodeId>> = None;
+        for (index, child) in targets {
+            let had = self.old.contains_key(child);
+            let now = self.node(
+                child,
+                composed,
+                child_visible,
+                opacity,
+                Some(id),
+                index,
+                false,
+            )?;
+            if now != had {
+                let list = reached.get_or_insert_with(|| own.children.clone());
+                if now {
+                    list.push(child);
+                } else {
+                    list.retain(|c| *c != child);
+                }
+            }
+        }
+        if let Some(children) = reached {
+            let mut record = own.clone();
+            record.children = children;
+            self.updates.push((id, record));
+        }
+        Ok(())
+    }
+
+    /// `id` is no longer painted: its rect, and every node below it that was.
+    fn remove_subtree(&mut self, id: NodeId) -> Result<(), Bail> {
+        let Some(record) = self.old.get(id) else {
+            return Ok(());
+        };
+        self.rects.push(record.painted);
+        self.removed.push(id);
+        for &child in &record.children {
+            // A node of this subtree that now hangs somewhere else was
+            // reparented, and would be walked there: not judged here.
+            if let Some(node) = self.tree.get(child)
+                && node.parent != Some(id)
+            {
+                return Err(Bail);
+            }
+            self.remove_subtree(child)?;
+        }
+        Ok(())
+    }
+}
+
+/// Whether any of `node`'s children has a nonzero `z_index`, so that they
+/// paint in an order other than their own.
+fn has_z_order(tree: &Tree, node: &Node) -> bool {
+    node.children
+        .iter()
+        .any(|c| tree.get(*c).is_some_and(|n| n.z_index != 0))
+}
+
+/// Whether `result` covers everything `full` reports (a change reported
+/// twice, or reported more broadly, is fine; a change missed is not).
+fn covers(result: &Damage, full: &Damage, width: f64, height: f64) -> bool {
+    match (result, full) {
+        (_, Damage::None) => true,
+        (Damage::Full, _) => true,
+        (Damage::None, _) => false,
+        (Damage::Rects(_), Damage::Full) => {
+            let Damage::Rects(rects) = result else {
+                return false;
+            };
+            rects.iter().map(Rect::area).sum::<f64>() >= width * height - 1e-6
+        }
+        (Damage::Rects(mine), Damage::Rects(theirs)) => theirs.iter().all(|want| {
+            // The rects do not overlap, so their overlaps with `want` add up.
+            let got: f64 = mine
+                .iter()
+                .map(|r| r.intersect(*want))
+                .filter(|r| r.width() > 0.0 && r.height() > 0.0)
+                .map(|r| r.area())
+                .sum();
+            got >= want.area() - 1e-6
+        }),
+    }
+}
+
+/// What places a node: its parent, index, transform, opacity, visible rect and
+/// size. The same for the full walk and the incremental one.
+fn fingerprint_placement(hasher: &mut impl Hasher, v: &walk::Visit<'_>) {
+    v.parent.hash(hasher);
+    v.order.hash(hasher);
+    affine(hasher, v.composed);
+    num(hasher, v.opacity);
+    rect(hasher, v.visible);
+    num(hasher, v.w);
+    num(hasher, v.h);
 }
 
 impl<'t> walk::Visitor<'t> for Recorder<'_> {
     /// Records every node the paint walk reaches -- the same `walk`, so
     /// the two can't disagree about which nodes are drawn.
     fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
+        self.visited += 1;
         let painted = round_out(painted_rect(
             self.text, v.id, v.node, v.composed, v.w, v.h, v.bounds, v.visible,
         ));
         // Fast and fixed-seed: a frame's fingerprints compare with the
         // last frame's, and nothing adversarial picks what's hashed.
         let mut hasher = FINGERPRINT.build_hasher();
-        v.parent.hash(&mut hasher);
-        v.order.hash(&mut hasher);
-        affine(&mut hasher, v.composed);
-        num(&mut hasher, v.opacity);
-        rect(&mut hasher, v.visible);
-        num(&mut hasher, v.w);
-        num(&mut hasher, v.h);
+        fingerprint_placement(&mut hasher, v);
         node_fingerprint(&mut hasher, self.tree, self.time, v.id, v.node);
         // 0.5.4 (#110): a backdrop blur shows what is behind it, so anything
         // painted before it that reaches its box or the blur's reach is part
@@ -218,11 +835,32 @@ impl<'t> walk::Visitor<'t> for Recorder<'_> {
                 }
             }
         }
+        self.special |= is_special(v.node);
+        let context = match v.parent.and_then(|p| self.records.get(p)) {
+            Some(parent) => context_hash(
+                parent.composed,
+                parent.child_visible,
+                parent.opacity,
+                v.parent,
+                v.order,
+            ),
+            None => self.root_context,
+        };
+        if let Some(parent) = v.parent.and_then(|p| self.records.get_mut(p)) {
+            parent.children.push(v.id);
+        }
         self.records.insert(
             v.id,
             Record {
                 painted,
                 fingerprint: hasher.finish(),
+                composed: v.composed,
+                child_visible: walk::child_visible(v),
+                opacity: v.opacity,
+                context,
+                children: Vec::new(),
+                order: v.order,
+                sorted: has_z_order(self.tree, v.node),
             },
         );
         true

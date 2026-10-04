@@ -14,7 +14,10 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap, SlotMap};
+use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap};
+
+use self::nodes::Nodes;
+pub use self::nodes::Touched;
 use taffy::prelude::{
     AvailableSpace, Layout, Position, Rect as TaffyRect, Size, Style, TaffyTree, auto, length,
 };
@@ -41,6 +44,7 @@ mod dispatch;
 mod focus;
 mod layers;
 mod layout;
+mod nodes;
 mod scroll;
 pub use scroll::KEY_SCROLL_LINE;
 #[cfg(test)]
@@ -55,7 +59,10 @@ pub enum FocusDirection {
 }
 
 pub struct Tree {
-    nodes: SlotMap<NodeId, Node>,
+    nodes: Nodes,
+    /// 0.5.4 (#125): counts the times taffy computed a layout, so a consumer
+    /// can tell that no node moved or changed size since it last looked.
+    layout_epoch: u64,
     taffy_nodes: SecondaryMap<NodeId, taffy::NodeId>,
     taffy: TaffyTree<()>,
     /// §14 step 7: which node `TreeUpdate.focus` reports. Moved by
@@ -144,7 +151,8 @@ fn rect_contains(layout: &Layout, local_point: Point) -> bool {
 impl Tree {
     pub fn new() -> Self {
         Self {
-            nodes: SlotMap::with_key(),
+            nodes: Nodes::new(),
+            layout_epoch: 0,
             animating: Vec::new(),
             static_selection: None,
             last_layout: None,
@@ -530,6 +538,19 @@ impl Tree {
         if changed {
             self.mark_dirty();
         }
+    }
+
+    /// 0.5.4 (#125): the nodes handed out mutably since the last call (see
+    /// `Touched`), and a fresh start. For the damage tracker: a node absent
+    /// from this was not written to.
+    pub fn take_touched(&self) -> Touched {
+        self.nodes.take_touched()
+    }
+
+    /// 0.5.4 (#125): how many times a layout has been computed. While it is
+    /// unchanged, no node's position or size has.
+    pub fn layout_epoch(&self) -> u64 {
+        self.layout_epoch
     }
 
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node> {
