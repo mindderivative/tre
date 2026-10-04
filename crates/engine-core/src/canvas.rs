@@ -8,6 +8,7 @@
 //! outside both paint and hit-testing, and only its *result* -- this
 //! module's types -- ever reaches `Tree`.
 
+use crate::Gradient;
 use peniko::Color;
 use peniko::kurbo::BezPath;
 
@@ -58,17 +59,23 @@ pub enum DrawCommand {
         width: f64,
         height: f64,
         color: Color,
+        /// 0.5.4 (#129): painted in place of `color`, over the rect.
+        gradient: Option<Gradient>,
     },
     FillCircle {
         cx: f64,
         cy: f64,
         radius: f64,
         color: Color,
+        /// 0.5.4 (#129): painted in place of `color`, over the circle's box.
+        gradient: Option<Gradient>,
     },
     StrokePath {
         path: BezPath,
         color: Color,
         width: f64,
+        /// 0.5.4 (#129): painted in place of `color`, over the path's bounds.
+        gradient: Option<Gradient>,
     },
 }
 

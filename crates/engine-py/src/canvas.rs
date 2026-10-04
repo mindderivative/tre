@@ -26,6 +26,20 @@ fn to_color(rgba: (u8, u8, u8, u8)) -> Color {
     Color::from_rgba8(rgba.0, rgba.1, rgba.2, rgba.3)
 }
 
+/// 0.5.4 (#129): a painter call's paint: an `(r, g, b, a)` tuple, or a
+/// `Gradient` resolved against the shape's own bounds.
+fn paint_of(value: &Bound<'_, PyAny>) -> PyResult<(Color, Option<engine_core::Gradient>)> {
+    if let Ok(gradient) = value.extract::<crate::gradient::PyGradient>() {
+        return Ok((Color::TRANSPARENT, Some(gradient.inner)));
+    }
+    let rgba: (u8, u8, u8, u8) = value.extract().map_err(|_| {
+        PyValueError::new_err(
+            "a painter color must be an (r, g, b, a) tuple of 0-255 ints, or a Gradient",
+        )
+    })?;
+    Ok((to_color(rgba), None))
+}
+
 /// M11 Phase 1 (§11.10, §11.11): each entry in `points` is a real
 /// bezier segment, not just a line-to point -- 2 numbers (`x, y`) is a
 /// line-to (a plain point, the only shape this ever accepted before
@@ -80,23 +94,42 @@ impl Painter {
 
     /// Node-local coordinates, matching every other `DrawCommand`
     /// (M5 Phase 1's own local-space paint convention).
-    fn fill_rect(&mut self, x: f64, y: f64, width: f64, height: f64, color: (u8, u8, u8, u8)) {
+    fn fill_rect(
+        &mut self,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        color: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let (color, gradient) = paint_of(color)?;
         self.commands.push(DrawCommand::FillRect {
             x,
             y,
             width,
             height,
-            color: to_color(color),
+            color,
+            gradient,
         });
+        Ok(())
     }
 
-    fn fill_circle(&mut self, cx: f64, cy: f64, radius: f64, color: (u8, u8, u8, u8)) {
+    fn fill_circle(
+        &mut self,
+        cx: f64,
+        cy: f64,
+        radius: f64,
+        color: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let (color, gradient) = paint_of(color)?;
         self.commands.push(DrawCommand::FillCircle {
             cx,
             cy,
             radius,
-            color: to_color(color),
+            color,
+            gradient,
         });
+        Ok(())
     }
 
     /// `points` builds a real `kurbo::BezPath` -- each entry a line-to
@@ -108,14 +141,16 @@ impl Painter {
     fn stroke_path(
         &mut self,
         points: Vec<Vec<f64>>,
-        color: (u8, u8, u8, u8),
+        color: &Bound<'_, PyAny>,
         width: f64,
     ) -> PyResult<()> {
         let path = build_path(points)?;
+        let (color, gradient) = paint_of(color)?;
         self.commands.push(DrawCommand::StrokePath {
             path,
-            color: to_color(color),
+            color,
             width,
+            gradient,
         });
         Ok(())
     }

@@ -109,6 +109,7 @@ fn canvas_draw_commands_paint_real_pixels_composed_with_an_ancestor_transform() 
             cy: 20.0,
             radius: 10.0,
             color: CIRCLE,
+            gradient: None,
         });
         let mut line = BezPath::new();
         line.move_to((0.0, 0.0));
@@ -117,6 +118,7 @@ fn canvas_draw_commands_paint_real_pixels_composed_with_an_ancestor_transform() 
             path: line,
             color: LINE,
             width: 4.0,
+            gradient: None,
         });
         state.hit_test = Some(CustomHitTest::Circle {
             cx: 20.0,
@@ -216,6 +218,7 @@ fn canvas_draw_commands_compound_with_the_nodes_own_real_opacity() {
             width: 100.0,
             height: 100.0,
             color: CIRCLE,
+            gradient: None,
         });
 
         let canvas = tree.insert(

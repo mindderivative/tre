@@ -942,6 +942,31 @@ fn fill_box(
     }
 }
 
+/// Sets the paint for a shape in `bounds` (0.5.4, #129): a gradient resolved
+/// against the bounds, or the flat colour at `own_alpha`. Returns whether a
+/// paint transform was set, which the caller resets after drawing (it is
+/// scene state, and the next shape must not inherit it).
+fn set_shape_paint(
+    scene: &mut Scene,
+    color: Color,
+    gradient: Option<&engine_core::Gradient>,
+    bounds: Rect,
+    own_alpha: f64,
+) -> bool {
+    match gradient {
+        Some(gradient) => {
+            let (paint, transform) = gradient.resolve(bounds.width(), bounds.height());
+            scene.set_paint(paint);
+            scene.set_paint_transform(Affine::translate((bounds.x0, bounds.y0)) * transform);
+            true
+        }
+        None => {
+            scene.set_paint(with_opacity(color, own_alpha));
+            false
+        }
+    }
+}
+
 /// The box's own rounded outline, for a fill or a clip.
 fn box_path<'g>(
     node: &engine_core::Node,
@@ -1008,6 +1033,7 @@ fn stroke_box(
     if border_width <= 0.0 {
         return;
     }
+    let border_gradient = node.paint.border_gradient.as_deref();
     // 0.5.4 (#107): a square box's border is four rects, which vello fills far
     // more cheaply than it expands a stroke (~2.4 us -> see the scene cost
     // test), and covers exactly the pixels the stroke did.
@@ -1016,7 +1042,13 @@ fn stroke_box(
         && border_width <= SQUARE_BORDER_MAX
         && border_width * 2.0 < w.min(h)
     {
-        scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+        let shaped = set_shape_paint(
+            scene,
+            node.paint.border_color.current,
+            border_gradient,
+            Rect::new(0.0, 0.0, w, h),
+            own_alpha,
+        );
         let b = border_width;
         for rect in [
             Rect::new(0.0, 0.0, w, b),
@@ -1025,6 +1057,9 @@ fn stroke_box(
             Rect::new(w - b, b, w, h - b),
         ] {
             scene.fill_rect(&rect);
+        }
+        if shaped {
+            scene.reset_paint_transform();
         }
         return;
     }
@@ -1041,9 +1076,18 @@ fn stroke_box(
             geometry.rounded_rect_border(id, w, h, radius, inset)
         }
     };
-    scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+    let shaped = set_shape_paint(
+        scene,
+        node.paint.border_color.current,
+        border_gradient,
+        Rect::new(0.0, 0.0, w, h),
+        own_alpha,
+    );
     scene.set_stroke(Stroke::new(border_width));
     scene.stroke_path(border_path);
+    if shaped {
+        scene.reset_paint_transform();
+    }
 }
 
 /// A node's own paint -- shadows, then what its kind draws -- in its own
@@ -1115,7 +1159,9 @@ fn draw_own(
             // left; before, it drew at the node's corner across its full
             // width, and the padding was reserved but never used.
             let padding = tree.layout(id).padding;
-            text.draw(
+            // 0.5.4 (#129): a gradient `fill` paints the glyphs, across the text's own extent.
+            let gradient = node.paint.gradient.as_ref().map(|g| &g.current);
+            text.draw_painted(
                 scene,
                 resources,
                 state,
@@ -1126,6 +1172,7 @@ fn draw_own(
                     color,
                 },
                 id,
+                gradient,
             );
             // 0.5.1 (#45): a text node's `stroke_*` and `corner_radius`
             // paint a border around its box; its `fill` is the glyph color.
@@ -1270,23 +1317,45 @@ fn draw_own(
                         width,
                         height,
                         color,
+                        gradient,
                     } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
-                        scene.fill_path(&Rect::new(*x, *y, x + width, y + height).to_path(0.1));
+                        let rect = Rect::new(*x, *y, x + width, y + height);
+                        let shaped =
+                            set_shape_paint(scene, *color, gradient.as_ref(), rect, own_alpha);
+                        scene.fill_path(&rect.to_path(0.1));
+                        if shaped {
+                            scene.reset_paint_transform();
+                        }
                     }
                     DrawCommand::FillCircle {
                         cx,
                         cy,
                         radius,
                         color,
+                        gradient,
                     } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
+                        let bounds = Rect::new(cx - radius, cy - radius, cx + radius, cy + radius);
+                        let shaped =
+                            set_shape_paint(scene, *color, gradient.as_ref(), bounds, own_alpha);
                         scene.fill_path(&Circle::new((*cx, *cy), *radius).to_path(0.1));
+                        if shaped {
+                            scene.reset_paint_transform();
+                        }
                     }
-                    DrawCommand::StrokePath { path, color, width } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
+                    DrawCommand::StrokePath {
+                        path,
+                        color,
+                        width,
+                        gradient,
+                    } => {
+                        let bounds = path.bounding_box();
+                        let shaped =
+                            set_shape_paint(scene, *color, gradient.as_ref(), bounds, own_alpha);
                         scene.set_stroke(Stroke::new(*width));
                         scene.stroke_path(path);
+                        if shaped {
+                            scene.reset_paint_transform();
+                        }
                     }
                 }
             }
@@ -1415,19 +1484,38 @@ fn draw_own(
             let (fill, stroke) = state.geometry(content.w, content.h);
             scene.set_transform(composed * Affine::translate((content.x, content.y)));
             let fill_color = node.paint.background.current;
-            if fill_color.components[3] > 0.0 {
-                scene.set_paint(with_opacity(fill_color, own_alpha));
+            let fill_gradient = node.paint.gradient.as_ref().map(|g| &g.current);
+            if fill_gradient.is_some() || fill_color.components[3] > 0.0 {
+                let shaped = set_shape_paint(
+                    scene,
+                    fill_color,
+                    fill_gradient,
+                    fill.bounding_box(),
+                    own_alpha,
+                );
                 scene.fill_path(&fill);
+                if shaped {
+                    scene.reset_paint_transform();
+                }
             }
             let stroke_width = node.paint.border_width.current;
             if stroke_width > 0.0 && !stroke.elements().is_empty() {
-                scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+                let shaped = set_shape_paint(
+                    scene,
+                    node.paint.border_color.current,
+                    node.paint.border_gradient.as_deref(),
+                    stroke.bounding_box(),
+                    own_alpha,
+                );
                 scene.set_stroke(
                     Stroke::new(stroke_width)
                         .with_caps(peniko::kurbo::Cap::Round)
                         .with_join(peniko::kurbo::Join::Round),
                 );
                 scene.stroke_path(&stroke);
+                if shaped {
+                    scene.reset_paint_transform();
+                }
             }
             scene.set_transform(composed);
         }

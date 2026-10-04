@@ -217,9 +217,12 @@ impl Node {
                     .extract::<crate::gradient::PyGradient>()
                     .expect("checked")
                     .inner;
-                if !matches!(node.kind, NodeKind::Rect | NodeKind::Container) {
+                if !matches!(
+                    node.kind,
+                    NodeKind::Rect | NodeKind::Container | NodeKind::Path(_) | NodeKind::Text(_)
+                ) {
                     return Err(pyo3::exceptions::PyValueError::new_err(
-                        "node property `fill` takes a Gradient only on a box node",
+                        "node property `fill` takes a Gradient only on a box, path or text node",
                     ));
                 }
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
@@ -264,6 +267,16 @@ impl Node {
                         handle,
                     ),
                 }
+            }
+            "stroke_color" if to.extract::<crate::gradient::PyGradient>().is_ok() => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "a gradient stroke can't be animated; set `stroke_color` to it instead",
+                ));
+            }
+            "stroke_color" if node.paint.border_gradient.is_some() => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "a gradient stroke can't animate to a color; set `stroke_color` to the color instead",
+                ));
             }
             "stroke_color" => {
                 let value = crate::node_props::parse_color(&to, property)?;

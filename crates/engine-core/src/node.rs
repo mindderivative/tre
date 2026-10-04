@@ -1247,6 +1247,10 @@ pub struct PaintProperties {
     /// which stays what a fill set back to a colour starts from. Boxed: most
     /// nodes have none.
     pub gradient: Option<Box<Animated<crate::Gradient>>>,
+    /// 0.5.4 (#129): a gradient painted in place of `border_color`, over the
+    /// node's bounds (a path's stroke: over the stroke's own bounds). Not
+    /// animated: set `stroke_color` to another to change it.
+    pub border_gradient: Option<Box<crate::Gradient>>,
     /// 0.5.4 (#110): a Gaussian blur of the node and its subtree, as a
     /// standard deviation in the node's own pixels. `0.0` is none.
     pub blur: Animated<f64>,
@@ -1330,6 +1334,7 @@ impl PaintProperties {
             node_transform: NodeTransform::default(),
             clip_children: false,
             gradient: None,
+            border_gradient: None,
             blur: Animated::new(0.0),
             blend: Blend::Normal,
             backdrop_blur: Animated::new(0.0),

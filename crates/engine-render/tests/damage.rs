@@ -386,6 +386,7 @@ fn a_canvas_redraw_damages_what_it_draws_past_its_box() {
             width: 10.0,
             height: 10.0,
             color: BLUE,
+            gradient: None,
         }],
         None,
     );
@@ -626,6 +627,7 @@ fn damage_walk_cost_beside_a_large_terminal_and_canvas() {
             width: 3.0,
             height: 3.0,
             color: BLUE,
+            gradient: None,
         })
         .collect();
     s.add(s.root, NodeKind::Canvas(canvas), 0.0, 200.0, 200.0, 100.0);

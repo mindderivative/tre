@@ -1289,6 +1289,7 @@ fn blittable(tree: &Tree, scroller: NodeId) -> bool {
     if !node.visible
         || node.shader.is_some()
         || paint.gradient.is_some()
+        || paint.border_gradient.is_some()
         || paint.background.current.components[3] < 1.0 - 1e-6
         || paint.border_width.current > 0.0
         || rounded(node)
@@ -1771,6 +1772,7 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         node_transform,
         clip_children,
         gradient,
+        border_gradient,
         blur,
         blend,
         backdrop_blur,
@@ -1810,6 +1812,18 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         Some(gradient) => {
             1u8.hash(h);
             gradient_fingerprint(h, &gradient.current);
+        }
+    }
+    // 0.5.4 (#129): and one is part of the border.
+    optional_gradient_fingerprint(h, border_gradient.as_deref());
+}
+
+fn optional_gradient_fingerprint(h: &mut impl Hasher, gradient: Option<&engine_core::Gradient>) {
+    match gradient {
+        None => 0u8.hash(h),
+        Some(gradient) => {
+            1u8.hash(h);
+            gradient_fingerprint(h, gradient);
         }
     }
 }
@@ -2016,27 +2030,33 @@ fn canvas_fingerprint(h: &mut impl Hasher, state: &CanvasState) {
                 width,
                 height,
                 color: c,
+                gradient,
             } => {
                 [*x, *y, *width, *height].iter().for_each(|v| num(h, *v));
                 color(h, *c);
+                optional_gradient_fingerprint(h, gradient.as_ref());
             }
             DrawCommand::FillCircle {
                 cx,
                 cy,
                 radius,
                 color: c,
+                gradient,
             } => {
                 [*cx, *cy, *radius].iter().for_each(|v| num(h, *v));
                 color(h, *c);
+                optional_gradient_fingerprint(h, gradient.as_ref());
             }
             DrawCommand::StrokePath {
                 path,
                 color: c,
                 width,
+                gradient,
             } => {
                 bez_path(h, path);
                 color(h, *c);
                 num(h, *width);
+                optional_gradient_fingerprint(h, gradient.as_ref());
             }
         }
     }

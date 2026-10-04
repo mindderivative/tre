@@ -857,6 +857,22 @@ impl TextRenderer {
         at: TextPlacement,
         node_id: NodeId,
     ) {
+        self.draw_painted(scene, resources, state, at, node_id, None);
+    }
+
+    /// `draw`, with the glyphs painted by a gradient (0.5.4, #129) instead of
+    /// the flat `at.color`, resolved against the shaped text's own extent
+    /// (not the node's box, which a text sized by its content can leave
+    /// zero wide). A rich-text span with its own colour keeps it.
+    pub fn draw_painted(
+        &mut self,
+        scene: &mut Scene,
+        resources: &mut Resources,
+        state: &TextState,
+        at: TextPlacement,
+        node_id: NodeId,
+        gradient: Option<&engine_core::Gradient>,
+    ) {
         let glyph_cache = self.glyph_cache;
         // M28 Phase 1: `shaped_layout` reuses the prior frame's
         // `Layout` unchanged whenever nothing about this node's real
@@ -919,7 +935,19 @@ impl TextRenderer {
                 ));
             }
         }
-        scene.set_paint(at.color);
+        let shaped = match gradient {
+            Some(gradient) => {
+                let (w, h) = (f64::from(layout.width()), f64::from(layout.height()));
+                let (paint, transform) = gradient.resolve(w, h);
+                scene.set_paint(paint);
+                scene.set_paint_transform(Affine::translate((at.x, at.y)) * transform);
+                true
+            }
+            None => {
+                scene.set_paint(at.color);
+                false
+            }
+        };
         let rich = !state.options.spans.is_empty();
         for line in layout.lines().take(shown) {
             for item in line.items() {
@@ -955,6 +983,9 @@ impl TextRenderer {
                     paint_decorations(scene, &glyph_run, at.x, at.y);
                 }
             }
+        }
+        if shaped {
+            scene.reset_paint_transform();
         }
         if clipped {
             scene.pop_layer();

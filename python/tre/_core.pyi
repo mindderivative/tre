@@ -802,8 +802,10 @@ class CursorImage:
 
 @final
 class Gradient:
-    """(0.5.4) A gradient to give a box (`Rect`/`Container`, `window.create("box")`)
-    as its `fill`: `node.set(fill=Gradient.linear([...]))`. Build one with
+    """(0.5.4) A gradient to give a box (`Rect`/`Container`, `window.create("box")`),
+    a path or a text node as its `fill` (a path's or box's `stroke_color` takes one
+    too, and so does a canvas painter call's color, each spanning the shape's own
+    bounds): `node.set(fill=Gradient.linear([...]))`. Build one with
     `Gradient.linear`, `Gradient.radial` or `Gradient.sweep`. Positions are
     relative to the box, so a gradient follows its box as layout resizes it.
     Immutable; to change a fill, set or animate `fill` to another. Setting
@@ -899,12 +901,12 @@ class Painter:
     constructed directly. M100 renamed it from `CanvasContext`.
     """
 
-    def fill_rect(self, x: float, y: float, width: float, height: float, color: Color) -> None: ...
-    def fill_circle(self, cx: float, cy: float, radius: float, color: Color) -> None: ...
+    def fill_rect(self, x: float, y: float, width: float, height: float, color: Color | Gradient) -> None: ...
+    def fill_circle(self, cx: float, cy: float, radius: float, color: Color | Gradient) -> None: ...
     def stroke_path(
         self,
         points: Sequence[Sequence[float]],
-        color: Color,
+        color: Color | Gradient,
         width: float,
     ) -> None:
         """Strokes a path in canvas-local coordinates. `points` starts

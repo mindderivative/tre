@@ -183,8 +183,10 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - **Fills can be gradients.** A box's `fill` takes a `tre.Gradient`
   (`Gradient.linear`, `.radial`, `.sweep`) as well as a colour, and animates
   between compatible ones (see [Gradients](reference/paint.md#gradients)).
-  Nothing changes for a fill set to a colour. Canvas painter calls still take
-  colours only.
+  Nothing changes for a fill set to a colour. A gradient is also accepted by a
+  path's or text node's `fill`, by `stroke_color` (borders and path strokes) and
+  by a canvas painter's `fill_rect`, `fill_circle` and `stroke_path`, each over
+  the shape's own bounds.
 - **Blur, frosted glass, and blend modes.** A node takes `blur` (a Gaussian blur
   of itself and its subtree), `backdrop_blur` (what is behind it, blurred,
   inside its box) and `blend_mode` (CSS `mix-blend-mode`); see

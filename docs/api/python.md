@@ -387,11 +387,11 @@ The drawing surface a canvas node's `draw` callback receives.
 
 | Method | Description |
 | --- | --- |
-| `fill_circle(cx: float, cy: float, radius: float, color: Color) -> None` | Fills a circle in canvas-local coordinates. |
-| `fill_rect(x: float, y: float, width: float, height: float, color: Color) -> None` | Fills a rectangle in canvas-local coordinates. |
+| `fill_circle(cx: float, cy: float, radius: float, color: Color \| Gradient) -> None` | Fills a circle in canvas-local coordinates. |
+| `fill_rect(x: float, y: float, width: float, height: float, color: Color \| Gradient) -> None` | Fills a rectangle in canvas-local coordinates. |
 | `set_hit_test_circle(cx: float, cy: float, radius: float) -> None` | Replaces this canvas's default rectangular hit test with a circular one. |
 | `set_hit_test_path(points: Sequence[Sequence[float]], tolerance: float) -> None` | Replaces this canvas's default rectangular hit test with a stroke-shaped one. |
-| `stroke_path(points: Sequence[Sequence[float]], color: Color, width: float) -> None` | Strokes a path in canvas-local coordinates. |
+| `stroke_path(points: Sequence[Sequence[float]], color: Color \| Gradient, width: float) -> None` | Strokes a path in canvas-local coordinates. |
 
 **Events:** none.
 

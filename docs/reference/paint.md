@@ -165,9 +165,16 @@ card.set(shadows=[((0, 0, 0, 77), 0, 1, 2, 0), ((0, 0, 0, 38), 0, 1, 3, 1)])
 ## Gradients
 
 A box's `fill` can be a `tre.Gradient` (0.5.4) instead of a colour: a ramp
-across the box, linear, radial or sweeping around a point. Only a box takes one
-(`window.create("box")`, a window's root); on a text, a text input or a path,
-`fill` is a colour.
+across the box, linear, radial or sweeping around a point. A box
+(`window.create("box")`, a window's root), a path and a text node take one as
+`fill` (a text node's gradient paints its glyphs, across the node's box); on a text
+input, `fill` is a colour. Elsewhere a gradient is accepted in place of a colour
+too, each time spanning the shape's own bounds:
+
+- `stroke_color` on any node: its border, over the node's box (a path's stroke:
+  over the stroke's bounds). A gradient stroke does not animate; set it again.
+- A canvas `Painter`'s `fill_rect`, `fill_circle` and `stroke_path`: over the
+  rect, the circle's bounding square, or the path's bounds.
 
 ```python
 from tre import Gradient

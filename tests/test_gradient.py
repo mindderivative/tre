@@ -97,12 +97,12 @@ def test_a_bad_fill_names_what_is_accepted():
         box.set(fill="red")
 
 
-def test_a_gradient_applies_only_to_a_box():
+def test_a_gradient_applies_only_to_a_box_path_or_text():
     window = Window(width=100, height=100)
-    text = window.create("text", text="hi", width=50, height=20)
+    field = window.create("text_input", width=50, height=20)
     with pytest.raises(ValueError, match="box"):
-        text.set(fill=Gradient.linear([BLACK, RED]))
-    assert isinstance(text.get("fill"), tuple)
+        field.set(fill=Gradient.linear([BLACK, RED]))
+    assert isinstance(field.get("fill"), tuple)
 
 
 def test_animating_between_gradients_interpolates():
@@ -141,3 +141,85 @@ def test_the_gradient_is_exported_and_the_pixels_can_be_saved(tmp_path):
     window, _ = boxed(Gradient.sweep([RED, BLUE, RED]))
     tre.write_png(tmp_path / "sweep.png", *window.snapshot())
     assert (tmp_path / "sweep.png").stat().st_size > 100
+
+
+# 0.5.4 (#129): gradients on more than a box's fill.
+
+GREEN = (0, 255, 0, 255)
+
+
+def ramp():
+    return Gradient.linear([BLACK, RED], angle=90)
+
+
+def test_a_canvas_painter_takes_a_gradient_over_the_shape():
+    window = Window(width=100, height=100)
+    window.root.set(padding=0)
+
+    def draw(ctx):
+        ctx.fill_rect(20, 20, 60, 60, ramp())
+        ctx.fill_circle(50, 90, 8, GREEN)
+
+    window.root.add_child(window.create("canvas", width=100, height=100, draw=draw))
+    left, right = shot_pixel(window, 24, 50), shot_pixel(window, 76, 50)
+    assert left[0] < 40 and right[0] > 215
+    assert shot_pixel(window, 50, 90)[:3] == (0, 255, 0)
+
+
+def test_a_painter_refuses_a_bad_paint():
+    window = Window(width=50, height=50)
+
+    def draw(ctx):
+        ctx.fill_rect(0, 0, 10, 10, "red")
+
+    with pytest.raises(ValueError, match="Gradient"):
+        window.root.add_child(window.create("canvas", width=50, height=50, draw=draw))
+
+
+def test_a_gradient_stroke_color_paints_the_border_and_reads_back():
+    window = Window(width=100, height=100)
+    window.root.set(padding=0)
+    box = window.create("box", width=80, height=80, stroke_width=10)
+    window.root.add_child(box)
+    box.set(stroke_color=ramp())
+    assert isinstance(box.get("stroke_color"), Gradient)
+    # (12, 5) and (74, 5) lie along the top border, near its two ends.
+    top_left, top_right = shot_pixel(window, 12, 5), shot_pixel(window, 74, 5)
+    assert top_left[0] < top_right[0] and top_right[0] > 200
+    box.set(stroke_color=GREEN)
+    assert box.get("stroke_color") == GREEN
+
+
+def test_a_gradient_stroke_does_not_animate():
+    window = Window(width=100, height=100)
+    box = window.create("box", width=80, height=80, stroke_width=4)
+    window.root.add_child(box)
+    with pytest.raises(ValueError, match="stroke"):
+        box.animate("stroke_color", ramp(), 100)
+    box.set(stroke_color=ramp())
+    with pytest.raises(ValueError, match="stroke"):
+        box.animate("stroke_color", GREEN, 100)
+
+
+def test_a_text_and_a_path_take_a_gradient_fill():
+    window = Window(width=120, height=60)
+    window.root.set(padding=0)
+    label = window.create("text", text="MMMMMM", font_size=36, font_weight=700)
+    window.root.add_child(label)
+    label.set(fill=ramp())
+    assert isinstance(label.get("fill"), Gradient)
+    rgba, width, _ = window.snapshot()
+    red = lambda x0, x1: max(rgba[(y * width + x) * 4] for x in range(x0, x1) for y in range(60))
+    assert red(0, 25) < red(60, 120)
+    path = window.create("path", data="M0,0 H10 V10 H0 Z", width=20, height=20)
+    window.root.add_child(path)
+    path.set(fill=ramp())
+    assert isinstance(path.get("fill"), Gradient)
+
+
+def test_a_text_input_still_refuses_a_gradient_fill():
+    window = Window(width=100, height=60)
+    field = window.create("text_input", width=80, height=30)
+    window.root.add_child(field)
+    with pytest.raises(ValueError, match="box"):
+        field.set(fill=ramp())

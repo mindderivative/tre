@@ -151,6 +151,7 @@ fn a_canvas_paints_from_the_content_box() {
             width: 10.0,
             height: 10.0,
             color: Color::from_rgba8(0xFF, 0, 0, 0xFF),
+            gradient: None,
         });
         padded(&mut tree, root, NodeKind::Canvas(state));
         let frame = frame(&mut tree, root).await;
@@ -176,6 +177,7 @@ fn unpadded_content_is_where_it_was() {
             width: 10.0,
             height: 10.0,
             color: Color::from_rgba8(0xFF, 0, 0, 0xFF),
+            gradient: None,
         });
         let id = tree.insert(
             NodeKind::Canvas(state),

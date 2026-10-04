@@ -173,6 +173,7 @@ fn canvas_transform_custom_hit_test_and_virtual_list_all_compose_under_one_share
             path: line.clone(),
             color: EDGE_COLOR,
             width: 6.0,
+            gradient: None,
         });
         edge_state.hit_test = Some(CustomHitTest::Path {
             path: line,

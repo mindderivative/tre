@@ -159,6 +159,7 @@ pub(crate) enum Change {
     /// 0.5.4 (#109): `fill` set to a `Gradient`.
     FillGradient(engine_core::Gradient),
     StrokeColor(Color),
+    StrokeGradient(engine_core::Gradient),
     StrokeWidth(f64),
     Opacity(f64),
     CornerRadius(Radius),
@@ -367,7 +368,16 @@ pub(crate) fn animatable_to_py(
             };
             number(*pick(&state.scroll, target))?
         }
-        "stroke_color" => color_to_py(*pick(&node.paint.border_color, target), py)?,
+        "stroke_color" => match &node.paint.border_gradient {
+            Some(gradient) => Py::new(
+                py,
+                crate::gradient::PyGradient {
+                    inner: (**gradient).clone(),
+                },
+            )?
+            .into_any(),
+            None => color_to_py(*pick(&node.paint.border_color, target), py)?,
+        },
         "stroke_width" => number(*pick(&node.paint.border_width, target))?,
         "translate_x" => number(*pick(&node.paint.node_transform.translate_x, target))?,
         "translate_y" => number(*pick(&node.paint.node_transform.translate_y, target))?,
@@ -492,7 +502,10 @@ impl Change {
             matches!(kind, NodeKind::Terminal(_))
         }
         fn box_node(kind: &NodeKind) -> bool {
-            matches!(kind, NodeKind::Rect | NodeKind::Container)
+            matches!(
+                kind,
+                NodeKind::Rect | NodeKind::Container | NodeKind::Path(_) | NodeKind::Text(_)
+            )
         }
         Some(match self {
             Change::Data(_) => ("data", "path", path),
@@ -507,7 +520,7 @@ impl Change {
             Change::ScrollbarFill(_) => ("scrollbar_fill", "scroll_view", scroll_view),
             Change::ScrollbarWidth(_) => ("scrollbar_width", "scroll_view", scroll_view),
             Change::Palette(_) => ("palette", "terminal", terminal),
-            Change::FillGradient(_) => ("fill", "box (a gradient)", box_node),
+            Change::FillGradient(_) => ("fill", "box, path or text", box_node),
             _ => return None,
         })
     }
@@ -717,7 +730,10 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
                 invalid(name, "an (r, g, b, a) tuple of 0-255 ints, or a Gradient")
             })?),
         },
-        "stroke_color" => Change::StrokeColor(parse_color(value, name)?),
+        "stroke_color" => match value.extract::<crate::gradient::PyGradient>() {
+            Ok(gradient) => Change::StrokeGradient(gradient.inner),
+            Err(_) => Change::StrokeColor(parse_color(value, name)?),
+        },
         "stroke_width" => Change::StrokeWidth(parse_non_negative(value, name)?),
         "opacity" => Change::Opacity(fraction(value, name)?),
         "blur" => Change::Blur(parse_non_negative(value, name)?),
@@ -1295,7 +1311,13 @@ impl Node {
                 Change::FillGradient(gradient) => {
                     node.paint.gradient = Some(Box::new(Animated::new(gradient)));
                 }
-                Change::StrokeColor(color) => node.paint.border_color = Animated::new(color),
+                Change::StrokeColor(color) => {
+                    node.paint.border_color = Animated::new(color);
+                    node.paint.border_gradient = None;
+                }
+                Change::StrokeGradient(gradient) => {
+                    node.paint.border_gradient = Some(Box::new(gradient));
+                }
                 Change::StrokeWidth(width) => node.paint.border_width = Animated::new(width),
                 Change::Opacity(opacity) => node.paint.opacity = Animated::new(opacity),
                 Change::Blur(blur) => node.paint.blur = Animated::new(blur),
