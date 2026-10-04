@@ -254,6 +254,100 @@ pub(crate) fn text_cursor_at(
     selectable.then_some(Cursor::Text)
 }
 
+/// Everything text interaction remembers between events (0.5.4, review): the
+/// text node or input a drag started in, the terminal one started in, and the
+/// link press and click count.
+#[derive(Default)]
+pub(crate) struct TextInteraction {
+    pub(crate) text_drag: Option<NodeId>,
+    pub(crate) terminal_drag: Option<NodeId>,
+    pub(crate) clicks: TextClicks,
+}
+
+/// Runs `event` through text interaction (pointer, touch stand-ins, Shift+Up
+/// and Down) and delivers the `link` events it produced. Called after
+/// `process_input` by the live loop, with the window's own text renderer, and
+/// by `Window.simulate`, with a headless one, so both do the same.
+pub(crate) fn process(
+    handles: &crate::window::WindowHandles,
+    text: &mut TextRenderer,
+    event: &InputEvent,
+    py: pyo3::Python<'_>,
+) {
+    let now = crate::clock::now(&handles.tree);
+    let mut link_clicks = Vec::new();
+    {
+        let mut state = handles.text_interaction.borrow_mut();
+        let TextInteraction {
+            text_drag,
+            terminal_drag,
+            clicks,
+        } = &mut *state;
+        link_clicks.extend(text_pointer_input(
+            event,
+            &handles.tree,
+            handles.root,
+            text,
+            text_drag,
+            terminal_drag,
+            clicks,
+            now,
+        ));
+        // 0.5.4 (#113): the pointer events a finger stood in for reach text
+        // the way a mouse's do, and a press that was taken ends here too.
+        let emulated = std::mem::take(&mut handles.touch.borrow_mut().emulated);
+        for item in &emulated {
+            match item {
+                crate::touch::Emulated::Pointer(pointer) => {
+                    link_clicks.extend(text_pointer_input(
+                        pointer,
+                        &handles.tree,
+                        handles.root,
+                        text,
+                        text_drag,
+                        terminal_drag,
+                        clicks,
+                        now,
+                    ));
+                }
+                crate::touch::Emulated::Cancel => {
+                    text_press_cancelled(text_drag, terminal_drag, clicks);
+                }
+            }
+        }
+    }
+    // 0.5.4 (#154): Shift+Up and Shift+Down in static text.
+    text_key_input(event, &handles.tree, text);
+    // 0.5.4 (#131): the `link` events, after the click itself, with no state
+    // borrowed, so a listener may do anything.
+    for click in link_clicks {
+        crate::listeners::deliver(
+            &crate::event::NodeContext {
+                tree: &handles.tree,
+                handlers: &handles.handlers,
+                completions: &handles.completions,
+            },
+            py,
+            crate::listeners::EventType::Link,
+            click.node,
+            Some(click.position),
+            |e| e.href = Some(click.href),
+        );
+    }
+}
+
+/// `process` for `Window.simulate`: the same, with the window's headless text
+/// renderer (made on first use).
+pub(crate) fn process_simulated(
+    handles: &crate::window::WindowHandles,
+    event: &InputEvent,
+    py: pyo3::Python<'_>,
+) {
+    let mut renderer = handles.sim_text.borrow_mut().take().unwrap_or_default();
+    process(handles, &mut renderer, event, py);
+    *handles.sim_text.borrow_mut() = Some(renderer);
+}
+
 /// A click that landed on a link span (0.5.4, #131).
 pub(crate) struct LinkClick {
     pub(crate) node: NodeId,

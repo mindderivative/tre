@@ -263,4 +263,9 @@ Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
 window-space `x`/`y` without a node. Pointer, wheel, click, and key events also
 take `shift`, `ctrl`, `alt`, and `meta`. A simulated key press edits text and moves focus exactly
 as a real one does — Ctrl+C/X/V/A included — and a focused terminal takes
-every key, as it does live. An unknown event or field raises `ValueError`.
+every key, as it does live. Simulated pointer, touch and key events also reach the
+parts of text handling that need the text layout (0.5.4): a press, drag and release
+select text, a press and release on a link span fire `link`, two quick presses select a
+word, and Shift+Up and Shift+Down move a selection a line, all as they do live (the text
+layout comes from a headless renderer, and the clock is the window's, so `advance` moves
+the double-click window). An unknown event or field raises `ValueError`.

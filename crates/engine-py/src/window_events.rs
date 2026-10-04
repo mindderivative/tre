@@ -1367,6 +1367,9 @@ impl PyWindow {
                 with_modifiers(modifiers, || {
                     for input in &inputs {
                         process_input(&ctx, &io, root, input, py);
+                        // 0.5.4 (review): text selection, links and Shift+Up/Down,
+                        // which need a text renderer; a headless one stands in.
+                        crate::text_interaction::process_simulated(&self.handles, input, py);
                     }
                 });
             }
@@ -1382,17 +1385,14 @@ impl PyWindow {
                     "touch_end" => engine_core::TouchPhase::Ended,
                     _ => engine_core::TouchPhase::Cancelled,
                 };
-                process_input(
-                    &ctx,
-                    &io,
-                    root,
-                    &InputEvent::Touch {
-                        id,
-                        phase,
-                        position,
-                    },
-                    py,
-                );
+                let input = InputEvent::Touch {
+                    id,
+                    phase,
+                    position,
+                };
+                process_input(&ctx, &io, root, &input, py);
+                // The pointer events the finger stood in for reach text too.
+                crate::text_interaction::process_simulated(&self.handles, &input, py);
             }
             // 0.5.4 (#113): a trackpad pinch (what macOS reports), `delta` a
             // magnification step and `phase` `"started"`, `"moved"`, `"ended"`
@@ -1510,6 +1510,9 @@ impl PyWindow {
                 with_modifiers(modifiers, || {
                     for input in &inputs {
                         process_input(&ctx, &io, root, input, py);
+                        // 0.5.4 (review): text selection, links and Shift+Up/Down,
+                        // which need a text renderer; a headless one stands in.
+                        crate::text_interaction::process_simulated(&self.handles, input, py);
                     }
                 });
             }

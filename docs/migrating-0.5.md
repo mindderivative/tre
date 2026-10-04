@@ -209,6 +209,10 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - **More keyboard selection in static text.** Ctrl+Shift+Left/Right move the
   selection a word and Shift+Up/Down a line, and Shift+arrows carry on into the next
   selectable text; see [Rich text and selectable text](guide/text.md#rich-text-and-selectable-text).
+- **Text interaction in tests.** `Window.simulate` pointer, touch and key events now reach
+  text selection, links, double and triple click, and Shift+Up/Down, so an app can test
+  a link click or a drag selection headlessly; see
+  [Testing without a display](reference/events.md#testing-without-a-display).
 - **Colour filters.** `tre.Shader.filter(grayscale=1.0, ...)` is a ready-made
   effect shader for the CSS filter functions `saturate`, `brightness`, `contrast`,
   `grayscale`, `hue_rotate`, `invert` and `sepia`, applied in the order given; see

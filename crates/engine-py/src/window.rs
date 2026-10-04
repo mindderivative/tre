@@ -172,6 +172,12 @@ pub(crate) struct WindowHandles {
     pub(crate) press_cancelled: Rc<Cell<bool>>,
     /// 0.5.4 (#113): this window's fingers and gesture recognizer.
     pub(crate) touch: Rc<RefCell<crate::touch::TouchRouter>>,
+    /// 0.5.4 (review): what a drag, a link press and a run of clicks in text
+    /// remember between events, for the live loop and `simulate` alike.
+    pub(crate) text_interaction: Rc<RefCell<crate::text_interaction::TextInteraction>>,
+    /// 0.5.4 (review): the text renderer `simulate` asks for hit tests and line
+    /// moves when no live renderer is at hand. Made on first use.
+    pub(crate) sim_text: Rc<RefCell<Option<engine_render::TextRenderer>>>,
     /// 0.5.4 (#114): files being dragged over, or just dropped on, this window.
     pub(crate) files: Rc<RefCell<crate::files::FileDrops>>,
     /// 0.5.4 (#116): this window's recent frames' costs.
@@ -312,6 +318,8 @@ impl PyWindow {
                 icon: Rc::new(RefCell::new(None)),
                 press_cancelled: Rc::new(Cell::new(false)),
                 touch: Rc::new(RefCell::new(crate::touch::TouchRouter::default())),
+                text_interaction: Rc::new(RefCell::new(Default::default())),
+                sim_text: Rc::new(RefCell::new(None)),
                 files: Rc::new(RefCell::new(crate::files::FileDrops::default())),
                 frame_stats: Default::default(),
                 resize_border: Rc::new(Cell::new(0.0)),

@@ -43,10 +43,7 @@ use winit::window::{Window, WindowId};
 use crate::dispatch::{WindowIo, process_input, run_completions, run_dispatch_outcome};
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType};
-use crate::text_interaction::{
-    TextClicks, text_access_lines, text_cursor_at, text_key_input, text_pointer_input,
-    text_press_cancelled,
-};
+use crate::text_interaction::{text_access_lines, text_cursor_at};
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
 use crate::window::{PyWindow, WindowHandles};
@@ -507,26 +504,6 @@ struct WindowRuntime {
     /// 0.5.1 (#70): when the window opened, on the window's clock: a
     /// shader's `frame.time` is the seconds since.
     opened: std::time::Instant,
-    /// M18 Phase 2 (§8, §10): which `TextField` (if any) a real
-    /// press-and-drag is currently extending a selection in -- plain,
-    /// not `RefCell`-wrapped, since only `on_input`'s own closure ever
-    /// reads or writes it. Lives here rather than `engine-core`'s
-    /// existing `Tree.dragging` (scrollbar-thumb drags): that
-    /// mechanism's own `update_drag` is pure geometry with zero
-    /// rendering knowledge, but a real drag-selection needs the exact
-    /// same per-glyph hit-test Phase 1 already established only
-    /// `engine-render` can do (§4) -- `engine-core` structurally can't
-    /// own this drag's own per-frame tracking.
-    text_drag: Option<NodeId>,
-    /// 0.5.4 (#131): links pressed and the multi-click count, for static text.
-    text_clicks: TextClicks,
-    /// M32 Phase 6 (§4, §5, §8): `text_drag`'s own real `Terminal`
-    /// sibling -- which terminal (if any) a real press-and-drag is
-    /// currently extending a real cell-range selection in. A separate
-    /// field, not a shared one, since a single real press can only
-    /// ever hit one real `NodeKind` at a time (`text_field_hit_offset`/
-    /// `terminal_hit_cell` are mutually exclusive per node).
-    terminal_drag: Option<NodeId>,
     /// M94: the pointer shape last applied to this window, so it's set on
     /// the OS window only when it changes.
     cursor: Cursor,
@@ -721,9 +698,6 @@ impl App {
                         handles: setup.handles.clone(),
                         gpu,
                         opened: crate::clock::now(&setup.handles.tree),
-                        text_drag: None,
-                        text_clicks: TextClicks::default(),
-                        terminal_drag: None,
                         cursor: Cursor::Default,
                     },
                 );
@@ -1278,60 +1252,15 @@ impl App {
                         runtime.cursor = wanted;
                     }
                 }
-                // Text-field and terminal pointer handling that needs the
-                // text renderer, which `process_input` has no access to.
-                let mut link_clicks = Vec::new();
-                link_clicks.extend(text_pointer_input(
-                    &event,
-                    &runtime.handles.tree,
-                    runtime.handles.root,
+                // Text-field, terminal and static-text interaction that needs
+                // the text renderer, which `process_input` has no access to:
+                // `Window.simulate` runs the same code with a headless one.
+                crate::text_interaction::process(
+                    &runtime.handles,
                     runtime.gpu.renderer.text(),
-                    &mut runtime.text_drag,
-                    &mut runtime.terminal_drag,
-                    &mut runtime.text_clicks,
-                    std::time::Instant::now(),
-                ));
-                // 0.5.4 (#113): the pointer events a finger stood in for reach
-                // text inputs the way a mouse's do.
-                let emulated = std::mem::take(&mut runtime.handles.touch.borrow_mut().emulated);
-                for item in &emulated {
-                    match item {
-                        crate::touch::Emulated::Pointer(pointer) => {
-                            link_clicks.extend(text_pointer_input(
-                                pointer,
-                                &runtime.handles.tree,
-                                runtime.handles.root,
-                                runtime.gpu.renderer.text(),
-                                &mut runtime.text_drag,
-                                &mut runtime.terminal_drag,
-                                &mut runtime.text_clicks,
-                                std::time::Instant::now(),
-                            ));
-                        }
-                        crate::touch::Emulated::Cancel => text_press_cancelled(
-                            &mut runtime.text_drag,
-                            &mut runtime.terminal_drag,
-                            &mut runtime.text_clicks,
-                        ),
-                    }
-                }
-                // 0.5.4 (#154): Shift+Up and Shift+Down in static text.
-                text_key_input(&event, &runtime.handles.tree, runtime.gpu.renderer.text());
-                // 0.5.4 (#131): the `link` events, after the click itself.
-                for click in link_clicks {
-                    listeners::deliver(
-                        &NodeContext {
-                            tree: &runtime.handles.tree,
-                            handlers: &runtime.handles.handlers,
-                            completions: &runtime.handles.completions,
-                        },
-                        py,
-                        listeners::EventType::Link,
-                        click.node,
-                        Some(click.position),
-                        |e| e.href = Some(click.href),
-                    );
-                }
+                    &event,
+                    py,
+                );
                 match event {
                     // A real OS appearance change: tre themes nothing
                     // itself (M99), so it only tells the framework.

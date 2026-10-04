@@ -328,3 +328,109 @@ def test_shift_down_with_a_selection_in_static_text_does_not_also_scroll_the_vie
     window.simulate("key_down", key="arrow_down", shift=True)
     window.advance(1)
     assert view.get("scroll_offset") > scrolled, "with no selection it scrolls as before"
+
+
+# Review: text interaction is shared by the live loop and `simulate`, so
+# pointer selection, links, multi-click and Shift+Up/Down are testable here.
+
+DOCS = "https://example.com/docs"
+
+
+def link_window(content="Visit the docs now", **props):
+    window = Window(width=300, height=120)
+    window.root.set(fill=WHITE, padding=0)
+    label = window.create("text", text=content, font_size=16, width=280, height=40,
+                          selectable=True, **props)
+    window.root.add_child(label)
+    start = content.index("docs")
+    label.set(spans=[(start, start + 4, {"link": DOCS})])
+    window.advance(1)
+    return window, label
+
+
+def x_of(window, content, upto):
+    """Where character index `upto` starts, from the engine's own measure."""
+    return window.measure_text(content[:upto], font_size=16)[0]
+
+
+def test_simulated_pointer_events_click_a_link_and_fire_link():
+    content = "Visit the docs now"
+    window, label = link_window(content)
+    seen = []
+    label.on("link", lambda event: seen.append(event.href))
+    on_link = x_of(window, content, 11) + 4
+    window.simulate("pointer_down", node=label, x=on_link, y=8)
+    window.simulate("pointer_up", node=label, x=on_link, y=8)
+    assert seen == [DOCS]
+    # Off the link: no event.
+    window.advance(1000)
+    window.simulate("pointer_down", node=label, x=2, y=8)
+    window.simulate("pointer_up", node=label, x=2, y=8)
+    assert seen == [DOCS]
+
+
+def test_a_link_listener_may_change_the_tree():
+    content = "Visit the docs now"
+    window, label = link_window(content)
+
+    def go(event):
+        label.set(text="changed")
+
+    label.on("link", go)
+    on_link = x_of(window, content, 11) + 4
+    window.simulate("click", node=label, x=on_link, y=8)
+    assert label.get("text") == "changed"
+
+
+def test_a_simulated_drag_selects_text_and_a_double_click_selects_a_word():
+    content = "Visit the docs now"
+    window, label = link_window(content)
+    a, b = x_of(window, content, 6) + 1, x_of(window, content, 9) + 1
+    window.simulate("pointer_down", node=label, x=a, y=8)
+    window.simulate("pointer_move", node=label, x=b, y=8)
+    window.simulate("pointer_up", node=label, x=b, y=8)
+    start, end = sorted(label.get("selection"))
+    # (A measured width leaves out trailing spaces, so the edges may be a space off.)
+    assert content[start:end].strip() == "the"
+    # Two quick presses on a word select it.
+    window.advance(1000)
+    inside = x_of(window, content, 11) + 4
+    window.simulate("pointer_down", node=label, x=inside, y=8)
+    window.simulate("pointer_up", node=label, x=inside, y=8)
+    window.simulate("pointer_down", node=label, x=inside, y=8)
+    start, end = sorted(label.get("selection"))
+    assert content[start:end] == "docs"
+    # And a link click is not made of a drag that selected something.
+    window.simulate("pointer_up", node=label, x=inside, y=8)
+
+
+def test_shift_down_moves_the_selection_a_line_in_simulated_input():
+    content = "word " * 30
+    window = Window(width=200, height=200)
+    window.root.set(fill=WHITE, padding=0)
+    label = window.create("text", text=content, font_size=16, width=120, selectable=True)
+    window.root.add_child(label)
+    window.advance(1)
+    label.set(selection=(2, 2))
+    window.simulate("key_down", key="arrow_down", shift=True)
+    start, end = label.get("selection")
+    assert start == 2 and end > 12, f"a line further on, not a character: {end}"
+    window.simulate("key_down", key="arrow_up", shift=True)
+    assert abs(label.get("selection")[1] - 2) <= 3
+
+
+def test_a_cancelled_touch_ends_a_link_press():
+    content = "Visit the docs now"
+    window, label = link_window(content)
+    seen = []
+    label.on("link", lambda event: seen.append(event.href))
+    on_link = x_of(window, content, 11) + 4
+    window.simulate("touch_start", node=label, x=on_link, y=8)
+    window.simulate("touch_cancel", node=label, x=on_link, y=8)
+    window.simulate("pointer_up", node=label, x=on_link, y=8)
+    assert seen == []
+    # A touch that is a clean tap still clicks it.
+    window.advance(1000)
+    window.simulate("touch_start", node=label, x=on_link, y=8)
+    window.simulate("touch_end", node=label, x=on_link, y=8)
+    assert seen == [DOCS]
