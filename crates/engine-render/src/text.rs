@@ -81,7 +81,13 @@ struct LayoutCacheKey {
     options: TextOptions,
 }
 
+/// A node's accessibility lines, with what they were made from: the layout's
+/// `built` number and the placement's `x` and `y` bits.
+type CachedAccessLines = ((u64, u64, u64), Vec<engine_core::AccessLine>);
+
 struct CachedLayout {
+    /// Which layout this is, by the renderer's running count (`shapes`).
+    built: u64,
     key: LayoutCacheKey,
     layout: parley::Layout<[u8; 4]>,
 }
@@ -432,10 +438,17 @@ pub struct TextRenderer {
     /// distinct strings a live-updating label has ever shown; see
     /// `evict_stale_layouts`.
     layout_cache: HashMap<NodeId, CachedLayout>,
-    /// How many text layouts have been built, for tests: a working cache
-    /// leaves it alone when only a colour changes.
-    #[cfg(test)]
+    /// How many text layouts have been built so far. Each cached layout
+    /// remembers which one it is (`built`), so what is derived from a layout
+    /// can tell when it has been replaced; a working cache leaves the count
+    /// alone when only a colour changes.
     shapes: u64,
+    /// The accessibility lines last made for a node, with what they were made
+    /// from (the layout's `built` and the placement), so an unchanged node is
+    /// not walked again on every accessibility refresh.
+    access_cache: HashMap<NodeId, CachedAccessLines>,
+    /// How many times lines were really worked out, for tests.
+    access_builds: u64,
     /// M32 Phase 1 (§5, §8, §10): real per-`(font_family, font_size)`
     /// monospace cell metrics, memoized -- see `monospace_cell_size`.
     /// Unbounded like `layout_cache` was before `evict_stale_layouts`
@@ -506,8 +519,9 @@ impl TextRenderer {
             },
             layout_cx: LayoutContext::new(),
             layout_cache: HashMap::new(),
-            #[cfg(test)]
             shapes: 0,
+            access_cache: HashMap::new(),
+            access_builds: 0,
             monospace_cell_cache: HashMap::new(),
             terminal_run_cache: HashMap::new(),
             font_generation,
@@ -688,8 +702,9 @@ impl TextRenderer {
             font_cx,
             layout_cx,
             layout_cache,
-            #[cfg(test)]
             shapes,
+            access_cache: _,
+            access_builds: _,
             monospace_cell_cache: _,
             terminal_run_cache: _,
             font_generation: _,
@@ -698,10 +713,7 @@ impl TextRenderer {
             system_fonts: _,
         } = self;
         if stale {
-            #[cfg(test)]
-            {
-                *shapes += 1;
-            }
+            *shapes += 1;
             let font = FontSpec {
                 family: font_family,
                 weight: font_weight,
@@ -714,6 +726,7 @@ impl TextRenderer {
             layout_cache.insert(
                 node_id,
                 CachedLayout {
+                    built: *shapes,
                     key: LayoutCacheKey {
                         content: content.to_string(),
                         font_family: font_family.to_string(),
@@ -746,6 +759,7 @@ impl TextRenderer {
     /// `sync_image_textures`.
     pub fn evict_stale_layouts(&mut self, tree: &Tree) {
         self.layout_cache.retain(|id, _| tree.get(*id).is_some());
+        self.access_cache.retain(|id, _| tree.get(*id).is_some());
         // M64 (§8, §11.3): the terminal run cache's own real eviction
         // -- drop every entry whose terminal node no longer exists at
         // all (the identical "NodeId removed" case `layout_cache`
@@ -1190,7 +1204,29 @@ impl TextRenderer {
         state: &TextState,
         at: TextPlacement,
     ) -> Vec<engine_core::AccessLine> {
-        let layout = self.static_layout(node_id, state, &at);
+        // The lines follow from the shaped layout and where it is placed; when
+        // neither has changed since they were last made, they are the same.
+        let _ = self.static_layout(node_id, state, &at);
+        let built = self.layout_cache.get(&node_id).map_or(0, |c| c.built);
+        let key = (built, at.x.to_bits(), at.y.to_bits());
+        if let Some((cached, lines)) = self.access_cache.get(&node_id)
+            && *cached == key
+        {
+            return lines.clone();
+        }
+        self.access_builds += 1;
+        let lines = self.build_access_lines(node_id, state, &at);
+        self.access_cache.insert(node_id, (key, lines.clone()));
+        lines
+    }
+
+    fn build_access_lines(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: &TextPlacement,
+    ) -> Vec<engine_core::AccessLine> {
+        let layout = self.static_layout(node_id, state, at);
         let shown = visible_lines(layout, &state.options);
         let content = &state.content;
         let mut out = Vec::new();
@@ -2545,6 +2581,54 @@ mod tests {
                 "a query and a recolour reuse the layout"
             );
         });
+    }
+
+    /// 0.5.4 (review): the accessibility lines of a text node are worked out
+    /// again only when its layout or its placement changed.
+    #[test]
+    fn access_lines_are_made_again_only_when_the_layout_or_placement_changes() {
+        let mut tree = Tree::new();
+        let a = text_node(&mut tree, "hello world");
+        let mut renderer = TextRenderer::new();
+        let base_x = placement().x;
+        let first = {
+            let NodeKind::Text(state) = &tree.get(a).unwrap().kind else {
+                panic!("expected Text");
+            };
+            let first = renderer.access_lines(a, state, placement());
+            assert_eq!(renderer.access_builds, 1);
+            // The same again, and with a different colour: nothing is redone.
+            let red = TextPlacement {
+                color: Color::from_rgba8(255, 0, 0, 255),
+                ..placement()
+            };
+            assert_eq!(renderer.access_lines(a, state, red), first);
+            assert_eq!(renderer.access_lines(a, state, placement()), first);
+            assert_eq!(renderer.access_builds, 1, "cached");
+            // Moved: the lines move with it.
+            let moved = TextPlacement {
+                x: base_x + 7.0,
+                ..placement()
+            };
+            let again = renderer.access_lines(a, state, moved);
+            assert_eq!(renderer.access_builds, 2);
+            assert_eq!(again[0].x0, first[0].x0 + 7.0);
+            first
+        };
+        // Changed text: a new layout, new lines.
+        if let NodeKind::Text(state) = &mut tree.get_mut(a).unwrap().kind {
+            state.content = "hello there world".to_string();
+        }
+        let NodeKind::Text(state) = &tree.get(a).unwrap().kind else {
+            panic!("expected Text");
+        };
+        let changed = renderer.access_lines(a, state, placement());
+        assert_eq!(renderer.access_builds, 3);
+        assert_ne!(changed[0].end, first[0].end);
+        // A removed node's lines are let go.
+        tree.remove(a);
+        renderer.evict_stale_layouts(&tree);
+        assert!(renderer.access_cache.is_empty());
     }
 
     /// M31 Phase 1 (§5, §8): the real finding that closes this phase's
