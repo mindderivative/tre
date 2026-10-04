@@ -589,6 +589,16 @@ impl SvgDocument {
         color: Option<Color>,
         images: &SvgImages,
     ) -> Result<Arc<Self>, String> {
+        // An SVGZ is inflated here, with a cap on its size, so a few kilobytes
+        // that expand to gigabytes cannot exhaust memory (neither in the
+        // tint below nor in `usvg`).
+        let inflated;
+        let data = if data.starts_with(&[0x1f, 0x8b]) {
+            inflated = inflate_capped(data)?;
+            &inflated[..]
+        } else {
+            data
+        };
         let tinted = color.and_then(|c| tint(data, c));
         let data = tinted.as_deref().unwrap_or(data);
         let lookup = images.clone();
@@ -668,18 +678,34 @@ impl SvgDocument {
     }
 }
 
+/// The most an SVGZ may expand to: 64 MiB, far past any real document.
+const MAX_INFLATED_SVG: u64 = 64 * 1024 * 1024;
+
+/// `data` (gzip) decompressed, or an error if it is not valid gzip or expands
+/// past [`MAX_INFLATED_SVG`].
+fn inflate_capped(data: &[u8]) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(data)
+        .take(MAX_INFLATED_SVG + 1)
+        .read_to_end(&mut out)
+        .map_err(|e| format!("SVGZ is not valid gzip: {e}"))?;
+    if out.len() as u64 > MAX_INFLATED_SVG {
+        return Err(format!(
+            "SVGZ expands to more than {} MiB; refused",
+            MAX_INFLATED_SVG / (1024 * 1024)
+        ));
+    }
+    Ok(out)
+}
+
 /// `data` with a `color` attribute added to the root `<svg>` element, which is
 /// what `currentColor` resolves to. `None` when the document is unreadable
 /// as text, has no root tag found, or sets `color` on the root itself (a
 /// second attribute would be an XML error, and the document's own wins).
 fn tint(data: &[u8], color: Color) -> Option<Vec<u8>> {
-    use std::io::Read;
     let text = if data.starts_with(&[0x1f, 0x8b]) {
-        let mut out = String::new();
-        flate2::read::GzDecoder::new(data)
-            .read_to_string(&mut out)
-            .ok()?;
-        out
+        String::from_utf8(inflate_capped(data).ok()?).ok()?
     } else {
         String::from_utf8(data.to_vec()).ok()?
     };
@@ -790,6 +816,44 @@ mod tests {
         };
         assert!(circle.fill.is_none());
         assert_eq!(circle.stroke.as_ref().unwrap().stroke.dash_pattern.len(), 2);
+    }
+
+    fn gzip(bytes: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        enc.write_all(bytes).unwrap();
+        enc.finish().unwrap()
+    }
+
+    #[test]
+    fn an_svgz_is_read_and_a_decompression_bomb_is_refused() {
+        let doc = SvgDocument::parse(&gzip(RED_SQUARE.as_bytes()), &SvgFonts::none()).unwrap();
+        assert_eq!((doc.width, doc.height), (20.0, 10.0));
+        // Tinting reads the inflated text too.
+        let tinted = SvgDocument::parse_tinted(
+            &gzip(RED_SQUARE.as_bytes()),
+            &SvgFonts::none(),
+            Some(Color::from_rgba8(1, 2, 3, 255)),
+        );
+        assert!(tinted.is_ok());
+        // A few kilobytes that expand past the cap.
+        let mut bomb =
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><!--"#.to_vec();
+        bomb.resize(bomb.len() + 65 * 1024 * 1024, b' ');
+        let squeezed = gzip(&bomb);
+        assert!(
+            squeezed.len() < 2 * 1024 * 1024,
+            "the bomb is small on the wire"
+        );
+        for color in [None, Some(Color::BLACK)] {
+            let err = match SvgDocument::parse_tinted(&squeezed, &SvgFonts::none(), color) {
+                Err(err) => err,
+                Ok(_) => panic!("a decompression bomb was accepted"),
+            };
+            assert!(err.contains("more than 64 MiB"), "{err}");
+        }
+        // Not gzip at all after the magic bytes: an error, not a panic.
+        assert!(SvgDocument::parse(&[0x1f, 0x8b, 0, 0, 0], &SvgFonts::none()).is_err());
     }
 
     #[test]

@@ -182,6 +182,14 @@ jobs:
       - name: Check the stub against the extension (stubtest)
         run: python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
 
+      # 0.5.4 (review): docs/api/*.md are generated and committed; a change
+      # to the API without regenerating them fails here instead of drifting.
+      - name: Check the generated API pages are current
+        run: |
+          python tools/gen_python_api.py
+          python tools/gen_rust_api.py
+          git diff --exit-code -- docs/api
+
       - name: Python FFI test suite
         run: python -m pytest tests/ -v
         env:

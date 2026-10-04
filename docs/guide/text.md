@@ -163,7 +163,11 @@ and Ctrl+Shift+Right move it a word (a run of letters and digits, a run of
 punctuation, then the spaces after it), and Shift+Up and Shift+Down a line, keeping
 the column. Moving past the start or end of a text goes on into the neighbouring
 selectable text, and Shift+Up on the first line goes to the start of the text, as
-Shift+Down on the last goes to its end, before they do. The pointer
+Shift+Down on the last goes to its end, before they do. While a selection in static
+text exists these keys belong to it: a scroll view does not also scroll for Shift+Up
+and Shift+Down, and Ctrl+Shift+Left and Right are consumed by the selection, so no
+`key_down` listener hears them (the other Shift keys still reach `key_down`
+listeners). The pointer
 is an I-beam over selectable text, unless the node sets a `cursor`. A press anywhere else
 clears the selection.
 
