@@ -258,3 +258,88 @@ def test_a_node_sized_on_one_side_takes_the_other_from_the_document():
     node.set(aspect_ratio=4.0)
     node.set(svg=TWO_SQUARES)
     assert node.get("aspect_ratio") == 4.0
+
+
+# 0.5.4 (#146): masks (made from blend layers) and drop shadows.
+
+def test_a_luminance_mask_keeps_what_is_white_and_hides_what_is_black():
+    window, _ = shown(svg(
+        '<defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">'
+        '<rect width="50" height="100" fill="#ffffff"/><rect x="50" width="50" height="100" fill="#000000"/>'
+        '</mask></defs><rect width="100" height="100" fill="#ff0000" mask="url(#m)"/>'
+    ))
+    assert pixel(window, 25, 50) == RED
+    assert pixel(window, 75, 50)[3] == 0
+
+
+def test_a_grey_mask_is_partly_see_through():
+    window, _ = shown(svg(
+        '<defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">'
+        '<rect width="100" height="100" fill="#808080"/></mask></defs>'
+        '<rect width="100" height="100" fill="#ff0000" mask="url(#m)"/>'
+    ))
+    assert 110 <= pixel(window, 50, 50)[3] <= 145
+
+
+def test_an_alpha_mask_uses_alpha_not_colour():
+    window, _ = shown(svg(
+        '<defs><mask id="m" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">'
+        '<rect width="50" height="100" fill="#000000"/></mask></defs>'
+        '<rect width="100" height="100" fill="#ff0000" mask="url(#m)"/>'
+    ))
+    assert pixel(window, 25, 50) == RED
+    assert pixel(window, 75, 50)[3] == 0
+
+
+def test_content_outside_the_masks_rectangle_is_hidden():
+    window, _ = shown(svg(
+        '<defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="50" height="100">'
+        '<rect width="100" height="100" fill="#ffffff"/></mask></defs>'
+        '<rect width="100" height="100" fill="#ff0000" mask="url(#m)"/>'
+    ))
+    assert pixel(window, 25, 50) == RED
+    assert pixel(window, 75, 50)[3] == 0
+
+
+def test_a_mask_leaves_the_rest_of_the_document_alone():
+    window, _ = shown(svg(
+        '<defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="50" height="50">'
+        '<rect width="50" height="50" fill="#000000"/></mask></defs>'
+        '<rect width="50" height="50" fill="#ff0000" mask="url(#m)"/>'
+        '<rect x="50" y="50" width="50" height="50" fill="#0000ff"/>'
+    ))
+    assert pixel(window, 25, 25)[3] == 0
+    assert pixel(window, 75, 75) == BLUE
+
+
+def test_a_drop_shadow_is_drawn_under_the_shape():
+    window, _ = shown(svg(
+        '<defs><filter id="s" x="-50%" y="-50%" width="200%" height="200%">'
+        '<feDropShadow dx="20" dy="0" stdDeviation="0" flood-color="#0000ff"/></filter></defs>'
+        '<g filter="url(#s)"><rect x="10" y="30" width="30" height="40" fill="#ff0000"/></g>'
+    ))
+    assert pixel(window, 25, 50) == RED, "the shape is on top"
+    assert pixel(window, 50, 50) == BLUE, "the shadow shows past its edge"
+    assert pixel(window, 70, 50)[3] == 0
+
+
+# 0.5.4 (#146): an SVG's text follows the engine's fonts as they change. A font
+# registered after the document takes the same path (one generation counter), but
+# every font the repository ships is already bundled, so only the system-fonts
+# switch can show it here.
+
+def test_svg_text_uses_system_fonts_only_when_they_are_on_and_is_hermetic_otherwise():
+    import tre
+
+    text = '<text x="4" y="40" font-size="32" font-family="Roboto" fill="#000000">漢字かな</text>'
+    window, _ = shown(svg(text))
+    hermetic = window.snapshot()
+    try:
+        tre.set_system_fonts(True)
+        with_system = window.snapshot()
+        tre.set_system_fonts(False)
+        assert window.snapshot() == hermetic
+    finally:
+        tre.set_system_fonts(False)
+    if with_system == hermetic:
+        pytest.skip("this machine has no system font for these scripts")

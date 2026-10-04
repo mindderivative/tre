@@ -11,11 +11,11 @@
 //! What is drawn: shapes, fills and strokes (caps, joins, miter limit,
 //! dashes), solid colours, linear and radial gradients (with their spread
 //! method), patterns, group opacity, clip paths (nested ones too), text (as
-//! outlines, from the engine's own fonts), nested SVG `<image>`s, and a
-//! filter that is a single Gaussian blur. What is not, and is dropped without
-//! an error: raster `<image>`s (the engine decodes no image formats),
-//! masks (the renderer cannot draw them yet), every other filter, and blend
-//! modes.
+//! outlines, from the engine's own fonts), nested SVG `<image>`s, masks (made
+//! from blend layers: the renderer has no mask layer), and a filter that is a
+//! single Gaussian blur or drop shadow. What is not, and is dropped without an
+//! error: raster `<image>`s (the engine decodes no image formats), every other
+//! filter, and blend modes.
 
 use peniko::kurbo::{Affine, BezPath, Cap, Join, Rect, Shape, Stroke};
 use peniko::{Color, Extend, Gradient};
@@ -33,6 +33,8 @@ pub struct SvgDocument {
     /// Unique per parse: the damage tracker's stand-in for hashing the whole
     /// scene.
     pub revision: u64,
+    /// Whether the document has text, so a change of fonts changes it.
+    pub has_text: bool,
 }
 
 #[derive(Debug)]
@@ -43,6 +45,10 @@ pub struct SvgGroup {
     /// A Gaussian blur's standard deviation, in the group's own units: the
     /// one filter drawn.
     pub blur: Option<f32>,
+    /// A drop shadow under the group: the filter's other drawable form.
+    pub shadow: Option<Box<SvgShadow>>,
+    /// The mask the group is drawn through.
+    pub mask: Option<Box<SvgMask>>,
     pub children: Vec<SvgNode>,
 }
 
@@ -60,6 +66,27 @@ pub struct SvgClip {
     pub even_odd: bool,
     /// The clip this one is itself clipped by.
     pub parent: Option<Box<SvgClip>>,
+}
+
+/// A drop shadow: the group's shapes, already recoloured to the shadow's
+/// colour, drawn offset and blurred under the group.
+#[derive(Debug)]
+pub struct SvgShadow {
+    pub dx: f64,
+    pub dy: f64,
+    pub blur: Option<f32>,
+    pub root: SvgGroup,
+}
+
+/// A mask, already converted so that its shapes' alpha is the mask: a
+/// luminance mask's colours became their luminance. Content outside `rect`
+/// is masked out.
+#[derive(Debug)]
+pub struct SvgMask {
+    pub rect: Rect,
+    pub root: SvgGroup,
+    /// A mask on the mask itself.
+    pub mask: Option<Box<SvgMask>>,
 }
 
 /// A tiled paint: `root` is drawn in tiles of `rect`'s size, the first at
@@ -128,21 +155,41 @@ fn bez_path(path: &usvg::tiny_skia_path::Path) -> BezPath {
     out
 }
 
-fn color(c: usvg::Color, opacity: f32) -> Color {
-    Color::from_rgba8(
-        c.red,
-        c.green,
-        c.blue,
-        (opacity.clamp(0.0, 1.0) * 255.0).round() as u8,
-    )
+/// How colours are converted: as they are, or into the alpha a mask or a
+/// shadow draws with, so those can be made out of ordinary shapes.
+#[derive(Clone, Copy)]
+enum Mode {
+    Normal,
+    /// A luminance mask: black, with the colour's luminance as its alpha.
+    Luminance,
+    /// A drop shadow: this colour, with the object's own alpha kept.
+    Flood(Color),
 }
 
-fn stops(base: &[usvg::Stop], opacity: f32) -> Vec<(f32, Color)> {
+fn color(c: usvg::Color, opacity: f32, mode: Mode) -> Color {
+    let alpha = opacity.clamp(0.0, 1.0);
+    match mode {
+        Mode::Normal => Color::from_rgba8(c.red, c.green, c.blue, (alpha * 255.0).round() as u8),
+        Mode::Luminance => {
+            // The coefficients SVG's luminance masks use, on sRGB values.
+            let y = 0.2125 * f32::from(c.red)
+                + 0.7154 * f32::from(c.green)
+                + 0.0721 * f32::from(c.blue);
+            Color::from_rgba8(0, 0, 0, (y * alpha).round() as u8)
+        }
+        Mode::Flood(flood) => {
+            let [r, g, b, a] = flood.to_rgba8().to_u8_array();
+            Color::from_rgba8(r, g, b, (f32::from(a) * alpha).round() as u8)
+        }
+    }
+}
+
+fn stops(base: &[usvg::Stop], opacity: f32, mode: Mode) -> Vec<(f32, Color)> {
     base.iter()
         .map(|s| {
             (
                 s.offset().get(),
-                color(s.color(), s.opacity().get() * opacity),
+                color(s.color(), s.opacity().get() * opacity, mode),
             )
         })
         .collect()
@@ -157,16 +204,16 @@ fn extend(method: usvg::SpreadMethod) -> Extend {
 }
 
 /// `None` for a pattern, which is not drawn.
-fn paint(paint: &usvg::Paint, opacity: f32) -> Option<SvgPaint> {
+fn paint(paint: &usvg::Paint, opacity: f32, mode: Mode) -> Option<SvgPaint> {
     match paint {
-        usvg::Paint::Color(c) => Some(SvgPaint::Color(color(*c, opacity))),
+        usvg::Paint::Color(c) => Some(SvgPaint::Color(color(*c, opacity, mode))),
         usvg::Paint::LinearGradient(g) => {
             let gradient = Gradient::new_linear(
                 (f64::from(g.x1()), f64::from(g.y1())),
                 (f64::from(g.x2()), f64::from(g.y2())),
             )
             .with_extend(extend(g.spread_method()))
-            .with_stops(stops(g.stops(), opacity).as_slice());
+            .with_stops(stops(g.stops(), opacity, mode).as_slice());
             Some(SvgPaint::Gradient(gradient, affine(g.transform())))
         }
         usvg::Paint::RadialGradient(g) => {
@@ -177,11 +224,11 @@ fn paint(paint: &usvg::Paint, opacity: f32) -> Option<SvgPaint> {
                 g.r().get(),
             )
             .with_extend(extend(g.spread_method()))
-            .with_stops(stops(g.stops(), opacity).as_slice());
+            .with_stops(stops(g.stops(), opacity, mode).as_slice());
             Some(SvgPaint::Gradient(gradient, affine(g.transform())))
         }
         usvg::Paint::Pattern(p) => {
-            let mut root = convert_group(p.root());
+            let mut root = convert_group(p.root(), mode);
             root.opacity *= opacity;
             let r = p.rect();
             Some(SvgPaint::Pattern(Arc::new(SvgPattern {
@@ -198,13 +245,13 @@ fn paint(paint: &usvg::Paint, opacity: f32) -> Option<SvgPaint> {
     }
 }
 
-fn convert_path(path: &usvg::Path) -> Option<SvgPath> {
+fn convert_path(path: &usvg::Path, mode: Mode) -> Option<SvgPath> {
     if !path.is_visible() {
         return None;
     }
     let fill = path.fill().and_then(|f| {
         Some(SvgFill {
-            paint: paint(f.paint(), f.opacity().get())?,
+            paint: paint(f.paint(), f.opacity().get(), mode)?,
             even_odd: matches!(f.rule(), usvg::FillRule::EvenOdd),
         })
     });
@@ -228,7 +275,7 @@ fn convert_path(path: &usvg::Path) -> Option<SvgPath> {
             );
         }
         Some(SvgStroke {
-            paint: paint(s.paint(), s.opacity().get())?,
+            paint: paint(s.paint(), s.opacity().get(), mode)?,
             stroke,
         })
     });
@@ -277,24 +324,71 @@ fn affine_path(to: Affine, path: &BezPath) -> BezPath {
     to * path.clone()
 }
 
-/// The one filter drawn: a single Gaussian blur, equal in x and y or averaged.
-fn blur_of(filters: &[Arc<usvg::filter::Filter>]) -> Option<f32> {
-    let [filter] = filters else { return None };
+/// What a group's filter draws: a Gaussian blur of the group, or a drop
+/// shadow under it. Only a filter that is exactly one of those primitives is
+/// drawn; anything else leaves the group as it is.
+fn effect_of(group: &usvg::Group) -> (Option<f32>, Option<Box<SvgShadow>>) {
+    let [filter] = group.filters() else {
+        return (None, None);
+    };
     let [primitive] = filter.primitives() else {
-        return None;
+        return (None, None);
     };
     match primitive.kind() {
         usvg::filter::Kind::GaussianBlur(b) => {
             let sigma = (b.std_dev_x().get() + b.std_dev_y().get()) / 2.0;
-            (sigma > 0.0).then_some(sigma)
+            ((sigma > 0.0).then_some(sigma), None)
         }
-        _ => None,
+        usvg::filter::Kind::DropShadow(d) => {
+            let c = d.color();
+            let flood = Color::from_rgba8(
+                c.red,
+                c.green,
+                c.blue,
+                (d.opacity().get().clamp(0.0, 1.0) * 255.0).round() as u8,
+            );
+            let sigma = (d.std_dev_x().get() + d.std_dev_y().get()) / 2.0;
+            let shadow = SvgShadow {
+                dx: f64::from(d.dx()),
+                dy: f64::from(d.dy()),
+                blur: (sigma > 0.0).then_some(sigma),
+                root: SvgGroup {
+                    transform: Affine::IDENTITY,
+                    opacity: 1.0,
+                    clip: None,
+                    blur: None,
+                    shadow: None,
+                    mask: None,
+                    children: convert_children(group, Mode::Flood(flood)),
+                },
+            };
+            (None, Some(Box::new(shadow)))
+        }
+        _ => (None, None),
+    }
+}
+
+fn convert_mask(mask: &usvg::Mask) -> SvgMask {
+    let mode = match mask.kind() {
+        usvg::MaskType::Luminance => Mode::Luminance,
+        usvg::MaskType::Alpha => Mode::Flood(Color::from_rgba8(0, 0, 0, 255)),
+    };
+    let r = mask.rect();
+    SvgMask {
+        rect: Rect::new(
+            f64::from(r.x()),
+            f64::from(r.y()),
+            f64::from(r.x() + r.width()),
+            f64::from(r.y() + r.height()),
+        ),
+        root: convert_group(mask.root(), mode),
+        mask: mask.mask().map(|m| Box::new(convert_mask(m))),
     }
 }
 
 /// A nested SVG `<image>`, drawn scaled into the image's own box and clipped
 /// to it. A raster one is not drawn.
-fn convert_image(image: &usvg::Image) -> Option<SvgGroup> {
+fn convert_image(image: &usvg::Image, mode: Mode) -> Option<SvgGroup> {
     let usvg::ImageKind::SVG(tree) = image.kind() else {
         return None;
     };
@@ -307,7 +401,7 @@ fn convert_image(image: &usvg::Image) -> Option<SvgGroup> {
     );
     let mut clip = BezPath::new();
     clip.extend(Rect::new(0.0, 0.0, w, h).path_elements(0.1));
-    let mut inner = convert_group(tree.root());
+    let mut inner = convert_group(tree.root(), mode);
     inner.transform = Affine::scale_non_uniform(
         w / f64::from(tree.size().width()),
         h / f64::from(tree.size().height()),
@@ -321,35 +415,46 @@ fn convert_image(image: &usvg::Image) -> Option<SvgGroup> {
             parent: None,
         }),
         blur: None,
+        shadow: None,
+        mask: None,
         children: vec![SvgNode::Group(inner)],
     })
 }
 
-fn convert_group(group: &usvg::Group) -> SvgGroup {
+fn convert_children(group: &usvg::Group, mode: Mode) -> Vec<SvgNode> {
     let mut children = Vec::new();
     for node in group.children() {
         match node {
-            usvg::Node::Group(g) => children.push(SvgNode::Group(convert_group(g))),
+            usvg::Node::Group(g) => children.push(SvgNode::Group(convert_group(g, mode))),
             usvg::Node::Path(p) => {
-                if let Some(p) = convert_path(p) {
+                if let Some(p) = convert_path(p, mode) {
                     children.push(SvgNode::Path(Box::new(p)));
                 }
             }
             // Text is already outlines, in a group of paths.
-            usvg::Node::Text(t) => children.push(SvgNode::Group(convert_group(t.flattened()))),
+            usvg::Node::Text(t) => {
+                children.push(SvgNode::Group(convert_group(t.flattened(), mode)));
+            }
             usvg::Node::Image(image) => {
-                if let Some(g) = convert_image(image) {
+                if let Some(g) = convert_image(image, mode) {
                     children.push(SvgNode::Group(g));
                 }
             }
         }
     }
+    children
+}
+
+fn convert_group(group: &usvg::Group, mode: Mode) -> SvgGroup {
+    let (blur, shadow) = effect_of(group);
     SvgGroup {
         transform: affine(group.transform()),
         opacity: group.opacity().get(),
         clip: group.clip_path().map(convert_clip),
-        blur: blur_of(group.filters()),
-        children,
+        blur,
+        shadow,
+        mask: group.mask().map(|m| Box::new(convert_mask(m))),
+        children: convert_children(group, mode),
     }
 }
 
@@ -381,8 +486,9 @@ impl SvgDocument {
         Ok(Arc::new(Self {
             width: f64::from(size.width()),
             height: f64::from(size.height()),
-            root: convert_group(tree.root()),
+            root: convert_group(tree.root(), Mode::Normal),
             revision: REVISION.fetch_add(1, Ordering::Relaxed),
+            has_text: tree.has_text_nodes(),
         }))
     }
 
@@ -396,9 +502,12 @@ impl SvgDocument {
                 opacity: 1.0,
                 clip: None,
                 blur: None,
+                shadow: None,
+                mask: None,
                 children: Vec::new(),
             },
             revision: REVISION.fetch_add(1, Ordering::Relaxed),
+            has_text: false,
         })
     }
 
@@ -468,8 +577,12 @@ fn tint(data: &[u8], color: Color) -> Option<Vec<u8>> {
 pub struct SvgFonts(Arc<usvg::fontdb::Database>);
 
 impl SvgFonts {
-    pub fn new(files: &[Arc<Vec<u8>>]) -> Self {
+    /// `system_fonts` adds the machine's installed fonts to `files`.
+    pub fn new(files: &[Arc<Vec<u8>>], system_fonts: bool) -> Self {
         let mut db = usvg::fontdb::Database::new();
+        if system_fonts {
+            db.load_system_fonts();
+        }
         for file in files {
             db.load_font_data(file.to_vec());
         }

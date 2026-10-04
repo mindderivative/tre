@@ -507,6 +507,31 @@ impl Tree {
         self.nodes.get(id)
     }
 
+    /// 0.5.4 (#146): every SVG node whose document has text is given the
+    /// document `reparse` makes from its source -- the fonts changed, so its
+    /// outlines must. `None` keeps a node's document. Marks the tree dirty
+    /// when any changed.
+    pub fn reparse_svgs(
+        &mut self,
+        mut reparse: impl FnMut(
+            &crate::svg::SvgState,
+        ) -> Option<std::sync::Arc<crate::svg::SvgDocument>>,
+    ) {
+        let mut changed = false;
+        for node in self.nodes.values_mut() {
+            if let NodeKind::Svg(state) = &mut node.kind
+                && state.document.has_text
+                && let Some(document) = reparse(state)
+            {
+                state.document = document;
+                changed = true;
+            }
+        }
+        if changed {
+            self.mark_dirty();
+        }
+    }
+
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node> {
         self.dirty = true;
         self.nodes.get_mut(id)

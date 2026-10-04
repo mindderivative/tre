@@ -78,18 +78,27 @@ box as on every node (a `fill` is the background behind the document).
 
 Drawn: shapes, fills and strokes (caps, joins, miter limit, dashes, paint
 order), solid colours, linear and radial gradients with their spread method,
-patterns, group opacity, clip paths (nested ones too), nested SVG `<image>`s, a
-filter that is a single Gaussian blur, and text. Text is turned into outlines
-when the document is parsed, from the fonts the engine itself has: Roboto (also
-the default, serif, and sans-serif family), the bundled mono face (monospace),
-and anything `tre.register_font` had registered *before* the document was set.
-It never reads system fonts, so it looks the same on every machine.
+patterns, group opacity, clip paths (nested ones too), masks (luminance and
+alpha, nested, with their rectangle), nested SVG `<image>`s, text, and a filter
+that is a single Gaussian blur or a single drop shadow (`feDropShadow`).
+
+- **Text** is turned into outlines from the fonts the engine has: Roboto (also
+  the default, serif, and sans-serif family), the bundled mono face
+  (monospace), anything `tre.register_font` registered, and, only when you turn
+  it on with `tre.set_system_fonts(True)`, the installed fonts. With system
+  fonts off it looks the same on every machine. The outlines follow the fonts:
+  registering a font or switching system fonts re-draws a document's text at the
+  next frame or snapshot.
+- **Masks** have no mask layer in the renderer, so a masked group is drawn and
+  then kept only where the mask's shapes are (a luminance mask's colours are
+  converted to their luminance first). It costs one extra layer per mask.
 
 Dropped without an error: raster `<image>`s (PNG, JPEG, GIF, WebP: the engine
-decodes no image formats, here or anywhere), masks (the renderer cannot draw
-them yet), every filter but a lone blur, and blend modes. The rest of the
-document still draws. A pattern that would need more than 2500 tiles is
-skipped. `get("svg")` returns the source as it was
+decodes no image formats, here or anywhere), every filter but a lone blur or
+drop shadow, and blend modes. The rest of the document still draws. A pattern
+that would need more than 2500 tiles is skipped.
+
+`get("svg")` returns the source as it was
 given (a `str` or `bytes`), and `svg_size` the document's size.
 
 **`svg_color`** is what `currentColor` resolves to, so a monochrome icon follows

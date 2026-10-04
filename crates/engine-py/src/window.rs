@@ -121,6 +121,9 @@ pub(crate) struct WindowHandles {
     pub(crate) blur_behind: Rc<Cell<bool>>,
     /// 0.5.4 (#142): `click_through`.
     pub(crate) click_through: Rc<Cell<bool>>,
+    /// 0.5.4 (#146): the font generation this window's SVG text was last
+    /// outlined for.
+    pub(crate) svg_font_generation: Rc<Cell<u64>>,
     /// 0.5.0 M2: whether the window is maximized, and minimized -- before
     /// `App.run()` opens it, what it opens as.
     pub(crate) maximized: Rc<Cell<bool>>,
@@ -286,6 +289,7 @@ impl PyWindow {
                 transparent_active: Rc::new(Cell::new(None)),
                 blur_behind: Rc::new(Cell::new(false)),
                 click_through: Rc::new(Cell::new(false)),
+                svg_font_generation: Rc::new(Cell::new(0)),
                 maximized: Rc::new(Cell::new(false)),
                 minimized: Rc::new(Cell::new(false)),
                 active: Rc::new(Cell::new(false)),

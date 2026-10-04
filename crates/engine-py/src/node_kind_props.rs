@@ -131,7 +131,26 @@ fn svg_change(source: Vec<u8>, is_text: bool, color: Option<Color>) -> PyResult<
 
 /// The fonts an SVG's text is shaped with: the engine's own, rebuilt only
 /// when a font is registered.
-fn svg_fonts() -> engine_core::SvgFonts {
+/// An SVG's text is outlined when its document is parsed, so when the fonts
+/// have changed since `seen` (a font registered, system fonts turned on or
+/// off) every document with text is parsed again. One atomic load when
+/// nothing changed.
+pub(crate) fn refresh_svg_text(
+    tree: &std::cell::RefCell<engine_core::Tree>,
+    seen: &std::cell::Cell<u64>,
+) {
+    let generation = engine_render::font_generation();
+    if generation == seen.get() {
+        return;
+    }
+    seen.set(generation);
+    let fonts = svg_fonts();
+    tree.borrow_mut().reparse_svgs(|state| {
+        engine_core::SvgDocument::parse_tinted(&state.source, &fonts, state.color).ok()
+    });
+}
+
+pub(crate) fn svg_fonts() -> engine_core::SvgFonts {
     use std::sync::Mutex;
     static CACHE: Mutex<Option<(u64, engine_core::SvgFonts)>> = Mutex::new(None);
     let mut cache = CACHE
@@ -144,7 +163,7 @@ fn svg_fonts() -> engine_core::SvgFonts {
         return fonts.clone();
     }
     let (generation, files) = engine_render::all_fonts();
-    let fonts = engine_core::SvgFonts::new(&files);
+    let fonts = engine_core::SvgFonts::new(&files, engine_render::system_fonts());
     *cache = Some((generation, fonts.clone()));
     fonts
 }

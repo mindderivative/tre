@@ -73,6 +73,10 @@ impl PyWindow {
             }
         }
 
+        crate::node_kind_props::refresh_svg_text(
+            &self.handles.tree,
+            &self.handles.svg_font_generation,
+        );
         let (tree, root, handlers) = (
             self.handles.tree.clone(),
             self.handles.root,

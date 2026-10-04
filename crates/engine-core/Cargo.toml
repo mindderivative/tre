@@ -25,4 +25,7 @@ taffy = "0.14.0"
 # memory-mapped font loading stay off, so text looks the same on every machine.
 # Reads an SVGZ to recolour it; already in the lock through usvg.
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+# Lets an SVG's text use installed fonts, when the app turns that on; the
+# same crate (and version) usvg builds its font database with.
+fontdb = { version = "0.23.0", default-features = false, features = ["fs", "fontconfig"] }
 usvg = { version = "0.47.0", default-features = false, features = ["text"] }

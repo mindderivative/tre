@@ -1397,6 +1397,24 @@ fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Sc
         scene.push_layer(None, None, opacity, None, filter);
         layers += 1;
     }
+    if let Some(shadow) = &group.shadow {
+        let at = here * Affine::translate((shadow.dx, shadow.dy));
+        scene.set_transform(at);
+        let blur = shadow.blur.map(|radius| {
+            vello_common::filter_effects::Filter::from_function(
+                vello_common::filter_effects::FilterFunction::Blur { radius },
+            )
+        });
+        let blurred = blur.is_some();
+        if blurred {
+            scene.push_layer(None, None, None, None, blur);
+        }
+        paint_svg_group(&shadow.root, at, scene);
+        if blurred {
+            scene.pop_layer();
+        }
+        scene.set_transform(here);
+    }
     for child in &group.children {
         match child {
             SvgNode::Group(g) => paint_svg_group(g, here, scene),
@@ -1449,9 +1467,39 @@ fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Sc
             }
         }
     }
+    if let Some(mask) = &group.mask {
+        paint_svg_mask(mask, here, scene);
+    }
     for _ in 0..layers {
         scene.pop_layer();
     }
+    scene.set_transform(here);
+}
+
+/// Masks what the current layer holds: the mask's shapes (whose alpha is the
+/// mask) are drawn over it with `DestIn`, which keeps the layer only where
+/// they are. Outside the mask's rectangle nothing is drawn, so nothing is
+/// kept. The renderer has no mask layer, so this stands in for one.
+fn paint_svg_mask(mask: &engine_core::SvgMask, here: Affine, scene: &mut Scene) {
+    scene.set_transform(here);
+    scene.push_layer(
+        None,
+        Some(peniko::BlendMode::new(
+            peniko::Mix::Normal,
+            peniko::Compose::DestIn,
+        )),
+        None,
+        None,
+        None,
+    );
+    let rect = mask.rect.to_path(0.1);
+    scene.push_layer(Some(&rect), None, None, None, None);
+    paint_svg_group(&mask.root, here, scene);
+    if let Some(inner) = &mask.mask {
+        paint_svg_mask(inner, here, scene);
+    }
+    scene.pop_layer();
+    scene.pop_layer();
     scene.set_transform(here);
 }
 

@@ -1132,6 +1132,10 @@ impl App {
                 // face now, so this frame must repaint. One atomic load
                 // when nothing was registered.
                 let fonts_changed = runtime.gpu.renderer.text().sync_registered_fonts();
+                crate::node_kind_props::refresh_svg_text(
+                    &runtime.handles.tree,
+                    &runtime.handles.svg_font_generation,
+                );
                 let dirty = runtime.handles.tree.borrow_mut().take_dirty();
                 let changed = dirty || resized || fonts_changed;
                 // 0.4.0 M6: an OS redraw (an expose) with nothing changed
