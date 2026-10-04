@@ -19,6 +19,7 @@ the reactivity layer (`Signal`, `Computed`, `Effect`, `ViewModel`, `batch`,
 from tre._core import (
     App,
     Painter,
+    CursorImage,
     Event,
     Gradient,
     LoopHandle,
@@ -42,6 +43,7 @@ MONOSPACE_FONT_FAMILY = "Hack Nerd Font Mono"
 __all__ = [
     "App",
     "Painter",
+    "CursorImage",
     "Event",
     "Gradient",
     "LoopHandle",

@@ -15,6 +15,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
 | [`Painter`](#painter) | The drawing surface a canvas node's `draw` callback receives. |
 | [`Gradient`](#gradient) | A linear, radial or sweep gradient to give a box as its `fill`. |
+| [`CursorImage`](#cursorimage) | A pointer shape drawn from pixels, for a node's `cursor`. |
 | [`Shader`](#shader) | WGSL that paints a node (a fill) or transforms its rendered content (an effect). |
 | [`ShaderError`](#shadererror) | A shader's source or names are wrong, positioned in the WGSL you gave. |
 
@@ -400,6 +401,24 @@ A linear, radial or sweep gradient to give a box as its `fill`.
 | `linear(stops: Sequence[Color] \| Sequence[tuple[float, Color]], angle: float=180.0) -> Gradient` | Along a line through the box's centre at `angle` degrees (0 up, 90 right, 180 down), spanning the box. |
 | `radial(stops, center, radius) -> Gradient` | Outward from `center` (fractions of the box; `None` is `(0.5, 0.5)`, the middle). |
 | `sweep(stops, center, start) -> Gradient` | Around `center` (`None` is the middle), starting `start` degrees clockwise from up. |
+
+**Events:** none.
+
+## CursorImage { #cursorimage }
+
+A pointer shape drawn from pixels, for a node's `cursor`.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [CursorImage reference](../reference/node.md#cursors)
+
+**Constructor:** `CursorImage(rgba: bytes, width: int, height: int, hotspot: tuple[int, int]=(0, 0))`
+
+**Properties:**
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `size` | `tuple[int, int]` |  |
+| `hotspot` | `tuple[int, int]` |  |
+| `ready` | `bool` | Whether the OS cursor has been made. |
 
 **Events:** none.
 

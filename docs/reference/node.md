@@ -52,6 +52,31 @@ innermost first, by the least that shows it; a node longer than a view is
 aligned to its start. An assistive technology's `scroll_into_view` request
 does the same, after any `a11y_action` listener.
 
+## Cursors
+
+A node's `cursor` is the pointer shape over it, inherited by its descendants: one of the
+named shapes in the table above, `None`, or (0.5.4) a `tre.CursorImage`, a shape drawn
+from pixels:
+
+```python
+import tre
+
+rgba = bytearray(32 * 32 * 4)             # straight-alpha RGBA8, drawn however you like
+...                                       # (decode a PNG with your imaging library)
+reticle = tre.CursorImage(bytes(rgba), 32, 32, hotspot=(16, 16))
+canvas.set(cursor=reticle)
+```
+
+`CursorImage(rgba, width, height, hotspot=(0, 0))` takes `width * height * 4` bytes, each
+side 1 to 256 pixels, and a `hotspot`, the pixel that is the pointer's position. The engine
+decodes no image format. The same image made twice is one cursor, and a cursor lives as
+long as the process. The OS cursor is made when `App.run()` runs its loop (`image.ready`
+says), so the default shape shows for the first moments. The image is in device pixels, not
+scaled for a HiDPI display: give a larger one on a 2x screen. `node.get("cursor")` returns
+the `CursorImage` that was set. It works on Windows, macOS, X11 and Wayland, and was checked
+by making the cursor on Wayland and X11 (KDE); the pixels themselves on screen were not
+inspected.
+
 ## `animate`
 
 **`animate(property, to, duration_ms=0, easing=None, on_complete=None)`**

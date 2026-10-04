@@ -594,10 +594,23 @@ fn border_cursor(direction: winit::window::ResizeDirection) -> Cursor {
     }
 }
 
-/// M94: `winit`'s icon for each of the engine's cursor shapes.
+/// M94: `winit`'s cursor for each of the engine's cursor shapes; 0.5.4 (#140) a
+/// custom image's, once the loop has built it (the default shape until then).
+fn winit_cursor(cursor: Cursor) -> winit::window::Cursor {
+    match cursor {
+        Cursor::Custom(id) => engine_platform::cursors::get(id).map_or(
+            winit::window::Cursor::Icon(winit::window::CursorIcon::Default),
+            winit::window::Cursor::Custom,
+        ),
+        shape => winit::window::Cursor::Icon(cursor_icon(shape)),
+    }
+}
+
+/// M94: `winit`'s icon for each of the engine's named cursor shapes.
 fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
     use winit::window::CursorIcon as Icon;
     match cursor {
+        Cursor::Custom(_) => Icon::Default,
         Cursor::Default => Icon::Default,
         Cursor::Pointer => Icon::Pointer,
         Cursor::Text => Icon::Text,
@@ -1404,7 +1417,7 @@ impl App {
                         });
                     if wanted != runtime.cursor {
                         if let Some(window) = runtime.handles.os_window.borrow().as_ref() {
-                            window.set_cursor(cursor_icon(wanted));
+                            window.set_cursor(winit_cursor(wanted));
                         }
                         runtime.cursor = wanted;
                     }

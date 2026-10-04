@@ -235,3 +235,6 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - **Sticky headers.** `node.set(sticky=inset)` holds a node at the start edge of
   its scroll view while its parent scrolls past, like CSS `position: sticky`; see
   [Sticky headers](guide/nodes-and-layout.md#sticky-headers). Off by default.
+- **Custom cursors.** `tre.CursorImage(rgba, width, height, hotspot)` is a pointer
+  shape drawn from pixels, accepted anywhere a node's `cursor` takes a name; see
+  [Cursors](reference/node.md#cursors). The named shapes are unchanged.

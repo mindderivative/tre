@@ -79,6 +79,7 @@
 //! update_if_active`, which already gates on activation state.
 
 pub mod appearance;
+pub mod cursors;
 pub mod titlebar;
 
 use std::cell::RefCell;
@@ -814,11 +815,13 @@ where
         self.attach();
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        cursors::flush(event_loop);
         self.park();
     }
 
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        cursors::flush(event_loop);
         self.attach();
         // Windows are created lazily, in `user_event`, as `OpenWindow`
         // requests arrive -- not eagerly here. `setup`'s own
@@ -828,6 +831,7 @@ where
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PlatformEvent) {
+        cursors::flush(event_loop);
         self.attach();
         match event {
             PlatformEvent::OpenWindow(request) => {
@@ -1034,6 +1038,7 @@ where
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        cursors::flush(event_loop);
         self.attach();
         let Self {
             windows,

@@ -9,6 +9,7 @@
 mod app;
 mod canvas;
 mod clock;
+mod cursor_image;
 mod dispatch;
 mod dock;
 mod error;
@@ -60,6 +61,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Node>()?;
     m.add_class::<Painter>()?;
     m.add_class::<gradient::PyGradient>()?;
+    m.add_class::<cursor_image::PyCursorImage>()?;
     m.add_class::<Event>()?;
     m.add_class::<LoopHandle>()?;
     m.add_class::<Shader>()?;

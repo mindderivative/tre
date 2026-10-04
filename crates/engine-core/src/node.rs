@@ -1435,6 +1435,9 @@ pub enum Cursor {
     ZoomIn,
     ZoomOut,
     AllScroll,
+    /// 0.5.4 (#140): a cursor image the app registered (`engine_platform::
+    /// cursors`), by id. Not in `ALL`: it has no name to parse.
+    Custom(u64),
 }
 
 impl Cursor {
@@ -1489,6 +1492,7 @@ impl Cursor {
             Self::ZoomIn => "zoom_in",
             Self::ZoomOut => "zoom_out",
             Self::AllScroll => "all_scroll",
+            Self::Custom(_) => "custom",
         }
     }
 

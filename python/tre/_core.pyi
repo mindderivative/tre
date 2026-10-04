@@ -37,6 +37,7 @@ __all__ = [
     "Node",
     "Painter",
     "Event",
+    "CursorImage",
     "Gradient",
     "LoopHandle",
     "Shader",
@@ -721,6 +722,32 @@ class ShaderError(ValueError):
     line: int | None
     column: int | None
     source_line: str | None
+
+@final
+class CursorImage:
+    """(0.5.4) A pointer shape drawn from pixels, for a node's `cursor`:
+    `node.set(cursor=CursorImage(rgba, 32, 32, hotspot=(4, 4)))`. `rgba` is
+    straight-alpha RGBA8 bytes, `width * height * 4` of them, each side 1 to
+    256 pixels; `hotspot` is the pixel that is the pointer's position. The same
+    image made twice is one cursor. The image is in device pixels, not scaled
+    for HiDPI, so give a larger one there. The engine decodes nothing: decode a
+    PNG yourself. The OS cursor is made once `App.run()` runs its loop (see
+    `ready`); the default shape shows until then. Raises `ValueError` for a bad
+    size, a wrong byte count, or a hotspot outside the image."""
+
+    def __new__(
+        cls, rgba: bytes, width: int, height: int, hotspot: tuple[int, int] = ...
+    ) -> CursorImage: ...
+    @property
+    def size(self) -> tuple[int, int]: ...
+    @property
+    def hotspot(self) -> tuple[int, int]: ...
+    @property
+    def ready(self) -> bool:
+        """Whether the OS cursor has been made."""
+        ...
+    def __eq__(self, other: object, /) -> bool: ...
+    def __hash__(self) -> int: ...
 
 @final
 class Gradient:

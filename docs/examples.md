@@ -33,6 +33,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `transparent_window.py` | `transparent=True`: a rounded, undecorated card on the desktop, with a close button |
 | `spring.py` | `easing=("spring", bounce)`: overshoot, and a retarget that keeps its speed |
 | `sticky_headers.py` | `sticky=0`: section headers that hold the top of a scroll view |
+| `custom_cursor.py` | `tre.CursorImage`: a reticle cursor drawn in Python, on a card |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |

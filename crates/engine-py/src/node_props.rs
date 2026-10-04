@@ -656,8 +656,19 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "a11y_hidden" => Change::A11yHidden(boolean(value, name)?),
         "focusable" => Change::Focusable(boolean(value, name)?),
         "tab_index" => Change::TabIndex(required(value, name, "an int")?),
+        // 0.5.4 (#140): a `CursorImage` is a cursor too.
+        "cursor"
+            if value
+                .extract::<crate::cursor_image::PyCursorImage>()
+                .is_ok() =>
+        {
+            let image = value
+                .extract::<crate::cursor_image::PyCursorImage>()
+                .expect("checked");
+            Change::Cursor(Some(Cursor::Custom(image.id)))
+        }
         "cursor" => {
-            let cursor: Option<String> = optional(value, name, "a str or None")?;
+            let cursor: Option<String> = optional(value, name, "a str, a CursorImage, or None")?;
             Change::Cursor(match cursor {
                 None => None,
                 Some(cursor) => Some(Cursor::from_name(&cursor).ok_or_else(|| {
@@ -937,12 +948,16 @@ impl Node {
                     any(focusable.into_pyobject(py)?.to_owned().into_any())
                 }
                 "tab_index" => any(access.tab_index.into_pyobject(py)?.into_any()),
-                "cursor" => node
-                    .cursor
-                    .map(Cursor::name)
-                    .into_pyobject(py)?
-                    .into_any()
-                    .unbind(),
+                "cursor" => match node.cursor {
+                    Some(Cursor::Custom(id)) => {
+                        Py::new(py, crate::cursor_image::PyCursorImage::from_id(id))?.into_any()
+                    }
+                    other => other
+                        .map(Cursor::name)
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind(),
+                },
                 "shader" => match &node.shader {
                     None => py.None(),
                     Some(core) => Py::new(
