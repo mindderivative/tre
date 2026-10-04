@@ -1165,6 +1165,76 @@ impl TextRenderer {
         (x <= line.metrics().offset + line.metrics().advance).then(|| cluster.text_range().start)
     }
 
+    /// 0.5.4 (#153): the shown lines of a static text node, with where each
+    /// character sits, for its accessibility runs. Coordinates are in the node
+    /// (`at` included). Assumes left-to-right text: a right-to-left run's
+    /// characters are placed in logical order from the run's start.
+    pub fn access_lines(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+    ) -> Vec<engine_core::AccessLine> {
+        let layout = self.static_layout(node_id, state, &at);
+        let shown = visible_lines(layout, &state.options);
+        let content = &state.content;
+        let mut out = Vec::new();
+        for line in layout.lines().take(shown) {
+            let range = line.text_range();
+            let (start, end) = (range.start.min(content.len()), range.end.min(content.len()));
+            if start >= end || !content.is_char_boundary(start) || !content.is_char_boundary(end) {
+                continue;
+            }
+            let metrics = line.metrics();
+            // (byte offset, left edge, advance) per character, from the clusters.
+            let mut placed: Vec<(usize, f32, f32)> = Vec::new();
+            for item in line.items() {
+                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                    continue;
+                };
+                let mut x = glyph_run.offset();
+                for cluster in glyph_run.run().visual_clusters() {
+                    let cluster_range = cluster.text_range();
+                    if cluster_range.start < start || cluster_range.end > end {
+                        continue;
+                    }
+                    let advance = cluster.advance();
+                    let chars: Vec<usize> = content[cluster_range.clone()]
+                        .char_indices()
+                        .map(|(i, _)| cluster_range.start + i)
+                        .collect();
+                    let each = advance / chars.len().max(1) as f32;
+                    for (k, byte) in chars.into_iter().enumerate() {
+                        placed.push((byte, x + each * k as f32, each));
+                    }
+                    x += advance;
+                }
+            }
+            placed.sort_by_key(|p| p.0);
+            // One entry per character of the line; a character no cluster
+            // placed (a trailing newline) sits at the line's end, no wide.
+            let line_end = metrics.offset + metrics.advance;
+            let chars: Vec<(f32, f32)> = content[start..end]
+                .char_indices()
+                .map(|(i, _)| {
+                    placed
+                        .binary_search_by_key(&(start + i), |p| p.0)
+                        .map_or((line_end, 0.0), |at| (placed[at].1, placed[at].2))
+                })
+                .collect();
+            out.push(engine_core::AccessLine {
+                start,
+                end,
+                x0: at.x,
+                y0: at.y + f64::from(metrics.block_min_coord),
+                x1: at.x + f64::from(line_end),
+                y1: at.y + f64::from(metrics.block_max_coord),
+                chars,
+            });
+        }
+        out
+    }
+
     /// 0.5.4 (#131): the bytes of the word (`lines == false`) or the visual
     /// line (`lines == true`) at `point`, for a double or triple click.
     pub fn text_range_at(

@@ -954,6 +954,7 @@ name = "engine-render"
 version = "0.5.4"
 dependencies = [
  "accesskit",
+ "accesskit_consumer",
  "engine-core",
  "engine-platform",
  "foldhash",

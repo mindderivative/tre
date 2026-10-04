@@ -86,19 +86,23 @@ widget needs no listener for it.
 
 A text node that is `selectable`, has a selection, or has a span with a `link`
 (0.5.4) is exposed as a text container: if its `role` is still the default it
-reads as a label, and its content is a run of text for each stretch between link
-boundaries, with each link a `link` node holding its run and the span's `link`
+reads as a label, and its content is a run of text for each line and each stretch
+between link boundaries, with each link a `link` node holding its run and the span's `link`
 string as its URL. A selection (`selection`, or the user's) is reported as a text
 selection, so a screen reader can read it and move through the text, and it can
 set the selection (`SetTextSelection`), which selects the text as the pointer
 would. Following a link (the `click` action on the link node) fires the text
 node's `link` event with `href`, as a mouse click does.
 
-A run's bounds are the whole text node's box, and a wrapped paragraph is one run,
-so a screen reader that places its cursor by position finds the node, not the
-word. Plain text with none of these is unchanged: no children, and the role you
-set. This is built and checked against AccessKit's own consumer; it has not been
-tried with NVDA, VoiceOver or Orca.
+Each shaped line is its own run, with its bounds and the position and width of
+every character, and the start of each word, so a screen reader can place its
+cursor, move by line or word, and a magnifier can follow it. A link that wraps is
+one link node holding a run per line. The lines come from the window's text
+renderer when the accessibility tree is built, so a tree built with no renderer
+(a headless test) has one run per link segment over the node's box. Positions
+assume left-to-right text. Plain text with none of these is unchanged: no
+children, and the role you set. This is built and checked against AccessKit's
+own consumer; it has not been tried with NVDA, VoiceOver or Orca.
 
 ## Announcing and hiding
 

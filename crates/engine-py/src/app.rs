@@ -215,6 +215,25 @@ fn link_under(
     tree.text_link_at(hit, offset).map(str::to_owned)
 }
 
+/// 0.5.4 (#153): the shaped lines of every text node the accessibility tree
+/// will expose as text, keyed by node.
+fn text_access_lines(
+    tree: &Rc<RefCell<Tree>>,
+    text_renderer: &mut TextRenderer,
+) -> std::collections::HashMap<NodeId, Vec<engine_core::AccessLine>> {
+    let tree = tree.borrow();
+    tree.text_nodes_needing_access_lines()
+        .into_iter()
+        .filter_map(|id| {
+            let NodeKind::Text(state) = &tree.get(id)?.kind else {
+                return None;
+            };
+            let lines = text_renderer.access_lines(id, state, text_placement(&tree, id));
+            Some((id, lines))
+        })
+        .collect()
+}
+
 /// 0.5.4 (#131): the pointer shape text asks for under `position`: a pointer
 /// over a link, an I-beam over selectable text, else `None` (the node's own
 /// `cursor`, if it set one, is checked first by the caller).
@@ -1525,6 +1544,22 @@ impl App {
             // own `Tree` -- unchanged by the multi-window split, just
             // looked up per `WindowId` now instead of assumed singular.
             move |window_id| {
+                // 0.5.4 (#153): the shaped lines of text that is exposed as
+                // text come from the window's text renderer, which needs the
+                // runtime mutably; if something already holds it, the update is
+                // built without them (one run per link segment).
+                if let Ok(mut runtimes) = runtimes_for_access.try_borrow_mut() {
+                    let runtime = runtimes
+                        .get_mut(&window_id)
+                        .expect("build_access_update requested for a window with no runtime state");
+                    let lines =
+                        text_access_lines(&runtime.handles.tree, runtime.gpu.renderer.text());
+                    runtime
+                        .handles
+                        .tree
+                        .borrow_mut()
+                        .set_text_access_lines(lines);
+                }
                 let runtimes = runtimes_for_access.borrow();
                 let runtime = runtimes
                     .get(&window_id)

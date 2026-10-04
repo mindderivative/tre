@@ -48,6 +48,8 @@ wgpu = { workspace = true }
 
 [dev-dependencies]
 accesskit = "0.25.0"
+# 0.5.4 (#153): reads the accessibility tree back the way a screen reader does.
+accesskit_consumer = "0.39.0"
 engine-platform = { path = "../engine-platform" }
 pollster = "1.0.1"
 # Test-only: builds taffy::Style values directly for the layout_tree/

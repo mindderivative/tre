@@ -40,7 +40,7 @@ use peniko::kurbo::BezPath;
 use peniko::kurbo::{Affine, ParamCurveNearest, Point, Rect};
 
 mod access;
-pub use access::TextPart;
+pub use access::{AccessLine, TextPart};
 mod dispatch;
 mod focus;
 mod layers;
@@ -110,6 +110,8 @@ pub struct Tree {
     /// 0.5.4 (#112): the text node whose static selection is showing, if any.
     /// One at a time, as on a desktop.
     static_selection: text_editing::StaticSelection,
+    /// 0.5.4 (#153): the shaped lines of text nodes, for their accessibility runs.
+    text_lines: std::collections::HashMap<NodeId, Vec<access::AccessLine>>,
     /// 0.5.4 (#103): the nodes the last full scan found animating, and the
     /// `animations_started` count it was taken at. See `tick_all`.
     animating: Vec<NodeId>,
@@ -160,6 +162,7 @@ impl Tree {
             layout_epoch: 0,
             animating: Vec::new(),
             static_selection: Default::default(),
+            text_lines: Default::default(),
             last_layout: None,
             scanned_at: None,
             taffy_nodes: SecondaryMap::new(),

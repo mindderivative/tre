@@ -148,6 +148,23 @@ impl Tree {
     }
 }
 
+/// One shaped line of a text node, for its accessibility runs (0.5.4, #153).
+/// The text renderer makes these; the tree has no text layout of its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AccessLine {
+    /// The bytes of the node's content on this line.
+    pub start: usize,
+    pub end: usize,
+    /// The line's box in the node's own coordinates.
+    pub x0: f64,
+    pub y0: f64,
+    pub x1: f64,
+    pub y1: f64,
+    /// For each character of `content[start..end]`: its left edge, measured
+    /// from the line's `x0`, and its advance.
+    pub chars: Vec<(f32, f32)>,
+}
+
 /// Bit 63 marks the ids of the accessibility nodes a text node makes for
 /// itself (its runs and links): a real node's id has a slot version there,
 /// which never gets that large.
@@ -202,6 +219,60 @@ fn text_segments(state: &crate::TextState) -> Vec<(usize, usize, Option<&str>)> 
     out
 }
 
+/// A stretch of text that is one accessibility run: inside one link (or none)
+/// and on one line.
+struct Piece<'a> {
+    start: usize,
+    end: usize,
+    /// Index of the link-boundary segment it came from.
+    segment: usize,
+    link: Option<&'a str>,
+    /// The shaped line it is on, with the lines' own indices.
+    line: Option<&'a AccessLine>,
+}
+
+/// Cuts a text node into runs: each link-boundary segment further cut at the
+/// shaped lines, when there are any that fit the content.
+fn text_pieces<'a>(state: &'a crate::TextState, lines: Option<&'a [AccessLine]>) -> Vec<Piece<'a>> {
+    let usable = lines.filter(|lines| {
+        !lines.is_empty()
+            && lines.iter().all(|l| {
+                l.start < l.end
+                    && l.end <= state.content.len()
+                    && state.content.is_char_boundary(l.start)
+                    && state.content.is_char_boundary(l.end)
+                    && l.chars.len() == state.content[l.start..l.end].chars().count()
+            })
+    });
+    let mut out = Vec::new();
+    for (segment, (start, end, link)) in text_segments(state).into_iter().enumerate() {
+        match usable {
+            None => out.push(Piece {
+                start,
+                end,
+                segment,
+                link,
+                line: None,
+            }),
+            Some(lines) => {
+                for line in lines {
+                    let (a, b) = (start.max(line.start), end.min(line.end));
+                    if a < b {
+                        out.push(Piece {
+                            start: a,
+                            end: b,
+                            segment,
+                            link,
+                            line: Some(line),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// What a synthetic accessibility id of a text node stands for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TextPart {
@@ -239,12 +310,16 @@ impl Tree {
             x1: x + w,
             y1: y + h,
         };
+        let lines = self.text_lines.get(&id).map(Vec::as_slice);
+        let pieces = text_pieces(state, lines);
         // (byte range, run id) per run, to place the selection.
         let mut runs: Vec<(usize, usize, accesskit::NodeId)> = Vec::new();
         let mut top = Vec::new();
-        for (index, (start, end, link)) in text_segments(state).into_iter().enumerate() {
+        // A link's runs, until its last piece.
+        let mut link_runs: Vec<(accesskit::NodeId, accesskit::Rect)> = Vec::new();
+        for (index, piece) in pieces.iter().enumerate() {
             let run_id = text_part_id(id, index * 2);
-            let text = &state.content[start..end];
+            let text = &state.content[piece.start..piece.end];
             let mut run = accesskit::Node::new(accesskit::Role::TextRun);
             run.set_value(text);
             run.set_character_lengths(
@@ -252,26 +327,71 @@ impl Tree {
                     .map(|c| c.len_utf8() as u8)
                     .collect::<Vec<u8>>(),
             );
-            run.set_bounds(bounds);
             run.set_text_direction(accesskit::TextDirection::LeftToRight);
-            runs.push((start, end, run_id));
-            match link {
-                Some(href) => {
-                    let link_id = text_part_id(id, index * 2 + 1);
-                    let mut node = accesskit::Node::new(accesskit::Role::Link);
-                    node.set_label(text);
-                    node.set_url(href);
-                    node.add_action(accesskit::Action::Click);
-                    node.set_bounds(bounds);
-                    node.set_children(vec![run_id]);
-                    out.push((link_id, node));
-                    out.push((run_id, run));
-                    top.push(link_id);
+            let run_bounds = match piece.line {
+                Some(line) => {
+                    let skip = state.content[line.start..piece.start].chars().count();
+                    let chars = &line.chars[skip..skip + text.chars().count()];
+                    let base = chars.first().map_or(0.0, |c| c.0);
+                    let width = chars.last().map_or(0.0, |c| c.0 + c.1 - base);
+                    run.set_character_positions(
+                        chars.iter().map(|c| c.0 - base).collect::<Vec<f32>>(),
+                    );
+                    run.set_character_widths(chars.iter().map(|c| c.1).collect::<Vec<f32>>());
+                    accesskit::Rect {
+                        x0: x + line.x0 + f64::from(base),
+                        y0: y + line.y0,
+                        x1: x + line.x0 + f64::from(base) + f64::from(width),
+                        y1: y + line.y1,
+                    }
                 }
-                None => {
-                    out.push((run_id, run));
-                    top.push(run_id);
-                }
+                None => bounds,
+            };
+            run.set_bounds(run_bounds);
+            let before = state.content[..piece.start].chars().next_back();
+            let starts: Vec<usize> = text
+                .char_indices()
+                .scan(before, |prev, (i, c)| {
+                    let start = !c.is_whitespace() && prev.is_some_and(char::is_whitespace);
+                    *prev = Some(c);
+                    Some(start.then_some(text[..i].chars().count()))
+                })
+                .flatten()
+                .collect();
+            if !starts.is_empty() {
+                run.set_word_starts(starts.into_iter().map(|i| i as u8).collect::<Vec<u8>>());
+            }
+            runs.push((piece.start, piece.end, run_id));
+            out.push((run_id, run));
+            match piece.link {
+                Some(_) => link_runs.push((run_id, run_bounds)),
+                None => top.push(run_id),
+            }
+            // A link node closes after the last piece of its segment.
+            let last_of_segment = pieces
+                .get(index + 1)
+                .is_none_or(|n| n.segment != piece.segment);
+            if let (Some(href), true) = (piece.link, last_of_segment) {
+                let link_id = text_part_id(id, piece.segment * 2 + 1);
+                let (first, last) = (link_runs[0].1, link_runs[link_runs.len() - 1].1);
+                let mut node = accesskit::Node::new(accesskit::Role::Link);
+                let label_start = pieces
+                    .iter()
+                    .find(|p| p.segment == piece.segment)
+                    .map_or(0, |p| p.start);
+                node.set_label(&state.content[label_start..piece.end]);
+                node.set_url(href);
+                node.add_action(accesskit::Action::Click);
+                node.set_bounds(accesskit::Rect {
+                    x0: first.x0.min(last.x0),
+                    y0: first.y0,
+                    x1: first.x1.max(last.x1),
+                    y1: last.y1,
+                });
+                node.set_children(link_runs.iter().map(|r| r.0).collect::<Vec<_>>());
+                out.push((link_id, node));
+                top.push(link_id);
+                link_runs.clear();
             }
         }
         if let Some((a, b)) = state.options.selection {
@@ -296,6 +416,32 @@ impl Tree {
         top
     }
 
+    /// Hands the tree the shaped lines of its text nodes, for their runs'
+    /// bounds and character positions (the text renderer makes them; see
+    /// [`AccessLine`]). Replaces any it had, so call it just before
+    /// [`build_access_update`](Self::build_access_update); text it has no lines
+    /// for gets one run per link segment, over the node's box.
+    pub fn set_text_access_lines(
+        &mut self,
+        lines: std::collections::HashMap<NodeId, Vec<AccessLine>>,
+    ) {
+        self.text_lines = lines;
+    }
+
+    /// The text nodes that are exposed as text containers, which are the ones
+    /// [`set_text_access_lines`](Self::set_text_access_lines) wants lines for.
+    pub fn text_nodes_needing_access_lines(&self) -> Vec<NodeId> {
+        self.nodes
+            .iter()
+            .filter(|(_, n)| {
+                n.visible
+                    && !n.access.hidden
+                    && matches!(&n.kind, NodeKind::Text(s) if exposes_text(s))
+            })
+            .map(|(id, _)| id)
+            .collect()
+    }
+
     /// What the synthetic accessibility id `id` stands for, if it is the run
     /// or link of one of this tree's text nodes (0.5.4, #151).
     pub fn resolve_text_part(&self, id: accesskit::NodeId) -> Option<TextPart> {
@@ -311,17 +457,22 @@ impl Tree {
         let NodeKind::Text(state) = &node.kind else {
             return None;
         };
-        let (start, end, link) = *text_segments(state).get(part / 2)?;
-        match (part % 2, link) {
-            (0, _) => Some(TextPart::Run { owner, start, end }),
-            (_, Some(href)) => Some(TextPart::Link {
+        let lines = self.text_lines.get(&owner).map(Vec::as_slice);
+        if part.is_multiple_of(2) {
+            let piece = text_pieces(state, lines).into_iter().nth(part / 2)?;
+            return Some(TextPart::Run {
                 owner,
-                href: href.to_owned(),
-                start,
-                end,
-            }),
-            _ => None,
+                start: piece.start,
+                end: piece.end,
+            });
         }
+        let (start, end, link) = *text_segments(state).get(part / 2)?;
+        Some(TextPart::Link {
+            owner,
+            href: link?.to_owned(),
+            start,
+            end,
+        })
     }
 
     /// A screen reader's `SetTextSelection`: selects the range it names in
