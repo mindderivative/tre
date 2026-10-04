@@ -794,53 +794,117 @@ impl Tree {
         if self.root_of(focus.0) != root {
             return false;
         }
-        let order = self.selectable_texts(root, [anchor.0, focus.0]);
-        let position = |id: NodeId| order.iter().position(|n| *n == id);
-        let (Some(ia), Some(ifo)) = (position(anchor.0), position(focus.0)) else {
-            return false;
-        };
-        // The ranges each node gets.
-        let mut ranges: Vec<(NodeId, (usize, usize))> = Vec::new();
-        if anchor.0 == focus.0 {
-            ranges.push((anchor.0, (anchor.1, focus.1)));
-        } else {
-            let (first, last) = if ia < ifo {
-                (anchor, focus)
-            } else {
-                (focus, anchor)
-            };
-            let (lo, hi) = (ia.min(ifo), ia.max(ifo));
-            for &id in &order[lo..=hi] {
-                let len = self.text_len(id).unwrap_or(0);
-                let range = if id == first.0 {
-                    (first.1, len)
-                } else if id == last.0 {
-                    (0, last.1)
-                } else {
-                    (0, len)
+        // A drag usually moves within the node it is already in: only that
+        // node's range changes, so the walk to find the order is not needed.
+        let ranges = match self.moved_focus_only(anchor, focus) {
+            Some(ranges) => ranges,
+            None => {
+                let order = self.selectable_texts(root, [anchor.0, focus.0]);
+                let position = |id: NodeId| order.iter().position(|n| *n == id);
+                let (Some(ia), Some(ifo)) = (position(anchor.0), position(focus.0)) else {
+                    return false;
                 };
-                ranges.push((id, range));
+                let mut ranges: Vec<(NodeId, (usize, usize))> = Vec::new();
+                if anchor.0 == focus.0 {
+                    ranges.push((anchor.0, (anchor.1, focus.1)));
+                } else {
+                    let (first, last) = if ia < ifo {
+                        (anchor, focus)
+                    } else {
+                        (focus, anchor)
+                    };
+                    for &id in &order[ia.min(ifo)..=ia.max(ifo)] {
+                        let len = self.text_len(id).unwrap_or(0);
+                        let range = if id == first.0 {
+                            (first.1, len)
+                        } else if id == last.0 {
+                            (0, last.1)
+                        } else {
+                            (0, len)
+                        };
+                        ranges.push((id, range));
+                    }
+                }
+                ranges
             }
-        }
-        let keep: Vec<NodeId> = ranges.iter().map(|(id, _)| *id).collect();
+        };
+        let keep: std::collections::HashSet<NodeId> = ranges.iter().map(|(id, _)| *id).collect();
+        // Write only the ranges that differ: a write through `get_mut` counts
+        // the node as touched, so the unchanged ones stay quiet.
+        let mut changed = false;
         let previous = std::mem::take(&mut self.static_selection.nodes);
         for id in previous.into_iter().filter(|id| !keep.contains(id)) {
             if let Some(NodeKind::Text(state)) = self.nodes.get_mut(id).map(|n| &mut n.kind) {
                 state.options.selection = None;
+                changed = true;
             }
         }
-        for (id, range) in ranges {
-            if let Some(NodeKind::Text(state)) = self.nodes.get_mut(id).map(|n| &mut n.kind) {
-                state.options.selection = Some(range);
+        for (id, range) in &ranges {
+            let current = match self.nodes.get(*id).map(|n| &n.kind) {
+                Some(NodeKind::Text(state)) => state.options.selection,
+                _ => continue,
+            };
+            if current != Some(*range)
+                && let Some(NodeKind::Text(state)) = self.nodes.get_mut(*id).map(|n| &mut n.kind)
+            {
+                state.options.selection = Some(*range);
+                changed = true;
             }
         }
         self.static_selection = StaticSelection {
             anchor: Some(anchor),
             focus: Some(focus),
-            nodes: keep,
+            nodes: ranges.iter().map(|(id, _)| *id).collect(),
         };
-        self.dirty = true;
+        if changed {
+            self.dirty = true;
+        }
         true
+    }
+
+    /// The ranges after only the moving end changed within the node it was
+    /// already in (same anchor, same focus node, same nodes selected): the
+    /// previous ranges with that node's own range updated. `None` when anything
+    /// else changed, so the caller works out the whole selection.
+    fn moved_focus_only(
+        &self,
+        anchor: (NodeId, usize),
+        focus: (NodeId, usize),
+    ) -> Option<Vec<(NodeId, (usize, usize))>> {
+        let StaticSelection {
+            anchor: Some(old_anchor),
+            focus: Some(old_focus),
+            nodes,
+        } = &self.static_selection
+        else {
+            return None;
+        };
+        if *old_anchor != anchor || old_focus.0 != focus.0 || nodes.is_empty() {
+            return None;
+        }
+        let (&first, &last) = (nodes.first()?, nodes.last()?);
+        let current = |id: NodeId| match &self.nodes.get(id)?.kind {
+            NodeKind::Text(state) => state.options.selection,
+            _ => None,
+        };
+        let len = self.text_len(focus.0)?;
+        // The focus node's new range, from where it sits in the selection.
+        let new = if nodes.len() == 1 {
+            (anchor.1, focus.1)
+        } else if focus.0 == last && anchor.0 == first {
+            (0, focus.1)
+        } else if focus.0 == first && anchor.0 == last {
+            (focus.1, len)
+        } else {
+            return None;
+        };
+        nodes
+            .iter()
+            .map(|&id| {
+                let range = if id == focus.0 { new } else { current(id)? };
+                Some((id, range))
+            })
+            .collect()
     }
 
     /// Moves the focus end of the selection to `focus` in text node `id`,

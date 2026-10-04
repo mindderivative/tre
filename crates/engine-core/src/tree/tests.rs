@@ -7269,6 +7269,52 @@ mod static_selection {
     }
 
     #[test]
+    fn a_drag_within_one_text_touches_only_that_text_and_matches_a_fresh_selection() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.set_text_selection(a, 1, 1);
+        tree.extend_text_selection(c, 2);
+        tree.take_touched();
+        // Moving the end within the last text: only it changes.
+        tree.extend_text_selection(c, 4);
+        let touched = tree.take_touched();
+        assert!(!touched.all, "no whole-tree touch");
+        assert_eq!(touched.ids, vec![c], "only the text the end moved in");
+        // The same position again changes nothing at all.
+        tree.extend_text_selection(c, 4);
+        let touched = tree.take_touched();
+        assert!(!touched.all && touched.ids.is_empty(), "{:?}", touched.ids);
+        assert_eq!(range_of(&tree, b), Some((0, 5)));
+
+        // A long wandering drag across the three texts, forwards and back,
+        // agrees at every step with selecting the same ends from scratch.
+        let mut seed = 7u32;
+        let mut next = move |n: usize| {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            ((seed >> 16) as usize) % n
+        };
+        let nodes = [a, b, c];
+        let lens = [5usize, 5, 7];
+        tree.set_text_selection(b, 2, 2);
+        for _ in 0..200 {
+            let k = next(3);
+            let offset = next(lens[k] + 1);
+            tree.extend_text_selection(nodes[k], offset);
+            let mut fresh = Tree::new();
+            let (_, f) = paragraphs(&mut fresh);
+            fresh.select_across((f[1], 2), (f[k], offset));
+            for i in 0..3 {
+                assert_eq!(
+                    range_of(&tree, nodes[i]),
+                    range_of(&fresh, f[i]),
+                    "step to ({k}, {offset}), text {i}"
+                );
+            }
+            assert_eq!(tree.static_selected_text(), fresh.static_selected_text());
+        }
+    }
+
+    #[test]
     fn a_non_text_node_is_refused_and_a_selection_set_directly_can_be_adopted() {
         let mut tree = Tree::new();
         let (kind, style, paint) = leaf(10.0, 10.0);
