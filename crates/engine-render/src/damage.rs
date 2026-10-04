@@ -612,9 +612,8 @@ impl Pass<'_> {
             None => self.rects.push(record.painted),
         }
         // A scroller's children are placed by its offset, which a child
-        // cannot see: they are all walked again. (Today a scroll also moves
-        // layout, so the layout epoch has already sent such a frame to the
-        // full walk; this holds if that ever stops being so.)
+        // cannot see (a scroll is a paint-time shift, not a layout change, since
+        // #105): they are all walked again.
         let force_children = force
             || (self.changed.contains(&id)
                 && matches!(
