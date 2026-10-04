@@ -923,6 +923,58 @@ pub struct TextOptions {
     /// Ends a cut last line -- by `max_lines`, or by the width when not
     /// wrapping -- with "…".
     pub ellipsis: bool,
+    /// 0.5.4 (#112): styles for ranges of the text, over the node's own.
+    /// Later spans win where they overlap.
+    pub spans: Vec<TextSpan>,
+    /// 0.5.4 (#112): whether a press and drag on the text selects it, and
+    /// Copy takes the selection. Paint and input state, not layout: see
+    /// `same_layout`.
+    pub selectable: bool,
+    /// 0.5.4 (#112): the selected bytes as `(anchor, focus)`, either order.
+    /// `Some((n, n))` is an empty selection.
+    pub selection: Option<(usize, usize)>,
+}
+
+impl TextOptions {
+    /// Whether `other` shapes and lays out text the same way: every field but
+    /// the selection state, which only changes what is painted over the
+    /// glyphs, so a selection drag doesn't reshape the text.
+    pub fn same_layout(&self, other: &Self) -> bool {
+        let Self {
+            italic,
+            letter_spacing,
+            wrap,
+            max_lines,
+            ellipsis,
+            spans,
+            selectable: _,
+            selection: _,
+        } = self;
+        *italic == other.italic
+            && *letter_spacing == other.letter_spacing
+            && *wrap == other.wrap
+            && *max_lines == other.max_lines
+            && *ellipsis == other.ellipsis
+            && *spans == other.spans
+    }
+}
+
+/// 0.5.4 (#112): a style for the part of a text node's content from byte
+/// offset `start` to `end` (UTF-8 offsets, like a text input's selection and
+/// `syntax_spans`; offsets outside the text or inside a character are
+/// clamped). Each field left `None` or `false` leaves the node's own style.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextSpan {
+    pub start: usize,
+    pub end: usize,
+    /// The glyph colour.
+    pub color: Option<Color>,
+    /// An OpenType weight (`100.0..=950.0`).
+    pub weight: Option<f32>,
+    /// `Some(true)` italic, `Some(false)` upright.
+    pub italic: Option<bool>,
+    pub underline: bool,
+    pub strikethrough: bool,
 }
 
 impl Default for TextOptions {
@@ -933,6 +985,9 @@ impl Default for TextOptions {
             wrap: true,
             max_lines: None,
             ellipsis: false,
+            spans: Vec::new(),
+            selectable: false,
+            selection: None,
         }
     }
 }

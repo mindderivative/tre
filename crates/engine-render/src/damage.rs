@@ -593,12 +593,43 @@ fn options_fingerprint(h: &mut impl Hasher, options: &TextOptions) {
         wrap,
         max_lines,
         ellipsis,
+        spans,
+        selectable,
+        selection,
     } = options;
     italic.hash(h);
     letter_spacing.to_bits().hash(h);
     wrap.hash(h);
     max_lines.hash(h);
     ellipsis.hash(h);
+    // 0.5.4 (#112): the selection is paint (the highlight); selectable is not.
+    let _ = selectable;
+    selection.hash(h);
+    // 0.5.4 (#112): spans.
+    for span in spans {
+        let engine_core::TextSpan {
+            start,
+            end,
+            color: span_color,
+            weight,
+            italic,
+            underline,
+            strikethrough,
+        } = span;
+        start.hash(h);
+        end.hash(h);
+        match span_color {
+            Some(c) => {
+                1u8.hash(h);
+                color(h, *c);
+            }
+            None => 0u8.hash(h),
+        }
+        weight.map(f32::to_bits).hash(h);
+        italic.hash(h);
+        underline.hash(h);
+        strikethrough.hash(h);
+    }
 }
 
 fn text_fingerprint(h: &mut impl Hasher, state: &TextState) {

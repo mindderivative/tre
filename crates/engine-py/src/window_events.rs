@@ -1019,6 +1019,7 @@ impl PyWindow {
             wrap: word(&WRAP, "wrap", wrap)?,
             max_lines: max_lines.filter(|n| *n > 0),
             ellipsis: word(&OVERFLOW, "overflow", overflow)?,
+            ..Default::default()
         };
         if !(font_size > 0.0 && font_size.is_finite()) {
             return Err(PyValueError::new_err(

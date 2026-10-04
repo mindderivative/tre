@@ -122,6 +122,8 @@ On `text` and `text_input` unless noted.
 | `wrap` | `"word"` wraps within the node's width; `"none"` keeps each paragraph on one line (`text` only) |
 | `max_lines` | The most lines shown, or `None` (`text` only) |
 | `overflow` | `"clip"` cuts text past the box or the line limit; `"ellipsis"` ends each cut line with "…" (`text` only) |
+| `spans` | (0.5.4) `[(start, end, style), ...]`: UTF-8 byte ranges styled with a dict of `color`, `weight`, `italic`, `underline`, `strikethrough` (`text` only; later spans win where they overlap) |
+| `selectable` | (0.5.4) `True` lets a press and drag select the text and Copy take it (`text` only; default `False`) |
 | `fill` | The glyph color (animatable) |
 
 A text node has no size of its own: size it with

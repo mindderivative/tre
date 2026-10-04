@@ -124,6 +124,35 @@ fn text_field_hit_offset(
     Some(text_renderer.hit_test_position(state, at, local_point))
 }
 
+/// 0.5.4 (#112): `text_field_hit_offset`'s sibling for selectable static text:
+/// the byte offset `local_point` lands on in a text node whose `selectable` is
+/// on, resolved against the placement `draw_own` paints it at (inside its
+/// padding). `None` for anything else.
+fn static_text_hit_offset(
+    tree: &Rc<RefCell<Tree>>,
+    text_renderer: &mut TextRenderer,
+    hit: NodeId,
+    local_point: Point,
+) -> Option<usize> {
+    let tree = tree.borrow();
+    let node = tree.get(hit)?;
+    let NodeKind::Text(state) = &node.kind else {
+        return None;
+    };
+    if !state.options.selectable {
+        return None;
+    }
+    let layout = tree.layout(hit);
+    let pad = layout.padding;
+    let at = TextPlacement {
+        x: f64::from(pad.left),
+        y: f64::from(pad.top),
+        max_width: (layout.size.width - pad.left - pad.right).max(0.0),
+        color: peniko::Color::TRANSPARENT,
+    };
+    Some(text_renderer.hit_test_text(hit, state, at, local_point))
+}
+
 /// M32 Phase 6 (§4, §5, §8): `text_field_hit_offset`'s own real
 /// `Terminal` sibling -- turns a real local click/drag point into the
 /// exact real `(row, col)` cell it lands on, via `engine-render`'s own
@@ -179,8 +208,18 @@ fn text_pointer_input(
             // scrutinee, the tree's `Ref` would still be alive in its body,
             // and the `borrow_mut` there panicked (0.4.4, 0.5.0).
             let hit = tree.borrow().hit_test_local(root, position);
+            // 0.5.4 (#112): a press anywhere but the selected static text
+            // clears its selection.
+            let on_selectable = hit
+                .is_some_and(|(id, point)| static_text_hit_offset(tree, text, id, point).is_some());
+            if !on_selectable {
+                tree.borrow_mut().clear_text_selection();
+            }
             if let Some((hit, local_point)) = hit {
-                if let Some(offset) = text_field_hit_offset(tree, text, hit, local_point) {
+                if let Some(offset) = static_text_hit_offset(tree, text, hit, local_point) {
+                    tree.borrow_mut().set_text_selection(hit, offset, offset);
+                    *text_drag = Some(hit);
+                } else if let Some(offset) = text_field_hit_offset(tree, text, hit, local_point) {
                     tree.borrow_mut().set_text_field_cursor(hit, offset);
                     // M18 Phase 2 (§8, §10): a real press
                     // on a TextField always ARMS drag
@@ -230,9 +269,13 @@ fn text_pointer_input(
                 let hit = tree.borrow().hit_test_local(root, position);
                 if let Some((hit, local_point)) = hit
                     && hit == field
-                    && let Some(offset) = text_field_hit_offset(tree, text, hit, local_point)
                 {
-                    tree.borrow_mut().extend_text_field_selection(hit, offset);
+                    if let Some(offset) = static_text_hit_offset(tree, text, hit, local_point) {
+                        tree.borrow_mut().extend_text_selection(hit, offset);
+                    } else if let Some(offset) = text_field_hit_offset(tree, text, hit, local_point)
+                    {
+                        tree.borrow_mut().extend_text_field_selection(hit, offset);
+                    }
                 }
             }
             // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
@@ -1793,6 +1836,165 @@ mod tests {
             state.selection_start, state.selection_end,
             "the selection grew"
         );
+    }
+
+    /// 0.5.4 (#112): a 300x40 selectable text node and, under it, a plain one.
+    fn static_text_scene() -> (
+        std::rc::Rc<std::cell::RefCell<Tree>>,
+        engine_core::NodeId,
+        engine_core::NodeId,
+        engine_core::NodeId,
+    ) {
+        let mut tree = Tree::new();
+        let paint = || PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0);
+        let text_node = |selectable: bool| {
+            NodeKind::Text(engine_core::TextState {
+                content: "Select this sentence".to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: 400.0,
+                font_size: 16.0,
+                align: engine_core::TextAlign::Start,
+                line_height: None,
+                options: engine_core::TextOptions {
+                    selectable,
+                    ..Default::default()
+                },
+            })
+        };
+        let sized = |h: f32| Style {
+            size: Size {
+                width: length(300.0),
+                height: length(h),
+            },
+            ..Default::default()
+        };
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                flex_direction: taffy::FlexDirection::Column,
+                size: Size {
+                    width: length(300.0),
+                    height: length(200.0),
+                },
+                ..Default::default()
+            },
+            paint(),
+        );
+        let selectable = tree.insert(text_node(true), sized(40.0), paint());
+        let plain = tree.insert(text_node(false), sized(40.0), paint());
+        tree.add_child(root, selectable);
+        tree.add_child(root, plain);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+        (
+            std::rc::Rc::new(std::cell::RefCell::new(tree)),
+            root,
+            selectable,
+            plain,
+        )
+    }
+
+    fn selection_of(
+        tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
+        id: engine_core::NodeId,
+    ) -> Option<(usize, usize)> {
+        match tree.borrow().get(id).map(|n| &n.kind) {
+            Some(NodeKind::Text(state)) => state.options.selection,
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_press_and_drag_in_selectable_text_select_and_copy_what_it_passes() {
+        let (tree, root, selectable, _) = static_text_scene();
+        let mut drags = (None, None);
+        pointer(press(Point::new(2.0, 10.0)), &tree, root, &mut drags);
+        assert_eq!(drags.0, Some(selectable), "the drag is armed");
+        assert_eq!(
+            selection_of(&tree, selectable),
+            Some((0, 0)),
+            "a click selects nothing"
+        );
+        pointer(
+            engine_core::InputEvent::PointerMoved {
+                position: Point::new(45.0, 10.0),
+            },
+            &tree,
+            root,
+            &mut drags,
+        );
+        let (anchor, focus) = selection_of(&tree, selectable).expect("a selection");
+        assert_eq!(anchor, 0);
+        assert!(focus > 2, "the drag reached into the text: {focus}");
+        let copied = tree.borrow().static_selected_text().expect("selected text");
+        assert_eq!(copied, "Select this sentence"[..focus]);
+        pointer(
+            engine_core::InputEvent::PointerReleased {
+                position: Point::new(45.0, 10.0),
+                button: engine_core::PointerButton::Primary,
+            },
+            &tree,
+            root,
+            &mut drags,
+        );
+        assert_eq!(drags, (None, None));
+        assert_eq!(
+            selection_of(&tree, selectable),
+            Some((anchor, focus)),
+            "it stays"
+        );
+    }
+
+    #[test]
+    fn a_press_elsewhere_clears_the_selection() {
+        let (tree, root, selectable, plain) = static_text_scene();
+        let mut drags = (None, None);
+        pointer(press(Point::new(2.0, 10.0)), &tree, root, &mut drags);
+        pointer(
+            engine_core::InputEvent::PointerMoved {
+                position: Point::new(60.0, 10.0),
+            },
+            &tree,
+            root,
+            &mut drags,
+        );
+        assert!(tree.borrow().static_selected_text().is_some());
+        pointer(
+            engine_core::InputEvent::PointerReleased {
+                position: Point::new(60.0, 10.0),
+                button: engine_core::PointerButton::Primary,
+            },
+            &tree,
+            root,
+            &mut drags,
+        );
+        // A press on the plain (not selectable) text below.
+        pointer(press(Point::new(20.0, 60.0)), &tree, root, &mut drags);
+        assert_eq!(selection_of(&tree, selectable), None);
+        assert_eq!(tree.borrow().static_selected_text(), None);
+        assert_eq!(selection_of(&tree, plain), None, "plain text never selects");
+        assert_eq!(drags.0, None, "and starts no drag");
+    }
+
+    #[test]
+    fn text_that_is_not_selectable_ignores_a_press_and_drag() {
+        let (tree, root, _, plain) = static_text_scene();
+        let mut drags = (None, None);
+        pointer(press(Point::new(2.0, 60.0)), &tree, root, &mut drags);
+        pointer(
+            engine_core::InputEvent::PointerMoved {
+                position: Point::new(80.0, 60.0),
+            },
+            &tree,
+            root,
+            &mut drags,
+        );
+        assert_eq!(selection_of(&tree, plain), None);
     }
 
     fn state_of_field(

@@ -105,6 +105,47 @@ taken from any registered font that has it, so one call per script is enough and
 no node needs to name them. Subset a font to the glyphs you need
 (`pyftsubset`) to keep an app small; a full CJK font is many megabytes.
 
+## Rich text and selectable text
+
+One text node can mix styles. `spans` styles ranges of its content (0.5.4),
+given as UTF-8 byte offsets, as a text input's `selection` and `syntax_spans`
+are:
+
+```python
+label = window.create("text", text="Sale: $12 $9, ends Friday", font_size=18, width=300)
+label.set(spans=[
+    (0, 5, {"weight": 500}),                              # "Sale:"
+    (6, 9, {"strikethrough": True}),                       # "$12"
+    (10, 12, {"color": (0xB3, 0x26, 0x1E, 0xFF), "weight": 500}),
+    (20, 26, {"italic": True, "underline": True}),
+])
+```
+
+A style may set any of `color`, `weight` (an OpenType weight, 100 to 950),
+`italic`, `underline` and `strikethrough`; what it leaves out stays the node's
+own, and a later span wins where two overlap. Offsets past the text, or inside a
+multi-byte character, are clamped, so a span survives a shorter `text`. Spans
+change the shape of the text (a heavier weight is wider), so the node's width
+is yours to size, as it is for any text. Underline and strikethrough follow the
+text's own font metrics and are drawn in the span's colour.
+
+`selectable=True` lets the user select the text with the pointer and copy it
+(0.5.4):
+
+```python
+help_text.set(selectable=True)          # press and drag selects; Ctrl+C copies
+help_text.get("selection")              # (start, end) or None; equal ends are a caret
+help_text.set(selection=(0, 5))         # select from code; None clears
+```
+
+Selected text shows the text colour at 30% behind it. One text holds a
+selection at a time, and a press anywhere else clears it. A selectable text
+claims the pointer events over its box, which plain text never does (so a label
+inside a button doesn't swallow the button's clicks): turn it on for text that
+stands alone. A text input's own selection is separate, and Copy takes the
+focused input's selection first. Static text exposes no selection to screen
+readers yet.
+
 ## Text input
 
 A `"text_input"` is editable text with a caret, selection, clipboard, and

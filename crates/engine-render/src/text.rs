@@ -135,6 +135,41 @@ fn family_stack<'a>(primary: &'a str, registered: &'a [String]) -> FontFamily<'a
     FontFamily::List(std::borrow::Cow::Owned(names))
 }
 
+/// 0.5.4 (#112): the underline and strikethrough a run's style asks for, as
+/// rules the width of the run, in the decoration's brush (the run's own when
+/// it has none), at the run font's own offset and thickness unless the style
+/// gives them.
+fn paint_decorations(scene: &mut Scene, glyph_run: &parley::GlyphRun<'_, [u8; 4]>, x: f64, y: f64) {
+    let style = glyph_run.style();
+    let metrics = glyph_run.run().metrics();
+    let (left, width) = (
+        x + f64::from(glyph_run.offset()),
+        f64::from(glyph_run.advance()),
+    );
+    for (decoration, offset, size) in [
+        (
+            &style.underline,
+            metrics.underline_offset,
+            metrics.underline_size,
+        ),
+        (
+            &style.strikethrough,
+            metrics.strikethrough_offset,
+            metrics.strikethrough_size,
+        ),
+    ] {
+        let Some(decoration) = decoration else {
+            continue;
+        };
+        let offset = decoration.offset.unwrap_or(offset);
+        let size = decoration.size.unwrap_or(size).max(1.0);
+        let [r, g, b, a] = decoration.brush;
+        scene.set_paint(Color::from_rgba8(r, g, b, a));
+        let top = y + f64::from(glyph_run.baseline() - offset);
+        scene.fill_rect(&Rect::new(left, top, left + width, top + f64::from(size)));
+    }
+}
+
 /// Shapes `content` with every style pushed, before line breaking.
 fn shape_text(
     font_cx: &mut FontContext,
@@ -176,6 +211,48 @@ fn shape_text(
             StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]),
             range.clone(),
         );
+    }
+    // 0.5.4 (#112): a text node's own spans, over the node's style.
+    let len = content.len();
+    let clamp = |mut offset: usize| {
+        offset = offset.min(len);
+        while !content.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    };
+    for span in &font.options.spans {
+        let range = clamp(span.start)..clamp(span.end);
+        if range.is_empty() {
+            continue;
+        }
+        if let Some(color) = span.color {
+            let rgba = color.to_rgba8();
+            builder.push(
+                StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]),
+                range.clone(),
+            );
+        }
+        if let Some(weight) = span.weight {
+            builder.push(
+                StyleProperty::FontWeight(FontWeight::new(weight)),
+                range.clone(),
+            );
+        }
+        if let Some(italic) = span.italic {
+            let style = if italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            };
+            builder.push(StyleProperty::FontStyle(style), range.clone());
+        }
+        if span.underline {
+            builder.push(StyleProperty::Underline(true), range.clone());
+        }
+        if span.strikethrough {
+            builder.push(StyleProperty::Strikethrough(true), range);
+        }
     }
     builder.build(content)
 }
@@ -543,7 +620,7 @@ impl TextRenderer {
                 || cached.key.line_height != line_height
                 || cached.key.spans != spans
                 || cached.key.default_color != default_color
-                || cached.key.options != *options
+                || !cached.key.options.same_layout(options)
         });
         let Self {
             font_cx,
@@ -778,7 +855,34 @@ impl TextRenderer {
             );
             scene.push_layer(Some(&clip.to_path(0.1)), None, None, None, None);
         }
+        // 0.5.4 (#112): the selection, behind the glyphs, in the text colour at 30%.
+        if let Some((anchor, focus)) = state.options.selection
+            && anchor != focus
+        {
+            let len = state.content.len();
+            let clamp = |offset: usize| {
+                let mut offset = offset.min(len);
+                while !state.content.is_char_boundary(offset) {
+                    offset -= 1;
+                }
+                offset
+            };
+            let selection = Selection::new(
+                Cursor::from_byte_index(layout, clamp(anchor), Affinity::Downstream),
+                Cursor::from_byte_index(layout, clamp(focus), Affinity::Downstream),
+            );
+            scene.set_paint(crate::with_opacity(at.color, 0.3));
+            for (bounds, _line) in selection.geometry(layout) {
+                scene.fill_rect(&Rect::new(
+                    bounds.x0 + at.x,
+                    bounds.y0 + at.y,
+                    bounds.x1 + at.x,
+                    bounds.y1 + at.y,
+                ));
+            }
+        }
         scene.set_paint(at.color);
+        let rich = !state.options.spans.is_empty();
         for line in layout.lines().take(shown) {
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
@@ -792,6 +896,11 @@ impl TextRenderer {
                     x: g.x + at.x as f32,
                     y: g.y + at.y as f32,
                 });
+                // 0.5.4 (#112): a span's colour is the run's brush.
+                if rich {
+                    let [r, g, b, a] = glyph_run.style().brush;
+                    scene.set_paint(Color::from_rgba8(r, g, b, a));
+                }
                 let mut builder = scene.glyph_run(resources, font).font_size(font_size);
                 // M96: italics with no italic face -- slanted by the angle
                 // font matching suggests (y-down, so the shear is negated;
@@ -801,6 +910,9 @@ impl TextRenderer {
                     builder = builder.glyph_transform(Affine::skew(shear, 0.0));
                 }
                 report_glyph_errors(builder.fill_glyphs(glyphs));
+                if rich {
+                    paint_decorations(scene, &glyph_run, at.x, at.y);
+                }
             }
         }
         if clipped {
@@ -897,6 +1009,32 @@ impl TextRenderer {
             display_offset
         };
         from_display_offset_folded(state.content.len(), &state.folded_ranges, folded_offset)
+    }
+
+    /// 0.5.4 (#112): the byte offset in a text node's content nearest `point`,
+    /// a local point in the node, resolved against the layout the node paints
+    /// (`draw`): how a press or drag in selectable text finds its place.
+    pub fn hit_test_text(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+        point: Point,
+    ) -> usize {
+        let layout = self.shaped_layout(
+            node_id,
+            &state.content,
+            &state.font_family,
+            state.font_weight,
+            state.font_size,
+            at.max_width,
+            state.align,
+            state.line_height,
+            &[],
+            at.color,
+            &state.options,
+        );
+        Cursor::from_point(layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index()
     }
 
     /// M15 Phase 1 (§5, §16.7): `draw`'s own real editable-field

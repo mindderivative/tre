@@ -190,3 +190,9 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   shipping fonts instead (see [Other languages and
   emoji](guide/text.md#other-languages-and-emoji)). It is off by default, so
   nothing changes unless you turn it on.
+- **Rich text and selectable text.** A text node's `spans` style ranges of its
+  content (colour, weight, italic, underline, strikethrough), and
+  `selectable=True` lets the user select and copy it; see [Rich text and
+  selectable text](guide/text.md#rich-text-and-selectable-text). Both are off by
+  default. A selectable text claims pointer events over its box; plain text still
+  never does.

@@ -119,7 +119,11 @@ impl Tree {
                 // take its clicks as `hit_test`'s target). `TextField` is
                 // unaffected, a distinct `NodeKind` with its own real
                 // click-to-focus need.
-                NodeKind::Text(_) => false,
+                // 0.5.4 (#112): unless it opted in to being selected, which
+                // needs the press to reach it.
+                NodeKind::Text(state) => {
+                    state.options.selectable && rect_contains(layout, local_point)
+                }
                 _ => rect_contains(layout, local_point),
             }
         };

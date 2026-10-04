@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 26] = [
+pub(crate) const KIND_PROPS: [&str; 28] = [
     "text",
     "font_family",
     "font_weight",
@@ -28,6 +28,8 @@ pub(crate) const KIND_PROPS: [&str; 26] = [
     "wrap",
     "max_lines",
     "overflow",
+    "spans",
+    "selectable",
     "multiline",
     "selection",
     "show_whitespace",
@@ -172,7 +174,10 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         )
     }
     fn selectable(kind: &NodeKind) -> bool {
-        matches!(kind, NodeKind::TextField(_) | NodeKind::Terminal(_))
+        matches!(
+            kind,
+            NodeKind::TextField(_) | NodeKind::Terminal(_) | NodeKind::Text(_)
+        )
     }
     fn image(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Image(_))
@@ -190,11 +195,11 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         "text" | "font_family" | "font_weight" => ("a text or text_input", text_like),
         "font_size" => ("a text, text_input, or terminal", sized_text),
         "line_height" | "text_align" | "font_style" | "letter_spacing" | "wrap" | "max_lines"
-        | "overflow" => ("a text", text),
+        | "overflow" | "spans" | "selectable" => ("a text", text),
         "multiline" | "show_whitespace" | "syntax_spans" | "folded_ranges" => {
             ("a text_input", text_input)
         }
-        "selection" => ("a text_input or terminal", selectable),
+        "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
         "orientation" | "scroll_offset" => ("a scroll_view", scroll_view),
         "item_count" | "item_extent" => ("a virtual_list", virtual_list),
@@ -362,6 +367,29 @@ fn parse_known(
         "selection" => {
             let mut selection = if let NodeKind::Terminal(state) = kind {
                 parse_terminal_selection(value, name, state.cols, state.rows)?
+            } else if matches!(kind, NodeKind::Text(_)) {
+                // 0.5.4 (#112): a static text's selection, or `None` for none.
+                let selection = if value.is_none() {
+                    None
+                } else {
+                    let text = match props.get_item("text")? {
+                        Some(text) => string(&text, "text")?,
+                        None => match kind {
+                            NodeKind::Text(state) => state.content.clone(),
+                            _ => String::new(),
+                        },
+                    };
+                    let (start, end): (usize, usize) = value.extract().map_err(|_| {
+                        invalid(name, "a (start, end) tuple of byte offsets, or None")
+                    })?;
+                    let range = byte_range(&text, start, end, name)?;
+                    Some((range.start, range.end))
+                };
+                change(move |node| {
+                    if let NodeKind::Text(state) = &mut node.kind {
+                        state.options.selection = selection;
+                    }
+                })?
             } else {
                 // Checked against the text this same call sets, if any.
                 let text = match props.get_item("text")? {
@@ -384,6 +412,69 @@ fn parse_known(
             };
             selection.late = true;
             Ok(selection)
+        }
+        "selectable" => {
+            let on = boolean(value, name)?;
+            change(move |node| {
+                if let NodeKind::Text(state) = &mut node.kind {
+                    state.options.selectable = on;
+                    if !on {
+                        state.options.selection = None;
+                    }
+                }
+            })
+        }
+        "spans" => {
+            let expected = "a list of (start, end, style) tuples, each style a dict with any of \
+                            color, weight, italic, underline, strikethrough";
+            let items: Vec<Bound<'_, PyAny>> =
+                value.extract().map_err(|_| invalid(name, expected))?;
+            let mut spans = Vec::with_capacity(items.len());
+            for item in &items {
+                let (start, end, style): (usize, usize, Bound<'_, pyo3::types::PyDict>) =
+                    item.extract().map_err(|_| invalid(name, expected))?;
+                if start > end {
+                    return Err(invalid(name, expected));
+                }
+                let mut span = engine_core::TextSpan {
+                    start,
+                    end,
+                    ..Default::default()
+                };
+                for (key, v) in style.iter() {
+                    let key: String = key.extract().map_err(|_| invalid(name, expected))?;
+                    match key.as_str() {
+                        "color" => span.color = Some(parse_color(&v, name)?),
+                        "weight" => {
+                            not_bool(&v, name, "a weight from 100 to 950")?;
+                            span.weight = Some(
+                                v.extract::<f32>()
+                                    .ok()
+                                    .filter(|w| (1.0..=1000.0).contains(w))
+                                    .ok_or_else(|| invalid(name, "a weight from 1 to 1000"))?,
+                            );
+                        }
+                        "italic" => span.italic = Some(boolean(&v, name)?),
+                        "underline" => span.underline = boolean(&v, name)?,
+                        "strikethrough" => span.strikethrough = boolean(&v, name)?,
+                        other => {
+                            return Err(invalid(
+                                name,
+                                &format!(
+                                    "spans styled with color, weight, italic, underline or \
+                                     strikethrough, not {other:?}"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                spans.push(span);
+            }
+            change(move |node| {
+                if let NodeKind::Text(state) = &mut node.kind {
+                    state.options.spans = spans;
+                }
+            })
         }
         "syntax_spans" => {
             let expected = "a list of (start, end, color) tuples";
@@ -612,6 +703,31 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
         ("letter_spacing", NodeKind::Text(s)) => to_py(f64::from(s.options.letter_spacing), py),
         ("wrap", NodeKind::Text(s)) => to_py(name_of(&WRAP, &s.options.wrap), py),
         ("max_lines", NodeKind::Text(s)) => to_py(s.options.max_lines, py),
+        ("selectable", NodeKind::Text(s)) => to_py(s.options.selectable, py),
+        ("selection", NodeKind::Text(s)) => to_py(s.options.selection, py),
+        ("spans", NodeKind::Text(s)) => {
+            let mut out = Vec::with_capacity(s.options.spans.len());
+            for span in &s.options.spans {
+                let style = pyo3::types::PyDict::new(py);
+                if let Some(color) = span.color {
+                    style.set_item("color", color_to_py(color, py)?)?;
+                }
+                if let Some(weight) = span.weight {
+                    style.set_item("weight", f64::from(weight))?;
+                }
+                if let Some(italic) = span.italic {
+                    style.set_item("italic", italic)?;
+                }
+                if span.underline {
+                    style.set_item("underline", true)?;
+                }
+                if span.strikethrough {
+                    style.set_item("strikethrough", true)?;
+                }
+                out.push((span.start, span.end, style));
+            }
+            to_py(out, py)
+        }
         ("overflow", NodeKind::Text(s)) => to_py(name_of(&OVERFLOW, &s.options.ellipsis), py),
         ("multiline", NodeKind::TextField(s)) => to_py(s.multiline, py),
         ("show_whitespace", NodeKind::TextField(s)) => to_py(s.show_whitespace, py),

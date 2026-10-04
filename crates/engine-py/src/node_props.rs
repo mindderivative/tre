@@ -1328,6 +1328,7 @@ impl Node {
         for &row in &released {
             tree.detach_collectible(row);
         }
+        tree.adopt_text_selection(self.id);
         drop(tree);
         if !callbacks.is_empty() {
             let mut handlers = self.handlers.borrow_mut();

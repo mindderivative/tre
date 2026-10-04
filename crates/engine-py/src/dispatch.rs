@@ -971,10 +971,13 @@ pub(crate) fn write_clipboard(text: &str) -> bool {
 /// no-GPU/no-display (M16 Phase 2). Returns `true` only on a genuine,
 /// complete real write.
 pub(crate) fn copy_focused_selection_to_clipboard(tree: &Rc<RefCell<Tree>>) -> bool {
+    // A focused text input's selection first, else (0.5.4, #112) the selected
+    // static text.
     let selected = tree
         .borrow()
         .focused()
-        .and_then(|field| tree.borrow().text_field_selected_text(field));
+        .and_then(|field| tree.borrow().text_field_selected_text(field))
+        .or_else(|| tree.borrow().static_selected_text());
     selected.is_some_and(|text| write_clipboard(&text))
 }
 

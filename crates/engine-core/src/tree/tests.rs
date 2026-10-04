@@ -6548,3 +6548,78 @@ mod scroll_without_layout {
         assert_eq!(tree.scroll_shift(view), (0.0, 0.0));
     }
 }
+
+/// 0.5.4 (#112): selection in static text.
+mod static_selection {
+    use super::*;
+
+    fn text(tree: &mut Tree, content: &str) -> NodeId {
+        let (_, style, paint) = leaf(100.0, 20.0);
+        tree.insert(
+            NodeKind::Text(crate::TextState {
+                content: content.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: 400.0,
+                font_size: 16.0,
+                align: crate::TextAlign::Start,
+                line_height: None,
+                options: Default::default(),
+            }),
+            style,
+            paint,
+        )
+    }
+
+    #[test]
+    fn a_selection_selects_clamps_and_copies() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "héllo world");
+        assert!(tree.set_text_selection(id, 0, 6));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("héllo"));
+        // Either order, and inside the two-byte 'é' (bytes 1..3) snaps back.
+        assert!(tree.set_text_selection(id, 6, 2));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("éllo"));
+        // Past the end is clamped; an empty selection copies nothing.
+        assert!(tree.set_text_selection(id, 8, 400));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("orld"));
+        tree.set_text_selection(id, 3, 3);
+        assert_eq!(tree.static_selected_text(), None);
+    }
+
+    #[test]
+    fn extending_keeps_the_anchor() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "abcdef");
+        tree.set_text_selection(id, 2, 2);
+        tree.extend_text_selection(id, 5);
+        tree.extend_text_selection(id, 4);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("cd"));
+    }
+
+    #[test]
+    fn one_node_owns_the_selection_at_a_time() {
+        let mut tree = Tree::new();
+        let (a, b) = (text(&mut tree, "first"), text(&mut tree, "second"));
+        tree.set_text_selection(a, 0, 5);
+        tree.set_text_selection(b, 0, 3);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("sec"));
+        assert_eq!(tree.text_selected_text(a), None, "the first was cleared");
+        tree.clear_text_selection();
+        assert_eq!(tree.static_selected_text(), None);
+    }
+
+    #[test]
+    fn a_non_text_node_is_refused_and_a_selection_set_directly_can_be_adopted() {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let rect = tree.insert(kind, style, paint);
+        assert!(!tree.set_text_selection(rect, 0, 1));
+        let id = text(&mut tree, "abc");
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.selection = Some((0, 2));
+        }
+        assert_eq!(tree.static_selected_text(), None, "not the owner yet");
+        tree.adopt_text_selection(id);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("ab"));
+    }
+}

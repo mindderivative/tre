@@ -99,6 +99,9 @@ pub struct Tree {
     /// the very first frame always paints. Read via `take_dirty`, never
     /// this field directly, so "read" and "reset" can never drift apart.
     dirty: bool,
+    /// 0.5.4 (#112): the text node whose static selection is showing, if any.
+    /// One at a time, as on a desktop.
+    static_selection: Option<NodeId>,
     /// 0.5.4 (#103): the nodes the last full scan found animating, and the
     /// `animations_started` count it was taken at. See `tick_all`.
     animating: Vec<NodeId>,
@@ -143,6 +146,7 @@ impl Tree {
         Self {
             nodes: SlotMap::with_key(),
             animating: Vec::new(),
+            static_selection: None,
             last_layout: None,
             scanned_at: None,
             taffy_nodes: SecondaryMap::new(),
