@@ -37,6 +37,16 @@ const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../assets/fonts/NotoSansArabic-R
 /// name confirmed by direct read of the font's own `name` table (Python
 /// `fontTools.ttLib.TTFont(...)['name']`, nameID 1), not assumed from
 /// the filename: `"Hack Nerd Font Mono"` (below).
+/// The faces every renderer registers, as raw files.
+pub(crate) fn bundled_fonts() -> [&'static [u8]; 4] {
+    [
+        ROBOTO_REGULAR,
+        ROBOTO_MEDIUM,
+        NOTO_SANS_ARABIC,
+        HACK_NERD_FONT_MONO,
+    ]
+}
+
 const HACK_NERD_FONT_MONO: &[u8] = include_bytes!("../assets/fonts/HackNerdFontMono-Regular.ttf");
 /// The real family name `Hack Nerd Font Mono`'s own `name` table
 /// reports -- what every `FontFamily::named(...)` call below must pass

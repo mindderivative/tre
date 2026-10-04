@@ -75,9 +75,18 @@ box as on every node (a `fill` is the background behind the document).
 
 Drawn: shapes, fills and strokes (caps, joins, miter limit, dashes, paint
 order), solid colours, linear and radial gradients with their spread method,
-group opacity, and clip paths. Dropped without an error: text, raster images,
-masks, filters, patterns and blend modes, and a clip path nested inside another
-clip path keeps only the outer one. `svg` is write-only; read `svg_size` for
+patterns, group opacity, clip paths (nested ones too), nested SVG `<image>`s, a
+filter that is a single Gaussian blur, and text. Text is turned into outlines
+when the document is parsed, from the fonts the engine itself has: Roboto (also
+the default, serif, and sans-serif family), the bundled mono face (monospace),
+and anything `tre.register_font` had registered *before* the document was set.
+It never reads system fonts, so it looks the same on every machine.
+
+Dropped without an error: raster `<image>`s (PNG, JPEG, GIF, WebP: the engine
+decodes no image formats, here or anywhere), masks (the renderer cannot draw
+them yet), every filter but a lone blur, and blend modes. The rest of the
+document still draws. A pattern that would need more than 2500 tiles is
+skipped. `svg` is write-only; read `svg_size` for
 the document's size.
 
 ## Paint on every node

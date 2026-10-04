@@ -44,7 +44,10 @@ use peniko::kurbo::{Affine, BezPath, Circle, Rect, RoundedRect, Shape, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use damage::{Damage, DamageTracker, MAX_RECTS};
-pub use fonts::{NoFontFacesFound, register_font, set_system_fonts, system_fonts};
+pub use fonts::{
+    NoFontFacesFound, all_fonts, generation as font_generation, register_font, set_system_fonts,
+    system_fonts,
+};
 pub use geometry_cache::GeometryCache;
 pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
@@ -1354,24 +1357,45 @@ fn draw_own(
 /// Paints an SVG group and everything under it. `parent` is the transform
 /// the group's own transform composes onto.
 fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Scene) {
-    use engine_core::{SvgNode, SvgPaint};
+    use engine_core::SvgNode;
     let here = parent * group.transform;
     scene.set_transform(here);
+    // A clip inside a clip is one more layer; the outermost goes first.
+    let mut clips = Vec::new();
+    let mut next = group.clip.as_ref();
+    while let Some(clip) = next {
+        clips.push(clip);
+        next = clip.parent.as_deref();
+    }
     let opacity = (group.opacity < 1.0).then_some(group.opacity);
-    let layered = group.clip.is_some() || opacity.is_some();
-    if layered {
-        let even_odd = group.clip.as_ref().is_some_and(|c| c.even_odd);
-        if even_odd {
-            scene.set_fill_rule(peniko::Fill::EvenOdd);
-        }
+    let filter = group.blur.map(|radius| {
+        vello_common::filter_effects::Filter::from_function(
+            vello_common::filter_effects::FilterFunction::Blur { radius },
+        )
+    });
+    let effect = opacity.is_some() || filter.is_some();
+    let mut layers = 0;
+    for (i, clip) in clips.iter().rev().enumerate() {
+        scene.set_fill_rule(if clip.even_odd {
+            peniko::Fill::EvenOdd
+        } else {
+            peniko::Fill::NonZero
+        });
+        // The opacity and the blur ride on the innermost layer.
+        let last = i + 1 == clips.len();
         scene.push_layer(
-            group.clip.as_ref().map(|c| &c.path),
+            Some(&clip.path),
             None,
-            opacity,
+            if last { opacity } else { None },
             None,
-            None,
+            if last { filter.clone() } else { None },
         );
-        scene.set_fill_rule(peniko::Fill::NonZero);
+        layers += 1;
+    }
+    scene.set_fill_rule(peniko::Fill::NonZero);
+    if clips.is_empty() && effect {
+        scene.push_layer(None, None, opacity, None, filter);
+        layers += 1;
     }
     for child in &group.children {
         match child {
@@ -1380,34 +1404,40 @@ fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Sc
                 scene.set_transform(here);
                 let fill = |scene: &mut Scene| {
                     let Some(fill) = &p.fill else { return };
-                    scene.set_fill_rule(if fill.even_odd {
+                    let rule = if fill.even_odd {
                         peniko::Fill::EvenOdd
                     } else {
                         peniko::Fill::NonZero
+                    };
+                    paint_svg_shape(&fill.paint, &p.path, rule, here, scene, |scene| {
+                        scene.set_fill_rule(rule);
+                        scene.fill_path(&p.path);
+                        scene.set_fill_rule(peniko::Fill::NonZero);
                     });
-                    match &fill.paint {
-                        SvgPaint::Color(c) => scene.set_paint(*c),
-                        SvgPaint::Gradient(g, t) => {
-                            scene.set_paint(g.clone());
-                            scene.set_paint_transform(*t);
-                        }
-                    }
-                    scene.fill_path(&p.path);
-                    scene.reset_paint_transform();
-                    scene.set_fill_rule(peniko::Fill::NonZero);
                 };
                 let stroke = |scene: &mut Scene| {
                     let Some(stroke) = &p.stroke else { return };
-                    match &stroke.paint {
-                        SvgPaint::Color(c) => scene.set_paint(*c),
-                        SvgPaint::Gradient(g, t) => {
-                            scene.set_paint(g.clone());
-                            scene.set_paint_transform(*t);
-                        }
-                    }
-                    scene.set_stroke(stroke.stroke.clone());
-                    scene.stroke_path(&p.path);
-                    scene.reset_paint_transform();
+                    // A pattern needs the stroke as an outline to clip to.
+                    let outline =
+                        matches!(stroke.paint, engine_core::SvgPaint::Pattern(_)).then(|| {
+                            peniko::kurbo::stroke(
+                                p.path.iter(),
+                                &stroke.stroke,
+                                &peniko::kurbo::StrokeOpts::default(),
+                                0.25,
+                            )
+                        });
+                    paint_svg_shape(
+                        &stroke.paint,
+                        outline.as_ref().unwrap_or(&p.path),
+                        peniko::Fill::NonZero,
+                        here,
+                        scene,
+                        |scene| {
+                            scene.set_stroke(stroke.stroke.clone());
+                            scene.stroke_path(&p.path);
+                        },
+                    );
                 };
                 if p.stroke_first {
                     stroke(scene);
@@ -1419,8 +1449,76 @@ fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Sc
             }
         }
     }
-    if layered {
+    for _ in 0..layers {
         scene.pop_layer();
+    }
+    scene.set_transform(here);
+}
+
+/// Paints one shape's fill or stroke with `paint`. A colour or a gradient
+/// is set as the scene's paint and `draw` fills or strokes with it; a
+/// pattern is drawn in tiles, clipped to `region` (the fill, or the
+/// stroke's outline).
+fn paint_svg_shape(
+    paint: &engine_core::SvgPaint,
+    region: &BezPath,
+    rule: peniko::Fill,
+    here: Affine,
+    scene: &mut Scene,
+    draw: impl FnOnce(&mut Scene),
+) {
+    use engine_core::SvgPaint;
+    // Past this many tiles a pattern is skipped: it would be a haze.
+    const MAX_TILES: i64 = 2500;
+    match paint {
+        SvgPaint::Color(c) => {
+            scene.set_paint(*c);
+            draw(scene);
+        }
+        SvgPaint::Gradient(g, t) => {
+            scene.set_paint(g.clone());
+            scene.set_paint_transform(*t);
+            draw(scene);
+            scene.reset_paint_transform();
+        }
+        SvgPaint::Pattern(pattern) => {
+            let (w, h) = (pattern.rect.width(), pattern.rect.height());
+            if w <= 0.0 || h <= 0.0 {
+                return;
+            }
+            // The region's box in the pattern's own space bounds the tiles.
+            // `region` is in the shape's own space, which `pattern.transform` maps
+            // the pattern's space into; `here` is applied by the scene.
+            let to_pattern = pattern.transform.inverse();
+            let bounds = to_pattern.transform_rect_bbox(region.bounding_box());
+            let first_x = ((bounds.x0 - pattern.rect.x0) / w).floor() as i64;
+            let last_x = ((bounds.x1 - pattern.rect.x0) / w).ceil() as i64;
+            let first_y = ((bounds.y0 - pattern.rect.y0) / h).floor() as i64;
+            let last_y = ((bounds.y1 - pattern.rect.y0) / h).ceil() as i64;
+            if (last_x - first_x).saturating_mul(last_y - first_y) > MAX_TILES {
+                return;
+            }
+            scene.set_fill_rule(rule);
+            scene.push_layer(Some(region), None, None, None, None);
+            scene.set_fill_rule(peniko::Fill::NonZero);
+            let tile_clip = Rect::new(0.0, 0.0, w, h).to_path(0.1);
+            for j in first_y..last_y {
+                for i in first_x..last_x {
+                    let tile = here
+                        * pattern.transform
+                        * Affine::translate((
+                            pattern.rect.x0 + i as f64 * w,
+                            pattern.rect.y0 + j as f64 * h,
+                        ));
+                    scene.set_transform(tile);
+                    scene.push_layer(Some(&tile_clip), None, None, None, None);
+                    paint_svg_group(&pattern.root, tile, scene);
+                    scene.pop_layer();
+                }
+            }
+            scene.pop_layer();
+            scene.set_transform(here);
+        }
     }
 }
 

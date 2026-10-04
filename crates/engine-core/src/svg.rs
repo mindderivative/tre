@@ -10,12 +10,14 @@
 //!
 //! What is drawn: shapes, fills and strokes (caps, joins, miter limit,
 //! dashes), solid colours, linear and radial gradients (with their spread
-//! method), group opacity, and clip paths. What is not, and is dropped
-//! without an error: text (the node is built without `usvg`'s font stack),
-//! raster and nested `<image>` elements, masks, filters, patterns, and blend
+//! method), patterns, group opacity, clip paths (nested ones too), text (as
+//! outlines, from the engine's own fonts), nested SVG `<image>`s, and a
+//! filter that is a single Gaussian blur. What is not, and is dropped without
+//! an error: raster `<image>`s (the engine decodes no image formats),
+//! masks (the renderer cannot draw them yet), every other filter, and blend
 //! modes.
 
-use peniko::kurbo::{Affine, BezPath, Cap, Join, Stroke};
+use peniko::kurbo::{Affine, BezPath, Cap, Join, Rect, Shape, Stroke};
 use peniko::{Color, Extend, Gradient};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,6 +40,9 @@ pub struct SvgGroup {
     pub transform: Affine,
     pub opacity: f32,
     pub clip: Option<SvgClip>,
+    /// A Gaussian blur's standard deviation, in the group's own units: the
+    /// one filter drawn.
+    pub blur: Option<f32>,
     pub children: Vec<SvgNode>,
 }
 
@@ -53,6 +58,17 @@ pub enum SvgNode {
 pub struct SvgClip {
     pub path: BezPath,
     pub even_odd: bool,
+    /// The clip this one is itself clipped by.
+    pub parent: Option<Box<SvgClip>>,
+}
+
+/// A tiled paint: `root` is drawn in tiles of `rect`'s size, the first at
+/// `rect`'s origin, all under `transform`.
+#[derive(Debug)]
+pub struct SvgPattern {
+    pub rect: Rect,
+    pub transform: Affine,
+    pub root: SvgGroup,
 }
 
 #[derive(Debug)]
@@ -82,6 +98,7 @@ pub enum SvgPaint {
     Color(Color),
     /// A gradient and the transform it is painted under.
     Gradient(Gradient, Affine),
+    Pattern(Arc<SvgPattern>),
 }
 
 fn affine(t: usvg::Transform) -> Affine {
@@ -163,7 +180,21 @@ fn paint(paint: &usvg::Paint, opacity: f32) -> Option<SvgPaint> {
             .with_stops(stops(g.stops(), opacity).as_slice());
             Some(SvgPaint::Gradient(gradient, affine(g.transform())))
         }
-        usvg::Paint::Pattern(_) => None,
+        usvg::Paint::Pattern(p) => {
+            let mut root = convert_group(p.root());
+            root.opacity *= opacity;
+            let r = p.rect();
+            Some(SvgPaint::Pattern(Arc::new(SvgPattern {
+                rect: Rect::new(
+                    f64::from(r.x()),
+                    f64::from(r.y()),
+                    f64::from(r.x() + r.width()),
+                    f64::from(r.y() + r.height()),
+                ),
+                transform: affine(p.transform()),
+                root,
+            })))
+        }
     }
 }
 
@@ -235,13 +266,63 @@ fn convert_clip(clip: &usvg::ClipPath) -> SvgClip {
     let mut rules = Vec::new();
     collect(clip.root(), affine(clip.transform()), &mut path, &mut rules);
     let even_odd = !rules.is_empty() && rules.iter().all(|r| *r);
-    // A clip inside a clip narrows it; one outline can't hold both, so the
-    // inner one is dropped (documented limit).
-    SvgClip { path, even_odd }
+    SvgClip {
+        path,
+        even_odd,
+        parent: clip.clip_path().map(|c| Box::new(convert_clip(c))),
+    }
 }
 
 fn affine_path(to: Affine, path: &BezPath) -> BezPath {
     to * path.clone()
+}
+
+/// The one filter drawn: a single Gaussian blur, equal in x and y or averaged.
+fn blur_of(filters: &[Arc<usvg::filter::Filter>]) -> Option<f32> {
+    let [filter] = filters else { return None };
+    let [primitive] = filter.primitives() else {
+        return None;
+    };
+    match primitive.kind() {
+        usvg::filter::Kind::GaussianBlur(b) => {
+            let sigma = (b.std_dev_x().get() + b.std_dev_y().get()) / 2.0;
+            (sigma > 0.0).then_some(sigma)
+        }
+        _ => None,
+    }
+}
+
+/// A nested SVG `<image>`, drawn scaled into the image's own box and clipped
+/// to it. A raster one is not drawn.
+fn convert_image(image: &usvg::Image) -> Option<SvgGroup> {
+    let usvg::ImageKind::SVG(tree) = image.kind() else {
+        return None;
+    };
+    if !image.is_visible() || tree.size().width() <= 0.0 || tree.size().height() <= 0.0 {
+        return None;
+    }
+    let (w, h) = (
+        f64::from(image.size().width()),
+        f64::from(image.size().height()),
+    );
+    let mut clip = BezPath::new();
+    clip.extend(Rect::new(0.0, 0.0, w, h).path_elements(0.1));
+    let mut inner = convert_group(tree.root());
+    inner.transform = Affine::scale_non_uniform(
+        w / f64::from(tree.size().width()),
+        h / f64::from(tree.size().height()),
+    ) * inner.transform;
+    Some(SvgGroup {
+        transform: Affine::IDENTITY,
+        opacity: 1.0,
+        clip: Some(SvgClip {
+            path: clip,
+            even_odd: false,
+            parent: None,
+        }),
+        blur: None,
+        children: vec![SvgNode::Group(inner)],
+    })
 }
 
 fn convert_group(group: &usvg::Group) -> SvgGroup {
@@ -254,14 +335,20 @@ fn convert_group(group: &usvg::Group) -> SvgGroup {
                     children.push(SvgNode::Path(Box::new(p)));
                 }
             }
-            // Raster images and text are not drawn.
-            usvg::Node::Image(_) | usvg::Node::Text(_) => {}
+            // Text is already outlines, in a group of paths.
+            usvg::Node::Text(t) => children.push(SvgNode::Group(convert_group(t.flattened()))),
+            usvg::Node::Image(image) => {
+                if let Some(g) = convert_image(image) {
+                    children.push(SvgNode::Group(g));
+                }
+            }
         }
     }
     SvgGroup {
         transform: affine(group.transform()),
         opacity: group.opacity().get(),
         clip: group.clip_path().map(convert_clip),
+        blur: blur_of(group.filters()),
         children,
     }
 }
@@ -269,11 +356,15 @@ fn convert_group(group: &usvg::Group) -> SvgGroup {
 static REVISION: AtomicU64 = AtomicU64::new(1);
 
 impl SvgDocument {
-    /// Parses an SVG (or gzip-compressed SVGZ) document. The error is
-    /// `usvg`'s own message.
-    pub fn parse(data: &[u8]) -> Result<Arc<Self>, String> {
-        let tree =
-            usvg::Tree::from_data(data, &usvg::Options::default()).map_err(|e| e.to_string())?;
+    /// Parses an SVG (or gzip-compressed SVGZ) document, shaping its text
+    /// with `fonts`. The error is `usvg`'s own message.
+    pub fn parse(data: &[u8], fonts: &SvgFonts) -> Result<Arc<Self>, String> {
+        let options = usvg::Options {
+            fontdb: fonts.0.clone(),
+            font_family: "Roboto".to_string(),
+            ..usvg::Options::default()
+        };
+        let tree = usvg::Tree::from_data(data, &options).map_err(|e| e.to_string())?;
         let size = tree.size();
         Ok(Arc::new(Self {
             width: f64::from(size.width()),
@@ -292,6 +383,7 @@ impl SvgDocument {
                 transform: Affine::IDENTITY,
                 opacity: 1.0,
                 clip: None,
+                blur: None,
                 children: Vec::new(),
             },
             revision: REVISION.fetch_add(1, Ordering::Relaxed),
@@ -316,6 +408,30 @@ impl SvgDocument {
     }
 }
 
+/// The font files an SVG's text is shaped with, loaded once and shared by
+/// every parse. Roboto is the default and sans-serif/serif family, the
+/// bundled mono face is the monospace one.
+#[derive(Clone)]
+pub struct SvgFonts(Arc<usvg::fontdb::Database>);
+
+impl SvgFonts {
+    pub fn new(files: &[Arc<Vec<u8>>]) -> Self {
+        let mut db = usvg::fontdb::Database::new();
+        for file in files {
+            db.load_font_data(file.to_vec());
+        }
+        db.set_sans_serif_family("Roboto");
+        db.set_serif_family("Roboto");
+        db.set_monospace_family("Hack Nerd Font Mono");
+        Self(Arc::new(db))
+    }
+
+    /// No fonts: text in a document draws nothing.
+    pub fn none() -> Self {
+        Self(Arc::new(usvg::fontdb::Database::new()))
+    }
+}
+
 /// `NodeKind::Svg`'s own state.
 #[derive(Debug, Clone)]
 pub struct SvgState {
@@ -333,7 +449,7 @@ mod tests {
 
     #[test]
     fn parses_size_shapes_and_strokes() {
-        let doc = SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap();
+        let doc = SvgDocument::parse(RED_SQUARE.as_bytes(), &SvgFonts::none()).unwrap();
         assert_eq!((doc.width, doc.height), (20.0, 10.0));
         assert_eq!(doc.root.children.len(), 2);
         let SvgNode::Path(rect) = &doc.root.children[0] else {
@@ -359,7 +475,7 @@ mod tests {
             </defs>
             <g clip-path="url(#c)" opacity="0.5"><rect width="10" height="10" fill="url(#g)"/></g>
         </svg>"##;
-        let doc = SvgDocument::parse(svg.as_bytes()).unwrap();
+        let doc = SvgDocument::parse(svg.as_bytes(), &SvgFonts::none()).unwrap();
         let SvgNode::Group(g) = &doc.root.children[0] else {
             panic!("a group")
         };
@@ -376,8 +492,8 @@ mod tests {
 
     #[test]
     fn garbage_is_an_error_and_fit_centres() {
-        assert!(SvgDocument::parse(b"not svg").is_err());
-        let doc = SvgDocument::parse(RED_SQUARE.as_bytes()).unwrap();
+        assert!(SvgDocument::parse(b"not svg", &SvgFonts::none()).is_err());
+        let doc = SvgDocument::parse(RED_SQUARE.as_bytes(), &SvgFonts::none()).unwrap();
         // 20x10 into 40x40: scale 2, centred vertically.
         let c = doc.fit(40.0, 40.0).as_coeffs();
         assert_eq!((c[0], c[4], c[5]), (2.0, 0.0, 10.0));

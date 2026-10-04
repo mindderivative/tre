@@ -123,7 +123,7 @@ pub(crate) fn fallback_families() -> Vec<String> {
 
 /// Current registry generation -- changes whenever `register_font`
 /// appends a new blob.
-pub(crate) fn generation() -> u64 {
+pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
 }
 
@@ -138,6 +138,20 @@ pub(crate) fn registered_since(from: usize) -> (u64, usize, Vec<Blob<u8>>) {
         .map(<[_]>::to_vec)
         .unwrap_or_default();
     (generation, registered.len(), new)
+}
+
+/// 0.5.4 (#143): every face text can use -- the bundled ones, then the
+/// registered ones -- as raw font files, for something outside the renderer
+/// that shapes text itself (an SVG document's), with the generation they
+/// correspond to: it changes when the set does.
+pub fn all_fonts() -> (u64, Vec<Arc<Vec<u8>>>) {
+    let (generation, _, registered) = registered_since(0);
+    let fonts = crate::text::bundled_fonts()
+        .iter()
+        .map(|bytes| Arc::new(bytes.to_vec()))
+        .chain(registered.iter().map(|blob| Arc::new(blob.data().to_vec())))
+        .collect();
+    (generation, fonts)
 }
 
 #[cfg(test)]

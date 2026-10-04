@@ -20,7 +20,7 @@ smallvec = "1"
 slotmap = "1.1.1"
 naga = { workspace = true }
 taffy = "0.14.0"
-# 0.5.4 (#141): parses an SVG document into groups and paths. Text, system
-# fonts and memory-mapped fonts are off: they pull in a font stack and the
-# node draws no text.
-usvg = { version = "0.47.0", default-features = false }
+# 0.5.4 (#141): parses an SVG document into groups and paths. `text` (#143)
+# turns an SVG's text into outlines, from the engine's own fonts; system and
+# memory-mapped font loading stay off, so text looks the same on every machine.
+usvg = { version = "0.47.0", default-features = false, features = ["text"] }

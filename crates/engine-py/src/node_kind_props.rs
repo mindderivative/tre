@@ -95,6 +95,26 @@ fn change(edit: impl FnOnce(&mut engine_core::Node) + 'static) -> PyResult<KindC
     })
 }
 
+/// The fonts an SVG's text is shaped with: the engine's own, rebuilt only
+/// when a font is registered.
+fn svg_fonts() -> engine_core::SvgFonts {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(u64, engine_core::SvgFonts)>> = Mutex::new(None);
+    let mut cache = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let generation = engine_render::font_generation();
+    if let Some((cached, fonts)) = cache.as_ref()
+        && *cached == generation
+    {
+        return fonts.clone();
+    }
+    let (generation, files) = engine_render::all_fonts();
+    let fonts = engine_core::SvgFonts::new(&files);
+    *cache = Some((generation, fonts.clone()));
+    fonts
+}
+
 fn invalid(name: &str, expected: &str) -> PyErr {
     PyValueError::new_err(format!("node property `{name}` must be {expected}"))
 }
@@ -252,9 +272,12 @@ fn parse_known(
                     .extract()
                     .map_err(|_| invalid(name, "an SVG document as a str or bytes"))?,
             };
-            let document = engine_core::SvgDocument::parse(&source).map_err(|reason| {
-                PyValueError::new_err(format!("node property `svg` isn't a valid SVG: {reason}"))
-            })?;
+            let document =
+                engine_core::SvgDocument::parse(&source, &svg_fonts()).map_err(|reason| {
+                    PyValueError::new_err(format!(
+                        "node property `svg` isn't a valid SVG: {reason}"
+                    ))
+                })?;
             change(move |node| {
                 if let NodeKind::Svg(state) = &mut node.kind {
                     state.document = document;
