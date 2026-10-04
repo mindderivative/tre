@@ -69,7 +69,10 @@ logo.set(svg=other_text)    # swap the document
 
 The document is parsed once, when `svg` is set, so a malformed one raises
 `ValueError` with the parser's message at that call and creates or changes
-nothing. A node has no size of its own: give it `width` and `height`. `fill`,
+nothing. Give the node a `width` and a `height`, or just one of them: a node
+sized on one side takes the other from the document's shape (its `aspect_ratio`
+follows the document, and follows a new document too, unless you set an
+`aspect_ratio` yourself). `fill`,
 `stroke_color`, `corner_radius`, `opacity`, `blur` and the rest paint for its
 box as on every node (a `fill` is the background behind the document).
 
@@ -86,8 +89,15 @@ Dropped without an error: raster `<image>`s (PNG, JPEG, GIF, WebP: the engine
 decodes no image formats, here or anywhere), masks (the renderer cannot draw
 them yet), every filter but a lone blur, and blend modes. The rest of the
 document still draws. A pattern that would need more than 2500 tiles is
-skipped. `svg` is write-only; read `svg_size` for
-the document's size.
+skipped. `get("svg")` returns the source as it was
+given (a `str` or `bytes`), and `svg_size` the document's size.
+
+**`svg_color`** is what `currentColor` resolves to, so a monochrome icon follows
+your theme: `icon.set(svg_color=(0x1C, 0x1B, 0x1F, 0xFF))`. It is `None` by
+default, which leaves `currentColor` black as the SVG standard says. It
+re-parses the document it has, takes effect together with a new `svg` given in
+the same call, and stays until you change it. A document whose root `<svg>`
+sets its own `color` keeps it.
 
 ## Paint on every node
 

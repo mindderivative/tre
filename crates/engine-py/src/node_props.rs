@@ -1216,7 +1216,23 @@ impl Node {
                 Change::Kind(kind_change) => {
                     resize_terminal |= kind_change.resizes_terminal;
                     reset_rows |= kind_change.resets_rows;
+                    let old_ratio = match &node.kind {
+                        NodeKind::Svg(state) => Some(state.document.width / state.document.height),
+                        _ => None,
+                    };
                     (kind_change.edit)(node);
+                    // A document's shape sizes the node's other side, unless
+                    // the app chose an aspect ratio of its own.
+                    if let (Some(ratio), Some(old)) = (kind_change.svg_ratio, old_ratio) {
+                        let current = style
+                            .as_ref()
+                            .map_or(node.layout_style.aspect_ratio, |s| s.aspect_ratio);
+                        if current.is_none_or(|c| (f64::from(c) - old).abs() < 1e-4) {
+                            style
+                                .get_or_insert_with(|| node.layout_style.clone())
+                                .aspect_ratio = Some(ratio as f32);
+                        }
+                    }
                 }
                 Change::Callback(key, callback) => {
                     if key == HandlerKey::SizeHint

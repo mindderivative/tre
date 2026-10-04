@@ -118,6 +118,8 @@ def test_svg_properties_apply_only_to_an_svg_node():
         box.get("svg_size")
     with pytest.raises(ValueError, match="read-only"):
         node.set(svg_size=(1, 1))
+    with pytest.raises(ValueError, match="applies only to an svg"):
+        box.set(svg_color=(0, 0, 0, 255))
 
 
 # 0.5.4 (#143): text, nested clips, patterns, a blur filter, nested SVG images,
@@ -202,3 +204,57 @@ def test_a_pattern_covers_the_whole_shape_when_the_document_is_scaled_and_rotate
     ))
     for x, y in ((5, 5), (95, 5), (5, 95), (95, 95), (50, 50)):
         assert pixel(window, x, y) == RED, (x, y)
+
+
+# 0.5.4 (#144): the source reads back, `svg_color` is what currentColor is, and
+# a node sized on one side takes the other from the document's shape.
+
+ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="currentColor"/></svg>'
+
+
+def test_the_source_reads_back_as_it_was_given():
+    _, node = shown(TWO_SQUARES)
+    assert node.get("svg") == TWO_SQUARES
+    _, node = shown(TWO_SQUARES.encode())
+    assert node.get("svg") == TWO_SQUARES.encode()
+
+
+def test_current_color_follows_svg_color():
+    window, node = shown(ICON)
+    assert pixel(window, 50, 50) == (0, 0, 0, 255), "black unless told otherwise"
+    assert node.get("svg_color") is None
+    node.set(svg_color=(0, 200, 0, 255))
+    assert pixel(window, 50, 50) == (0, 200, 0, 255)
+    assert node.get("svg_color") == (0, 200, 0, 255)
+    node.set(svg_color=None)
+    assert pixel(window, 50, 50) == (0, 0, 0, 255)
+
+
+def test_svg_color_can_be_given_with_the_document_and_survives_a_new_one():
+    window, node = shown(ICON, svg_color=(255, 0, 0, 255))
+    assert pixel(window, 50, 50) == RED
+    node.set(svg=ICON.replace('width="10" height="10"', 'width="10" height="10" '))
+    assert pixel(window, 50, 50) == RED, "the colour stays until it is changed"
+    node.set(svg=ICON, svg_color=BLUE)
+    assert pixel(window, 50, 50) == BLUE
+
+
+def test_a_documents_own_color_beats_svg_color():
+    own = ICON.replace("<svg ", '<svg color="#ff0000" ')
+    window, _ = shown(own, svg_color=BLUE)
+    assert pixel(window, 50, 50) == RED
+
+
+def test_a_node_sized_on_one_side_takes_the_other_from_the_document():
+    window = Window(width=100, height=100)
+    node = window.create("svg", svg=TWO_SQUARES, width=100, position="absolute", x=0, y=0)  # 20x10
+    window.root.add_child(node)
+    assert node.get("aspect_ratio") == 2.0
+    assert pixel(window, 95, 45) == BLUE
+    assert pixel(window, 50, 60)[3] == 0, "50 high, so nothing below it"
+    # A document of another shape re-sizes it; the app's own ratio is kept.
+    node.set(svg=svg('<rect width="100" height="100" fill="#00ff00"/>'))
+    assert node.get("aspect_ratio") == 1.0
+    node.set(aspect_ratio=4.0)
+    node.set(svg=TWO_SQUARES)
+    assert node.get("aspect_ratio") == 4.0

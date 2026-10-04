@@ -359,6 +359,18 @@ impl SvgDocument {
     /// Parses an SVG (or gzip-compressed SVGZ) document, shaping its text
     /// with `fonts`. The error is `usvg`'s own message.
     pub fn parse(data: &[u8], fonts: &SvgFonts) -> Result<Arc<Self>, String> {
+        Self::parse_tinted(data, fonts, None)
+    }
+
+    /// `parse`, with `currentColor` resolving to `color` wherever the
+    /// document doesn't set its own `color` on the root element.
+    pub fn parse_tinted(
+        data: &[u8],
+        fonts: &SvgFonts,
+        color: Option<Color>,
+    ) -> Result<Arc<Self>, String> {
+        let tinted = color.and_then(|c| tint(data, c));
+        let data = tinted.as_deref().unwrap_or(data);
         let options = usvg::Options {
             fontdb: fonts.0.clone(),
             font_family: "Roboto".to_string(),
@@ -408,6 +420,47 @@ impl SvgDocument {
     }
 }
 
+/// `data` with a `color` attribute added to the root `<svg>` element, which is
+/// what `currentColor` resolves to. `None` when the document is unreadable
+/// as text, has no root tag found, or sets `color` on the root itself (a
+/// second attribute would be an XML error, and the document's own wins).
+fn tint(data: &[u8], color: Color) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let text = if data.starts_with(&[0x1f, 0x8b]) {
+        let mut out = String::new();
+        flate2::read::GzDecoder::new(data)
+            .read_to_string(&mut out)
+            .ok()?;
+        out
+    } else {
+        String::from_utf8(data.to_vec()).ok()?
+    };
+    // The root tag: the first `<svg` that is followed by whitespace, `>` or `/`.
+    let mut from = 0;
+    let start = loop {
+        let at = from + text[from..].find("<svg")?;
+        match text[at + 4..].chars().next() {
+            Some(c) if c.is_whitespace() || c == '>' || c == '/' => break at,
+            _ => from = at + 4,
+        }
+    };
+    let end = start + text[start..].find('>')?;
+    let tag = &text[start..end];
+    if tag
+        .split_whitespace()
+        .any(|part| part.starts_with("color="))
+    {
+        return None;
+    }
+    let [r, g, b, a] = color.to_rgba8().to_u8_array();
+    let attribute = format!(" color=\"rgba({r},{g},{b},{})\"", f64::from(a) / 255.0);
+    let mut out = String::with_capacity(text.len() + attribute.len());
+    out.push_str(&text[..start + 4]);
+    out.push_str(&attribute);
+    out.push_str(&text[start + 4..]);
+    Some(out.into_bytes())
+}
+
 /// The font files an SVG's text is shaped with, loaded once and shared by
 /// every parse. Roboto is the default and sans-serif/serif family, the
 /// bundled mono face is the monospace one.
@@ -436,6 +489,24 @@ impl SvgFonts {
 #[derive(Debug, Clone)]
 pub struct SvgState {
     pub document: Arc<SvgDocument>,
+    /// What the document was parsed from, as it was given.
+    pub source: Arc<Vec<u8>>,
+    /// Whether `source` was given as text (and reads back as text).
+    pub source_is_text: bool,
+    /// What `currentColor` resolves to; `None` leaves the document's own.
+    pub color: Option<Color>,
+}
+
+impl SvgState {
+    /// A node with no document yet.
+    pub fn empty() -> Self {
+        Self {
+            document: SvgDocument::empty(),
+            source: Arc::new(Vec::new()),
+            source_is_text: true,
+            color: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -488,6 +559,28 @@ mod tests {
             p.fill.as_ref().unwrap().paint,
             SvgPaint::Gradient(..)
         ));
+    }
+
+    #[test]
+    fn current_color_follows_the_tint_unless_the_document_sets_its_own() {
+        let svg = r##"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="currentColor"/></svg>"##;
+        let fill = |doc: &SvgDocument| match &doc.root.children[0] {
+            SvgNode::Path(p) => match p.fill.as_ref().unwrap().paint {
+                SvgPaint::Color(c) => c.to_rgba8().to_u8_array(),
+                _ => panic!("a colour"),
+            },
+            _ => panic!("a path"),
+        };
+        let none = SvgFonts::none();
+        let plain = SvgDocument::parse(svg.as_bytes(), &none).unwrap();
+        assert_eq!(fill(&plain), [0, 0, 0, 255]);
+        let tinted = Color::from_rgba8(10, 200, 30, 255);
+        let doc = SvgDocument::parse_tinted(svg.as_bytes(), &none, Some(tinted)).unwrap();
+        assert_eq!(fill(&doc), [10, 200, 30, 255]);
+        // A root that sets `color` keeps it: no duplicate attribute.
+        let own = svg.replace("<svg ", "<svg color=\"#ff0000\" ");
+        let doc = SvgDocument::parse_tinted(own.as_bytes(), &none, Some(tinted)).unwrap();
+        assert_eq!(fill(&doc), [255, 0, 0, 255]);
     }
 
     #[test]

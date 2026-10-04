@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 30] = [
+pub(crate) const KIND_PROPS: [&str; 31] = [
     "text",
     "font_family",
     "font_weight",
@@ -47,6 +47,7 @@ pub(crate) const KIND_PROPS: [&str; 30] = [
     "item_extent",
     "svg",
     "svg_size",
+    "svg_color",
 ];
 
 const TEXT_ALIGN: [(&str, TextAlign); 3] = [
@@ -84,6 +85,9 @@ pub(crate) struct KindChange {
     /// Changes a virtual list's rows, so every built one is released and
     /// rebuilt at the next layout.
     pub(crate) resets_rows: bool,
+    /// A new SVG document's width over height: the node's `aspect_ratio`
+    /// follows it unless the app set its own.
+    pub(crate) svg_ratio: Option<f64>,
 }
 
 fn change(edit: impl FnOnce(&mut engine_core::Node) + 'static) -> PyResult<KindChange> {
@@ -92,7 +96,37 @@ fn change(edit: impl FnOnce(&mut engine_core::Node) + 'static) -> PyResult<KindC
         late: false,
         resizes_terminal: false,
         resets_rows: false,
+        svg_ratio: None,
     })
+}
+
+fn parse_svg_color(value: &Bound<'_, PyAny>) -> PyResult<Option<Color>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+    parse_color(value, "svg_color").map(Some)
+}
+
+/// Parses `source` (raising for a bad document) into a change that installs
+/// it, and the aspect ratio the node should follow.
+fn svg_change(source: Vec<u8>, is_text: bool, color: Option<Color>) -> PyResult<KindChange> {
+    let document =
+        engine_core::SvgDocument::parse_tinted(&source, &svg_fonts(), color).map_err(|reason| {
+            PyValueError::new_err(format!("node property `svg` isn't a valid SVG: {reason}"))
+        })?;
+    let ratio = document.width / document.height;
+    let mut kind_change = change(move |node| {
+        if let NodeKind::Svg(state) = &mut node.kind {
+            *state = engine_core::SvgState {
+                document,
+                source: std::sync::Arc::new(source),
+                source_is_text: is_text,
+                color,
+            };
+        }
+    })?;
+    kind_change.svg_ratio = Some(ratio);
+    Ok(kind_change)
 }
 
 /// The fonts an SVG's text is shaped with: the engine's own, rebuilt only
@@ -226,7 +260,7 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         }
         "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
-        "svg" | "svg_size" => ("an svg", svg),
+        "svg" | "svg_size" | "svg_color" => ("an svg", svg),
         "orientation" | "scroll_offset" => ("a scroll_view", scroll_view),
         "item_count" | "item_extent" => ("a virtual_list", virtual_list),
         _ => ("a terminal", terminal),
@@ -266,23 +300,36 @@ fn parse_known(
         // 0.5.4 (#141): a document, as text or bytes (gzip-compressed SVGZ
         // included). It parses here, once, so a bad one raises at `set`.
         "svg" => {
-            let source: Vec<u8> = match value.extract::<String>() {
-                Ok(text) => text.into_bytes(),
-                Err(_) => value
-                    .extract()
-                    .map_err(|_| invalid(name, "an SVG document as a str or bytes"))?,
+            let (source, is_text) = match value.extract::<String>() {
+                Ok(text) => (text.into_bytes(), true),
+                Err(_) => (
+                    value
+                        .extract::<Vec<u8>>()
+                        .map_err(|_| invalid(name, "an SVG document as a str or bytes"))?,
+                    false,
+                ),
             };
-            let document =
-                engine_core::SvgDocument::parse(&source, &svg_fonts()).map_err(|reason| {
-                    PyValueError::new_err(format!(
-                        "node property `svg` isn't a valid SVG: {reason}"
-                    ))
-                })?;
-            change(move |node| {
-                if let NodeKind::Svg(state) = &mut node.kind {
-                    state.document = document;
-                }
-            })
+            // `svg_color` in the same call wins over the node's current one.
+            let color = match props.get_item("svg_color")? {
+                Some(v) => parse_svg_color(&v)?,
+                None => match kind {
+                    NodeKind::Svg(state) => state.color,
+                    _ => None,
+                },
+            };
+            svg_change(source, is_text, color)
+        }
+        // 0.5.4 (#144): what `currentColor` is. Re-parses the document it
+        // already has, unless a new one comes in the same call.
+        "svg_color" => {
+            let color = parse_svg_color(value)?;
+            if props.contains("svg")? {
+                return change(|_| {});
+            }
+            let NodeKind::Svg(state) = kind else {
+                return change(|_| {});
+            };
+            svg_change(state.source.to_vec(), state.source_is_text, color)
         }
         "text" => {
             let text = string(value, name)?;
@@ -801,9 +848,14 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
             to_py(ranges, py)
         }
         ("svg_size", NodeKind::Svg(s)) => to_py((s.document.width, s.document.height), py),
-        ("svg", NodeKind::Svg(_)) => Err(PyValueError::new_err(
-            "node property `svg` is write-only -- read `svg_size` for the document's size",
-        )),
+        ("svg", NodeKind::Svg(s)) if s.source_is_text => {
+            to_py(String::from_utf8_lossy(&s.source).into_owned(), py)
+        }
+        ("svg", NodeKind::Svg(s)) => to_py(pyo3::types::PyBytes::new(py, &s.source), py),
+        ("svg_color", NodeKind::Svg(s)) => match s.color {
+            Some(c) => color_to_py(c, py),
+            None => Ok(py.None()),
+        },
         ("rgba", NodeKind::Image(s)) => {
             to_py(pyo3::types::PyBytes::new(py, s.image.data.data()), py)
         }

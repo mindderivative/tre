@@ -430,9 +430,7 @@ impl PyWindow {
             }
             "svg" => {
                 require(&["svg"])?;
-                NodeKind::Svg(engine_core::SvgState {
-                    document: engine_core::SvgDocument::empty(),
-                })
+                NodeKind::Svg(engine_core::SvgState::empty())
             }
             "text" => {
                 require(&["text"])?;

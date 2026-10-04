@@ -337,7 +337,8 @@ class Window:
         `"scroll_view"`, `"virtual_list"`, or `"terminal"` -- and applies `props`
         atomically, as `Node.set` does. Required: `text` for a text,
         `rgba`/`pixel_width`/`pixel_height` for an image, `data` for a
-        path, `svg` for an svg, `draw` for a canvas, `item_count`, `materialize`, and one of
+        path, `svg` (a `str` or `bytes` document; also read, with `svg_size` and
+        `svg_color`, what `currentColor` is) for an svg, `draw` for a canvas, `item_count`, `materialize`, and one of
         `item_extent`/`size_hint` for a virtual list, and `shell`, `cols`,
         `rows` for a terminal (which also takes `scrollback_lines`, at
         creation only). Attach it with `add_child`; until it's attached it
