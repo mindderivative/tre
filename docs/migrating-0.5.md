@@ -220,3 +220,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   virtual list lets it coast to rest (see [Touch and
   gestures](guide/events-and-input.md#touch-and-gestures)), and an animation of
   a scroll offset is now stopped by a manual scroll instead of fighting it.
+- **Transparent windows.** `window.set(transparent=True)` before `App.run()` opens a
+  see-through window (with `get("transparent_active")` saying whether the surface
+  can blend), and `set(blur_behind=True)` asks the compositor to blur behind it
+  where it can; see [Window](reference/window.md). Two fixes ride along: the
+  surface format now prefers an 8-bit one (Mesa on Wayland listed a ten-bit
+  format first, which has two bits of alpha), and `snapshot()` now returns
+  true straight alpha, as documented (it had returned the renderer's
+  premultiplied pixels, so translucent pixels were too dark).

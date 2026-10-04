@@ -295,6 +295,13 @@ pub struct WindowOptions {
     /// used on Windows and X11; Wayland and macOS take the app's icon from
     /// its desktop file or bundle.
     pub icon: Option<(Vec<u8>, u32, u32)>,
+    /// 0.5.4 (#137): whether the window can be see-through: asks the OS for a
+    /// window with an alpha channel. Fixed when the window opens (X11 can only
+    /// choose it then).
+    pub transparent: bool,
+    /// 0.5.4 (#137): asks the compositor to blur what is behind the window,
+    /// where it can (Wayland with KDE's blur protocol, macOS).
+    pub blur: bool,
 }
 
 impl Default for WindowOptions {
@@ -305,6 +312,8 @@ impl Default for WindowOptions {
             fullscreen: false,
             min_size: None,
             icon: None,
+            transparent: false,
+            blur: false,
         }
     }
 }
@@ -843,6 +852,8 @@ where
                         .with_window_icon(options.icon.clone().and_then(|(rgba, w, h)| {
                             winit::window::Icon::from_rgba(rgba, w, h).ok()
                         }))
+                        .with_transparent(options.transparent)
+                        .with_blur(options.blur)
                         .with_visible(false);
                 if let Some((w, h)) = options.min_size {
                     attrs = attrs.with_min_inner_size(winit::dpi::LogicalSize::new(w, h));

@@ -30,6 +30,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `file_drop.py` | `file_hover`, `file_hover_cancel` and `file_drop` for a drop zone (simulated, or real files with `--watch`) |
 | `accessibility_preferences.py` | `get("reduced_motion")`, `get("high_contrast")` and their events: snap instead of ease, swap to a high-contrast palette |
 | `frame_stats.py` | `window.frame_stats()`: stage times, redraw kind, fps and percentiles for a window that animates |
+| `transparent_window.py` | `transparent=True`: a rounded, undecorated card on the desktop, with a close button |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |

@@ -249,7 +249,7 @@ impl PyWindow {
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
 const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
     min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
-    dpi_scaling";
+    dpi_scaling, transparent, blur_behind";
 
 /// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
 /// RGBA8 bytes, `width * height * 4` of them.
@@ -650,6 +650,8 @@ impl PyWindow {
         let mut gpu_watchdog = None;
         let mut present_mode = None;
         let mut dpi_scaling = None;
+        let mut transparent = None;
+        let mut blur_behind = None;
         let mut system_menu = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
@@ -685,6 +687,16 @@ impl PyWindow {
                     "resize_border" => resize_border = Some(parse_min_edge(&name, &value)?),
                     "gpu_watchdog" => gpu_watchdog = Some(parse_watchdog(&name, &value)?),
                     "present_mode" => present_mode = Some(parse_present_mode(&name, &value)?),
+                    "transparent" => {
+                        transparent = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `transparent` must be a bool")
+                        })?);
+                    }
+                    "blur_behind" => {
+                        blur_behind = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `blur_behind` must be a bool")
+                        })?);
+                    }
                     "dpi_scaling" => {
                         dpi_scaling = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `dpi_scaling` must be a bool")
@@ -703,7 +715,7 @@ impl PyWindow {
                         });
                     }
                     "width" | "height" | "scale_factor" | "maximized" | "minimized" | "active"
-                    | "platform" | "titlebar_inset" | "native_controls" => {
+                    | "platform" | "titlebar_inset" | "native_controls" | "transparent_active" => {
                         return Err(PyValueError::new_err(format!(
                             "window property `{name}` is read-only -- settable: {SETTABLE}"
                         )));
@@ -739,6 +751,21 @@ impl PyWindow {
         }
         if let Some(choice) = present_mode {
             self.handles.present_mode.set(choice);
+        }
+        if let Some(on) = transparent {
+            // The OS gives a window its alpha channel when it is made.
+            if self.handles.os_window.borrow().is_some() {
+                return Err(PyValueError::new_err(
+                    "window property `transparent` can only be set before the window opens (App.run())",
+                ));
+            }
+            self.handles.transparent.set(on);
+        }
+        if let Some(on) = blur_behind {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                window.set_blur(on);
+            }
+            self.handles.blur_behind.set(on);
         }
         if let Some(on) = dpi_scaling {
             self.handles.dpi_scaling.set(on);
@@ -898,6 +925,29 @@ impl PyWindow {
                 .to_owned()
                 .into_any()
                 .unbind(),
+            "transparent" => self
+                .handles
+                .transparent
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "transparent_active" => self
+                .handles
+                .transparent_active
+                .get()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "blur_behind" => self
+                .handles
+                .blur_behind
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "present_mode" => self
                 .handles
                 .present_mode
@@ -1006,7 +1056,8 @@ impl PyWindow {
                      scale_factor, dark, reduced_motion, high_contrast, partial_redraw, partial_redraw_active, show_damage, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
-                     native_controls, gpu_watchdog, present_mode, dpi_scaling"
+                     native_controls, gpu_watchdog, present_mode, dpi_scaling, transparent, \
+                     transparent_active, blur_behind"
                 )));
             }
         })

@@ -497,3 +497,36 @@ fn partial_redraw_behind_a_backdrop_blur_matches_a_full_redraw() {
         "the kept frame plus the partial redraw is the frame drawn whole"
     );
 }
+
+/// 0.5.4 (#137): a see-through window keeps a partial redraw exact: the cleared
+/// areas are transparent again, not left holding what was drawn there.
+#[test]
+fn partial_redraw_on_a_transparent_background_matches_a_full_redraw() {
+    let build = |x: f32| {
+        let mut w = Window::new((100.0, 100.0), 1.0);
+        w.tree.get_mut(w.root).unwrap().paint.background = Animated::new(Color::TRANSPARENT);
+        let id = w.rect(x, 20.0, 30.0, 30.0, Color::from_rgba8(255, 0, 0, 128), 8.0);
+        (w, id)
+    };
+    let (mut live, id) = build(10.0);
+    live.frame();
+    // The translucent box moves: where it was must clear to nothing.
+    live.tree.get_mut(id).unwrap().layout_style = {
+        let mut s = live.tree.get(id).unwrap().layout_style.clone();
+        s.inset.left = length(50.0);
+        s
+    };
+    let style = live.tree.get(id).unwrap().layout_style.clone();
+    live.tree.set_layout_style(id, style);
+    assert!(matches!(live.frame(), Damage::Rects(_)), "a partial redraw");
+
+    let (mut fresh, _) = build(50.0);
+    fresh.frame();
+    assert_eq!(
+        differing(&live.pixels(), &fresh.pixels(), 0),
+        0,
+        "the old place is clear again"
+    );
+    // And the old place really is empty: alpha zero.
+    assert_eq!(live.at(20, 30), [0, 0, 0, 0]);
+}

@@ -16,7 +16,30 @@
 /// choice, which on Linux and most desktops is an sRGB format. Takes the first
 /// format that is not, or `None` if every one is (the caller keeps its default).
 pub fn linear_surface_format(supported: &[wgpu::TextureFormat]) -> Option<wgpu::TextureFormat> {
-    supported.iter().copied().find(|format| !format.is_srgb())
+    use wgpu::TextureFormat::{Bgra8Unorm, Rgba8Unorm};
+    // The 8-bit formats the renderer draws in come first: a ten-bit-colour
+    // format (`Rgb10a2Unorm`, which Mesa lists ahead of them on Wayland) has
+    // two bits of alpha, which a see-through window shows as four-step
+    // blending (0.5.4, #137).
+    [Bgra8Unorm, Rgba8Unorm]
+        .into_iter()
+        .find(|format| supported.contains(format))
+        .or_else(|| supported.iter().copied().find(|format| !format.is_srgb()))
+}
+
+/// 0.5.4 (#137): the alpha mode for a see-through window, out of those the
+/// surface supports, or `None` where it can't blend with the desktop at all.
+/// The renderer writes premultiplied alpha, so `PreMultiplied` is exact;
+/// `Inherit` leaves the choice to the window system, which expects
+/// premultiplied; `PostMultiplied` (straight alpha) would draw wrong edges
+/// and is never chosen.
+pub fn transparent_alpha_mode(
+    supported: &[wgpu::CompositeAlphaMode],
+) -> Option<wgpu::CompositeAlphaMode> {
+    use wgpu::CompositeAlphaMode::{Inherit, PreMultiplied};
+    [PreMultiplied, Inherit]
+        .into_iter()
+        .find(|mode| supported.contains(mode))
 }
 
 /// What an app asks of the swapchain.
@@ -109,10 +132,39 @@ mod tests {
         );
         assert_eq!(
             linear_surface_format(&[Rgba8UnormSrgb, Bgra8UnormSrgb, Rgba8Unorm, Bgra8Unorm]),
-            Some(Rgba8Unorm)
+            Some(Bgra8Unorm)
+        );
+        // Never a ten-bit-colour format while an 8-bit one is there.
+        assert_eq!(
+            linear_surface_format(&[
+                Rgba8UnormSrgb,
+                Bgra8UnormSrgb,
+                wgpu::TextureFormat::Rgb10a2Unorm,
+                Rgba8Unorm,
+                Bgra8Unorm
+            ]),
+            Some(Bgra8Unorm)
+        );
+        assert_eq!(
+            linear_surface_format(&[wgpu::TextureFormat::Rgb10a2Unorm]),
+            Some(wgpu::TextureFormat::Rgb10a2Unorm),
+            "better than nothing"
         );
         assert_eq!(linear_surface_format(&[Bgra8UnormSrgb]), None);
         assert_eq!(linear_surface_format(&[]), None);
+    }
+
+    #[test]
+    fn a_transparent_window_wants_premultiplied_alpha_and_never_straight() {
+        use wgpu::CompositeAlphaMode::{Auto, Inherit, Opaque, PostMultiplied, PreMultiplied};
+        assert_eq!(
+            transparent_alpha_mode(&[Opaque, PreMultiplied, Inherit]),
+            Some(PreMultiplied)
+        );
+        assert_eq!(transparent_alpha_mode(&[Opaque, Inherit]), Some(Inherit));
+        assert_eq!(transparent_alpha_mode(&[Opaque, PostMultiplied]), None);
+        assert_eq!(transparent_alpha_mode(&[Auto, Opaque]), None);
+        assert_eq!(transparent_alpha_mode(&[]), None);
     }
 
     #[test]

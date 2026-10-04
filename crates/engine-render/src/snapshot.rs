@@ -86,6 +86,20 @@ pub fn snapshot(
     read_back(device, queue, &texture)
 }
 
+/// Premultiplied RGBA8 to straight alpha, in place: each colour channel divided
+/// by alpha, rounded, for pixels that are neither opaque nor clear.
+fn unpremultiply(rgba: &mut [u8]) {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let a = u32::from(px[3]);
+        if a == 0 || a == 255 {
+            continue;
+        }
+        for c in &mut px[..3] {
+            *c = ((u32::from(*c) * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+}
+
 /// `texture`'s pixels, rows unpadded.
 fn read_back(
     device: &wgpu::Device,
@@ -136,9 +150,34 @@ fn read_back(
     for y in 0..height as usize {
         rgba.extend_from_slice(&data[y * padded..y * padded + row]);
     }
+    // The renderer writes premultiplied alpha; a snapshot is straight alpha, as
+    // an image file and every decoder expect.
+    unpremultiply(&mut rgba);
     Ok(Snapshot {
         width,
         height,
         rgba,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unpremultiply;
+
+    #[test]
+    fn opaque_and_clear_pixels_are_untouched_and_translucent_ones_are_divided() {
+        let mut px = vec![
+            10, 20, 30, 255, // opaque
+            0, 0, 0, 0, // clear
+            128, 0, 0, 128, // half red, premultiplied
+            50, 50, 50, 200, // dim
+            1, 0, 0, 1, // alpha 1: a rounding extreme
+        ];
+        unpremultiply(&mut px);
+        assert_eq!(&px[0..4], &[10, 20, 30, 255]);
+        assert_eq!(&px[4..8], &[0, 0, 0, 0]);
+        assert_eq!(&px[8..12], &[255, 0, 0, 128]);
+        assert_eq!(&px[12..16], &[64, 64, 64, 200]);
+        assert_eq!(&px[16..20], &[255, 0, 0, 1]);
+    }
 }

@@ -49,7 +49,7 @@ pub use geometry_cache::GeometryCache;
 pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
-pub use present::{PresentChoice, linear_surface_format};
+pub use present::{PresentChoice, linear_surface_format, transparent_alpha_mode};
 pub use shader_pass::{ShaderPasses, ShaderTextures};
 pub use snapshot::{Snapshot, snapshot};
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};

@@ -113,6 +113,12 @@ pub(crate) struct WindowHandles {
     /// and borders -- `Window(decorations=False)` or a live `set` turns them
     /// off for the framework to draw its own.
     pub(crate) decorations: Rc<Cell<bool>>,
+    /// 0.5.4 (#137): whether the window opens see-through, and (once open)
+    /// whether its surface can show it.
+    pub(crate) transparent: Rc<Cell<bool>>,
+    pub(crate) transparent_active: Rc<Cell<Option<bool>>>,
+    /// 0.5.4 (#137): whether the compositor is asked to blur behind the window.
+    pub(crate) blur_behind: Rc<Cell<bool>>,
     /// 0.5.0 M2: whether the window is maximized, and minimized -- before
     /// `App.run()` opens it, what it opens as.
     pub(crate) maximized: Rc<Cell<bool>>,
@@ -274,6 +280,9 @@ impl PyWindow {
                 surface_partial: Rc::new(Cell::new(None)),
                 show_damage: Rc::new(Cell::new(false)),
                 decorations: Rc::new(Cell::new(decorations)),
+                transparent: Rc::new(Cell::new(false)),
+                transparent_active: Rc::new(Cell::new(None)),
+                blur_behind: Rc::new(Cell::new(false)),
                 maximized: Rc::new(Cell::new(false)),
                 minimized: Rc::new(Cell::new(false)),
                 active: Rc::new(Cell::new(false)),

@@ -229,6 +229,37 @@ surface the platform won't let Tesserae Engine copy into always redraws in full,
 logs a warning saying so; `get("partial_redraw")` reports the setting, and
 `get("partial_redraw_active")` whether it's in effect (`None` until
 `App.run()` opens the window).
+**`set(transparent=True)`** (0.5.4) opens the window see-through: the OS gives it an alpha
+channel, so a root `fill` with alpha below 255, or `(0, 0, 0, 0)`, shows the desktop
+through it. With `decorations=False` that is a window of any shape: a rounded card,
+a floating palette, a splash. It must be set before `App.run()`, because the OS fixes
+it when the window is made (X11 can only choose it then); setting it on an open window
+raises `ValueError`. Once the window is open, `get("transparent_active")` says whether
+it took: `True` when the surface blends with the desktop, `False` where it can't
+(there is no premultiplied or inherited alpha mode), and the window is then opaque, so
+an app can fall back to a solid background. It is checked live on KDE under both
+Wayland and X11, where a 50% red box over a green window behind it composites to exactly
+`(128, 127, 0)`.
+
+```python
+window = Window(width=320, height=200, decorations=False)
+window.set(transparent=True)
+window.root.set(fill=(0, 0, 0, 0))                 # nothing of its own
+card = window.create("box", width=300, height=180, x=10, y=10, position="absolute",
+                     corner_radius=24, fill=(0x1C, 0x1B, 0x1F, 0xE6))   # 90% opaque, rounded
+window.root.add_child(card)
+```
+
+**`set(blur_behind=True)`** asks the compositor to blur what is behind a transparent
+window, live. It works only where the platform has it: Wayland with KDE's blur protocol,
+and macOS; it is ignored on X11 and Windows, so treat it as a polish and keep the
+window readable without it.
+
+Notes: draw straight-alpha colours as always; the renderer premultiplies for the
+surface. An app that wants shadows draws them itself (the OS draws none around a
+transparent undecorated window on every platform). A transparent window with partial
+redraw still redraws exactly: cleared areas become transparent again.
+
 **`set(show_damage=True)`** makes each presented frame show what it
 redrew: its damage rects tinted magenta, or, for a full redraw, the window's
 edge outlined in orange. It's for seeing partial redraw work and for finding

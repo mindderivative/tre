@@ -341,6 +341,8 @@ struct GpuState {
     /// surface supports (the choice picks one of them).
     present: PresentChoice,
     present_modes: Vec<wgpu::PresentMode>,
+    /// 0.5.4 (#137): whether the surface blends with what is behind the window.
+    transparent_active: bool,
 }
 
 impl GpuState {
@@ -351,6 +353,7 @@ impl GpuState {
         width: u32,
         height: u32,
         present: PresentChoice,
+        transparent: bool,
     ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
@@ -409,6 +412,22 @@ impl GpuState {
                  every frame in full (no partial redraw)"
             );
         }
+        // 0.5.4 (#137): a see-through window needs a surface that blends with
+        // what is behind it. The renderer writes premultiplied alpha, which is
+        // what `PreMultiplied` expects; `Inherit` leaves it to the window
+        // system (X11's compositing and most Wayland ones read premultiplied).
+        // With neither, the window stays opaque and the app is told.
+        let alpha = engine_render::transparent_alpha_mode(&capabilities.alpha_modes);
+        let transparent_active = transparent && alpha.is_some();
+        if transparent {
+            match alpha {
+                Some(mode) => config.alpha_mode = mode,
+                None => tracing::warn!(
+                    modes = ?capabilities.alpha_modes,
+                    "this surface can't blend with what is behind the window: it stays opaque"
+                ),
+            }
+        }
         surface.configure(&device, &config);
         let renderer = WindowRenderer::new(&device, config.format, width, height, copyable);
 
@@ -423,6 +442,7 @@ impl GpuState {
             watch,
             present,
             present_modes: capabilities.present_modes,
+            transparent_active,
         })
     }
 
@@ -888,6 +908,7 @@ impl App {
                     setup.handles.width.get(),
                     setup.handles.height.get(),
                     setup.handles.present_mode.get(),
+                    setup.handles.transparent.get(),
                 ) {
                     Ok(gpu) => gpu,
                     Err(err) => {
@@ -895,6 +916,10 @@ impl App {
                         return false;
                     }
                 };
+                setup
+                    .handles
+                    .transparent_active
+                    .set(Some(gpu.transparent_active));
                 setup
                     .handles
                     .surface_partial
@@ -1709,6 +1734,8 @@ impl App {
                                 min_size: Some(setup.handles.min_size.get())
                                     .filter(|size| *size != (0.0, 0.0)),
                                 icon: setup.handles.icon.borrow().clone(),
+                                transparent: setup.handles.transparent.get(),
+                                blur: setup.handles.blur_behind.get(),
                             },
                         },
                         token: index as u64,

@@ -399,6 +399,8 @@ class Window:
         gpu_watchdog: float | None = ...,
         present_mode: str = ...,
         dpi_scaling: bool = ...,
+        transparent: bool = ...,
+        blur_behind: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -435,7 +437,15 @@ class Window:
         and crisp on a HiDPI screen; `width`, `height` and every pointer
         position are then logical. `False`, the default, leaves everything in
         physical pixels, for a framework that multiplies by `scale_factor`
-        itself. Takes effect live."""
+        itself. Takes effect live. `transparent`: (0.5.4) `True` opens the window
+        see-through -- the OS gives it an alpha channel, so a root `fill` with
+        alpha below 255 (or `(0, 0, 0, 0)`) shows the desktop through it, for
+        rounded or shaped frameless windows; only before `App.run()` (the OS
+        fixes it when the window is made), a `ValueError` after. Read
+        `get("transparent_active")` once open: `False` where the surface can't
+        blend with the desktop and the window stays opaque. `blur_behind`:
+        (0.5.4) asks the compositor to blur what is behind the window, where it
+        can (Wayland with KDE's blur protocol, macOS; ignored elsewhere); live."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -468,7 +478,9 @@ class Window:
     @overload
     def get(self, name: Literal["present_mode"]) -> str: ...
     @overload
-    def get(self, name: Literal["dpi_scaling"]) -> bool: ...
+    def get(self, name: Literal["dpi_scaling", "transparent", "blur_behind"]) -> bool: ...
+    @overload
+    def get(self, name: Literal["transparent_active"]) -> bool | None: ...
     @overload
     def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
     @overload
