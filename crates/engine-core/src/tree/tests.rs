@@ -6963,6 +6963,148 @@ mod static_selection {
         assert_eq!(tree.static_selected_text().as_deref(), Some("cs "));
     }
 
+    /// A column holding paragraphs "alpha", "bravo", "charlie", all selectable.
+    fn paragraphs(tree: &mut Tree) -> (NodeId, [NodeId; 3]) {
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                flex_direction: taffy::FlexDirection::Column,
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
+        );
+        let ids = ["alpha", "bravo", "charlie"].map(|content| {
+            let id = text(tree, content);
+            if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+                state.options.selectable = true;
+            }
+            tree.add_child(root, id);
+            id
+        });
+        (root, ids)
+    }
+
+    fn range_of(tree: &Tree, id: NodeId) -> Option<(usize, usize)> {
+        match &tree.get(id).unwrap().kind {
+            NodeKind::Text(state) => state.options.selection,
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_selection_runs_from_one_text_into_another_taking_what_lies_between() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        assert!(tree.select_across((a, 2), (c, 3)));
+        assert_eq!(
+            range_of(&tree, a),
+            Some((2, 5)),
+            "from the anchor to the end"
+        );
+        assert_eq!(range_of(&tree, b), Some((0, 5)), "the middle whole");
+        assert_eq!(range_of(&tree, c), Some((0, 3)), "the start to the focus");
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("pha\nbravo\ncha")
+        );
+    }
+
+    #[test]
+    fn a_backwards_selection_covers_the_same_text() {
+        let mut tree = Tree::new();
+        let (_, [a, _, c]) = paragraphs(&mut tree);
+        assert!(tree.select_across((c, 3), (a, 2)));
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("pha\nbravo\ncha")
+        );
+    }
+
+    #[test]
+    fn extending_a_drag_into_other_texts_and_back_selects_and_releases_them() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.set_text_selection(a, 1, 1);
+        tree.extend_text_selection(a, 3);
+        assert_eq!(range_of(&tree, b), None);
+        tree.extend_text_selection(c, 2);
+        assert_eq!(range_of(&tree, b), Some((0, 5)));
+        assert_eq!(range_of(&tree, c), Some((0, 2)));
+        tree.extend_text_selection(b, 2);
+        assert_eq!(range_of(&tree, c), None, "the third is let go");
+        assert_eq!(range_of(&tree, b), Some((0, 2)));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("lpha\nbr"));
+        tree.extend_text_selection(a, 3);
+        assert_eq!(range_of(&tree, b), None);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("lp"));
+    }
+
+    #[test]
+    fn texts_that_are_not_selectable_or_not_visible_are_skipped_between() {
+        let mut tree = Tree::new();
+        let (root, [a, b, c]) = paragraphs(&mut tree);
+        if let NodeKind::Text(state) = &mut tree.get_mut(b).unwrap().kind {
+            state.options.selectable = false;
+        }
+        let d = text(&mut tree, "delta");
+        if let NodeKind::Text(state) = &mut tree.get_mut(d).unwrap().kind {
+            state.options.selectable = true;
+        }
+        tree.add_child(root, d);
+        tree.get_mut(c).unwrap().visible = false;
+        assert!(tree.select_across((a, 0), (d, 5)));
+        assert_eq!(range_of(&tree, b), None);
+        assert_eq!(range_of(&tree, c), None);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("alpha\ndelta"));
+    }
+
+    #[test]
+    fn a_new_selection_or_a_clear_releases_every_text_and_other_trees_are_refused() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.select_across((a, 0), (c, 7));
+        tree.set_text_selection(b, 1, 3);
+        assert_eq!((range_of(&tree, a), range_of(&tree, c)), (None, None));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("ra"));
+        tree.select_across((a, 0), (c, 7));
+        tree.clear_text_selection();
+        assert!([a, b, c].iter().all(|id| range_of(&tree, *id).is_none()));
+        assert_eq!(tree.static_selected_text(), None);
+        let (_, [other, ..]) = paragraphs(&mut tree);
+        assert!(
+            !tree.select_across((a, 0), (other, 1)),
+            "two separate trees"
+        );
+    }
+
+    #[test]
+    fn a_screen_reader_can_select_from_one_text_to_another() {
+        let mut tree = Tree::new();
+        let (root, [a, _, c]) = paragraphs(&mut tree);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(60.0),
+            },
+        );
+        let update = tree.build_access_update(root);
+        let run_of = |id: NodeId| node_of(&update, to_access_id(id)).children()[0];
+        let at = |node, character_index| accesskit::TextPosition {
+            node,
+            character_index,
+        };
+        let selection = accesskit::TextSelection {
+            anchor: at(run_of(a), 3),
+            focus: at(run_of(c), 2),
+        };
+        assert!(tree.set_text_selection_from_access(&selection));
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("ha\nbravo\nch")
+        );
+    }
+
     #[test]
     fn a_non_text_node_is_refused_and_a_selection_set_directly_can_be_adopted() {
         let mut tree = Tree::new();

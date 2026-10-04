@@ -717,70 +717,176 @@ impl Tree {
     }
 }
 
+/// 0.5.4 (#112, #152): the selection in static text. Each selected text node
+/// holds its own range in `TextOptions::selection` (what paints and what a
+/// screen reader reads); this is what ties them into one selection, which can
+/// run from a point in one text to a point in another.
+#[derive(Clone, Debug, Default)]
+pub(super) struct StaticSelection {
+    /// Where the selection started, and where its moving end is.
+    anchor: Option<(NodeId, usize)>,
+    focus: Option<(NodeId, usize)>,
+    /// The nodes holding a range of it, in document order.
+    nodes: Vec<NodeId>,
+}
+
 /// 0.5.4 (#112): selection in static text (`TextOptions::selectable`).
 impl Tree {
+    fn text_len(&self, id: NodeId) -> Option<usize> {
+        match &self.nodes.get(id)?.kind {
+            NodeKind::Text(state) => Some(state.content.len()),
+            _ => None,
+        }
+    }
+
+    /// Selectable, visible text nodes under `root` in document order, plus the
+    /// `extra` nodes whatever their `selectable`.
+    fn selectable_texts(&self, root: NodeId, extra: [NodeId; 2]) -> Vec<NodeId> {
+        let mut out = Vec::new();
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            if !node.visible {
+                continue;
+            }
+            if let NodeKind::Text(state) = &node.kind
+                && (state.options.selectable || extra.contains(&id))
+            {
+                out.push(id);
+            }
+            stack.extend(node.children.iter().rev());
+        }
+        out
+    }
+
     /// Selects `anchor..focus` (bytes, either order, clamped to character
-    /// boundaries) in a selectable text node, clearing any other node's
-    /// selection first. `false`, changing nothing, if `id` isn't a text node.
+    /// boundaries) in a text node, clearing any other selection first.
+    /// `false`, changing nothing, if `id` isn't a text node.
     pub fn set_text_selection(&mut self, id: NodeId, anchor: usize, focus: usize) -> bool {
-        let Some(NodeKind::Text(state)) = self.nodes.get(id).map(|n| &n.kind) else {
+        self.select_across((id, anchor), (id, focus))
+    }
+
+    /// Selects from `anchor` to `focus`, each a text node and a byte offset
+    /// (clamped to a character boundary). When they are in different nodes,
+    /// every selectable text between them in document order is selected whole,
+    /// and the two ends from their offset to the node's end, or its start to the
+    /// offset. `false`, changing nothing, unless both are text nodes of one tree.
+    pub fn select_across(&mut self, anchor: (NodeId, usize), focus: (NodeId, usize)) -> bool {
+        let snap = |tree: &Self, (id, offset): (NodeId, usize)| match &tree.nodes.get(id)?.kind {
+            NodeKind::Text(state) => Some((id, Self::char_boundary(&state.content, offset))),
+            _ => None,
+        };
+        let (Some(anchor), Some(focus)) = (snap(self, anchor), snap(self, focus)) else {
             return false;
         };
-        let selection = (
-            Self::char_boundary(&state.content, anchor),
-            Self::char_boundary(&state.content, focus),
-        );
-        self.clear_text_selection_except(Some(id));
-        if let Some(NodeKind::Text(state)) = self.nodes.get_mut(id).map(|n| &mut n.kind) {
-            state.options.selection = Some(selection);
+        let root = self.root_of(anchor.0);
+        if self.root_of(focus.0) != root {
+            return false;
         }
-        self.static_selection = Some(id);
+        let order = self.selectable_texts(root, [anchor.0, focus.0]);
+        let position = |id: NodeId| order.iter().position(|n| *n == id);
+        let (Some(ia), Some(ifo)) = (position(anchor.0), position(focus.0)) else {
+            return false;
+        };
+        // The ranges each node gets.
+        let mut ranges: Vec<(NodeId, (usize, usize))> = Vec::new();
+        if anchor.0 == focus.0 {
+            ranges.push((anchor.0, (anchor.1, focus.1)));
+        } else {
+            let (first, last) = if ia < ifo {
+                (anchor, focus)
+            } else {
+                (focus, anchor)
+            };
+            let (lo, hi) = (ia.min(ifo), ia.max(ifo));
+            for &id in &order[lo..=hi] {
+                let len = self.text_len(id).unwrap_or(0);
+                let range = if id == first.0 {
+                    (first.1, len)
+                } else if id == last.0 {
+                    (0, last.1)
+                } else {
+                    (0, len)
+                };
+                ranges.push((id, range));
+            }
+        }
+        let keep: Vec<NodeId> = ranges.iter().map(|(id, _)| *id).collect();
+        let previous = std::mem::take(&mut self.static_selection.nodes);
+        for id in previous.into_iter().filter(|id| !keep.contains(id)) {
+            if let Some(NodeKind::Text(state)) = self.nodes.get_mut(id).map(|n| &mut n.kind) {
+                state.options.selection = None;
+            }
+        }
+        for (id, range) in ranges {
+            if let Some(NodeKind::Text(state)) = self.nodes.get_mut(id).map(|n| &mut n.kind) {
+                state.options.selection = Some(range);
+            }
+        }
+        self.static_selection = StaticSelection {
+            anchor: Some(anchor),
+            focus: Some(focus),
+            nodes: keep,
+        };
         self.dirty = true;
         true
     }
 
-    /// Moves the focus end of a text node's selection to `focus`, keeping its
-    /// anchor (a drag); starts one at `focus` if there is none.
+    /// Moves the focus end of the selection to `focus` in text node `id`,
+    /// keeping its anchor (a drag), even if that is another text node; starts
+    /// a selection at `focus` if there is none.
     pub fn extend_text_selection(&mut self, id: NodeId, focus: usize) -> bool {
-        let anchor = match self.nodes.get(id).map(|n| &n.kind) {
-            Some(NodeKind::Text(state)) => state.options.selection.map_or(focus, |(a, _)| a),
-            _ => return false,
-        };
-        self.set_text_selection(id, anchor, focus)
+        match self.static_selection.anchor {
+            Some(anchor) if self.text_len(anchor.0).is_some() => {
+                self.select_across(anchor, (id, focus))
+            }
+            _ => self.set_text_selection(id, focus, focus),
+        }
     }
 
     /// Makes text node `id` the owner of the static selection if it has one,
     /// or releases it if it was the owner and has none: for code that sets
     /// `TextOptions::selection` directly on the node.
     pub fn adopt_text_selection(&mut self, id: NodeId) {
-        let has = matches!(
-            self.nodes.get(id).map(|n| &n.kind),
-            Some(NodeKind::Text(state)) if state.options.selection.is_some()
-        );
-        if has {
-            self.clear_text_selection_except(Some(id));
-            self.static_selection = Some(id);
-        } else if self.static_selection == Some(id) {
-            self.static_selection = None;
+        let selection = match self.nodes.get(id).map(|n| &n.kind) {
+            Some(NodeKind::Text(state)) => state.options.selection,
+            _ => None,
+        };
+        match selection {
+            Some((a, f)) => {
+                // Sets exactly this node's range, clearing the rest.
+                let previous = std::mem::take(&mut self.static_selection.nodes);
+                for other in previous.into_iter().filter(|n| *n != id) {
+                    if let Some(NodeKind::Text(state)) =
+                        self.nodes.get_mut(other).map(|n| &mut n.kind)
+                    {
+                        state.options.selection = None;
+                    }
+                }
+                self.static_selection = StaticSelection {
+                    anchor: Some((id, a)),
+                    focus: Some((id, f)),
+                    nodes: vec![id],
+                };
+            }
+            None if self.static_selection.nodes.contains(&id) => self.clear_text_selection(),
+            None => {}
         }
     }
 
     /// Clears the selection in static text, wherever it is.
     pub fn clear_text_selection(&mut self) {
-        self.clear_text_selection_except(None);
-    }
-
-    fn clear_text_selection_except(&mut self, keep: Option<NodeId>) {
-        let Some(owner) = self.static_selection else {
-            return;
-        };
-        if Some(owner) == keep {
+        let StaticSelection { nodes, .. } = std::mem::take(&mut self.static_selection);
+        if nodes.is_empty() {
             return;
         }
-        if let Some(NodeKind::Text(state)) = self.nodes.get_mut(owner).map(|n| &mut n.kind) {
-            state.options.selection = None;
+        for id in nodes {
+            if let Some(NodeKind::Text(state)) = self.nodes.get_mut(id).map(|n| &mut n.kind) {
+                state.options.selection = None;
+            }
         }
-        self.static_selection = None;
         self.dirty = true;
     }
 
@@ -799,32 +905,32 @@ impl Tree {
             .and_then(|s| s.link.as_deref())
     }
 
-    /// 0.5.4 (#131): Ctrl+A in static text: selects all of the text node that
-    /// owns the selection. `false` if none does.
+    /// 0.5.4 (#131): Ctrl+A in static text: selects all of the text node the
+    /// selection started in. `false` if there is no selection.
     pub fn select_all_static_text(&mut self) -> bool {
-        let Some(owner) = self.static_selection else {
+        let Some((owner, _)) = self.static_selection.anchor else {
             return false;
         };
-        let len = match self.nodes.get(owner).map(|n| &n.kind) {
-            Some(NodeKind::Text(state)) => state.content.len(),
-            _ => return false,
+        let Some(len) = self.text_len(owner) else {
+            return false;
         };
         self.set_text_selection(owner, 0, len)
     }
 
     /// 0.5.4 (#131): Shift+Left, Shift+Right, Shift+Home or Shift+End in
     /// static text: moves the selection's focus end one character (or to the
-    /// start or end of the text), keeping its anchor. `false` if no text node
-    /// owns a selection.
+    /// start or end of its text), keeping its anchor. `false` if there is no
+    /// selection.
     pub fn extend_static_selection(&mut self, key: crate::Key) -> bool {
-        let Some(owner) = self.static_selection else {
+        let (Some(anchor), Some((owner, focus))) =
+            (self.static_selection.anchor, self.static_selection.focus)
+        else {
             return false;
         };
         let Some(NodeKind::Text(state)) = self.nodes.get(owner).map(|n| &n.kind) else {
             return false;
         };
         let content = &state.content;
-        let (anchor, focus) = state.options.selection.unwrap_or((0, 0));
         let focus = Self::char_boundary(content, focus);
         let moved = match key {
             crate::Key::ArrowLeft => content[..focus]
@@ -839,14 +945,19 @@ impl Tree {
             crate::Key::End => content.len(),
             _ => return false,
         };
-        self.set_text_selection(owner, anchor, moved)
+        self.select_across(anchor, (owner, moved))
     }
 
-    /// The text a Copy of the static selection would take: `None` for no
-    /// selection or an empty one.
+    /// The text a Copy of the static selection would take, the nodes' pieces
+    /// joined by newlines: `None` for no selection or an empty one.
     pub fn static_selected_text(&self) -> Option<String> {
-        let owner = self.static_selection?;
-        self.text_selected_text(owner)
+        let pieces: Vec<String> = self
+            .static_selection
+            .nodes
+            .iter()
+            .filter_map(|id| self.text_selected_text(*id))
+            .collect();
+        (!pieces.is_empty()).then(|| pieces.join("\n"))
     }
 
     /// The selected text of text node `id`, if any is selected.

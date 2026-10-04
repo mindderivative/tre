@@ -347,6 +347,6 @@ impl Tree {
         ) else {
             return false;
         };
-        a_owner == f_owner && self.set_text_selection(a_owner, anchor, focus)
+        self.select_across((a_owner, anchor), (f_owner, focus))
     }
 }

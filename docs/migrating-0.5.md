@@ -200,6 +200,10 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   screen reader can follow a link or set the selection; see
   [Text, selection and links](guide/accessibility.md#text-selection-and-links).
   Other text is unchanged.
+- **Selection across texts.** A drag that starts in one selectable text and moves
+  into others selects across them, and Copy joins the pieces with newlines; see
+  [Rich text and selectable text](guide/text.md#rich-text-and-selectable-text).
+  Before, only one text could hold a selection.
 - **Colour filters.** `tre.Shader.filter(grayscale=1.0, ...)` is a ready-made
   effect shader for the CSS filter functions `saturate`, `brightness`, `contrast`,
   `grayscale`, `hue_rotate`, `invert` and `sepia`, applied in the order given; see

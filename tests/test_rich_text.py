@@ -254,3 +254,16 @@ def test_ctrl_a_and_shift_arrows_work_on_selected_static_text():
     assert node.get("selection") == (2, 0)
     window.simulate("key_down", key="a", ctrl=True)
     assert node.get("selection") == (0, 6)
+
+
+def test_selecting_in_one_text_clears_the_selection_in_another():
+    window = Window(width=300, height=120)
+    window.root.set(fill=WHITE, padding=0)
+    first = window.create("text", text="alpha", width=100, height=30, selectable=True)
+    second = window.create("text", text="bravo", width=100, height=30, selectable=True)
+    window.root.add_child(first)
+    window.root.add_child(second)
+    first.set(selection=(0, 3))
+    second.set(selection=(1, 4))
+    assert first.get("selection") is None
+    assert second.get("selection") == (1, 4)

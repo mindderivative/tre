@@ -159,8 +159,18 @@ Selected text shows the text colour at 30% behind it. Double-click selects a
 word and triple-click a line. With a selection showing, Ctrl+A selects all of
 that text, and Shift+Left, Shift+Right, Shift+Home and Shift+End move the end
 of the selection a character, or to the start or end of the text. The pointer
-is an I-beam over selectable text, unless the node sets a `cursor`. One text
-holds a selection at a time, and a press anywhere else clears it. A selectable text
+is an I-beam over selectable text, unless the node sets a `cursor`. A press anywhere else
+clears the selection.
+
+A drag that starts in one selectable text and moves on into others (0.5.4) selects
+across them, so a document with a text node per paragraph selects like one text:
+the start text from the press to its end, every selectable text between whole, and
+the last text up to the pointer. Copy joins the pieces with a newline, and each
+node's own range reads back from `node.get("selection")`. The drag follows the
+pointer only while it is over selectable text; over anything else it keeps what it
+had, and it does not scroll the view. Setting `selection` from code selects within
+that one text and clears the rest. Ctrl+A and the Shift keys act on the text the
+selection started in. A selectable text
 claims the pointer events over its box, which plain text never does (so a label
 inside a button doesn't swallow the button's clicks): turn it on for text that
 stands alone. A text input's own selection is separate, and Copy takes the

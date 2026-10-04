@@ -381,12 +381,20 @@ fn text_pointer_input(
             // un-scoped refinement beyond this phase.
             if let Some(field) = *text_drag {
                 let hit = tree.borrow().hit_test_local(root, position);
-                if let Some((hit, local_point)) = hit
-                    && hit == field
-                {
-                    if let Some(offset) = static_text_hit_offset(tree, text, hit, local_point) {
-                        tree.borrow_mut().extend_text_selection(hit, offset);
-                    } else if let Some(offset) = text_field_hit_offset(tree, text, hit, local_point)
+                if let Some((hit, local_point)) = hit {
+                    let static_drag = matches!(
+                        tree.borrow().get(field).map(|n| &n.kind),
+                        Some(NodeKind::Text(_))
+                    );
+                    if static_drag {
+                        // 0.5.4 (#152): a drag that started in static text goes on
+                        // into any other selectable text, selecting what lies
+                        // between; over anything else it keeps what it had.
+                        if let Some(offset) = static_text_hit_offset(tree, text, hit, local_point) {
+                            tree.borrow_mut().extend_text_selection(hit, offset);
+                        }
+                    } else if hit == field
+                        && let Some(offset) = text_field_hit_offset(tree, text, hit, local_point)
                     {
                         tree.borrow_mut().extend_text_field_selection(hit, offset);
                     }
@@ -432,7 +440,7 @@ fn text_pointer_input(
                 if let Some((hit, point)) = still
                     && hit == node
                     && link_under(tree, text, hit, point).as_deref() == Some(href.as_str())
-                    && tree.borrow().text_selected_text(node).is_none()
+                    && tree.borrow().static_selected_text().is_none()
                 {
                     link_click = Some(LinkClick {
                         node,
@@ -2401,6 +2409,66 @@ mod tests {
         assert_eq!(
             clicks,
             vec![(linked, "https://example.com/docs".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_drag_from_one_selectable_text_into_another_selects_across_them() {
+        let (tree, root, first, second) = static_text_scene();
+        if let Some(NodeKind::Text(state)) = tree.borrow_mut().get_mut(second).map(|n| &mut n.kind)
+        {
+            state.options.selectable = true;
+        }
+        let mut state = (super::TextClicks::default(), (None, None));
+        run(
+            &[
+                press(Point::new(60.0, 10.0)),
+                engine_core::InputEvent::PointerMoved {
+                    position: Point::new(60.0, 50.0),
+                },
+                release(Point::new(60.0, 50.0)),
+            ],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            std::time::Instant::now(),
+        );
+        let (a, b) = selection_of(&tree, first).expect("the first holds the start");
+        let (c, d) = selection_of(&tree, second).expect("the second holds the end");
+        assert_eq!(
+            a.max(b),
+            "Select this sentence".len(),
+            "to the end of the first"
+        );
+        assert_eq!(c.min(d), 0, "from the start of the second");
+        assert!(a.min(b) > 0 && c.max(d) > 0);
+        let copied = tree.borrow().static_selected_text().expect("copyable");
+        assert!(
+            copied.contains('\n'),
+            "the two texts are joined by a newline: {copied:?}"
+        );
+        // Dragging on over something that is not selectable keeps the selection.
+        run(
+            &[
+                press(Point::new(60.0, 10.0)),
+                engine_core::InputEvent::PointerMoved {
+                    position: Point::new(60.0, 50.0),
+                },
+                engine_core::InputEvent::PointerMoved {
+                    position: Point::new(60.0, 150.0),
+                },
+                release(Point::new(60.0, 150.0)),
+            ],
+            &tree,
+            root,
+            &mut state.0,
+            &mut state.1,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        );
+        assert_eq!(
+            tree.borrow().static_selected_text().as_deref(),
+            Some(copied.as_str())
         );
     }
 

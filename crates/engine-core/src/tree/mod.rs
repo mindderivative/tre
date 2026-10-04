@@ -109,7 +109,7 @@ pub struct Tree {
     dirty: bool,
     /// 0.5.4 (#112): the text node whose static selection is showing, if any.
     /// One at a time, as on a desktop.
-    static_selection: Option<NodeId>,
+    static_selection: text_editing::StaticSelection,
     /// 0.5.4 (#103): the nodes the last full scan found animating, and the
     /// `animations_started` count it was taken at. See `tick_all`.
     animating: Vec<NodeId>,
@@ -159,7 +159,7 @@ impl Tree {
             nodes: Nodes::new(),
             layout_epoch: 0,
             animating: Vec::new(),
-            static_selection: None,
+            static_selection: Default::default(),
             last_layout: None,
             scanned_at: None,
             taffy_nodes: SecondaryMap::new(),
