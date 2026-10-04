@@ -77,13 +77,6 @@ struct LayoutCacheKey {
     /// resolves to, which `draw_field`'s own paint loop reads directly
     /// (`shaped_layout`'s own real build below).
     spans: Vec<(Range<usize>, Color)>,
-    /// M31 Phase 4 (§5, §8): the real default brush every glyph
-    /// outside every real span resolves to -- without pushing this
-    /// explicitly, an un-spanned glyph's own real `style_index` would
-    /// point at `Style::default()`'s own `[u8; 4]::default()` brush
-    /// (`[0, 0, 0, 0]`, fully transparent), not `at.color`. Part of
-    /// the cache key since a real color change changes it.
-    default_color: Color,
     /// M96: italics, letter spacing, wrapping, and the line limit.
     options: TextOptions,
 }
@@ -149,7 +142,13 @@ fn family_stack<'a>(primary: &'a str, registered: &'a [String]) -> FontFamily<'a
 /// rules the width of the run, in the decoration's brush (the run's own when
 /// it has none), at the run font's own offset and thickness unless the style
 /// gives them.
-fn paint_decorations(scene: &mut Scene, glyph_run: &parley::GlyphRun<'_, [u8; 4]>, x: f64, y: f64) {
+fn paint_decorations(
+    scene: &mut Scene,
+    glyph_run: &parley::GlyphRun<'_, [u8; 4]>,
+    x: f64,
+    y: f64,
+    default: Color,
+) {
     let style = glyph_run.style();
     let metrics = glyph_run.run().metrics();
     let (left, width) = (
@@ -173,10 +172,35 @@ fn paint_decorations(scene: &mut Scene, glyph_run: &parley::GlyphRun<'_, [u8; 4]
         };
         let offset = decoration.offset.unwrap_or(offset);
         let size = decoration.size.unwrap_or(size).max(1.0);
-        let [r, g, b, a] = decoration.brush;
-        scene.set_paint(Color::from_rgba8(r, g, b, a));
+        scene.set_paint(resolve_brush(decoration.brush, default));
         let top = y + f64::from(glyph_run.baseline() - offset);
         scene.fill_rect(&Rect::new(left, top, left + width, top + f64::from(size)));
+    }
+}
+
+/// The brush of text that has no colour of its own: shaped with this, and
+/// painted in whatever colour the node has at paint time, so a colour change
+/// never reshapes the text (0.5.4, review).
+const NO_BRUSH: [u8; 4] = [0, 0, 0, 0];
+
+/// `color` as a brush. A span that really is `(0, 0, 0, 0)` becomes the other
+/// fully transparent value, so it is never mistaken for "no colour".
+fn brush_of(color: Color) -> [u8; 4] {
+    let rgba = color.to_rgba8();
+    let brush = [rgba.r, rgba.g, rgba.b, rgba.a];
+    if brush == NO_BRUSH {
+        [1, 1, 1, 0]
+    } else {
+        brush
+    }
+}
+
+/// A glyph run's colour: its own brush, or `default` where it has none.
+fn resolve_brush(brush: [u8; 4], default: Color) -> Color {
+    if brush == NO_BRUSH {
+        default
+    } else {
+        Color::from_rgba8(brush[0], brush[1], brush[2], brush[3])
     }
 }
 
@@ -187,7 +211,6 @@ fn shape_text(
     content: &str,
     font: &FontSpec<'_>,
     spans: &[(Range<usize>, Color)],
-    default_color: Color,
 ) -> parley::Layout<[u8; 4]> {
     let mut builder = layout_cx.ranged_builder(font_cx, content, 1.0, true);
     let fallback = fonts::fallback_families();
@@ -213,14 +236,9 @@ fn shape_text(
     // M31 Phase 4 (§5, §8): a default brush over the whole content, then a
     // per-range override for each syntax span -- every glyph needs a real
     // brush, since painting reads each glyph's own back.
-    let rgba = default_color.to_rgba8();
-    builder.push_default(StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]));
+    builder.push_default(StyleProperty::Brush(NO_BRUSH));
     for (range, color) in spans {
-        let rgba = color.to_rgba8();
-        builder.push(
-            StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]),
-            range.clone(),
-        );
+        builder.push(StyleProperty::Brush(brush_of(*color)), range.clone());
     }
     // 0.5.4 (#112): a text node's own spans, over the node's style.
     let len = content.len();
@@ -237,11 +255,7 @@ fn shape_text(
             continue;
         }
         if let Some(color) = span.color {
-            let rgba = color.to_rgba8();
-            builder.push(
-                StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]),
-                range.clone(),
-            );
+            builder.push(StyleProperty::Brush(brush_of(color)), range.clone());
         }
         if let Some(weight) = span.weight {
             builder.push(
@@ -327,9 +341,8 @@ fn build_text_layout(
     max_width: f32,
     align: TextAlign,
     spans: &[(Range<usize>, Color)],
-    default_color: Color,
 ) -> parley::Layout<[u8; 4]> {
-    let mut layout = shape_text(font_cx, layout_cx, content, font, spans, default_color);
+    let mut layout = shape_text(font_cx, layout_cx, content, font, spans);
     break_and_align(&mut layout, font, max_width, align);
     if !font.options.ellipsis {
         return layout;
@@ -351,7 +364,7 @@ fn build_text_layout(
     }
     // The widest single-line width of `text`.
     let mut width_of = |text: &str| {
-        let mut probe = shape_text(font_cx, layout_cx, text, font, &[], default_color);
+        let mut probe = shape_text(font_cx, layout_cx, text, font, &[]);
         probe.break_all_lines(None);
         probe.width()
     };
@@ -384,7 +397,7 @@ fn build_text_layout(
         display.push_str(text[..boundaries[lo]].trim_end());
         display.push('…');
     }
-    let mut layout = shape_text(font_cx, layout_cx, &display, font, &[], default_color);
+    let mut layout = shape_text(font_cx, layout_cx, &display, font, &[]);
     break_and_align(&mut layout, font, max_width, align);
     layout
 }
@@ -419,6 +432,10 @@ pub struct TextRenderer {
     /// distinct strings a live-updating label has ever shown; see
     /// `evict_stale_layouts`.
     layout_cache: HashMap<NodeId, CachedLayout>,
+    /// How many text layouts have been built, for tests: a working cache
+    /// leaves it alone when only a colour changes.
+    #[cfg(test)]
+    shapes: u64,
     /// M32 Phase 1 (§5, §8, §10): real per-`(font_family, font_size)`
     /// monospace cell metrics, memoized -- see `monospace_cell_size`.
     /// Unbounded like `layout_cache` was before `evict_stale_layouts`
@@ -489,6 +506,8 @@ impl TextRenderer {
             },
             layout_cx: LayoutContext::new(),
             layout_cache: HashMap::new(),
+            #[cfg(test)]
+            shapes: 0,
             monospace_cell_cache: HashMap::new(),
             terminal_run_cache: HashMap::new(),
             font_generation,
@@ -585,7 +604,6 @@ impl TextRenderer {
             width,
             TextAlign::Start,
             &[],
-            Color::BLACK,
         );
         let shown = visible_lines(&layout, font.options);
         let widest = (0..shown)
@@ -652,7 +670,6 @@ impl TextRenderer {
         align: TextAlign,
         line_height: Option<f32>,
         spans: &[(Range<usize>, Color)],
-        default_color: Color,
         options: &TextOptions,
     ) -> &parley::Layout<[u8; 4]> {
         let stale = self.layout_cache.get(&node_id).is_none_or(|cached| {
@@ -664,7 +681,6 @@ impl TextRenderer {
                 || cached.key.align != align
                 || cached.key.line_height != line_height
                 || cached.key.spans != spans
-                || cached.key.default_color != default_color
                 || !cached.key.options.same_layout(options)
         });
         let Self {
@@ -672,6 +688,8 @@ impl TextRenderer {
             font_cx,
             layout_cx,
             layout_cache,
+            #[cfg(test)]
+            shapes,
             monospace_cell_cache: _,
             terminal_run_cache: _,
             font_generation: _,
@@ -680,6 +698,10 @@ impl TextRenderer {
             system_fonts: _,
         } = self;
         if stale {
+            #[cfg(test)]
+            {
+                *shapes += 1;
+            }
             let font = FontSpec {
                 family: font_family,
                 weight: font_weight,
@@ -687,16 +709,8 @@ impl TextRenderer {
                 line_height,
                 options,
             };
-            let layout = build_text_layout(
-                font_cx,
-                layout_cx,
-                content,
-                &font,
-                max_width,
-                align,
-                spans,
-                default_color,
-            );
+            let layout =
+                build_text_layout(font_cx, layout_cx, content, &font, max_width, align, spans);
             layout_cache.insert(
                 node_id,
                 CachedLayout {
@@ -709,7 +723,6 @@ impl TextRenderer {
                         align,
                         line_height,
                         spans: spans.to_vec(),
-                        default_color,
                         options: options.clone(),
                     },
                     layout,
@@ -812,14 +825,13 @@ impl TextRenderer {
     /// 0.4.0 M4: the size of what `draw` paints for a text node with
     /// these inputs, from its box's origin -- the shown lines' width and
     /// height, or the box width where `draw` clips an overflowing line.
-    /// Asks `shaped_layout` exactly as `draw` does (`color` included, as
-    /// `draw`'s `TextPlacement` passes it), so it reuses the same cached
-    /// layout rather than shaping again.
+    /// Asks `shaped_layout` exactly as `draw` does, so it reuses the same
+    /// cached layout rather than shaping again (colour is not part of what is
+    /// shaped).
     pub(crate) fn text_extent(
         &mut self,
         state: &TextState,
         max_width: f32,
-        color: Color,
         node_id: NodeId,
     ) -> (f32, f32) {
         let layout = self.shaped_layout(
@@ -832,7 +844,6 @@ impl TextRenderer {
             state.align,
             state.line_height,
             &[],
-            color,
             &state.options,
         );
         let clips_width =
@@ -899,7 +910,6 @@ impl TextRenderer {
             state.align,
             state.line_height,
             &[],
-            at.color,
             &state.options,
         );
 
@@ -944,19 +954,20 @@ impl TextRenderer {
                 ));
             }
         }
-        let shaped = match gradient {
-            Some(gradient) => {
-                let (w, h) = (f64::from(layout.width()), f64::from(layout.height()));
-                let (paint, transform) = gradient.resolve(w, h);
-                scene.set_paint(paint);
-                scene.set_paint_transform(Affine::translate((at.x, at.y)) * transform);
-                true
+        // What a run with no colour of its own is painted with: the gradient
+        // across the text, or the node's colour.
+        let base = gradient.map(|gradient| {
+            let (w, h) = (f64::from(layout.width()), f64::from(layout.height()));
+            gradient.resolve(w, h)
+        });
+        let shaped = base.is_some();
+        match &base {
+            Some((paint, transform)) => {
+                scene.set_paint(paint.clone());
+                scene.set_paint_transform(Affine::translate((at.x, at.y)) * *transform);
             }
-            None => {
-                scene.set_paint(at.color);
-                false
-            }
-        };
+            None => scene.set_paint(at.color),
+        }
         let rich = !state.options.spans.is_empty();
         for line in layout.lines().take(shown) {
             for item in line.items() {
@@ -973,8 +984,14 @@ impl TextRenderer {
                 });
                 // 0.5.4 (#112): a span's colour is the run's brush.
                 if rich {
-                    let [r, g, b, a] = glyph_run.style().brush;
-                    scene.set_paint(Color::from_rgba8(r, g, b, a));
+                    let brush = glyph_run.style().brush;
+                    if brush != NO_BRUSH {
+                        scene.set_paint(Color::from_rgba8(brush[0], brush[1], brush[2], brush[3]));
+                    } else if let Some((paint, _)) = &base {
+                        scene.set_paint(paint.clone());
+                    } else {
+                        scene.set_paint(at.color);
+                    }
                 }
                 let mut builder = scene
                     .glyph_run(resources, font)
@@ -989,7 +1006,7 @@ impl TextRenderer {
                 }
                 report_glyph_errors(builder.fill_glyphs(glyphs));
                 if rich {
-                    paint_decorations(scene, &glyph_run, at.x, at.y);
+                    paint_decorations(scene, &glyph_run, at.x, at.y, at.color);
                 }
             }
         }
@@ -1112,7 +1129,6 @@ impl TextRenderer {
             state.align,
             state.line_height,
             &[],
-            at.color,
             &state.options,
         );
         Cursor::from_point(layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index()
@@ -1136,7 +1152,6 @@ impl TextRenderer {
             state.align,
             state.line_height,
             &[],
-            at.color,
             &state.options,
         )
     }
@@ -1418,7 +1433,6 @@ impl TextRenderer {
             // pre-M62 behavior, never wired to any real per-field value.
             None,
             &display_spans,
-            text_color,
             &TextOptions::default(),
         );
 
@@ -1475,10 +1489,9 @@ impl TextRenderer {
                 // draw call per glyph.
                 let styles = layout.styles();
                 let mut batch: Vec<glifo::Glyph> = Vec::new();
-                let mut batch_color = at.color;
+                let mut batch_color = text_color;
                 for g in glyph_run.positioned_glyphs() {
-                    let [r, gr, b, a] = styles[g.style_index as usize].brush;
-                    let color = Color::from_rgba8(r, gr, b, a);
+                    let color = resolve_brush(styles[g.style_index as usize].brush, text_color);
                     if !batch.is_empty() && color != batch_color {
                         scene.set_paint(batch_color);
                         report_glyph_errors(
@@ -2359,7 +2372,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
 
@@ -2373,7 +2385,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -2391,7 +2402,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -2409,7 +2419,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -2427,7 +2436,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(renderer.layout_cache.get(&id).unwrap().key.font_size, 24.0);
@@ -2442,7 +2450,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(renderer.layout_cache.get(&id).unwrap().key.max_width, 50.0);
@@ -2457,7 +2464,6 @@ mod tests {
             TextAlign::Center,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -2475,7 +2481,6 @@ mod tests {
             TextAlign::Center,
             Some(1.5),
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -2495,31 +2500,51 @@ mod tests {
             TextAlign::Center,
             Some(1.5),
             &changed_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.spans,
             changed_spans
         );
+    }
 
-        renderer.shaped_layout(
-            id,
-            "goodbye",
-            MONOSPACE_FONT_FAMILY,
-            700.0,
-            24.0,
-            50.0,
-            TextAlign::Center,
-            Some(1.5),
-            &changed_spans,
-            Color::from_rgba8(255, 255, 255, 255),
-            &TextOptions::default(),
-        );
-        assert_eq!(
-            renderer.layout_cache.get(&id).unwrap().key.default_color,
-            Color::from_rgba8(255, 255, 255, 255)
-        );
+    /// 0.5.4 (review): colour is applied when painting, not when shaping, so a
+    /// pointer query (which has no colour) and the draw (which has) share one
+    /// layout, and recolouring a node reshapes nothing.
+    #[test]
+    fn querying_and_painting_a_text_node_shapes_it_once_whatever_the_colour() {
+        pollster::block_on(async {
+            let mut frame_renderer = frame_renderer_for_test().await;
+            let mut renderer = TextRenderer::new();
+            let mut scene = Scene::new(100, 100);
+            let mut tree = Tree::new();
+            let a = text_node(&mut tree, "hello world");
+            let NodeKind::Text(state) = &tree.get(a).unwrap().kind else {
+                panic!("expected Text");
+            };
+            renderer.draw(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                state,
+                placement(),
+                a,
+            );
+            assert_eq!(renderer.shapes, 1);
+            let clear = TextPlacement {
+                color: Color::TRANSPARENT,
+                ..placement()
+            };
+            renderer.hit_test_text(a, state, clear, Point::new(5.0, 5.0));
+            let red = TextPlacement {
+                color: Color::from_rgba8(255, 0, 0, 255),
+                ..placement()
+            };
+            renderer.draw(&mut scene, frame_renderer.resources_mut(), state, red, a);
+            assert_eq!(
+                renderer.shapes, 1,
+                "a query and a recolour reuse the layout"
+            );
+        });
     }
 
     /// M31 Phase 1 (§5, §8): the real finding that closes this phase's
@@ -2553,7 +2578,6 @@ mod tests {
                 TextAlign::Start,
                 None,
                 &[],
-                Color::from_rgba8(0, 0, 0, 255),
                 &TextOptions::default(),
             )
             .lines()
@@ -2570,7 +2594,6 @@ mod tests {
                 TextAlign::Start,
                 None,
                 &[],
-                Color::from_rgba8(0, 0, 0, 255),
                 &TextOptions::default(),
             )
             .lines()
@@ -2613,7 +2636,6 @@ mod tests {
                 TextAlign::Start,
                 None,
                 &[],
-                Color::from_rgba8(0, 0, 0, 255),
                 &TextOptions::default(),
             )
             .lines()
@@ -2630,7 +2652,6 @@ mod tests {
                 TextAlign::Start,
                 Some(2.0),
                 &[],
-                Color::from_rgba8(0, 0, 0, 255),
                 &TextOptions::default(),
             )
             .lines()

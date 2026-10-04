@@ -284,3 +284,31 @@ fn changing_a_gradient_damages_where_it_is() {
     tree.get_mut(canvas_id).unwrap().paint.border_gradient = Some(Box::new(ramp()));
     assert_ne!(tracker.damage(&tree, r, w, h, &mut text), Damage::None);
 }
+
+#[test]
+fn text_with_a_coloured_span_still_paints_its_other_runs_with_the_gradient() {
+    let mut tree = Tree::new();
+    let r = root(&mut tree);
+    let id = text_node(&mut tree, r, Some(ramp()));
+    if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+        state.options.spans = vec![engine_core::TextSpan {
+            start: 0,
+            end: 2,
+            color: Some(Color::from_rgba8(0, 255, 0, 255)),
+            ..Default::default()
+        }];
+    }
+    let f = frame(&mut tree, r);
+    // The first glyphs are the span's green; the later ones are the ramp's red,
+    // not a flat colour.
+    let green = (0..25).any(|x| (20..70).any(|y| f.at(x, y)[1] > 200));
+    assert!(green, "the span keeps its colour");
+    assert!(
+        peak_red(&f, 70, 100) > 150,
+        "the unspanned end is on the ramp"
+    );
+    assert!(
+        peak_red(&f, 30, 45) < peak_red(&f, 70, 100),
+        "and it is a ramp"
+    );
+}

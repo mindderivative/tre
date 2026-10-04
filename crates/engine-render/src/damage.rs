@@ -1525,7 +1525,7 @@ fn local_painted(text: &mut TextRenderer, id: NodeId, node: &Node, w: f64, h: f6
     }
     match &node.kind {
         NodeKind::Text(state) => {
-            let (tw, th) = text.text_extent(state, w as f32, node.paint.background.current, id);
+            let (tw, th) = text.text_extent(state, w as f32, id);
             // Glyphs overhang their advance a little (italics,
             // ascenders); a quarter of the font size covers it.
             let overhang = f64::from(state.font_size) * 0.25;

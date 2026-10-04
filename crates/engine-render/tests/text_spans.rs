@@ -382,3 +382,30 @@ fn a_size_or_family_change_damages_the_text_and_a_link_does_not() {
     set(&mut tree, &|s| s.link = Some("https://example.com".into()));
     assert_eq!(tracker.damage(&tree, root, w, h, &mut text), Damage::None);
 }
+
+#[test]
+fn unspanned_text_follows_the_nodes_colour_when_it_changes() {
+    use engine_core::Animated;
+    let (device, queue) = pollster::block_on(support::device("text spans"));
+    let (mut tree, root) = tree(
+        "Hello world",
+        vec![TextSpan {
+            color: Some(RED),
+            ..span(0, 5)
+        }],
+    );
+    // The node's own colour is green now; 'world' follows it, 'Hello' stays red.
+    tree.get_mut(root).unwrap().paint.background = Animated::new(Color::from_rgba8(0, 255, 0, 255));
+    let s = snapshot(&device, &queue, &tree, root, W, H, 1.0, 0.0).unwrap();
+    let green = |x0: u32, x1: u32| {
+        (0..s.height)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let i = ((y * s.width + x) * 4) as usize;
+                s.rgba[i + 3] > 128 && s.rgba[i + 1] > 200 && s.rgba[i] < 80
+            })
+            .count()
+    };
+    assert!(green(100, W) > 100, "'world' is the node's green");
+    assert_eq!(green(0, 70), 0, "'Hello' keeps its red");
+}
