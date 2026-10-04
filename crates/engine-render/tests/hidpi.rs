@@ -449,3 +449,51 @@ fn snapping_changes_nothing_at_whole_scales() {
     authored.frame();
     assert_eq!(differing(&scaled.pixels(), &authored.pixels(), 0), 0);
 }
+
+#[test]
+fn a_blur_scales_with_the_display() {
+    let mut scaled = Window::new((80.0, 60.0), 2.0);
+    let id = scaled.rect(20.0, 15.0, 30.0, 30.0, RED, 0.0);
+    scaled.tree.get_mut(id).unwrap().paint.blur = Animated::new(3.0);
+    scaled.frame();
+
+    let mut authored = Window::new((160.0, 120.0), 1.0);
+    let id = authored.rect(40.0, 30.0, 60.0, 60.0, RED, 0.0);
+    authored.tree.get_mut(id).unwrap().paint.blur = Animated::new(6.0);
+    authored.frame();
+
+    // The same blur, to a rounding of the filter's own size steps.
+    assert!(
+        differing(&scaled.pixels(), &authored.pixels(), 12) < 40,
+        "a sigma of 3 at 2x is a sigma of 6 at 1x"
+    );
+}
+
+/// 0.5.4 (#110): a window with a bar behind a frosted panel.
+fn frosted_window(bar_color: Color) -> (Window, NodeId) {
+    let mut w = Window::new((100.0, 100.0), 1.0);
+    let bar = w.rect(45.0, 0.0, 10.0, 100.0, bar_color, 0.0);
+    let panel = w.rect(30.0, 30.0, 40.0, 40.0, Color::from_rgba8(0, 0, 0, 0), 6.0);
+    w.tree.get_mut(panel).unwrap().paint.backdrop_blur = Animated::new(4.0);
+    (w, bar)
+}
+
+#[test]
+fn partial_redraw_behind_a_backdrop_blur_matches_a_full_redraw() {
+    let (mut live, bar) = frosted_window(RED);
+    live.frame();
+    live.tree.get_mut(bar).unwrap().paint.background = Animated::new(BLUE);
+    let damage = live.frame();
+    assert!(
+        matches!(damage, Damage::Rects(_)),
+        "a partial redraw: {damage:?}"
+    );
+
+    let (mut fresh, _) = frosted_window(BLUE);
+    fresh.frame();
+    assert_eq!(
+        differing(&live.pixels(), &fresh.pixels(), 0),
+        0,
+        "the kept frame plus the partial redraw is the frame drawn whole"
+    );
+}

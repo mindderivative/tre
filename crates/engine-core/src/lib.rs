@@ -39,11 +39,11 @@ pub use input::{
     ctrl_shortcut,
 };
 pub use node::{
-    CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Node, NodeId, NodeKind,
-    NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
-    SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, TerminalCell, TerminalPalette,
-    TerminalState, TextAlign, TextFieldState, TextOptions, TextState, VirtualListState,
-    WindowRegion,
+    Blend, CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Node, NodeId,
+    NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
+    SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, TerminalCell,
+    TerminalPalette, TerminalState, TextAlign, TextFieldState, TextOptions, TextState,
+    VirtualListState, WindowRegion,
 };
 pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};

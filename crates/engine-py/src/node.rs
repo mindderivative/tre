@@ -131,7 +131,7 @@ impl Node {
     /// Starts (or retargets) an animation on one property, from its
     /// current value, and returns immediately. The animatable properties
     /// are the paint names (`fill`, `stroke_color`, `stroke_width`,
-    /// `opacity`, `corner_radius`, `shadows`), the transform parts, a
+    /// `opacity`, `blur`, `backdrop_blur`, `corner_radius`, `shadows`), the transform parts, a
     /// scroll view's `scroll_offset`, and a path's `data`/`trim_*`; any
     /// other name raises `ValueError`. `on_complete` is called with no
     /// arguments exactly once, the frame (or `Window.advance`) this
@@ -304,6 +304,16 @@ impl Node {
                     "translate_y" => &mut parts.translate_y,
                     "scale" => &mut parts.scale,
                     _ => &mut parts.rotation_deg,
+                };
+                animate_field(field, value, duration, curve, now, handle);
+            }
+            "blur" | "backdrop_blur" => {
+                let value = crate::node_props::parse_non_negative(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let field = if property == "blur" {
+                    &mut node.paint.blur
+                } else {
+                    &mut node.paint.backdrop_blur
                 };
                 animate_field(field, value, duration, curve, now, handle);
             }

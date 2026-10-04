@@ -171,7 +171,7 @@ class Node:
         `duration_ms=0` snaps instantly on the next tick rather than
         easing. `easing` is `"linear"` (the default) or a cubic bezier
         `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it. Animatable:
-        `fill`, `stroke_color`, `stroke_width`, `opacity`,
+        `fill`, `stroke_color`, `stroke_width`, `opacity`, `blur`, `backdrop_blur`,
         `corner_radius` (a number or a 4-tuple), `shadows`, the transform
         parts `translate_x`/`translate_y`/`scale`/`rotation_deg`, a
         scroll view's `scroll_offset`, and a path's `data`/`trim_start`/

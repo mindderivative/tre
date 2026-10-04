@@ -296,6 +296,12 @@ fn build_scene(
         text,
         geometry,
         open: Vec::new(),
+        walk_root: root,
+        base: Affine::scale(scale),
+        window: visible,
+        stop_at: None,
+        stopped: false,
+        depth: 0,
     };
     let base = Affine::scale(scale);
     if effect_root.is_some() {
@@ -433,6 +439,32 @@ pub(crate) fn clips_children(node: &engine_core::Node) -> bool {
     ) || node.paint.clip_children
 }
 
+/// `peniko`'s blend for a node's `Blend`: the mixing function over the
+/// backdrop (`SrcOver`).
+fn blend_mode(blend: engine_core::Blend) -> peniko::BlendMode {
+    use engine_core::Blend;
+    use peniko::Mix;
+    let mix = match blend {
+        Blend::Normal => Mix::Normal,
+        Blend::Multiply => Mix::Multiply,
+        Blend::Screen => Mix::Screen,
+        Blend::Overlay => Mix::Overlay,
+        Blend::Darken => Mix::Darken,
+        Blend::Lighten => Mix::Lighten,
+        Blend::ColorDodge => Mix::ColorDodge,
+        Blend::ColorBurn => Mix::ColorBurn,
+        Blend::HardLight => Mix::HardLight,
+        Blend::SoftLight => Mix::SoftLight,
+        Blend::Difference => Mix::Difference,
+        Blend::Exclusion => Mix::Exclusion,
+        Blend::Hue => Mix::Hue,
+        Blend::Saturation => Mix::Saturation,
+        Blend::Color => Mix::Color,
+        Blend::Luminosity => Mix::Luminosity,
+    };
+    peniko::BlendMode::new(mix, peniko::Compose::SrcOver)
+}
+
 /// The paint walk (`walk::Visitor`): each node's own paint, its group
 /// opacity layer, and its children's clip layer, which `leave` closes.
 struct Painter<'a> {
@@ -452,11 +484,85 @@ struct Painter<'a> {
     /// Per node entered and not yet left: whether it opened an opacity
     /// layer, whether it opened a clip layer, and whether it drew itself.
     open: Vec<(bool, bool, bool)>,
+    /// 0.5.4 (#110): what the walk started from, to walk again for a
+    /// backdrop blur (`paint_backdrop`).
+    walk_root: NodeId,
+    base: Affine,
+    window: Rect,
+    /// A backdrop pass paints everything behind this node and stops there:
+    /// nothing from `stop_at` on is drawn.
+    stop_at: Option<NodeId>,
+    stopped: bool,
+    /// How many backdrop passes this painter is inside of; one inside another
+    /// is allowed, a third is not.
+    depth: u8,
+}
+
+impl Painter<'_> {
+    /// 0.5.4 (#110): frosted glass. Paints, inside `v`'s box, everything behind
+    /// it blurred by `sigma`: the part of the tree that paints before `v`,
+    /// drawn again inside a blur layer clipped to the box. The nested walk
+    /// is limited to the box and the blur's reach (three standard deviations),
+    /// so its cost follows the box, not the window.
+    fn paint_backdrop(&mut self, v: &walk::Visit<'_>, sigma: f64) {
+        let reach = sigma * 3.0;
+        let region = v.bounds.inflate(reach, reach).intersect(self.window);
+        if region.width() <= 0.0 || region.height() <= 0.0 {
+            return;
+        }
+        self.scene.set_transform(v.composed);
+        let clip = box_path(v.node, v.id, v.w, v.h, self.geometry);
+        self.scene.push_layer(Some(clip), None, None, None, None);
+        self.scene.push_layer(
+            None,
+            None,
+            None,
+            None,
+            Some(vello_common::filter_effects::Filter::from_function(
+                vello_common::filter_effects::FilterFunction::Blur {
+                    radius: sigma as f32,
+                },
+            )),
+        );
+        self.scene.set_transform(Affine::IDENTITY);
+        let window_clip = region.to_path(0.1);
+        self.scene
+            .push_layer(Some(&window_clip), None, None, None, None);
+        let mut behind = Painter {
+            tree: self.tree,
+            rects: None,
+            shaders: self.shaders,
+            effect_root: None,
+            scene: &mut *self.scene,
+            resources: &mut *self.resources,
+            text: &mut *self.text,
+            geometry: &mut *self.geometry,
+            open: Vec::new(),
+            walk_root: self.walk_root,
+            base: self.base,
+            window: self.window,
+            stop_at: Some(v.id),
+            stopped: false,
+            depth: self.depth + 1,
+        };
+        walk::walk(self.tree, self.walk_root, self.base, region, &mut behind);
+        self.scene.pop_layer();
+        self.scene.pop_layer();
+        self.scene.pop_layer();
+    }
 }
 
 impl<'t> walk::Visitor<'t> for Painter<'_> {
     fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
         let node = v.node;
+        // A backdrop pass draws what is behind its node, and nothing else.
+        if self.stopped {
+            return false;
+        }
+        if self.stop_at == Some(v.id) {
+            self.stopped = true;
+            return false;
+        }
         // 0.4.0 M5: in a partial redraw a node draws only if what it paints
         // (`damage::painted_rect`, the extent the damage walk records --
         // shadows and overflow included, not just its box) reaches a damage
@@ -488,10 +594,37 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
         } else {
             node.paint.opacity.current
         };
-        let layered = opacity < 1.0;
+        // 0.5.4 (#110): a blur or a blend mode makes the node and its subtree
+        // a layer too, with the opacity: they act on the group, not each paint.
+        let blur = if is_root {
+            0.0
+        } else {
+            node.paint.blur.current
+        };
+        let blend = if is_root {
+            engine_core::Blend::Normal
+        } else {
+            node.paint.blend
+        };
+        let layered = opacity < 1.0 || blur > 0.0 || blend != engine_core::Blend::Normal;
         if layered {
-            self.scene
-                .push_layer(None, None, Some(opacity as f32), None, None);
+            // A blur's width is in the node's own pixels: the layer takes the
+            // scene's current transform, so set the node's.
+            self.scene.set_transform(v.composed);
+            let filter = (blur > 0.0).then(|| {
+                vello_common::filter_effects::Filter::from_function(
+                    vello_common::filter_effects::FilterFunction::Blur {
+                        radius: blur as f32,
+                    },
+                )
+            });
+            self.scene.push_layer(
+                None,
+                (blend != engine_core::Blend::Normal).then(|| blend_mode(blend)),
+                (opacity < 1.0).then_some(opacity as f32),
+                None,
+                filter,
+            );
         }
         // 0.5.1 (#69): an effect node whose shader ran is its result: the
         // texture in place of the node and its subtree.
@@ -500,6 +633,13 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
         } else {
             self.shaders.texture_of(v.id)
         };
+        // 0.5.4 (#110): frosted glass, under the node's own paint.
+        if draw_self && !is_root && self.effect_root.is_none() && self.depth < 2 {
+            let sigma = node.paint.backdrop_blur.current;
+            if sigma > 0.0 {
+                self.paint_backdrop(v, sigma);
+            }
+        }
         if let Some((size, true)) = shader {
             if draw_self {
                 paint_shader_texture(

@@ -179,3 +179,8 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   between compatible ones (see [Gradients](reference/paint.md#gradients)).
   Nothing changes for a fill set to a colour. Canvas painter calls still take
   colours only.
+- **Blur, frosted glass, and blend modes.** A node takes `blur` (a Gaussian blur
+  of itself and its subtree), `backdrop_blur` (what is behind it, blurred,
+  inside its box) and `blend_mode` (CSS `mix-blend-mode`); see
+  [Blur, frosted glass, and blend modes](reference/paint.md#blur-frosted-glass-and-blend-modes).
+  All are off by default and change nothing for existing nodes.

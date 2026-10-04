@@ -26,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 44] = [
+const SETTABLE: [&str; 47] = [
     "visible",
     "z_index",
     "clip_children",
@@ -40,6 +40,9 @@ const SETTABLE: [&str; 44] = [
     "opacity",
     "corner_radius",
     "shadows",
+    "blur",
+    "backdrop_blur",
+    "blend_mode",
     "data",
     "view_box",
     "trim_start",
@@ -146,6 +149,10 @@ pub(crate) enum Change {
     TrimStart(f64),
     TrimEnd(f64),
     Fill(Color),
+    /// 0.5.4 (#110).
+    Blur(f64),
+    BackdropBlur(f64),
+    BlendMode(engine_core::Blend),
     /// 0.5.4 (#109): `fill` set to a `Gradient`.
     FillGradient(engine_core::Gradient),
     StrokeColor(Color),
@@ -364,6 +371,8 @@ pub(crate) fn animatable_to_py(
         "scale" => number(*pick(&node.paint.node_transform.scale, target))?,
         "rotation_deg" => number(*pick(&node.paint.node_transform.rotation_deg, target))?,
         "opacity" => number(*pick(&node.paint.opacity, target))?,
+        "blur" => number(*pick(&node.paint.blur, target))?,
+        "backdrop_blur" => number(*pick(&node.paint.backdrop_blur, target))?,
         "corner_radius" => match &node.paint.corner_radii_override {
             Some(radii) => {
                 let [a, b, c, d] = pick(radii, target).0;
@@ -433,6 +442,8 @@ pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyRes
         "scale" => node.paint.node_transform.scale.stop(),
         "rotation_deg" => node.paint.node_transform.rotation_deg.stop(),
         "opacity" => node.paint.opacity.stop(),
+        "blur" => node.paint.blur.stop(),
+        "backdrop_blur" => node.paint.backdrop_blur.stop(),
         "corner_radius" => {
             node.paint.corner_radius.stop();
             if let Some(radii) = &mut node.paint.corner_radii_override {
@@ -685,6 +696,15 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "stroke_color" => Change::StrokeColor(parse_color(value, name)?),
         "stroke_width" => Change::StrokeWidth(parse_non_negative(value, name)?),
         "opacity" => Change::Opacity(fraction(value, name)?),
+        "blur" => Change::Blur(parse_non_negative(value, name)?),
+        "backdrop_blur" => Change::BackdropBlur(parse_non_negative(value, name)?),
+        "blend_mode" => {
+            let mode: String = required(value, name, "a blend mode name")?;
+            Change::BlendMode(engine_core::Blend::from_name(&mode).ok_or_else(|| {
+                let valid: Vec<&str> = engine_core::Blend::ALL.iter().map(|(n, _)| *n).collect();
+                invalid(name, &format!("one of: {}", valid.join(", ")))
+            })?)
+        }
         "corner_radius" => Change::CornerRadius(parse_radius(value, name)?),
         "shadows" => Change::Shadows(parse_shadows(value, name)?),
         "placeholder" => Change::Placeholder(required(value, name, "a str")?),
@@ -924,6 +944,7 @@ impl Node {
                     WindowRegion::Drag => any("drag".into_pyobject(py)?.into_any()),
                     WindowRegion::NoDrag => any("none".into_pyobject(py)?.into_any()),
                 },
+                "blend_mode" => any(node.paint.blend.name().into_pyobject(py)?.into_any()),
                 "visible" => any(node.visible.into_pyobject(py)?.to_owned().into_any()),
                 "z_index" => any(node.z_index.into_pyobject(py)?.into_any()),
                 "clip_children" => any(node
@@ -1231,6 +1252,9 @@ impl Node {
                 Change::StrokeColor(color) => node.paint.border_color = Animated::new(color),
                 Change::StrokeWidth(width) => node.paint.border_width = Animated::new(width),
                 Change::Opacity(opacity) => node.paint.opacity = Animated::new(opacity),
+                Change::Blur(blur) => node.paint.blur = Animated::new(blur),
+                Change::BackdropBlur(blur) => node.paint.backdrop_blur = Animated::new(blur),
+                Change::BlendMode(mode) => node.paint.blend = mode,
                 Change::CornerRadius(Radius::Uniform(radius)) => {
                     node.paint.corner_radius = Animated::new(radius);
                     node.paint.corner_radii_override = None;

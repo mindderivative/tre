@@ -204,6 +204,20 @@ impl<'t> walk::Visitor<'t> for Recorder<'_> {
         num(&mut hasher, v.w);
         num(&mut hasher, v.h);
         node_fingerprint(&mut hasher, self.tree, self.time, v.id, v.node);
+        // 0.5.4 (#110): a backdrop blur shows what is behind it, so anything
+        // painted before it that reaches its box or the blur's reach is part
+        // of what it paints. The records so far are exactly those nodes.
+        let sigma = v.node.paint.backdrop_blur.current;
+        if sigma > 0.0 {
+            let reach = v.bounds.inflate(sigma * 3.0, sigma * 3.0);
+            for (id, record) in self.records.iter() {
+                if record.painted.overlaps(reach) {
+                    id.hash(&mut hasher);
+                    record.fingerprint.hash(&mut hasher);
+                    rect(&mut hasher, record.painted);
+                }
+            }
+        }
         self.records.insert(
             v.id,
             Record {
@@ -253,6 +267,12 @@ pub(crate) fn painted_rect(
 /// reaches past it.
 fn local_painted(text: &mut TextRenderer, id: NodeId, node: &Node, w: f64, h: f64) -> Rect {
     let mut local = Rect::new(0.0, 0.0, w, h);
+    // 0.5.4 (#110): a blur spreads the node's pixels about three standard
+    // deviations past its box.
+    let reach = node.paint.blur.current * 3.0;
+    if reach > 0.0 {
+        local = local.inflate(reach, reach);
+    }
     for shadow in &node.paint.shadows.current.0 {
         if shadow.color.components[3] <= 0.0 {
             continue;
@@ -497,6 +517,9 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         node_transform,
         clip_children,
         gradient,
+        blur,
+        blend,
+        backdrop_blur,
     } = paint;
     color(h, background.current);
     num(h, corner_radius.current);
@@ -523,6 +546,10 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         num(h, part.current);
     }
     clip_children.hash(h);
+    // 0.5.4 (#110): blur, blend mode and backdrop blur.
+    num(h, blur.current);
+    (*blend as u8).hash(h);
+    num(h, backdrop_blur.current);
     // 0.5.4 (#109): a gradient is part of the fill.
     match gradient {
         None => 0u8.hash(h),

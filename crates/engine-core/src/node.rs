@@ -1153,6 +1153,73 @@ pub struct PaintProperties {
     /// which stays what a fill set back to a colour starts from. Boxed: most
     /// nodes have none.
     pub gradient: Option<Box<Animated<crate::Gradient>>>,
+    /// 0.5.4 (#110): a Gaussian blur of the node and its subtree, as a
+    /// standard deviation in the node's own pixels. `0.0` is none.
+    pub blur: Animated<f64>,
+    /// 0.5.4 (#110): how the node and its subtree mix with what is behind.
+    pub blend: Blend,
+    /// 0.5.4 (#110): frosted glass -- a Gaussian blur, standard deviation
+    /// in the node's own pixels, of everything painted behind the node,
+    /// shown inside its box. `0.0` is none.
+    pub backdrop_blur: Animated<f64>,
+}
+
+/// How a node mixes with what is behind it (CSS `mix-blend-mode`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Blend {
+    #[default]
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl Blend {
+    /// Every mode, with the name Python uses.
+    pub const ALL: [(&'static str, Blend); 16] = [
+        ("normal", Blend::Normal),
+        ("multiply", Blend::Multiply),
+        ("screen", Blend::Screen),
+        ("overlay", Blend::Overlay),
+        ("darken", Blend::Darken),
+        ("lighten", Blend::Lighten),
+        ("color_dodge", Blend::ColorDodge),
+        ("color_burn", Blend::ColorBurn),
+        ("hard_light", Blend::HardLight),
+        ("soft_light", Blend::SoftLight),
+        ("difference", Blend::Difference),
+        ("exclusion", Blend::Exclusion),
+        ("hue", Blend::Hue),
+        ("saturation", Blend::Saturation),
+        ("color", Blend::Color),
+        ("luminosity", Blend::Luminosity),
+    ];
+
+    pub fn name(self) -> &'static str {
+        Self::ALL
+            .iter()
+            .find(|(_, mode)| *mode == self)
+            .map_or("normal", |(name, _)| name)
+    }
+
+    pub fn from_name(name: &str) -> Option<Blend> {
+        Self::ALL
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, mode)| *mode)
+    }
 }
 
 impl PaintProperties {
@@ -1169,6 +1236,9 @@ impl PaintProperties {
             node_transform: NodeTransform::default(),
             clip_children: false,
             gradient: None,
+            blur: Animated::new(0.0),
+            blend: Blend::Normal,
+            backdrop_blur: Animated::new(0.0),
         }
     }
 
@@ -1204,7 +1274,10 @@ impl PaintProperties {
             .gradient
             .as_mut()
             .is_some_and(|gradient| gradient.tick(now, completed));
-        gradient
+        let blur = self.blur.tick(now, completed);
+        let backdrop_blur = self.backdrop_blur.tick(now, completed);
+        blur || backdrop_blur
+            || gradient
             || radii
             || shadows
             || node_transform

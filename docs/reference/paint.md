@@ -63,6 +63,9 @@ halfway point instead. The last frame is exactly the target path.
 | `corner_radius` | one radius, or `(top_left, top_right, bottom_right, bottom_left)`: rounds the background and the border, and clips an image to the rounded box (a scroll view and a virtual list clip their content to it). A path has no box, so it ignores it |
 | `opacity` | `0.0`–`1.0` — **group opacity**: the node and its whole subtree fade together, as one layer |
 | `shadows` | a list of `(color, offset_x, offset_y, blur, spread)` — CSS `box-shadow`'s model, the first listed on top |
+| `blur` | (0.5.4) a number ≥ 0: a Gaussian blur of the node and its whole subtree, as a standard deviation in pixels |
+| `backdrop_blur` | (0.5.4) a number ≥ 0: frosted glass — what is behind the node, blurred, inside its box |
+| `blend_mode` | (0.5.4) how the node and its subtree mix with what is behind: `"normal"` (the default) or a CSS `mix-blend-mode` |
 
 Every kind paints these for its own box (0.5.1). Before, a text, text input,
 image, canvas, scroll view, virtual list, or terminal accepted `stroke_color`,
@@ -118,6 +121,35 @@ and radius; animating from a flat colour fades the gradient in from that colour.
 Animating between unlike gradients, or from a gradient to a colour, raises
 `ValueError`: set `fill` instead.
 
+## Blur, frosted glass, and blend modes
+
+Three effects (0.5.4), all acting on a node as a group, like `opacity`:
+
+```python
+card.set(blur=3)                        # the card and everything in it, soft
+panel.set(fill=(255, 255, 255, 60), backdrop_blur=12, corner_radius=16)  # frosted glass
+highlight.set(blend_mode="screen")      # lighten what is behind
+```
+
+- **`blur`** is the standard deviation of a Gaussian blur, in the node's own
+  pixels, so it scales with the display. The blur spreads the node's pixels
+  about three deviations past its box, and that margin is damaged and redrawn
+  with it. It animates (`node.animate("blur", 0, 300)`).
+- **`backdrop_blur`** blurs everything painted *behind* the node and shows it
+  inside the node's box, clipped to its rounded corners. The node's own `fill`
+  draws over it, so a translucent white `fill` makes frosted glass. Cost follows
+  the box, not the window: the content behind is drawn again inside the box and
+  the blur's reach, then blurred. It animates. A node behind another frosted
+  node is drawn blurred in that one's backdrop, to a depth of two.
+- **`blend_mode`** is one of `normal`, `multiply`, `screen`, `overlay`, `darken`,
+  `lighten`, `color_dodge`, `color_burn`, `hard_light`, `soft_light`,
+  `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`. The
+  node and its subtree are drawn as one layer and mixed with what is behind it.
+
+Not available: masks (the renderer does not support them yet; a rounded
+`corner_radius` with `clip_children` covers most shapes) and colour filters such as
+saturate or brightness (use a WGSL [effect shader](shader.md), which can do both).
+
 ## Animating
 
 ```python
@@ -134,7 +166,7 @@ as CSS `cubic-bezier()` takes it — MD3's named curves are bezier values, e.g.
 emphasized decelerate is `(0.05, 0.7, 0.1, 1.0)`. `on_complete` runs once when
 the value arrives; an animation replaced by another, or stopped, never calls it.
 
-Animatable: `fill`, `stroke_color`, `stroke_width`, `opacity`, `corner_radius`
+Animatable: `fill`, `stroke_color`, `stroke_width`, `opacity`, `blur`, `backdrop_blur`, `corner_radius`
 (a number or a 4-tuple), `shadows` (lists of different lengths fade the extra
 shadows in or out), the transform parts `translate_x`, `translate_y`, `scale`,
 and `rotation_deg`, a scroll view's `scroll_offset`, and a path's `data`,
