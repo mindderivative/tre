@@ -249,7 +249,7 @@ impl PyWindow {
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
 const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
     min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
-    dpi_scaling, transparent, blur_behind";
+    dpi_scaling, transparent, blur_behind, click_through";
 
 /// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
 /// RGBA8 bytes, `width * height * 4` of them.
@@ -658,6 +658,7 @@ impl PyWindow {
         let mut dpi_scaling = None;
         let mut transparent = None;
         let mut blur_behind = None;
+        let mut click_through = None;
         let mut system_menu = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
@@ -701,6 +702,11 @@ impl PyWindow {
                     "blur_behind" => {
                         blur_behind = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `blur_behind` must be a bool")
+                        })?);
+                    }
+                    "click_through" => {
+                        click_through = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `click_through` must be a bool")
                         })?);
                     }
                     "dpi_scaling" => {
@@ -772,6 +778,16 @@ impl PyWindow {
                 window.set_blur(on);
             }
             self.handles.blur_behind.set(on);
+        }
+        if let Some(on) = click_through {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                window.set_cursor_hittest(!on).map_err(|err| {
+                    PyValueError::new_err(format!(
+                        "window property `click_through` isn't supported here: {err}"
+                    ))
+                })?;
+            }
+            self.handles.click_through.set(on);
         }
         if let Some(on) = dpi_scaling {
             self.handles.dpi_scaling.set(on);
@@ -946,6 +962,14 @@ impl PyWindow {
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
+            "click_through" => self
+                .handles
+                .click_through
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "blur_behind" => self
                 .handles
                 .blur_behind
@@ -1063,7 +1087,7 @@ impl PyWindow {
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
                      native_controls, gpu_watchdog, present_mode, dpi_scaling, transparent, \
-                     transparent_active, blur_behind"
+                     transparent_active, blur_behind, click_through"
                 )));
             }
         })

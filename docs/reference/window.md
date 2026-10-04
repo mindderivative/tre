@@ -255,6 +255,15 @@ window, live. It works only where the platform has it: Wayland with KDE's blur p
 and macOS; it is ignored on X11 and Windows, so treat it as a polish and keep the
 window readable without it.
 
+**`set(click_through=True)`** (0.5.4) makes the whole window ignore the pointer: clicks,
+scrolls and hover go to whatever is behind it, and the window gets none. It takes effect
+live, or at open if set before `App.run()`. The window is all or nothing: winit has no
+per-region input shape, so a window whose opaque parts should still take clicks cannot
+have its transparent parts pass them through. A platform that cannot do it raises
+`ValueError`. A click-through window is for overlays and HUDs, so give the app a
+keyboard shortcut or another window to turn it off again, since the window itself
+can no longer be clicked.
+
 Notes: draw straight-alpha colours as always; the renderer premultiplies for the
 surface. An app that wants shadows draws them itself (the OS draws none around a
 transparent undecorated window on every platform). A transparent window with partial

@@ -303,6 +303,9 @@ pub struct WindowOptions {
     /// 0.5.4 (#137): asks the compositor to blur what is behind the window,
     /// where it can (Wayland with KDE's blur protocol, macOS).
     pub blur: bool,
+    /// 0.5.4 (#142): the window ignores the pointer: clicks, scrolls and hover
+    /// pass to whatever is behind it.
+    pub click_through: bool,
 }
 
 impl Default for WindowOptions {
@@ -315,6 +318,7 @@ impl Default for WindowOptions {
             icon: None,
             transparent: false,
             blur: false,
+            click_through: false,
         }
     }
 }
@@ -902,6 +906,10 @@ where
                 // mutually exclusive at the `winit` level, nothing this
                 // codebase needs to coordinate itself.
                 window.set_ime_allowed(true);
+                if options.click_through {
+                    // Not every platform can; the property reports it on `set`.
+                    let _ = window.set_cursor_hittest(false);
+                }
                 window.set_visible(true);
                 window.request_redraw();
                 let id = window.id();

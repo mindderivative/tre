@@ -27,7 +27,7 @@ def test_transparent_and_blur_behind_can_be_set_before_the_window_opens():
     assert window.get("transparent") is False
 
 
-@pytest.mark.parametrize("name", ["transparent", "blur_behind"])
+@pytest.mark.parametrize("name", ["transparent", "blur_behind", "click_through"])
 @pytest.mark.parametrize("value", [1, "yes", None])
 def test_they_take_only_a_bool(name, value):
     with pytest.raises(ValueError, match=f"`{name}` must be a bool"):
@@ -89,3 +89,42 @@ def test_a_live_transparent_window_reports_whether_its_surface_can_blend():
     assert result.returncode == 0, result.stderr
     out = result.stdout.split()
     assert out[0] == "active" and out[1] in ("True", "False")
+
+
+def test_click_through_defaults_off_and_can_be_set_before_opening():
+    window = Window()
+    assert window.get("click_through") is False
+    window.set(click_through=True)
+    assert window.get("click_through") is True
+    window.set(click_through=False)
+    assert window.get("click_through") is False
+
+
+CLICK_THROUGH = """
+import threading, time
+from tre import App, Window
+
+window = Window(width=120, height=80)
+app = App()
+app.add_window(window)
+handle = app.thread_handle()
+seen = []
+def toggle():
+    for on in (True, False):
+        try:
+            window.set(click_through=on)
+            seen.append(window.get("click_through"))
+        except ValueError as err:
+            seen.append("unsupported")
+    window.close()
+threading.Thread(target=lambda: (time.sleep(1.5), handle.call_soon(toggle)), daemon=True).start()
+app.run()
+print(*seen)
+"""
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="needs a display")
+def test_a_live_window_can_toggle_click_through():
+    result = subprocess.run([sys.executable, "-c", CLICK_THROUGH], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() in (["True", "False"], ["unsupported", "unsupported"])

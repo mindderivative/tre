@@ -405,6 +405,7 @@ class Window:
         dpi_scaling: bool = ...,
         transparent: bool = ...,
         blur_behind: bool = ...,
+        click_through: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -449,7 +450,10 @@ class Window:
         `get("transparent_active")` once open: `False` where the surface can't
         blend with the desktop and the window stays opaque. `blur_behind`:
         (0.5.4) asks the compositor to blur what is behind the window, where it
-        can (Wayland with KDE's blur protocol, macOS; ignored elsewhere); live."""
+        can (Wayland with KDE's blur protocol, macOS; ignored elsewhere); live.
+        `click_through`: (0.5.4) `True` makes the whole window ignore the pointer,
+        so clicks, scrolls and hover reach what is behind it; live, and a
+        `ValueError` where the platform can't."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -482,7 +486,7 @@ class Window:
     @overload
     def get(self, name: Literal["present_mode"]) -> str: ...
     @overload
-    def get(self, name: Literal["dpi_scaling", "transparent", "blur_behind"]) -> bool: ...
+    def get(self, name: Literal["dpi_scaling", "transparent", "blur_behind", "click_through"]) -> bool: ...
     @overload
     def get(self, name: Literal["transparent_active"]) -> bool | None: ...
     @overload

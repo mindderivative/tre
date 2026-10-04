@@ -119,6 +119,8 @@ pub(crate) struct WindowHandles {
     pub(crate) transparent_active: Rc<Cell<Option<bool>>>,
     /// 0.5.4 (#137): whether the compositor is asked to blur behind the window.
     pub(crate) blur_behind: Rc<Cell<bool>>,
+    /// 0.5.4 (#142): `click_through`.
+    pub(crate) click_through: Rc<Cell<bool>>,
     /// 0.5.0 M2: whether the window is maximized, and minimized -- before
     /// `App.run()` opens it, what it opens as.
     pub(crate) maximized: Rc<Cell<bool>>,
@@ -283,6 +285,7 @@ impl PyWindow {
                 transparent: Rc::new(Cell::new(false)),
                 transparent_active: Rc::new(Cell::new(None)),
                 blur_behind: Rc::new(Cell::new(false)),
+                click_through: Rc::new(Cell::new(false)),
                 maximized: Rc::new(Cell::new(false)),
                 minimized: Rc::new(Cell::new(false)),
                 active: Rc::new(Cell::new(false)),

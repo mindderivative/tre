@@ -243,3 +243,6 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   its box; see [SVG documents](reference/paint.md#svg-documents). It is a new
   kind, so nothing changes for existing nodes. It adds a dependency, `usvg`,
   built without its text and font features.
+- **Click-through windows.** `window.set(click_through=True)` makes the whole
+  window ignore the pointer, so clicks reach what is behind it; see
+  [Transparent windows](reference/window.md). Off by default.

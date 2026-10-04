@@ -1749,6 +1749,7 @@ impl App {
                                 icon: setup.handles.icon.borrow().clone(),
                                 transparent: setup.handles.transparent.get(),
                                 blur: setup.handles.blur_behind.get(),
+                                click_through: setup.handles.click_through.get(),
                             },
                         },
                         token: index as u64,
