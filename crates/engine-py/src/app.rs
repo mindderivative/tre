@@ -194,6 +194,19 @@ fn text_placement(tree: &Tree, id: NodeId) -> TextPlacement {
     }
 }
 
+/// 0.5.4 (review): a press that was taken from the pointer (a cancelled touch,
+/// or one that became a pan) starts no drag and clicks no link, whatever its
+/// release does afterwards.
+fn text_press_cancelled(
+    text_drag: &mut Option<NodeId>,
+    terminal_drag: &mut Option<NodeId>,
+    clicks: &mut TextClicks,
+) {
+    *text_drag = None;
+    *terminal_drag = None;
+    clicks.link_press = None;
+}
+
 /// 0.5.4 (#131): the link under `local_point` in text node `hit`, if it has
 /// link spans and the point is on a character of one.
 fn link_under(
@@ -1752,17 +1765,26 @@ impl App {
                 // 0.5.4 (#113): the pointer events a finger stood in for reach
                 // text inputs the way a mouse's do.
                 let emulated = std::mem::take(&mut runtime.handles.touch.borrow_mut().emulated);
-                for pointer in &emulated {
-                    link_clicks.extend(text_pointer_input(
-                        pointer,
-                        &runtime.handles.tree,
-                        runtime.handles.root,
-                        runtime.gpu.renderer.text(),
-                        &mut runtime.text_drag,
-                        &mut runtime.terminal_drag,
-                        &mut runtime.text_clicks,
-                        std::time::Instant::now(),
-                    ));
+                for item in &emulated {
+                    match item {
+                        crate::touch::Emulated::Pointer(pointer) => {
+                            link_clicks.extend(text_pointer_input(
+                                pointer,
+                                &runtime.handles.tree,
+                                runtime.handles.root,
+                                runtime.gpu.renderer.text(),
+                                &mut runtime.text_drag,
+                                &mut runtime.terminal_drag,
+                                &mut runtime.text_clicks,
+                                std::time::Instant::now(),
+                            ));
+                        }
+                        crate::touch::Emulated::Cancel => text_press_cancelled(
+                            &mut runtime.text_drag,
+                            &mut runtime.terminal_drag,
+                            &mut runtime.text_clicks,
+                        ),
+                    }
                 }
                 // 0.5.4 (#154): Shift+Up and Shift+Down in static text.
                 text_key_input(&event, &runtime.handles.tree, runtime.gpu.renderer.text());
@@ -2640,6 +2662,43 @@ mod tests {
             &tree,
             &mut text
         ));
+    }
+
+    #[test]
+    fn a_press_taken_from_the_pointer_neither_drags_nor_clicks_a_link() {
+        let (tree, root, linked, _) = link_scene();
+        let at = on_docs(&tree, linked);
+        let mut text = engine_render::TextRenderer::new();
+        let (mut clicks, mut drags) = (super::TextClicks::default(), (None, None));
+        let now = std::time::Instant::now();
+        let mut feed =
+            |event: engine_core::InputEvent,
+             clicks: &mut super::TextClicks,
+             drags: &mut (Option<engine_core::NodeId>, Option<engine_core::NodeId>)| {
+                super::text_pointer_input(
+                    &event,
+                    &tree,
+                    root,
+                    &mut text,
+                    &mut drags.0,
+                    &mut drags.1,
+                    clicks,
+                    now,
+                )
+                .map(|c| c.href)
+            };
+        // Pressed on the link, then the press is cancelled (a pan began): the
+        // release over the same link is not a click.
+        feed(press(at), &mut clicks, &mut drags);
+        assert!(drags.0.is_some(), "the press armed a drag");
+        super::text_press_cancelled(&mut drags.0, &mut drags.1, &mut clicks);
+        assert_eq!(drags, (None, None));
+        assert_eq!(feed(release(at), &mut clicks, &mut drags), None);
+        // And an uncancelled press and release still clicks it (a fresh click
+        // count, so it is not the second half of a double click).
+        clicks = super::TextClicks::default();
+        feed(press(at), &mut clicks, &mut drags);
+        assert!(feed(release(at), &mut clicks, &mut drags).is_some());
     }
 
     #[test]

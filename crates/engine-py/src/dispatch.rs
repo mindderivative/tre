@@ -736,7 +736,7 @@ fn shift_wheel(event: &InputEvent) -> Option<InputEvent> {
 /// nothing. Shift still scrolls, as it does in a browser. Core's
 /// `KeyPressed` carries only Shift; the rest are tracked here.
 fn keyboard_scroll(ctx: &NodeContext<'_>, event: &InputEvent) {
-    let InputEvent::KeyPressed { key, .. } = *event else {
+    let InputEvent::KeyPressed { key, shift } = *event else {
         return;
     };
     let held = listeners::modifiers();
@@ -744,6 +744,14 @@ fn keyboard_scroll(ctx: &NodeContext<'_>, event: &InputEvent) {
         return;
     }
     let mut tree = ctx.tree.borrow_mut();
+    // 0.5.4 (review): with a selection in static text, Shift+Up/Down move the
+    // selection (see `text_key_input`); they do not also scroll the view.
+    if shift
+        && matches!(key, Key::ArrowUp | Key::ArrowDown)
+        && tree.static_selection_ends().is_some()
+    {
+        return;
+    }
     let Some(focused) = tree.focused() else {
         return;
     };

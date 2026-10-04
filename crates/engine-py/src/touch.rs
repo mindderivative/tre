@@ -39,7 +39,16 @@ pub(crate) struct TouchRouter {
     trackpad_scale: f64,
     /// The pointer events the primary finger stood in for, for the live loop
     /// to replay into text-input handling (which needs the text renderer).
-    pub(crate) emulated: Vec<InputEvent>,
+    pub(crate) emulated: Vec<Emulated>,
+}
+
+/// One thing for the live loop to replay into text handling after a touch.
+pub(crate) enum Emulated {
+    /// A pointer event the primary finger stood in for.
+    Pointer(InputEvent),
+    /// The press is not going to be a click or a drag: the touch was taken
+    /// (cancelled), or became a pan. Any drag or link press it started ends.
+    Cancel,
 }
 
 impl Default for TouchRouter {
@@ -164,7 +173,10 @@ fn touch(
             }),
             TouchPhase::Cancelled => None,
         };
-        router.borrow_mut().emulated.extend(pointer);
+        router
+            .borrow_mut()
+            .emulated
+            .extend(pointer.map(Emulated::Pointer));
         match phase {
             TouchPhase::Started => {
                 process_input(ctx, io, root, &InputEvent::PointerMoved { position }, py);
@@ -223,6 +235,8 @@ fn touch(
 fn cancel_press(ctx: &NodeContext<'_>, io: &WindowIo<'_>, target: Option<NodeId>, py: Python<'_>) {
     let pressed = ctx.tree.borrow_mut().cancel_press();
     io.window.press_cancelled.set(true);
+    // Text handling runs later in the live loop; tell it the press is over.
+    io.window.touch.borrow_mut().emulated.push(Emulated::Cancel);
     if let Some(node) = pressed.or(target) {
         deliver(ctx, py, EventType::PointerCancel, node, None, |_| {});
     }

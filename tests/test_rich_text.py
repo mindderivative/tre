@@ -303,3 +303,28 @@ def test_ctrl_a_selects_the_selected_static_text_even_when_a_button_has_focus():
     button.focus()
     window.simulate("key_down", key="a", ctrl=True)
     assert label.get("selection") == (0, 10)
+
+
+def test_shift_down_with_a_selection_in_static_text_does_not_also_scroll_the_view():
+    window = Window(width=200, height=100)
+    window.root.set(fill=WHITE, padding=0)
+    view = window.create("scroll_view", width=200, height=100)
+    content = window.create("box", width=200, height=600, focusable=True)
+    label = window.create("text", text="alpha beta", width=100, height=20, selectable=True)
+    window.root.add_child(view)
+    view.add_child(content)
+    content.add_child(label)
+    window.advance(1)
+    content.focus()
+    window.simulate("key_down", key="arrow_down")
+    window.advance(1)
+    scrolled = view.get("scroll_offset")
+    assert scrolled > 0, "the arrow key scrolls the view"
+    label.set(selection=(2, 2))
+    window.simulate("key_down", key="arrow_down", shift=True)
+    window.advance(1)
+    assert view.get("scroll_offset") == scrolled, "Shift+Down went to the selection"
+    label.set(selection=None)
+    window.simulate("key_down", key="arrow_down", shift=True)
+    window.advance(1)
+    assert view.get("scroll_offset") > scrolled, "with no selection it scrolls as before"
