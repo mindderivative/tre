@@ -594,6 +594,7 @@ pub(crate) fn kind_id(kind: &NodeKind) -> &'static str {
         NodeKind::TextField(_) => "text_input",
         NodeKind::Image(_) => "image",
         NodeKind::Path(_) => "path",
+        NodeKind::Svg(_) => "svg",
         NodeKind::Terminal(_) => "terminal",
         NodeKind::ScrollView(_) => "scroll_view",
     }

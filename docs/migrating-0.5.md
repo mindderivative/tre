@@ -238,3 +238,8 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - **Custom cursors.** `tre.CursorImage(rgba, width, height, hotspot)` is a pointer
   shape drawn from pixels, accepted anywhere a node's `cursor` takes a name; see
   [Cursors](reference/node.md#cursors). The named shapes are unchanged.
+- **SVG documents.** `window.create("svg", svg=...)` paints a whole SVG file as
+  one node (shapes, strokes, gradients, group opacity, clip paths), fitted into
+  its box; see [SVG documents](reference/paint.md#svg-documents). It is a new
+  kind, so nothing changes for existing nodes. It adds a dependency, `usvg`,
+  built without its text and font features.

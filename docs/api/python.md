@@ -410,7 +410,7 @@ A pointer shape drawn from pixels, for a node's `cursor`.
 
 **Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [CursorImage reference](../reference/node.md#cursors)
 
-**Constructor:** `CursorImage(rgba: bytes, width: int, height: int, hotspot: tuple[int, int]=(0, 0))`
+**Constructor:** `CursorImage(rgba: bytes, width: int, height: int, hotspot: tuple[int, int]=...)`
 
 **Properties:**
 

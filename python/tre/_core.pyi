@@ -333,11 +333,11 @@ class Window:
         ...
     def create(self, kind: str, **props: Any) -> Node:
         """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
-        `"text_input"`, `"image"`, `"path"`, `"canvas"`, `"scroll_view"`,
-        `"virtual_list"`, or `"terminal"` -- and applies `props`
+        `"text_input"`, `"image"`, `"path"`, `"svg"`, `"canvas"`,
+        `"scroll_view"`, `"virtual_list"`, or `"terminal"` -- and applies `props`
         atomically, as `Node.set` does. Required: `text` for a text,
         `rgba`/`pixel_width`/`pixel_height` for an image, `data` for a
-        path, `draw` for a canvas, `item_count`, `materialize`, and one of
+        path, `svg` for an svg, `draw` for a canvas, `item_count`, `materialize`, and one of
         `item_extent`/`size_hint` for a virtual list, and `shell`, `cols`,
         `rows` for a terminal (which also takes `scrollback_lines`, at
         creation only). Attach it with `add_child`; until it's attached it

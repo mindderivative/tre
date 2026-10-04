@@ -15,8 +15,8 @@ window = Window(width=640, height=400, title="Inbox")
 ## Nodes
 
 **`create(kind, **props) -> Node`** makes a detached node of `kind` —
-`"box"`, `"text"`, `"text_input"`, `"image"`, `"path"`, `"canvas"`,
-`"scroll_view"`, `"virtual_list"`, or `"terminal"` — and sets `props`
+`"box"`, `"text"`, `"text_input"`, `"image"`, `"path"`, `"svg"`,
+`"canvas"`, `"scroll_view"`, `"virtual_list"`, or `"terminal"` — and sets `props`
 atomically, as `Node.set` does: a bad property raises `ValueError` and
 nothing is created. Every kind and property is on
 [Nodes and Properties](properties.md).

@@ -77,6 +77,9 @@ pub enum NodeKind {
     Image(ImageState),
     /// M95 (D4): any vector path -- fill, stroke, trim, morph.
     Path(crate::path::PathState),
+    /// 0.5.4 (#141): a whole SVG document, parsed once and painted as one
+    /// retained scene, fitted into the node's box.
+    Svg(crate::svg::SvgState),
     /// M30 Phase 9 Step 4 (§5, §8, §10): a real, live terminal -- see
     /// `TerminalState`'s own doc comment for the real crate-boundary
     /// reasoning (the identical "engine-core holds inert data,

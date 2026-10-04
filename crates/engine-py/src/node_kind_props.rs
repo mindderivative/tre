@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 28] = [
+pub(crate) const KIND_PROPS: [&str; 30] = [
     "text",
     "font_family",
     "font_weight",
@@ -45,6 +45,8 @@ pub(crate) const KIND_PROPS: [&str; 28] = [
     "rows",
     "item_count",
     "item_extent",
+    "svg",
+    "svg_size",
 ];
 
 const TEXT_ALIGN: [(&str, TextAlign); 3] = [
@@ -182,6 +184,9 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
     fn image(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Image(_))
     }
+    fn svg(kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Svg(_))
+    }
     fn scroll_view(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::ScrollView(_))
     }
@@ -201,6 +206,7 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         }
         "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
+        "svg" | "svg_size" => ("an svg", svg),
         "orientation" | "scroll_offset" => ("a scroll_view", scroll_view),
         "item_count" | "item_extent" => ("a virtual_list", virtual_list),
         _ => ("a terminal", terminal),
@@ -234,6 +240,27 @@ fn parse_known(
     props: &Bound<'_, PyDict>,
 ) -> PyResult<KindChange> {
     match name {
+        "svg_size" => Err(PyValueError::new_err(
+            "node property `svg_size` is read-only",
+        )),
+        // 0.5.4 (#141): a document, as text or bytes (gzip-compressed SVGZ
+        // included). It parses here, once, so a bad one raises at `set`.
+        "svg" => {
+            let source: Vec<u8> = match value.extract::<String>() {
+                Ok(text) => text.into_bytes(),
+                Err(_) => value
+                    .extract()
+                    .map_err(|_| invalid(name, "an SVG document as a str or bytes"))?,
+            };
+            let document = engine_core::SvgDocument::parse(&source).map_err(|reason| {
+                PyValueError::new_err(format!("node property `svg` isn't a valid SVG: {reason}"))
+            })?;
+            change(move |node| {
+                if let NodeKind::Svg(state) = &mut node.kind {
+                    state.document = document;
+                }
+            })
+        }
         "text" => {
             let text = string(value, name)?;
             change(move |node| match &mut node.kind {
@@ -750,6 +777,10 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
                 s.folded_ranges.iter().map(|r| (r.start, r.end)).collect();
             to_py(ranges, py)
         }
+        ("svg_size", NodeKind::Svg(s)) => to_py((s.document.width, s.document.height), py),
+        ("svg", NodeKind::Svg(_)) => Err(PyValueError::new_err(
+            "node property `svg` is write-only -- read `svg_size` for the document's size",
+        )),
         ("rgba", NodeKind::Image(s)) => {
             to_py(pyo3::types::PyBytes::new(py, s.image.data.data()), py)
         }

@@ -54,6 +54,32 @@ shape drawn from a different corner still morphs cleanly. Paths with different
 numbers of subpaths, or an open path against a closed one, switch at the
 halfway point instead. The last frame is exactly the target path.
 
+## SVG documents
+
+An `svg` node (0.5.4) paints a whole SVG document. Give it the file's text or
+bytes (gzip-compressed `.svgz` too) and the node draws it as one scene, scaled
+uniformly and centred into its box (SVG's `xMidYMid meet`), inside its padding
+and clipped to it:
+
+```python
+logo = window.create("svg", svg=open("logo.svg", "rb").read(), width=96, height=96)
+logo.get("svg_size")        # (120.0, 120.0): the document's own width and height
+logo.set(svg=other_text)    # swap the document
+```
+
+The document is parsed once, when `svg` is set, so a malformed one raises
+`ValueError` with the parser's message at that call and creates or changes
+nothing. A node has no size of its own: give it `width` and `height`. `fill`,
+`stroke_color`, `corner_radius`, `opacity`, `blur` and the rest paint for its
+box as on every node (a `fill` is the background behind the document).
+
+Drawn: shapes, fills and strokes (caps, joins, miter limit, dashes, paint
+order), solid colours, linear and radial gradients with their spread method,
+group opacity, and clip paths. Dropped without an error: text, raster images,
+masks, filters, patterns and blend modes, and a clip path nested inside another
+clip path keeps only the outer one. `svg` is write-only; read `svg_size` for
+the document's size.
+
 ## Paint on every node
 
 | Property | Value |

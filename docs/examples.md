@@ -22,6 +22,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `show_damage.py` | What partial redraw repaints each frame, tinted; `--watch` keeps the window open for checking on a real desktop |
 | `hidpi.py` | `dpi_scaling`: a card laid out in logical pixels and drawn sharp at the display's scale; `--watch` keeps the window open to drag between monitors |
 | `snapshot.py` | `window.snapshot()` and `tre.write_png`: a window's pixels at 1x and 2x, with no display |
+| `svg_document.py` | An `svg` node painting a document with gradients, a clip, dashes and group opacity, at two aspect ratios |
 | `gradients.py` | `Gradient.linear`, `.radial` and `.sweep` fills, one animating between two gradients |
 | `effects.py` | `blur`, `backdrop_blur` (frosted glass, animating) and `blend_mode` over a striped background |
 | `languages.py` | `set_system_fonts`: Latin, CJK, Hebrew, Indic, Thai and colour emoji in one window |

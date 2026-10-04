@@ -28,6 +28,7 @@ mod node;
 mod overlay;
 mod path;
 mod shader;
+mod svg;
 mod tree;
 
 pub use access::{AccessNodeData, AccessStates, AccessValue, Action, ActionData, Live, Role};
@@ -53,6 +54,9 @@ pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
 pub use shader::{
     FRAME_BLOCK_SIZE, Shader, ShaderError, ShaderMode, UniformKind, UniformValue, frame_block,
+};
+pub use svg::{
+    SvgClip, SvgDocument, SvgFill, SvgGroup, SvgNode, SvgPaint, SvgPath, SvgState, SvgStroke,
 };
 pub use tree::{
     FocusDirection, KEY_SCROLL_LINE, Tree, from_access_id, node_id_as_u64, to_access_id,

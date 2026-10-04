@@ -1218,6 +1218,45 @@ fn draw_own(
         // shown (all of it, or `cover`'s crop), and `transform` maps its
         // texels onto the node box. The paint has no opacity of its own,
         // so an opacity layer wraps it, skipped when fully transparent.
+        // 0.5.4 (#141): an SVG document, painted as one retained scene:
+        // fitted into the content box (`xMidYMid meet`) and clipped to it,
+        // under the box's own background and border like an image.
+        NodeKind::Svg(state) => {
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            let content = content_box(tree, id, w, h);
+            let rounded = node.paint.corner_radius.current > 0.0
+                || node.paint.corner_radii_override.is_some();
+            if rounded {
+                scene.push_layer(
+                    Some(box_path(node, id, w, h, geometry)),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            }
+            if content.w > 0.0 && content.h > 0.0 && own_alpha > 0.0 {
+                let clip = Rect::new(
+                    content.x,
+                    content.y,
+                    content.x + content.w,
+                    content.y + content.h,
+                )
+                .to_path(0.1);
+                let opacity = (own_alpha < 1.0).then_some(own_alpha as f32);
+                scene.push_layer(Some(&clip), None, opacity, None, None);
+                let base = composed
+                    * Affine::translate((content.x, content.y))
+                    * state.document.fit(content.w, content.h);
+                paint_svg_group(&state.document.root, base, scene);
+                scene.pop_layer();
+            }
+            if rounded {
+                scene.pop_layer();
+            }
+            scene.set_transform(composed);
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
+        }
         NodeKind::Image(state) => {
             // 0.5.1 (#45): a background behind the image (it shows through
             // transparent pixels and letterbox bars), the image clipped to
@@ -1309,6 +1348,79 @@ fn draw_own(
             }
             scene.set_transform(composed);
         }
+    }
+}
+
+/// Paints an SVG group and everything under it. `parent` is the transform
+/// the group's own transform composes onto.
+fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Scene) {
+    use engine_core::{SvgNode, SvgPaint};
+    let here = parent * group.transform;
+    scene.set_transform(here);
+    let opacity = (group.opacity < 1.0).then_some(group.opacity);
+    let layered = group.clip.is_some() || opacity.is_some();
+    if layered {
+        let even_odd = group.clip.as_ref().is_some_and(|c| c.even_odd);
+        if even_odd {
+            scene.set_fill_rule(peniko::Fill::EvenOdd);
+        }
+        scene.push_layer(
+            group.clip.as_ref().map(|c| &c.path),
+            None,
+            opacity,
+            None,
+            None,
+        );
+        scene.set_fill_rule(peniko::Fill::NonZero);
+    }
+    for child in &group.children {
+        match child {
+            SvgNode::Group(g) => paint_svg_group(g, here, scene),
+            SvgNode::Path(p) => {
+                scene.set_transform(here);
+                let fill = |scene: &mut Scene| {
+                    let Some(fill) = &p.fill else { return };
+                    scene.set_fill_rule(if fill.even_odd {
+                        peniko::Fill::EvenOdd
+                    } else {
+                        peniko::Fill::NonZero
+                    });
+                    match &fill.paint {
+                        SvgPaint::Color(c) => scene.set_paint(*c),
+                        SvgPaint::Gradient(g, t) => {
+                            scene.set_paint(g.clone());
+                            scene.set_paint_transform(*t);
+                        }
+                    }
+                    scene.fill_path(&p.path);
+                    scene.reset_paint_transform();
+                    scene.set_fill_rule(peniko::Fill::NonZero);
+                };
+                let stroke = |scene: &mut Scene| {
+                    let Some(stroke) = &p.stroke else { return };
+                    match &stroke.paint {
+                        SvgPaint::Color(c) => scene.set_paint(*c),
+                        SvgPaint::Gradient(g, t) => {
+                            scene.set_paint(g.clone());
+                            scene.set_paint_transform(*t);
+                        }
+                    }
+                    scene.set_stroke(stroke.stroke.clone());
+                    scene.stroke_path(&p.path);
+                    scene.reset_paint_transform();
+                };
+                if p.stroke_first {
+                    stroke(scene);
+                    fill(scene);
+                } else {
+                    fill(scene);
+                    stroke(scene);
+                }
+            }
+        }
+    }
+    if layered {
+        scene.pop_layer();
     }
 }
 

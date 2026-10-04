@@ -404,7 +404,7 @@ impl PyWindow {
         py: Python<'_>,
     ) -> PyResult<Node> {
         const KINDS: &str =
-            "box, text, text_input, image, path, canvas, scroll_view, virtual_list, terminal";
+            "box, text, text_input, image, path, svg, canvas, scroll_view, virtual_list, terminal";
         let props = match props {
             Some(props) => props.copy()?,
             None => PyDict::new(py),
@@ -427,6 +427,12 @@ impl PyWindow {
             "path" => {
                 require(&["data"])?;
                 NodeKind::Path(PathState::new(PathData(BezPath::new())))
+            }
+            "svg" => {
+                require(&["svg"])?;
+                NodeKind::Svg(engine_core::SvgState {
+                    document: engine_core::SvgDocument::empty(),
+                })
             }
             "text" => {
                 require(&["text"])?;

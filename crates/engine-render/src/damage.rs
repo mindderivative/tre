@@ -472,6 +472,7 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId, nod
             | NodeKind::Terminal(_)
             | NodeKind::Image(_)
             | NodeKind::Path(_)
+            | NodeKind::Svg(_)
             | NodeKind::Canvas(_)
     ) {
         let pad = tree.layout(id).padding;
@@ -489,6 +490,8 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId, nod
         }
         NodeKind::Image(state) => image_fingerprint(h, state),
         NodeKind::Path(state) => path_fingerprint(h, state),
+        // A document is immutable; a new one is a new revision.
+        NodeKind::Svg(state) => state.document.revision.hash(h),
         NodeKind::Canvas(state) => canvas_fingerprint(h, state),
         NodeKind::ScrollView(state) => {
             scroll_fingerprint(h, state);

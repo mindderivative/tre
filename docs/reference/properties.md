@@ -15,6 +15,7 @@ This page lists them all. Paint, paths, shadows, and easing have their own page,
 | `"text_input"` | — | Editable text: selection, clipboard, IME, syntax spans, folding, obscuring |
 | `"image"` | `rgba`, `pixel_width`, `pixel_height` | Decoded RGBA8 pixels; video is repeated `set(rgba=..., ...)` |
 | `"path"` | `data` | A vector path — see [Paths](paint.md#paths) |
+| `"svg"` | `svg` | A whole SVG document — see [SVG documents](paint.md#svg-documents) |
 | `"canvas"` | `draw` | Immediate-mode drawing through a [painter](painter.md) |
 | `"scroll_view"` | — | Clips and scrolls one child |
 | `"virtual_list"` | `item_count`, `materialize`, and `item_extent` or `size_hint` | Builds only the rows its viewport shows |
