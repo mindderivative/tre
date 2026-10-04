@@ -228,8 +228,9 @@ highlight.set(blend_mode="screen")      # lighten what is behind
   node and its subtree are drawn as one layer and mixed with what is behind it.
 
 Not available: masks (the renderer does not support them yet; a rounded
-`corner_radius` with `clip_children` covers most shapes) and colour filters such as
-saturate or brightness (use a WGSL [effect shader](shader.md), which can do both).
+`corner_radius` with `clip_children` covers most shapes) and colour filters as node
+properties. For saturate, brightness, contrast, grayscale, hue rotate, invert and sepia
+use [`Shader.filter`](shader.md#shaderfilterfilters), a ready-made effect shader.
 
 ## Animating
 

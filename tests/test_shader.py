@@ -254,3 +254,74 @@ def test_a_live_window_runs_with_an_animated_shader():
     done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=60)
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip().splitlines()[-1] == "RAN"
+
+
+# 0.5.4 (#130): Shader.filter -- CSS colour filters as a ready effect shader.
+
+
+def filtered(fill, **filters):
+    window = Window(width=40, height=40)
+    window.root.set(fill=(0, 0, 0, 255), padding=0)
+    box = window.create("box", width=20, height=20, fill=fill)
+    window.root.add_child(box)
+    box.set(shader=Shader.filter(**filters))
+    rgba, width, _ = window.snapshot()
+    i = (10 * width + 10) * 4
+    return tuple(rgba[i : i + 4])
+
+
+def near(actual, expected, slack=3):
+    return all(abs(a - e) <= slack for a, e in zip(actual, expected))
+
+
+def test_a_filter_is_an_effect_shader_with_one_uniform_each():
+    shader = Shader.filter(grayscale=1.0, brightness=1.25)
+    assert shader.mode == "effect"
+    assert shader.uniforms == {"grayscale": 1.0, "brightness": 1.25}
+    shader.set(uniforms={"grayscale": 0.5, "brightness": 1.0})
+    assert shader.uniforms["grayscale"] == 0.5
+
+
+def test_a_filter_needs_a_known_name_and_a_sensible_value():
+    with pytest.raises(ValueError, match="at least one"):
+        Shader.filter()
+    with pytest.raises(TypeError, match="no filter `blurry`"):
+        Shader.filter(blurry=1.0)
+    with pytest.raises(ValueError, match="0 to 1"):
+        Shader.filter(grayscale=1.5)
+    with pytest.raises(ValueError, match="0 or more"):
+        Shader.filter(brightness=-1.0)
+    with pytest.raises(TypeError):
+        Shader.filter(sepia="a lot")
+    Shader.filter(hue_rotate=-90.0)  # degrees may be negative
+
+
+def test_the_filters_match_css_on_a_known_colour():
+    red = (255, 0, 0, 255)
+    assert near(filtered(red, grayscale=1.0), (54, 54, 54, 255))
+    assert near(filtered(red, invert=1.0), (0, 255, 255, 255))
+    assert near(filtered(red, brightness=0.5), (128, 0, 0, 255))
+    assert near(filtered(red, saturate=0.0), (54, 54, 54, 255), 6)
+    assert near(filtered(red, sepia=1.0), (100, 89, 69, 255), 6)
+    assert near(filtered((128, 128, 128, 255), contrast=2.0), (128, 128, 128, 255))
+    assert near(filtered((192, 64, 128, 255), contrast=0.0), (128, 128, 128, 255))
+    assert near(filtered(red, hue_rotate=120.0), (0, 113, 0, 255), 4)  # CSS: (0, 0.443, 0)
+
+
+def test_filters_apply_in_the_order_given():
+    red = (255, 0, 0, 255)
+    a = filtered(red, invert=1.0, brightness=0.5)  # cyan, then halved
+    b = filtered(red, brightness=0.5, invert=1.0)  # halved, then inverted
+    assert near(a, (0, 128, 128, 255)) and near(b, (127, 255, 255, 255))
+
+
+def test_a_filter_leaves_alpha_and_outside_the_node_alone():
+    assert filtered((255, 0, 0, 255), grayscale=1.0)[3] == 255
+    window = Window(width=40, height=40)
+    window.root.set(fill=(0, 0, 255, 255), padding=0)
+    box = window.create("box", width=20, height=20, fill=(255, 0, 0, 255))
+    window.root.add_child(box)
+    box.set(shader=Shader.filter(grayscale=1.0))
+    rgba, width, _ = window.snapshot()
+    i = (30 * width + 30) * 4
+    assert tuple(rgba[i : i + 4]) == (0, 0, 255, 255)

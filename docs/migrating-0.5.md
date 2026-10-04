@@ -187,6 +187,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   path's or text node's `fill`, by `stroke_color` (borders and path strokes) and
   by a canvas painter's `fill_rect`, `fill_circle` and `stroke_path`, each over
   the shape's own bounds.
+- **Colour filters.** `tre.Shader.filter(grayscale=1.0, ...)` is a ready-made
+  effect shader for the CSS filter functions `saturate`, `brightness`, `contrast`,
+  `grayscale`, `hue_rotate`, `invert` and `sepia`, applied in the order given; see
+  [Shader.filter](reference/shader.md#shaderfilterfilters). Nothing changes for
+  existing shaders.
 - **Blur, frosted glass, and blend modes.** A node takes `blur` (a Gaussian blur
   of itself and its subtree), `backdrop_blur` (what is behind it, blurred,
   inside its box) and `blend_mode` (CSS `mix-blend-mode`); see

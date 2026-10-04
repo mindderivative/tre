@@ -91,6 +91,80 @@ fn value_to_py(py: Python<'_>, value: UniformValue) -> PyResult<Py<PyAny>> {
     })
 }
 
+/// One CSS filter function: its name (also the uniform's), how a value is
+/// checked, and the WGSL line that applies `u.<name>` to `rgb`.
+struct FilterFn {
+    name: &'static str,
+    /// The largest value, or `None` for no upper bound.
+    max: Option<f32>,
+    /// Whether a negative value means something (a hue rotation).
+    signed: bool,
+    wgsl: &'static str,
+}
+
+/// The CSS filter functions, with CSS's own definitions (the matrices of the
+/// Filter Effects spec), applied to straight-alpha sRGB-encoded colour and
+/// clamped after each, as a browser does.
+const FILTERS: [FilterFn; 7] = [
+    FilterFn {
+        name: "saturate",
+        max: None,
+        signed: false,
+        wgsl: "rgb = mix(vec3<f32>(dot(rgb, vec3<f32>(0.213, 0.715, 0.072))), rgb, u.saturate);",
+    },
+    FilterFn {
+        name: "brightness",
+        max: None,
+        signed: false,
+        wgsl: "rgb = rgb * u.brightness;",
+    },
+    FilterFn {
+        name: "contrast",
+        max: None,
+        signed: false,
+        wgsl: "rgb = (rgb - vec3<f32>(0.5)) * u.contrast + vec3<f32>(0.5);",
+    },
+    FilterFn {
+        name: "grayscale",
+        max: Some(1.0),
+        signed: false,
+        wgsl: "rgb = mix(rgb, vec3<f32>(dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722))), u.grayscale);",
+    },
+    FilterFn {
+        name: "hue_rotate",
+        max: None,
+        signed: true,
+        wgsl: "{ let a = radians(u.hue_rotate); let c = cos(a); let s = sin(a); \
+               rgb = vec3<f32>( \
+               dot(rgb, vec3<f32>(0.213 + c * 0.787 - s * 0.213, 0.715 - c * 0.715 - s * 0.715, 0.072 - c * 0.072 + s * 0.928)), \
+               dot(rgb, vec3<f32>(0.213 - c * 0.213 + s * 0.143, 0.715 + c * 0.285 + s * 0.140, 0.072 - c * 0.072 - s * 0.283)), \
+               dot(rgb, vec3<f32>(0.213 - c * 0.213 - s * 0.787, 0.715 - c * 0.715 + s * 0.715, 0.072 + c * 0.928 + s * 0.072))); }",
+    },
+    FilterFn {
+        name: "invert",
+        max: Some(1.0),
+        signed: false,
+        wgsl: "rgb = mix(rgb, vec3<f32>(1.0) - rgb, u.invert);",
+    },
+    FilterFn {
+        name: "sepia",
+        max: Some(1.0),
+        signed: false,
+        wgsl: "rgb = mix(rgb, vec3<f32>(dot(rgb, vec3<f32>(0.393, 0.769, 0.189)), dot(rgb, vec3<f32>(0.349, 0.686, 0.168)), dot(rgb, vec3<f32>(0.272, 0.534, 0.131))), u.sepia);",
+    },
+];
+
+/// The effect WGSL for `names` (indexes into `FILTERS`), applied in order.
+fn filter_wgsl(order: &[usize]) -> String {
+    let mut body = String::from("    let c = content(p.uv);\n    var rgb = c.rgb;\n");
+    for &i in order {
+        body.push_str("    ");
+        body.push_str(FILTERS[i].wgsl);
+        body.push_str("\n    rgb = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));\n");
+    }
+    format!("fn shade(p: Pixel) -> vec4<f32> {{\n{body}    return vec4<f32>(rgb, c.a);\n}}\n")
+}
+
 /// A shader: WGSL with one function, `fn shade(p: Pixel) -> vec4<f32>`,
 /// checked when it is made.
 #[pyclass(frozen, name = "Shader")]
@@ -187,6 +261,56 @@ impl Shader {
         Ok(Self {
             core,
             inputs: handles,
+        })
+    }
+
+    /// (0.5.4) An effect shader that applies CSS filter functions to a node
+    /// and its subtree, in the order the keywords are given. See the stub.
+    #[staticmethod]
+    #[pyo3(signature = (**filters))]
+    fn filter(filters: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
+        let mut order = Vec::new();
+        let mut uniforms: Vec<(String, UniformValue)> = Vec::new();
+        for (key, value) in filters.into_iter().flat_map(|d| d.iter()) {
+            let name: String = key.extract()?;
+            let Some(index) = FILTERS.iter().position(|f| f.name == name) else {
+                let known: Vec<&str> = FILTERS.iter().map(|f| f.name).collect();
+                return Err(PyTypeError::new_err(format!(
+                    "Shader.filter() has no filter `{name}`; the filters are {}",
+                    known.join(", ")
+                )));
+            };
+            let f = &FILTERS[index];
+            let v = number(&value, &name)?;
+            if !v.is_finite() || (v < 0.0 && !f.signed) || f.max.is_some_and(|m| v > m) {
+                let range = match (f.signed, f.max) {
+                    (true, _) => "a number of degrees".to_owned(),
+                    (false, Some(m)) => format!("a number from 0 to {m}"),
+                    (false, None) => "a number of 0 or more".to_owned(),
+                };
+                return Err(PyValueError::new_err(format!(
+                    "filter `{name}` must be {range}, got {v}"
+                )));
+            }
+            order.push(index);
+            uniforms.push((name, UniformValue::F32(v)));
+        }
+        if order.is_empty() {
+            return Err(PyValueError::new_err(
+                "Shader.filter() needs at least one filter, e.g. Shader.filter(grayscale=1.0)",
+            ));
+        }
+        let core = engine_core::Shader::new(
+            filter_wgsl(&order),
+            uniforms,
+            Vec::new(),
+            ShaderMode::Effect,
+            false,
+        )
+        .map_err(|e| raise(&e))?;
+        Ok(Self {
+            core,
+            inputs: Vec::new(),
         })
     }
 

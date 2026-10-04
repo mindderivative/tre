@@ -52,6 +52,37 @@ updates them all.
 `==` compares identity, so `node.get("shader") == shader` after
 `node.set(shader=shader)`.
 
+## `Shader.filter(**filters)`
+
+(0.5.4) A ready-made effect shader that applies CSS colour filters to a node and
+everything in it, so a grayscale, sepia or brightness change needs no WGSL:
+
+```python
+card.set(shader=tre.Shader.filter(grayscale=1.0))           # disabled look
+photo.set(shader=tre.Shader.filter(sepia=0.8, contrast=1.1))
+```
+
+| Filter | Value | No change |
+| --- | --- | --- |
+| `saturate` | 0 or more | `1.0` |
+| `brightness` | 0 or more | `1.0` |
+| `contrast` | 0 or more | `1.0` |
+| `grayscale` | 0 to 1 | `0.0` |
+| `hue_rotate` | degrees, any sign | `0.0` |
+| `invert` | 0 to 1 | `0.0` |
+| `sepia` | 0 to 1 | `0.0` |
+
+The filters apply in the order you give the keywords, each with CSS's own
+definition, on the sRGB colour and clamped after each step; alpha is untouched.
+Each filter is a uniform of its own name, so `shader.set(uniforms={...})`
+changes them live (name every filter the shader was made with) — step it from
+a frame handler to fade a filter in. An unknown name raises `TypeError`; no
+filter, or a value out of range, raises `ValueError`.
+
+It is an ordinary effect shader (see [Effects](#effects)): the node renders to a
+texture, so it costs what any effect does, and a node has one shader, which this
+replaces. It also stands in for the CSS filters `vello_gpu` cannot draw.
+
 ## Errors
 
 A mistake in the source, a missing or misshapen `shade`, or a bad name raises

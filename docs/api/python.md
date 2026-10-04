@@ -462,6 +462,7 @@ WGSL that paints a node (a fill) or transforms its rendered content (an effect).
 
 | Method | Description |
 | --- | --- |
+| `filter(*, saturate, brightness, contrast, grayscale, hue_rotate, invert, sepia) -> Shader` | A ready-made effect shader that applies CSS colour filters to a node and its subtree… |
 | `set(*, uniforms: dict[str, float \| tuple[float, ...]]) -> None` | Replaces the uniforms all at once; a mistake raises and changes nothing. |
 
 **Events:** none.

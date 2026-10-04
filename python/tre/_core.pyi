@@ -879,6 +879,28 @@ class Shader:
         mode: str = "fill",
         animated: bool = False,
     ) -> Shader: ...
+    @staticmethod
+    def filter(
+        *,
+        saturate: float = ...,
+        brightness: float = ...,
+        contrast: float = ...,
+        grayscale: float = ...,
+        hue_rotate: float = ...,
+        invert: float = ...,
+        sepia: float = ...,
+    ) -> Shader:
+        """(0.5.4) A ready-made effect shader that applies CSS colour filters to a
+        node and its subtree: `node.set(shader=Shader.filter(grayscale=1.0))`.
+        Give the filters you want as keywords; they apply in the order given,
+        each as CSS defines it (1.0 is no change for `saturate`, `brightness` and
+        `contrast`; `grayscale`, `invert` and `sepia` run 0 to 1; `hue_rotate` is
+        in degrees). Each is a uniform of the same name, so
+        `shader.set(uniforms={...})` changes them live, naming every filter the
+        shader was made with. A node has one shader: this takes its place.
+        Raises `TypeError` for an unknown filter and `ValueError` for no filter
+        or a value out of range."""
+        ...
     @property
     def wgsl(self) -> str: ...
     @property
