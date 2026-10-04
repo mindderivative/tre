@@ -248,10 +248,13 @@ pub(crate) enum WindowEventType {
     FileHover,
     FileHoverCancel,
     FileDrop,
+    /// 0.5.4 (#115): the OS's reduced-motion or increased-contrast preference changed.
+    ReducedMotion,
+    HighContrast,
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 16] = [
+    const ALL: [WindowEventType; 18] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -268,6 +271,8 @@ impl WindowEventType {
         Self::FileHover,
         Self::FileHoverCancel,
         Self::FileDrop,
+        Self::ReducedMotion,
+        Self::HighContrast,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -288,6 +293,8 @@ impl WindowEventType {
             Self::FileHover => "file_hover",
             Self::FileHoverCancel => "file_hover_cancel",
             Self::FileDrop => "file_drop",
+            Self::ReducedMotion => "reduced_motion",
+            Self::HighContrast => "high_contrast",
         }
     }
 

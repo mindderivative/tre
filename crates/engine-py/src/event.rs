@@ -130,6 +130,12 @@ pub struct Event {
     pub(crate) height: Option<f64>,
     #[pyo3(get)]
     pub(crate) dark: Option<bool>,
+    /// 0.5.4 (#115): `reduced_motion` -- whether the OS now asks for less motion.
+    #[pyo3(get)]
+    pub(crate) reduced_motion: Option<bool>,
+    /// 0.5.4 (#115): `high_contrast` -- whether the OS now asks for more contrast.
+    #[pyo3(get)]
+    pub(crate) high_contrast: Option<bool>,
     /// 0.5.0 M2: the window's `maximized` event -- whether it now is.
     #[pyo3(get)]
     pub(crate) maximized: Option<bool>,
@@ -277,6 +283,8 @@ impl Event {
             width: None,
             height: None,
             dark: None,
+            reduced_motion: None,
+            high_contrast: None,
             maximized: None,
             active: None,
             titlebar_inset: None,

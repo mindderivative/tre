@@ -396,6 +396,12 @@ enum PlatformEvent {
     /// window is told, as the OS tells each window on macOS and Windows.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     ThemeChanged(bool),
+    /// 0.5.4 (#115): the portal announced a new reduced-motion or contrast
+    /// preference; every open window is told.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    ReducedMotionChanged(bool),
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    HighContrastChanged(bool),
     /// 0.5.0 M2 (issue #28): the app asked to close a window
     /// (`EventLoopWaker::close_window`) -- handled exactly as the user
     /// closing it, `CloseRequested` first, which the app may refuse.
@@ -619,8 +625,14 @@ where
     #[cfg(target_os = "linux")]
     {
         let proxy = proxy.clone();
-        appearance::portal::watch(move |dark| {
-            proxy.send_event(PlatformEvent::ThemeChanged(dark)).is_ok()
+        appearance::portal::watch(move |change| {
+            use appearance::portal::Change;
+            let event = match change {
+                Change::Dark(dark) => PlatformEvent::ThemeChanged(dark),
+                Change::ReducedMotion(reduced) => PlatformEvent::ReducedMotionChanged(reduced),
+                Change::HighContrast(high) => PlatformEvent::HighContrastChanged(high),
+            };
+            proxy.send_event(event).is_ok()
         });
     }
 
@@ -721,6 +733,10 @@ struct PerWindow {
     /// put the pointer -- so this is tracked here and read when
     /// translating a press/release into an `InputEvent`.
     last_cursor_position: Point,
+    /// 0.5.4 (#115): the OS preferences as last seen, to report a change when
+    /// the window regains focus (Windows and macOS announce none).
+    reduced_motion: Option<bool>,
+    high_contrast: Option<bool>,
     /// M29 Phase 2 (§5, §6): this window's own last-reported `on_frame`
     /// return -- `true` until the first real `RedrawRequested` settles
     /// it, so a freshly created window (which already gets one explicit
@@ -891,6 +907,8 @@ where
                         max_frames: request.config.max_frames,
                         modifiers: ModifiersState::empty(),
                         last_cursor_position: Point::ZERO,
+                        reduced_motion: None,
+                        high_contrast: None,
                         animating: true,
                     },
                 );
@@ -953,6 +971,20 @@ where
             PlatformEvent::ThemeChanged(dark) => {
                 for (&id, win) in &self.windows {
                     (self.on_input)(id, InputEvent::ThemeChanged { dark });
+                    win.window.request_redraw();
+                }
+            }
+            PlatformEvent::ReducedMotionChanged(reduced) => {
+                for (&id, win) in &mut self.windows {
+                    win.reduced_motion = Some(reduced);
+                    (self.on_input)(id, InputEvent::ReducedMotionChanged { reduced });
+                    win.window.request_redraw();
+                }
+            }
+            PlatformEvent::HighContrastChanged(high) => {
+                for (&id, win) in &mut self.windows {
+                    win.high_contrast = Some(high);
+                    (self.on_input)(id, InputEvent::HighContrastChanged { high });
                     win.window.request_redraw();
                 }
             }
@@ -1259,6 +1291,30 @@ where
             }
             // 0.5.0 M2 (issue #28): the window gained or lost focus.
             WindowEvent::Focused(focused) => {
+                if focused {
+                    // 0.5.4 (#115): coming back from the system settings is when
+                    // a changed preference is noticed where the OS says nothing.
+                    let motion = appearance::current_reduced_motion(Some(&win.window));
+                    if let Some(reduced) = motion
+                        && win.reduced_motion != Some(reduced)
+                    {
+                        let changed = win.reduced_motion.is_some();
+                        win.reduced_motion = Some(reduced);
+                        if changed {
+                            on_input(window_id, InputEvent::ReducedMotionChanged { reduced });
+                        }
+                    }
+                    let contrast = appearance::current_high_contrast(Some(&win.window));
+                    if let Some(high) = contrast
+                        && win.high_contrast != Some(high)
+                    {
+                        let changed = win.high_contrast.is_some();
+                        win.high_contrast = Some(high);
+                        if changed {
+                            on_input(window_id, InputEvent::HighContrastChanged { high });
+                        }
+                    }
+                }
                 on_input(window_id, InputEvent::Focused { focused });
                 win.request_redraw();
             }

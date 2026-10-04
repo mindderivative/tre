@@ -120,6 +120,14 @@ pub struct Modifiers {
 /// (keeping `Clone`) needed no call-site rewrites.
 #[derive(Clone, Debug, PartialEq)]
 pub enum InputEvent {
+    /// 0.5.4 (#115): the OS's reduced-motion preference changed.
+    ReducedMotionChanged {
+        reduced: bool,
+    },
+    /// 0.5.4 (#115): the OS's increased-contrast preference changed.
+    HighContrastChanged {
+        high: bool,
+    },
     /// 0.5.4 (#114): the OS is dragging a file over the window. The platform
     /// reports one per file; `position` is where the pointer last was, since
     /// `winit` gives a file drag no position of its own.

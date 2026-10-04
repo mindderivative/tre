@@ -111,6 +111,10 @@ class Event:
     """`resize`: the window's new width."""
     height: float | None
     dark: bool | None
+    reduced_motion: bool | None
+    """`reduced_motion`: whether the OS now asks for less motion."""
+    high_contrast: bool | None
+    """`high_contrast`: whether the OS now asks for more contrast."""
     """`color_scheme`: whether the OS switched to dark mode."""
     maximized: bool | None
     """(0.5.0) `maximized`: whether the window is now maximized."""
@@ -440,7 +444,7 @@ class Window:
     @overload
     def get(self, name: Literal["partial_redraw_active"]) -> bool | None: ...
     @overload
-    def get(self, name: Literal["dark"]) -> bool | None: ...
+    def get(self, name: Literal["dark", "reduced_motion", "high_contrast"]) -> bool | None: ...
     @overload
     def get(
         self,

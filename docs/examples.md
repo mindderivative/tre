@@ -28,6 +28,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `rich_text.py` | `spans` (colour, weight, italic, underline, strikethrough) and `selectable` text |
 | `touch.py` | `tap`, `long_press`, `pan` and `pinch`, driven by simulated fingers (or real ones with `--watch`) |
 | `file_drop.py` | `file_hover`, `file_hover_cancel` and `file_drop` for a drop zone (simulated, or real files with `--watch`) |
+| `accessibility_preferences.py` | `get("reduced_motion")`, `get("high_contrast")` and their events: snap instead of ease, swap to a high-contrast palette |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |

@@ -322,6 +322,8 @@ What a listener receives when it takes one argument; never constructed directly.
 | `width` | `float \| None` | New size on `resize`. |
 | `height` | `float \| None` | New size on `resize`. |
 | `dark` | `bool \| None` | New appearance on `color_scheme`. |
+| `reduced_motion` | `bool \| None` |  |
+| `high_contrast` | `bool \| None` |  |
 | `maximized` | `bool \| None` | New state on `maximized`. |
 | `active` | `bool \| None` | New state on `active`. |
 | `titlebar_inset` | `tuple[float, float] \| None` | New `(height, width)` on `titlebar_inset`. |

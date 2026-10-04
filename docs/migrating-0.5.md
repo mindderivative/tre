@@ -207,3 +207,8 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   events (with `paths`) reach the node under the pointer and the window; see
   [Files dragged from the OS](guide/events-and-input.md#files-dragged-from-the-os).
   They work on Windows, macOS and X11, not Wayland.
+- **The OS's reduced-motion and increased-contrast preferences.**
+  `window.get("reduced_motion")` and `get("high_contrast")` read them, and
+  `reduced_motion` and `high_contrast` window events report changes; see
+  [Window properties](reference/events.md#window-properties). The engine only
+  reports them; honouring them is the app's.

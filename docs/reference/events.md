@@ -108,6 +108,8 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | --- | --- | --- |
 | `resize` | The window's client area changed size | `width`, `height` |
 | `color_scheme` | The OS switched between light and dark | `dark` |
+| `reduced_motion` | The OS's reduce-motion preference changed (0.5.4) | `reduced_motion` |
+| `high_contrast` | The OS's increased-contrast preference changed (0.5.4) | `high_contrast` |
 | `scale_factor` | The window moved to a display with a different scale factor | `scale_factor` |
 | `close_requested` | The user asked to close the window; `event.cancel()` keeps it open | — |
 | `closed` | The window closed — by the user or by reaching `max_frames` | — |
@@ -131,12 +133,14 @@ A window event has no node: `event.target` is `None`.
 window.set(title="Editor — draft.md")
 window.get("scale_factor")  # 1.0 until App.run() opens the window
 window.get("dark")          # True, False, or None where the OS can't say
+window.get("reduced_motion")  # (0.5.4) True if the user asked for less motion
+window.get("high_contrast")   # (0.5.4) True if the user asked for more contrast
 ```
 
 `window.set(title=...)` changes the title, live if the window is open.
 `window.set(partial_redraw=False)` redraws the whole window every frame
 instead of only what changed ([Window](window.md)). `window.get(name)` reads
-`width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`,
+`width`, `height`, `title`, `scale_factor`, `dark`, `reduced_motion`, `high_contrast`, `partial_redraw`,
 `partial_redraw_active`, or `show_damage`, and (0.5.0) `decorations`,
 `fullscreen`, `min_width`, `min_height`, `maximized`, `minimized`, `active`,
 `platform`, `resize_border`, `system_menu`, `titlebar_inset`,
@@ -151,6 +155,29 @@ in the right one and then listen to `color_scheme`. Linux reads it from the
 desktop's settings portal, before `App.run()` too, and the portal's changes
 arrive as `color_scheme`; macOS and Windows answer once the window is open,
 and `None` before. `None` also means no portal answered (a headless session).
+
+**Reduced motion and increased contrast** (0.5.4) are the OS's accessibility
+preferences, read the same way. `window.get("reduced_motion")` is `True` when the
+user asked the system to cut animation, `False` when they did not, and `None` where
+the platform can't say; `get("high_contrast")` is the same for "more contrast". An
+app that honours them reads them at start and listens for `reduced_motion` and
+`high_contrast`:
+
+```python
+if window.get("reduced_motion"):
+    ANIMATE_MS = 0                      # snap instead of easing
+window.on("reduced_motion", lambda e: set_animations(not e.reduced_motion))
+window.on("high_contrast", lambda e: use_high_contrast_palette(e.high_contrast))
+```
+
+The engine reports them and changes nothing itself: durations are the app's to
+shorten, and colours its to swap. Linux reads the settings portal's
+`reduced-motion` and `contrast` (with GNOME's `enable-animations` and
+`high-contrast` for an older portal) and its changes arrive live; Windows reads the
+client-area animation setting and the High Contrast theme, macOS the "Reduce motion"
+and "Increase contrast" options. Windows and macOS announce no change, so the event
+fires when the window regains focus after one. Only the Linux read is checked on real
+hardware; the Windows and macOS code is compiled for those targets and untested.
 
 ## Event
 
@@ -178,6 +205,7 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `related_target` | `focus`, `unfocus` — the node on the other side of the move |
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
+| `reduced_motion` / `high_contrast` | `reduced_motion` / `high_contrast` — the new preference |
 | `maximized` / `active` | `maximized` / `active` — the window's new state |
 | `path`, `paths` | `file_hover`, `file_drop` — the dragged files' paths as `str`s; `path` is the first |
 | `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |
@@ -221,6 +249,7 @@ window.simulate("resize", width=800, height=600)
 | `a11y_action` | `node`, `action`; `value` for `set_value` |
 | `resize` | `width`, `height` |
 | `color_scheme` | `dark` |
+| `reduced_motion`, `high_contrast` | `value` (a bool) |
 | `scale_factor` | `scale_factor` |
 | `close_requested`, `closed` | — |
 | `maximized` / `active` | `maximized` / `active` — sets the window's state; the event fires only if it changed, as the live window's does. Before `App.run()`, `maximize()`/`restore()`/`minimize()` change the state with no event, so simulating the state you're already in fires nothing |

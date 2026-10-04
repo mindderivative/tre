@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 34] = [
+const SIMULATED_EVENTS: [&str; 36] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -65,6 +65,8 @@ const SIMULATED_EVENTS: [&str; 34] = [
     "a11y_action",
     "resize",
     "color_scheme",
+    "reduced_motion",
+    "high_contrast",
     "scale_factor",
     "close_requested",
     "closed",
@@ -984,10 +986,24 @@ impl PyWindow {
                     .into_any()
                     .unbind()
             }
+            "reduced_motion" => {
+                let window = self.handles.os_window.borrow().clone();
+                engine_platform::appearance::current_reduced_motion(window.as_deref())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
+            "high_contrast" => {
+                let window = self.handles.os_window.borrow().clone();
+                engine_platform::appearance::current_high_contrast(window.as_deref())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
-                     scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
+                     scale_factor, dark, reduced_motion, high_contrast, partial_redraw, partial_redraw_active, show_damage, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
                      native_controls, gpu_watchdog, present_mode, dpi_scaling"
@@ -1419,6 +1435,28 @@ impl PyWindow {
                     WindowEventType::ColorScheme,
                     |e| e.dark = Some(dark),
                 );
+            }
+            // 0.5.4 (#115): what the live window reports when the OS's motion or
+            // contrast preference changes.
+            "reduced_motion" | "high_contrast" => {
+                let value = f.bool("value")?;
+                let value = f.required("value", value)?;
+                f.done()?;
+                if event == "reduced_motion" {
+                    listeners::deliver_window(
+                        &self.handles.window_listeners,
+                        py,
+                        WindowEventType::ReducedMotion,
+                        |e| e.reduced_motion = Some(value),
+                    );
+                } else {
+                    listeners::deliver_window(
+                        &self.handles.window_listeners,
+                        py,
+                        WindowEventType::HighContrast,
+                        |e| e.high_contrast = Some(value),
+                    );
+                }
             }
             // 0.5.0 M2: what the live window reports when it's maximized or
             // restored, or gains or loses focus -- the state changes, and

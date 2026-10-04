@@ -1376,6 +1376,23 @@ impl App {
                             |e| e.dark = Some(dark),
                         );
                     }
+                    // 0.5.4 (#115): the OS's motion or contrast preference changed.
+                    InputEvent::ReducedMotionChanged { reduced } => {
+                        listeners::deliver_window(
+                            &runtime.handles.window_listeners,
+                            py,
+                            WindowEventType::ReducedMotion,
+                            |e| e.reduced_motion = Some(reduced),
+                        );
+                    }
+                    InputEvent::HighContrastChanged { high } => {
+                        listeners::deliver_window(
+                            &runtime.handles.window_listeners,
+                            py,
+                            WindowEventType::HighContrast,
+                            |e| e.high_contrast = Some(high),
+                        );
+                    }
                     // 0.5.0 M2 (issue #28): the window gained or lost focus.
                     InputEvent::Focused { focused } => {
                         listeners::update_window_state(

@@ -448,6 +448,10 @@ impl Tree {
             // 0.5.4 (#113): touches and trackpad pinches are recognized and
             // delivered by the window (`engine-py`); the tree has nothing to do.
             InputEvent::Touch { .. } | InputEvent::TrackpadPinch { .. } => DispatchOutcome::None,
+            // 0.5.4 (#115): OS preferences are reported by the window (`engine-py`).
+            InputEvent::ReducedMotionChanged { .. } | InputEvent::HighContrastChanged { .. } => {
+                DispatchOutcome::None
+            }
             // 0.5.4 (#114): files are delivered by the window (`engine-py`).
             InputEvent::FileHovered { .. }
             | InputEvent::FileHoverCancelled
