@@ -43,7 +43,7 @@ use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Rect, RoundedRect, Shape, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
-pub use damage::{Damage, DamageTracker, MAX_RECTS};
+pub use damage::{Damage, DamageTracker, MAX_RECTS, SCROLL_BLIT_MIN_NODES, Shift};
 pub use fonts::{
     NoFontFacesFound, all_fonts, generation as font_generation, register_font, set_system_fonts,
     system_fonts,

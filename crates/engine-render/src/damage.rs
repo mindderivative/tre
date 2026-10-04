@@ -27,6 +27,17 @@
 //!   else that cannot be judged from the changed nodes alone, hands the call
 //!   over to the full walk. The cost follows the changes, not the tree.
 //!
+//! **A scroll is a shift, not a change** (0.5.4, #126). Scrolling a view moves
+//! every node under it by the same whole number of pixels, which as changes
+//! would redraw the whole view. `plan_shift` recognises the case (one scroller
+//! whose own change is only its offset, everything inside moved alike with its
+//! content unchanged, nothing outside changed or painting over the view, an
+//! opaque plain background, enough nodes moving to be worth it) and reports a
+//! `Shift`: copy the view's kept pixels by that distance, then redraw only
+//! what the copy does not explain (the uncovered strip, the scrollbar where it
+//! was and is, and the old pixels of anything inside that did not move with
+//! the rest). Any doubt returns `None` and the changes are ordinary damage.
+//!
 //! `TRE_DAMAGE_VERIFY=1` (or `DamageTracker::with_verification`) runs both on
 //! every call and panics if the incremental result misses anything the full
 //! walk finds, or leaves a record that differs from it; CI runs the suites
@@ -51,8 +62,8 @@ use std::hash::{BuildHasher, Hash, Hasher};
 
 use engine_core::{
     CanvasState, CellColor, DrawCommand, ImageState, ItemExtent, Node, NodeId, NodeKind,
-    PaintProperties, PathState, ScrollViewState, TerminalState, TextFieldState, TextOptions,
-    TextState, Tree, VirtualListState, fit_transform,
+    PaintProperties, PathState, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS, ScrollViewState,
+    TerminalState, TextFieldState, TextOptions, TextState, Tree, VirtualListState, fit_transform,
 };
 use peniko::Color;
 use peniko::kurbo::{Affine, Rect, Shape};
@@ -69,6 +80,13 @@ pub const FULL_FRACTION: f64 = 0.5;
 const MAX_TRACKED: usize = 64;
 /// The fingerprint hasher, the same every frame (and every run).
 const FINGERPRINT: foldhash::fast::FixedState = foldhash::fast::FixedState::with_seed(0x74_72_65);
+/// How many nodes must move with a scroll before it is carried by a copy
+/// rather than redrawn. Measured (0.5.4, #126): a block copy of a view costs
+/// about as much as redrawing a few dozen plain nodes, and wins only past a
+/// couple of hundred; the paint walk's cost per node outside the damage (#149)
+/// caps what it can win until that goes.
+pub const SCROLL_BLIT_MIN_NODES: usize = 200;
+
 /// Pixels of antialiasing and glyph overhang added around every painted
 /// rect, beyond its geometry.
 const MARGIN: f64 = 2.0;
@@ -85,11 +103,57 @@ pub enum Damage {
     Rects(Vec<Rect>),
 }
 
+/// What marks a node as a scroller: which way it scrolls.
+#[derive(Clone, Copy, PartialEq)]
+struct ScrollInfo {
+    horizontal: bool,
+}
+
+/// 0.5.4 (#126): a scroller's content moved as a block. Copy `region` (window
+/// pixels) of the kept frame by (`dx`, `dy`) device pixels before redrawing the
+/// damage, which then holds only what the move does not explain: the strip it
+/// uncovered, the scrollbar, and anything that changed besides.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Shift {
+    pub region: Rect,
+    pub dx: f64,
+    pub dy: f64,
+}
+
+/// A node's record, as a change reports it.
+#[derive(Clone, Copy)]
+struct Snap {
+    painted: Rect,
+    /// How far a scroller was scrolled (0 for anything else).
+    offset: f64,
+    composed: Affine,
+    content: u64,
+    parent: Option<NodeId>,
+    scroll: Option<ScrollInfo>,
+}
+
+/// One node's pixels changed (or it appeared, or it went).
+struct Change {
+    id: NodeId,
+    before: Option<Snap>,
+    after: Option<Snap>,
+}
+
 /// What the walk knows about one node as of the last frame.
 #[derive(Clone)]
 struct Record {
     painted: Rect,
     fingerprint: u64,
+    /// How far a scroller was scrolled (0 for anything else).
+    offset: f64,
+    /// The node's box in window pixels, before margins and clipping.
+    bounds: Rect,
+    /// 0.5.4 (#126): what the node is, apart from where it is and how far its
+    /// own contents are scrolled. Equal `content` and a moved `composed` means
+    /// the node's pixels only moved.
+    content: u64,
+    parent: Option<NodeId>,
+    scroll: Option<ScrollInfo>,
     // 0.5.4 (#125): the rest is what reaching this node's children takes,
     // without walking down to them from the root.
     composed: Affine,
@@ -112,6 +176,17 @@ struct Record {
 }
 
 impl Record {
+    fn snap(&self) -> Snap {
+        Snap {
+            painted: self.painted,
+            offset: self.offset,
+            composed: self.composed,
+            content: self.content,
+            parent: self.parent,
+            scroll: self.scroll,
+        }
+    }
+
     /// Whether the node paints the same as `other` did.
     fn same_pixels(&self, other: &Record) -> bool {
         self.painted == other.painted && self.fingerprint == other.fingerprint
@@ -171,6 +246,12 @@ pub struct DamageTracker {
     /// Debug aid: a second, full-walk tracker whose answer the incremental
     /// one must cover. See `with_verification`.
     verify: Option<Box<DamageTracker>>,
+    /// 0.5.4 (#126): tell a scroll from a change (default; see `Shift`).
+    scroll_blit: bool,
+    /// A scroll is carried by a copy only when at least this many nodes move
+    /// with it: below that, redrawing them costs less than the copies.
+    scroll_blit_min_nodes: usize,
+    shift: Option<Shift>,
 }
 
 /// One frame's walk (`walk::Visitor`): the records it builds and what it
@@ -190,6 +271,13 @@ impl Default for DamageTracker {
     fn default() -> Self {
         let mut tracker = Self::default_plain();
         tracker.incremental = std::env::var_os("TRE_DAMAGE_FULL").is_none();
+        tracker.scroll_blit = std::env::var_os("TRE_SCROLL_BLIT_OFF").is_none();
+        if let Some(n) = std::env::var("TRE_SCROLL_BLIT_MIN_NODES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            tracker.scroll_blit_min_nodes = n;
+        }
         if std::env::var_os("TRE_DAMAGE_VERIFY").is_some() {
             tracker.verify = Some(Box::new(Self::full_only()));
         }
@@ -211,6 +299,7 @@ impl DamageTracker {
         Self {
             incremental: false,
             verify: None,
+            scroll_blit: false,
             ..Self::default_plain()
         }
     }
@@ -230,6 +319,9 @@ impl DamageTracker {
             incremental: true,
             visited: 0,
             verify: None,
+            scroll_blit: true,
+            scroll_blit_min_nodes: SCROLL_BLIT_MIN_NODES,
+            shift: None,
         }
     }
 
@@ -248,6 +340,28 @@ impl DamageTracker {
     /// comparing against.
     pub fn without_shortcuts() -> Self {
         Self::full_only()
+    }
+
+    /// A tracker that walks the whole tree and never plans a scroll shift, to
+    /// compare against.
+    pub fn without_scroll_blit() -> Self {
+        Self {
+            scroll_blit: false,
+            ..Self::default_plain()
+        }
+    }
+
+    /// Sets how many nodes must move with a scroll for it to be carried by a
+    /// copy (default `SCROLL_BLIT_MIN_NODES`); `0` always carries it.
+    pub fn set_scroll_blit_min_nodes(&mut self, nodes: usize) {
+        self.scroll_blit_min_nodes = nodes;
+    }
+
+    /// The scroll shift the last `damage` call found, if any: apply it to the
+    /// kept frame before redrawing that call's damage (which is `Rects`
+    /// whenever this is `Some`).
+    pub fn take_shift(&mut self) -> Option<Shift> {
+        self.shift.take()
     }
 
     /// How many nodes the last `damage` call walked.
@@ -290,13 +404,16 @@ impl DamageTracker {
         height: u16,
         text: &mut TextRenderer,
     ) -> Damage {
+        self.shift = None;
         let result = self.damage_unverified(tree, root, width, height, text);
         if let Some(mut shadow) = self.verify.take() {
             shadow.time = self.time;
             shadow.scale = self.scale;
             let full = shadow.damage(tree, root, width, height, text);
+            // A scroll shift stands in for the moved nodes' rects: the pixel
+            // tests are what check it. The records must agree regardless.
             assert!(
-                covers(&result, &full, f64::from(width), f64::from(height)),
+                self.shift.is_some() || covers(&result, &full, f64::from(width), f64::from(height)),
                 "the incremental damage walk missed a change.\n  incremental: {result:?}\n  full walk:   {full:?}"
             );
             // The records themselves must agree too: a record the incremental
@@ -367,9 +484,13 @@ impl DamageTracker {
         } else {
             Err(Bail)
         };
-        let damage = match result {
-            Ok(damage) => damage,
+        let changes = match result {
+            Ok(changes) => Some(changes),
             Err(Bail) => self.full_walk(tree, root, window, width, height, text),
+        };
+        let damage = match changes {
+            None => Damage::Full,
+            Some(changes) => self.resolve(tree, changes, window),
         };
         self.layout_epoch = Some(epoch);
         self.focused = focused;
@@ -387,7 +508,7 @@ impl DamageTracker {
         width: u16,
         height: u16,
         text: &mut TextRenderer,
-    ) -> Damage {
+    ) -> Option<Vec<Change>> {
         self.spare.clear();
         let mut recorder = Recorder {
             tree,
@@ -409,30 +530,259 @@ impl DamageTracker {
         let previous = &self.spare;
         self.size = Some((width, height));
         if first {
-            return Damage::Full;
+            return None;
         }
 
-        let mut rects = Vec::new();
+        let mut changes = Vec::new();
         for (id, now) in &self.records {
             match previous.get(id) {
                 Some(before) if before.same_pixels(now) => {}
-                Some(before) => {
-                    // A change in place (a colour, a glyph) needs its rect
-                    // once, not twice toward the `MAX_TRACKED` cap.
-                    if before.painted != now.painted {
-                        rects.push(before.painted);
-                    }
-                    rects.push(now.painted);
-                }
-                None => rects.push(now.painted),
+                before => changes.push(Change {
+                    id,
+                    before: before.map(Record::snap),
+                    after: Some(now.snap()),
+                }),
             }
         }
         for (id, before) in previous {
             if !self.records.contains_key(id) {
-                rects.push(before.painted);
+                changes.push(Change {
+                    id,
+                    before: Some(before.snap()),
+                    after: None,
+                });
             }
         }
-        merge(rects, window)
+        Some(changes)
+    }
+
+    /// The damage for `changes`: a scroll shift and the little it leaves, if
+    /// the changes are one, else every changed node's old and new rect.
+    fn resolve(&mut self, tree: &Tree, changes: Vec<Change>, window: Rect) -> Damage {
+        if self.scroll_blit
+            && !self.special
+            && let Some((shift, rects)) = self.plan_shift(tree, &changes)
+        {
+            let damage = merge(rects, window);
+            // Nothing to save when most of the window is redrawn anyway.
+            if matches!(damage, Damage::Rects(_)) {
+                self.shift = Some(shift);
+                return damage;
+            }
+        }
+        merge(plain_rects(&changes), window)
+    }
+
+    /// 0.5.4 (#126): whether `changes` are one scroller's content moving
+    /// as a block, so that its pixels can be copied instead of redrawn.
+    ///
+    /// Everything about it is conservative: any doubt returns `None` and the
+    /// changes become ordinary damage. A scroller qualifies when its own change
+    /// is only its offset; every node under it that moved did so by the same
+    /// whole number of device pixels with its own content unchanged (what is
+    /// new, gone or different is redrawn where it now is, and where its old
+    /// pixels land); and nothing outside it changed or paints over it. Its
+    /// background must be opaque and plain, so that what lies behind the
+    /// content does not matter, its box square-cornered and whole-pixel, and
+    /// nothing from it up the tree blends, blurs, fades or rounds its clip.
+    fn plan_shift(&self, tree: &Tree, changes: &[Change]) -> Option<(Shift, Vec<Rect>)> {
+        let mut scrolled = changes.iter().filter(|c| match (&c.before, &c.after) {
+            (Some(b), Some(a)) => {
+                a.scroll.is_some()
+                    && b.scroll == a.scroll
+                    && b.content == a.content
+                    && b.composed == a.composed
+                    && b.parent == a.parent
+            }
+            _ => false,
+        });
+        let scrolled_change = scrolled.next()?;
+        let scroller = scrolled_change.id;
+        if scrolled.next().is_some() {
+            return None;
+        }
+        let record = self.records.get(scroller)?;
+        record.scroll?;
+        let view = record.child_visible;
+        let [a, b, c, d, _, _] = record.composed.as_coeffs();
+        let whole = |v: f64| (v - v.round()).abs() < 1e-6;
+        if b != 0.0
+            || c != 0.0
+            || a <= 0.0
+            || d <= 0.0
+            || !(whole(view.x0) && whole(view.y0) && whole(view.x1) && whole(view.y1))
+            || view.area() <= 0.0
+            // Clipped by an ancestor: the scrollbar and corners are not where
+            // the box says.
+            || view != record.bounds
+            || (record.opacity - 1.0).abs() > 1e-9
+            || !blittable(tree, scroller)
+        {
+            return None;
+        }
+
+        let parents: HashMap<NodeId, Option<NodeId>> = changes
+            .iter()
+            .filter_map(|c| c.after.or(c.before).map(|s| (c.id, s.parent)))
+            .collect();
+        let parent_of = |id: NodeId| -> Option<NodeId> {
+            match parents.get(&id) {
+                Some(parent) => *parent,
+                None => self.records.get(id).and_then(|r| r.parent),
+            }
+        };
+        let inside = |id: NodeId| -> bool {
+            let mut current = parent_of(id);
+            for _ in 0..4096 {
+                match current {
+                    Some(p) if p == scroller => return true,
+                    Some(p) => current = parent_of(p),
+                    None => return false,
+                }
+            }
+            false
+        };
+        let mut above = HashSet::new();
+        let mut current = parent_of(scroller);
+        while let Some(p) = current {
+            above.insert(p);
+            current = parent_of(p);
+        }
+
+        // How far what is inside moved: all of it alike, in whole pixels.
+        let mut delta: Option<(f64, f64)> = None;
+        let mut moved: HashSet<NodeId> = HashSet::new();
+        for change in changes {
+            let (Some(before), Some(after)) = (&change.before, &change.after) else {
+                continue;
+            };
+            if change.id == scroller
+                || before.content != after.content
+                || before.parent != after.parent
+                || !inside(change.id)
+            {
+                continue;
+            }
+            let (was, now) = (before.composed.as_coeffs(), after.composed.as_coeffs());
+            if was[..4] != now[..4] {
+                continue;
+            }
+            let step = (now[4] - was[4], now[5] - was[5]);
+            match delta {
+                None => delta = Some(step),
+                Some(first)
+                    if (first.0 - step.0).abs() < 1e-6 && (first.1 - step.1).abs() < 1e-6 => {}
+                // Not a block: some moved differently.
+                Some(_) => return None,
+            }
+            moved.insert(change.id);
+        }
+        let (dx, dy) = delta?;
+        if !(whole(dx) && whole(dy)) || (dx == 0.0 && dy == 0.0) {
+            return None;
+        }
+        // Too little moves for the copy to pay.
+        if moved.len() < self.scroll_blit_min_nodes {
+            return None;
+        }
+        let (dx, dy) = (dx.round(), dy.round());
+        let kept = view.intersect(view + peniko::kurbo::Vec2::new(dx, dy));
+        // Worth it only if most of the view is carried over.
+        if kept.width() <= 0.0 || kept.height() <= 0.0 || kept.area() < view.area() * 0.25 {
+            return None;
+        }
+
+        // Nothing outside the scroller may have changed within its view, and
+        // nothing but it, its ancestors (behind it) and its contents may paint
+        // there: a block copy would carry such pixels along.
+        let touches = |s: &Snap| s.painted.overlaps(view);
+        for change in changes {
+            if change.id == scroller || inside(change.id) {
+                continue;
+            }
+            if change.before.iter().chain(change.after.iter()).any(touches) {
+                return None;
+            }
+        }
+        let changed_ids: HashSet<NodeId> = changes.iter().map(|c| c.id).collect();
+        let mut rects: Vec<Rect> = Vec::new();
+        for (id, other) in &self.records {
+            if !other.painted.overlaps(view) || id == scroller || above.contains(&id) {
+                continue;
+            }
+            if !inside(id) {
+                return None;
+            }
+            // Content that stayed put (a sticky header) is not carried by the
+            // move: it is drawn again where it is.
+            // (A changed node is covered below, with where its old pixels went.)
+            if !moved.contains(&id) && !changed_ids.contains(&id) {
+                rects.push(other.painted);
+                // ...and the copy carried its pixels along with the rest.
+                let ghost = (other.painted + peniko::kurbo::Vec2::new(dx, dy)).intersect(view);
+                if ghost.width() > 0.0 && ghost.height() > 0.0 {
+                    rects.push(ghost);
+                }
+            }
+        }
+
+        // What each change leaves to redraw.
+        for change in changes {
+            if change.id == scroller {
+                continue;
+            }
+            if !inside(change.id) {
+                rects.extend(plain_rects(std::slice::from_ref(change)));
+                continue;
+            }
+            if moved.contains(&change.id) {
+                continue;
+            }
+            if let Some(after) = &change.after {
+                rects.push(after.painted);
+            }
+            // The copy puts the old pixels of a node that did not move with
+            // the rest where the rest went.
+            if let Some(before) = &change.before {
+                let ghost = (before.painted + peniko::kurbo::Vec2::new(dx, dy)).intersect(view);
+                if ghost.width() > 0.0 && ghost.height() > 0.0 {
+                    rects.push(ghost);
+                }
+            }
+        }
+        // The strip the move uncovered.
+        if dy > 0.0 {
+            rects.push(Rect::new(view.x0, view.y0, view.x1, kept.y0));
+        } else if dy < 0.0 {
+            rects.push(Rect::new(view.x0, kept.y1, view.x1, view.y1));
+        }
+        if dx > 0.0 {
+            rects.push(Rect::new(view.x0, view.y0, kept.x0, view.y1));
+        } else if dx < 0.0 {
+            rects.push(Rect::new(kept.x1, view.y0, view.x1, view.y1));
+        }
+        // The scrollbar's thumb moved, and the copy carried its old pixels:
+        // where it was and where it is.
+        let (before, after) = match (&scrolled_change.before, &scrolled_change.after) {
+            (Some(b), Some(a)) => (b.offset, a.offset),
+            _ => return None,
+        };
+        let moved_by = peniko::kurbo::Vec2::new(dx, dy);
+        // (The old thumb's pixels are in the copy, `moved_by` along.)
+        if let Some(thumb) = thumb_rect(tree, scroller, before, record.composed) {
+            rects.push((thumb + moved_by).inflate(2.0, 2.0).intersect(view));
+        }
+        if let Some(thumb) = thumb_rect(tree, scroller, after, record.composed) {
+            rects.push(thumb.inflate(2.0, 2.0).intersect(view));
+        }
+        Some((
+            Shift {
+                region: view,
+                dx,
+                dy,
+            },
+            rects,
+        ))
     }
 
     /// 0.5.4 (#125): only the nodes that were written to since the last
@@ -454,7 +804,7 @@ impl DamageTracker {
         touched: &engine_core::Touched,
         focused: Option<NodeId>,
         text: &mut TextRenderer,
-    ) -> Result<Damage, Bail> {
+    ) -> Result<Vec<Change>, Bail> {
         let mut changed: HashSet<NodeId> = touched
             .ids
             .iter()
@@ -475,7 +825,7 @@ impl DamageTracker {
             changed,
             updates: Vec::new(),
             removed: Vec::new(),
-            rects: Vec::new(),
+            changes: Vec::new(),
             visited: 0,
         };
         pass.register();
@@ -484,7 +834,7 @@ impl DamageTracker {
         let Pass {
             updates,
             removed,
-            rects,
+            changes,
             visited,
             ..
         } = pass;
@@ -495,7 +845,7 @@ impl DamageTracker {
             self.records.insert(id, record);
         }
         self.visited = visited;
-        Ok(merge(rects, window))
+        Ok(changes)
     }
 }
 
@@ -515,7 +865,7 @@ struct Pass<'a> {
     changed: HashSet<NodeId>,
     updates: Vec<(NodeId, Record)>,
     removed: Vec<NodeId>,
-    rects: Vec<Rect>,
+    changes: Vec<Change>,
     visited: usize,
 }
 
@@ -583,16 +933,17 @@ impl Pass<'_> {
         if is_special(v.node) {
             return Err(Bail);
         }
+        let (hasher, content, scroll, offset) = record_hasher(self.tree, self.time, &v);
         let mut record = Record {
             painted: round_out(painted_rect(
                 self.text, v.id, v.node, v.composed, v.w, v.h, v.bounds, v.visible,
             )),
-            fingerprint: {
-                let mut hasher = FINGERPRINT.build_hasher();
-                fingerprint_placement(&mut hasher, &v);
-                node_fingerprint(&mut hasher, self.tree, self.time, v.id, v.node);
-                hasher.finish()
-            },
+            fingerprint: hasher.finish(),
+            offset,
+            bounds: v.bounds,
+            content,
+            parent,
+            scroll,
             composed: v.composed,
             child_visible: walk::child_visible(&v),
             opacity: v.opacity,
@@ -603,13 +954,11 @@ impl Pass<'_> {
         };
         match old {
             Some(before) if before.same_pixels(&record) => {}
-            Some(before) => {
-                if before.painted != record.painted {
-                    self.rects.push(before.painted);
-                }
-                self.rects.push(record.painted);
-            }
-            None => self.rects.push(record.painted),
+            _ => self.changes.push(Change {
+                id,
+                before: old.map(Record::snap),
+                after: Some(record.snap()),
+            }),
         }
         // A scroller's children are placed by its offset, which a child
         // cannot see (a scroll is a paint-time shift, not a layout change, since
@@ -745,7 +1094,11 @@ impl Pass<'_> {
         let Some(record) = self.old.get(id) else {
             return Ok(());
         };
-        self.rects.push(record.painted);
+        self.changes.push(Change {
+            id,
+            before: Some(record.snap()),
+            after: None,
+        });
         self.removed.push(id);
         for &child in &record.children {
             // A node of this subtree that now hangs somewhere else was
@@ -759,6 +1112,114 @@ impl Pass<'_> {
         }
         Ok(())
     }
+}
+
+/// Every change's old and new painted rect (once, when it did not move).
+fn plain_rects(changes: &[Change]) -> Vec<Rect> {
+    let mut rects = Vec::new();
+    for change in changes {
+        match (&change.before, &change.after) {
+            (Some(before), Some(after)) => {
+                // A change in place (a colour, a glyph) needs its rect once,
+                // not twice toward the `MAX_TRACKED` cap.
+                if before.painted != after.painted {
+                    rects.push(before.painted);
+                }
+                rects.push(after.painted);
+            }
+            (Some(only), None) | (None, Some(only)) => rects.push(only.painted),
+            (None, None) => {}
+        }
+    }
+    rects
+}
+
+/// Where a scroller's scrollbar thumb is, in window pixels, with its offset
+/// at `offset`; `None` when it has nothing to scroll and shows none. The
+/// geometry is the paint's own (`thumb_geometry_at`).
+fn thumb_rect(tree: &Tree, scroller: NodeId, offset: f64, composed: Affine) -> Option<Rect> {
+    let node = tree.get(scroller)?;
+    let size = tree.layout(scroller).size;
+    let (width, height) = (f64::from(size.width), f64::from(size.height));
+    let (horizontal, thickness, (track, thumb, along), content, viewport) = match &node.kind {
+        NodeKind::ScrollView(state) => {
+            let child = *node.children.first()?;
+            let child_size = tree.layout(child).size;
+            let (viewport, content) = if state.horizontal {
+                (width, f64::from(child_size.width))
+            } else {
+                (height, f64::from(child_size.height))
+            };
+            (
+                state.horizontal,
+                state.scrollbar_width,
+                state.thumb_geometry_at(viewport, content, offset),
+                content,
+                viewport,
+            )
+        }
+        NodeKind::VirtualList(state) => (
+            false,
+            SCROLLBAR_THICKNESS,
+            state.thumb_geometry_at(height, offset),
+            state.total_extent(),
+            height,
+        ),
+        _ => return None,
+    };
+    if content <= viewport || track <= 0.0 {
+        return None;
+    }
+    let local = if horizontal {
+        Rect::new(
+            along,
+            height - thickness - SCROLLBAR_MARGIN,
+            along + thumb,
+            height - SCROLLBAR_MARGIN,
+        )
+    } else {
+        Rect::new(
+            width - thickness - SCROLLBAR_MARGIN,
+            along,
+            width - SCROLLBAR_MARGIN,
+            along + thumb,
+        )
+    };
+    Some(composed.transform_rect_bbox(local))
+}
+
+/// Whether a scroller's pixels can be carried by a block copy: nothing behind
+/// it shows through (an opaque plain background), its box has no rounded
+/// corners or border to move, and nothing from it up the tree blends,
+/// blurs, rounds a clip, or runs a shader.
+fn blittable(tree: &Tree, scroller: NodeId) -> bool {
+    let Some(node) = tree.get(scroller) else {
+        return false;
+    };
+    let paint = &node.paint;
+    let rounded =
+        |n: &Node| n.paint.corner_radius.current > 0.0 || n.paint.corner_radii_override.is_some();
+    if !node.visible
+        || node.shader.is_some()
+        || paint.gradient.is_some()
+        || paint.background.current.components[3] < 1.0 - 1e-6
+        || paint.border_width.current > 0.0
+        || rounded(node)
+        || paint.blur.current > 0.0
+        || paint.backdrop_blur.current > 0.0
+        || paint.blend != engine_core::Blend::Normal
+    {
+        return false;
+    }
+    tree.ancestors(scroller).skip(1).all(|id| {
+        tree.get(id).is_some_and(|n| {
+            n.shader.is_none()
+                && n.paint.blur.current <= 0.0
+                && n.paint.backdrop_blur.current <= 0.0
+                && n.paint.blend == engine_core::Blend::Normal
+                && !(crate::clips_children(n) && rounded(n))
+        })
+    })
 }
 
 /// Whether any of `node`'s children has a nonzero `z_index`, so that they
@@ -795,16 +1256,45 @@ fn covers(result: &Damage, full: &Damage, width: f64, height: f64) -> bool {
     }
 }
 
-/// What places a node: its parent, index, transform, opacity, visible rect and
-/// size. The same for the full walk and the incremental one.
-fn fingerprint_placement(hasher: &mut impl Hasher, v: &walk::Visit<'_>) {
-    v.parent.hash(hasher);
-    v.order.hash(hasher);
-    affine(hasher, v.composed);
-    num(hasher, v.opacity);
-    rect(hasher, v.visible);
-    num(hasher, v.w);
-    num(hasher, v.h);
+/// The hashes a node's record is made of: its `fingerprint` so far (what a
+/// record's whole identity is, still open for more), its `content` (what the
+/// node is, apart from where it is and how far its own contents are
+/// scrolled), and what tells a scroller. The same for the full walk and the
+/// incremental one.
+fn record_hasher(
+    tree: &Tree,
+    time: f32,
+    v: &walk::Visit<'_>,
+) -> (impl Hasher, u64, Option<ScrollInfo>, f64) {
+    // Fast and fixed-seed: a frame's fingerprints compare with the last
+    // frame's, and nothing adversarial picks what's hashed.
+    let mut content = FINGERPRINT.build_hasher();
+    num(&mut content, v.opacity);
+    rect(&mut content, v.visible);
+    num(&mut content, v.w);
+    num(&mut content, v.h);
+    node_fingerprint_with(&mut content, tree, time, v.id, v.node, false);
+    let content = content.finish();
+    let (offset, scroll) = match &v.node.kind {
+        NodeKind::ScrollView(state) => (
+            state.scroll.current,
+            Some(ScrollInfo {
+                horizontal: state.horizontal,
+            }),
+        ),
+        NodeKind::VirtualList(state) => (
+            state.scroll_offset.current,
+            Some(ScrollInfo { horizontal: false }),
+        ),
+        _ => (0.0, None),
+    };
+    let mut hasher = FINGERPRINT.build_hasher();
+    v.parent.hash(&mut hasher);
+    v.order.hash(&mut hasher);
+    affine(&mut hasher, v.composed);
+    content.hash(&mut hasher);
+    num(&mut hasher, offset);
+    (hasher, content, scroll, offset)
 }
 
 impl<'t> walk::Visitor<'t> for Recorder<'_> {
@@ -817,9 +1307,7 @@ impl<'t> walk::Visitor<'t> for Recorder<'_> {
         ));
         // Fast and fixed-seed: a frame's fingerprints compare with the
         // last frame's, and nothing adversarial picks what's hashed.
-        let mut hasher = FINGERPRINT.build_hasher();
-        fingerprint_placement(&mut hasher, v);
-        node_fingerprint(&mut hasher, self.tree, self.time, v.id, v.node);
+        let (mut hasher, content, scroll, offset) = record_hasher(self.tree, self.time, v);
         // 0.5.4 (#110): a backdrop blur shows what is behind it, so anything
         // painted before it that reaches its box or the blur's reach is part
         // of what it paints. The records so far are exactly those nodes.
@@ -853,6 +1341,11 @@ impl<'t> walk::Visitor<'t> for Recorder<'_> {
             Record {
                 painted,
                 fingerprint: hasher.finish(),
+                offset,
+                bounds: v.bounds,
+                content,
+                parent: v.parent,
+                scroll,
                 composed: v.composed,
                 child_visible: walk::child_visible(v),
                 opacity: v.opacity,
@@ -1059,6 +1552,19 @@ pub(crate) fn effect_content_fingerprint(tree: &Tree, time: f32, id: NodeId) -> 
 
 /// Everything about `node` itself that decides its pixels.
 fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId, node: &Node) {
+    node_fingerprint_with(h, tree, time, id, node, true);
+}
+
+/// `node_fingerprint`, optionally without how far a scroller is scrolled
+/// (hashed apart, so a node whose only change is a scroll can be told).
+fn node_fingerprint_with(
+    h: &mut impl Hasher,
+    tree: &Tree,
+    time: f32,
+    id: NodeId,
+    node: &Node,
+    with_offset: bool,
+) {
     let Node {
         id: _,
         parent: _,
@@ -1131,7 +1637,7 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId, nod
         NodeKind::Svg(state) => state.document.revision.hash(h),
         NodeKind::Canvas(state) => canvas_fingerprint(h, state),
         NodeKind::ScrollView(state) => {
-            scroll_fingerprint(h, state);
+            scroll_fingerprint(h, state, with_offset);
             // The scrollbar thumb's size follows the content's.
             for &child in &node.children {
                 let size = tree.layout(child).size;
@@ -1139,7 +1645,7 @@ fn node_fingerprint(h: &mut impl Hasher, tree: &Tree, time: f32, id: NodeId, nod
                 size.height.to_bits().hash(h);
             }
         }
-        NodeKind::VirtualList(state) => list_fingerprint(h, state),
+        NodeKind::VirtualList(state) => list_fingerprint(h, state, with_offset),
         NodeKind::Terminal(state) => {
             focused.hash(h); // the cursor
             terminal_fingerprint(h, state);
@@ -1431,7 +1937,7 @@ fn canvas_fingerprint(h: &mut impl Hasher, state: &CanvasState) {
     }
 }
 
-fn scroll_fingerprint(h: &mut impl Hasher, state: &ScrollViewState) {
+fn scroll_fingerprint(h: &mut impl Hasher, state: &ScrollViewState, with_offset: bool) {
     let ScrollViewState {
         scroll,
         horizontal,
@@ -1441,7 +1947,9 @@ fn scroll_fingerprint(h: &mut impl Hasher, state: &ScrollViewState) {
         // Bookkeeping for the `scroll` event; paints nothing.
         reported: _,
     } = state;
-    num(h, scroll.current);
+    if with_offset {
+        num(h, scroll.current);
+    }
     horizontal.hash(h);
     thumb_drag_anchor
         .map(|(a, b)| (a.to_bits(), b.to_bits()))
@@ -1453,7 +1961,7 @@ fn scroll_fingerprint(h: &mut impl Hasher, state: &ScrollViewState) {
     num(h, *scrollbar_width);
 }
 
-fn list_fingerprint(h: &mut impl Hasher, state: &VirtualListState) {
+fn list_fingerprint(h: &mut impl Hasher, state: &VirtualListState, with_offset: bool) {
     let VirtualListState {
         item_count,
         item_extent,
@@ -1471,7 +1979,9 @@ fn list_fingerprint(h: &mut impl Hasher, state: &VirtualListState) {
         ItemExtent::Fixed(extent) => num(h, *extent),
         ItemExtent::Variable => 1u8.hash(h),
     }
-    num(h, scroll_offset.current);
+    if with_offset {
+        num(h, scroll_offset.current);
+    }
     num(h, state.total_extent());
     thumb_drag_anchor
         .map(|(a, b)| (a.to_bits(), b.to_bits()))

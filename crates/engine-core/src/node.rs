@@ -431,6 +431,17 @@ impl ScrollViewState {
     /// too rather than cached, since neither crate can hold the
     /// other's own cross-frame state).
     pub fn thumb_geometry(&self, viewport_extent: f64, content_extent: f64) -> (f64, f64, f64) {
+        self.thumb_geometry_at(viewport_extent, content_extent, self.scroll.current)
+    }
+
+    /// `thumb_geometry` as it would be at scroll offset `offset` (0.5.4, #126:
+    /// where the thumb was, for a frame that moved it).
+    pub fn thumb_geometry_at(
+        &self,
+        viewport_extent: f64,
+        content_extent: f64,
+        offset: f64,
+    ) -> (f64, f64, f64) {
         let track = viewport_extent - SCROLLBAR_MARGIN * 2.0;
         if track <= 0.0 {
             return (0.0, 0.0, 0.0);
@@ -443,7 +454,7 @@ impl ScrollViewState {
         };
         let thumb = thumb.min(track);
         let progress = if max_scroll > 0.0 {
-            self.scroll.current / max_scroll
+            offset / max_scroll
         } else {
             0.0
         };
@@ -822,6 +833,11 @@ impl VirtualListState {
     /// wheel-scroll clamping can never disagree about the real content
     /// extent.
     pub fn thumb_geometry(&self, viewport_extent: f64) -> (f64, f64, f64) {
+        self.thumb_geometry_at(viewport_extent, self.scroll_offset.current)
+    }
+
+    /// `thumb_geometry` as it would be at scroll offset `offset`.
+    pub fn thumb_geometry_at(&self, viewport_extent: f64, offset: f64) -> (f64, f64, f64) {
         let track = viewport_extent - SCROLLBAR_MARGIN * 2.0;
         if track <= 0.0 {
             return (0.0, 0.0, 0.0);
@@ -835,7 +851,7 @@ impl VirtualListState {
         };
         let thumb = thumb.min(track);
         let progress = if max_scroll > 0.0 {
-            self.scroll_offset.current / max_scroll
+            offset / max_scroll
         } else {
             0.0
         };

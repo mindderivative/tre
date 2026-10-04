@@ -143,6 +143,12 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   with one card animating). The tree now ticks only the nodes known to be
   animating, and looks at every node once only when a new animation has started:
   75 ns per frame in the same case. Nothing to change in an app.
+- **Scrolling a big view redraws less.** A scroll that moves a whole view of
+  200 nodes or more is carried by copying the kept pixels, with only the strip
+  it uncovers and the scrollbar redrawn; see [Window](reference/window.md).
+  Pixels are identical, except that text edges in the copied area may differ by
+  one level in a pixel or two from a fresh draw. `TRE_SCROLL_BLIT_OFF=1`
+  turns it off.
 - **The damage walk is about 2.4x cheaper.** Working out what changed each frame
   fingerprinted every visible node into a hashed map built from scratch: 3.7 ms
   at 9,000 nodes, now 1.5 ms, from keeping the records in a slot-indexed array

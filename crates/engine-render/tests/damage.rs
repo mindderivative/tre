@@ -392,9 +392,11 @@ fn a_canvas_redraw_damages_what_it_draws_past_its_box() {
     assert!(covers(&s.frame(), Rect::new(60.0, 60.0, 70.0, 70.0)));
 }
 
-#[test]
-fn scrolling_damages_only_the_viewport() {
+/// A 100x100 scroll view at (50, 50) with a 400px content child, settled.
+fn scrolling_scene(tracker: DamageTracker) -> (Scene, NodeId) {
     let mut s = Scene::new();
+    s.tracker = tracker;
+    s.tracker.set_scroll_blit_min_nodes(0);
     let view = s.add(
         s.root,
         NodeKind::ScrollView(ScrollViewState::new(false)),
@@ -405,7 +407,16 @@ fn scrolling_damages_only_the_viewport() {
     );
     let content = s.add(view, NodeKind::Rect, 0.0, 0.0, 100.0, 400.0);
     s.tree.get_mut(content).unwrap().layout_style.position = Position::Relative;
+    // An opaque view, so its content can be carried by a copy.
+    s.tree.get_mut(view).unwrap().paint.background.current = GREY;
     s.settle();
+    (s, view)
+}
+
+#[test]
+fn scrolling_damages_only_the_viewport() {
+    // Without the shift, every row moved: the whole viewport is damaged.
+    let (mut s, view) = scrolling_scene(DamageTracker::without_scroll_blit());
     if let NodeKind::ScrollView(state) = &mut s.tree.get_mut(view).unwrap().kind {
         state.scroll.current = 40.0;
     }
@@ -418,6 +429,34 @@ fn scrolling_damages_only_the_viewport() {
         within(&damage, Rect::new(50.0, 50.0, 150.0, 150.0), 4.0),
         "{damage:?}"
     );
+}
+
+#[test]
+fn a_scroll_is_a_shift_and_the_strip_it_uncovers() {
+    // 0.5.4 (#126): with it, the content is moved in the kept frame and the
+    // damage is the strip the move uncovered and the scrollbar.
+    let (mut s, view) = scrolling_scene(DamageTracker::new());
+    if let NodeKind::ScrollView(state) = &mut s.tree.get_mut(view).unwrap().kind {
+        state.scroll.current = 40.0;
+    }
+    let damage = s.frame();
+    let shift = s.tracker.take_shift().expect("a plain scroll is a shift");
+    assert_eq!(shift.region, Rect::new(50.0, 50.0, 150.0, 150.0));
+    assert_eq!((shift.dx, shift.dy), (0.0, -40.0));
+    // The strip at the bottom, 40px tall, and nothing above it but the thumb.
+    assert!(
+        covers(&damage, Rect::new(50.0, 110.0, 150.0, 150.0)),
+        "{damage:?}"
+    );
+    assert!(
+        within(&damage, Rect::new(50.0, 50.0, 150.0, 150.0), 4.0),
+        "{damage:?}"
+    );
+    let area: f64 = rects(&damage).iter().map(Rect::area).sum();
+    assert!(area < 100.0 * 100.0 * 0.6, "{damage:?}");
+    // The next call has no shift left over.
+    assert_eq!(s.frame(), Damage::None);
+    assert!(s.tracker.take_shift().is_none());
 }
 
 #[test]

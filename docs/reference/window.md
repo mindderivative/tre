@@ -229,6 +229,21 @@ surface the platform won't let Tesserae Engine copy into always redraws in full,
 logs a warning saying so; `get("partial_redraw")` reports the setting, and
 `get("partial_redraw_active")` whether it's in effect (`None` until
 `App.run()` opens the window).
+
+**Scrolling** (0.5.4) is the one change a partial redraw can carry as a block. When a
+scroll view or virtual list scrolls and nothing else changes in or over it, the window
+copies the view's kept pixels by the scroll distance and redraws only the strip the
+scroll uncovered, its scrollbar, and anything that did not move with it, instead of the
+whole view. It does this only when the copy is exact and worth it: the view has an opaque
+plain background (no gradient, border or rounded corners), the scroll is a whole number of
+device pixels, everything under it moved by the same distance, no other node paints over
+it, nothing above it fades, blends or blurs, and at least 200 nodes move with it (a copy
+costs about as much as redrawing fewer). Anything else redraws as before. Text edges drawn
+by the copy can differ from a fresh draw by one level in a pixel or two, because a glyph
+is rasterised from where it sits in the window; nothing else differs, and a later full
+redraw re-draws them. How much it saves depends on the machine and the content: it
+removes the redraw of the view, but not the walk over its nodes. Set the environment
+variable `TRE_SCROLL_BLIT_OFF=1` to turn it off while measuring or chasing a rendering bug.
 **`set(transparent=True)`** (0.5.4) opens the window see-through: the OS gives it an alpha
 channel, so a root `fill` with alpha below 255, or `(0, 0, 0, 0)`, shows the desktop
 through it. With `decorations=False` that is a window of any shape: a rounded card,
