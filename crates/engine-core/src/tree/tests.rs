@@ -6752,6 +6752,79 @@ mod static_selection {
         );
     }
 
+    #[test]
+    fn ctrl_arrows_move_the_selection_by_word() {
+        use crate::Key;
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "one  two, three");
+        tree.set_text_selection(id, 0, 0);
+        let word = |tree: &mut Tree, key| {
+            tree.extend_static_selection_by(key, true);
+            tree.static_selection_ends().unwrap().1.1
+        };
+        assert_eq!(
+            word(&mut tree, Key::ArrowRight),
+            5,
+            "past 'one' and its spaces, to 'two'"
+        );
+        assert_eq!(
+            word(&mut tree, Key::ArrowRight),
+            8,
+            "the comma is its own word"
+        );
+        assert_eq!(word(&mut tree, Key::ArrowRight), 10, "then 'three'");
+        assert_eq!(word(&mut tree, Key::ArrowRight), 15, "to the end");
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 10);
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 8);
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 5);
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 0);
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 0, "stays at the start");
+    }
+
+    #[test]
+    fn a_horizontal_move_at_the_end_of_a_text_goes_on_into_the_next() {
+        use crate::Key;
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.set_text_selection(a, 3, 3);
+        tree.extend_static_selection(Key::End);
+        tree.extend_static_selection(Key::ArrowRight);
+        assert_eq!(tree.static_selection_ends().unwrap().1, (b, 0));
+        tree.extend_static_selection(Key::ArrowRight);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("ha\nb"));
+        tree.extend_static_selection_by(Key::ArrowRight, true);
+        assert_eq!(range_of(&tree, b), Some((0, 5)));
+        tree.extend_static_selection(Key::End);
+        tree.extend_static_selection(Key::ArrowRight);
+        assert_eq!(tree.static_selection_ends().unwrap().1, (c, 0));
+        // And back, over the boundary.
+        tree.extend_static_selection(Key::ArrowLeft);
+        assert_eq!(tree.static_selection_ends().unwrap().1, (b, 5));
+        // The first text's start has nowhere to go: it stays.
+        tree.set_text_selection(a, 0, 0);
+        assert!(tree.extend_static_selection(Key::ArrowLeft));
+        assert_eq!(tree.static_selection_ends().unwrap().1, (a, 0));
+    }
+
+    #[test]
+    fn with_no_line_to_move_to_the_vertical_edge_is_the_text_edge_then_the_next_text() {
+        let mut tree = Tree::new();
+        let (_, [a, b, _]) = paragraphs(&mut tree);
+        tree.set_text_selection(a, 2, 2);
+        assert_eq!(tree.static_selection_vertical_edge(false), Some((a, 0)));
+        assert_eq!(tree.static_selection_vertical_edge(true), Some((a, 5)));
+        tree.set_text_selection(a, 0, 5);
+        assert_eq!(
+            tree.static_selection_vertical_edge(true),
+            Some((b, 5)),
+            "already at the end"
+        );
+        tree.set_text_selection(b, 0, 0);
+        assert_eq!(tree.static_selection_vertical_edge(false), Some((a, 0)));
+        tree.clear_text_selection();
+        assert_eq!(tree.static_selection_vertical_edge(true), None);
+    }
+
     /// A selectable "Visit the docs now" with "docs" (10..14) a link.
     fn linked(tree: &mut Tree) -> NodeId {
         let id = text(tree, "Visit the docs now");

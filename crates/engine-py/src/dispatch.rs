@@ -415,6 +415,23 @@ pub(crate) fn process_input(
     if resize_from_border(ctx, io, event) {
         return DispatchOutcome::None;
     }
+    // 0.5.4 (#154): Ctrl+Shift+Left/Right move the selection in static text by
+    // word. The tree's own Shift+arrow handling moves by character, so this
+    // comes first and, when it moves the selection, the key goes no further.
+    if let InputEvent::KeyPressed {
+        key: key @ (engine_core::Key::ArrowLeft | engine_core::Key::ArrowRight),
+        shift: true,
+    } = event
+        && listeners::modifiers().ctrl
+    {
+        let mut tree = ctx.tree.borrow_mut();
+        let in_input = tree
+            .focused()
+            .is_some_and(|f| matches!(tree.get(f).map(|n| &n.kind), Some(NodeKind::TextField(_))));
+        if !in_input && tree.extend_static_selection_by(*key, true) {
+            return DispatchOutcome::None;
+        }
+    }
     listeners::note_input_modality(event);
     let shifted = shift_wheel(event);
     let delivered = shifted.as_ref().unwrap_or(event);

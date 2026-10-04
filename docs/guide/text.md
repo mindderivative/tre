@@ -158,7 +158,12 @@ A span's `font_size` makes its line taller when it is larger than the rest, and
 Selected text shows the text colour at 30% behind it. Double-click selects a
 word and triple-click a line. With a selection showing, Ctrl+A selects all of
 that text, and Shift+Left, Shift+Right, Shift+Home and Shift+End move the end
-of the selection a character, or to the start or end of the text. The pointer
+of the selection a character, or to the start or end of the text. Ctrl+Shift+Left
+and Ctrl+Shift+Right move it a word (a run of letters and digits, a run of
+punctuation, then the spaces after it), and Shift+Up and Shift+Down a line, keeping
+the column. Moving past the start or end of a text goes on into the neighbouring
+selectable text, and Shift+Up on the first line goes to the start of the text, as
+Shift+Down on the last goes to its end, before they do. The pointer
 is an I-beam over selectable text, unless the node sets a `cursor`. A press anywhere else
 clears the selection.
 

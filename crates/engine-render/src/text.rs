@@ -1235,6 +1235,34 @@ impl TextRenderer {
         out
     }
 
+    /// 0.5.4 (#154): where the selection's moving end goes when moved `delta`
+    /// lines (negative up) in a static text node, keeping the horizontal place
+    /// it was at: the new byte offset. At the first or last line it goes to that
+    /// line's start or end.
+    pub fn move_focus_lines(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+        anchor: usize,
+        focus: usize,
+        delta: isize,
+    ) -> usize {
+        let layout = self.static_layout(node_id, state, &at);
+        let len = state.content.len();
+        let cursor = |offset: usize| {
+            let mut offset = offset.min(len);
+            while !state.content.is_char_boundary(offset) {
+                offset -= 1;
+            }
+            Cursor::from_byte_index(layout, offset, Affinity::Downstream)
+        };
+        Selection::new(cursor(anchor), cursor(focus))
+            .move_lines(layout, delta, true)
+            .focus()
+            .index()
+    }
+
     /// 0.5.4 (#131): the bytes of the word (`lines == false`) or the visual
     /// line (`lines == true`) at `point`, for a double or triple click.
     pub fn text_range_at(

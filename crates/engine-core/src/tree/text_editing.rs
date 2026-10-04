@@ -917,11 +917,30 @@ impl Tree {
         self.set_text_selection(owner, 0, len)
     }
 
-    /// 0.5.4 (#131): Shift+Left, Shift+Right, Shift+Home or Shift+End in
-    /// static text: moves the selection's focus end one character (or to the
-    /// start or end of its text), keeping its anchor. `false` if there is no
-    /// selection.
-    pub fn extend_static_selection(&mut self, key: crate::Key) -> bool {
+    /// The selection's anchor and its moving end: a text node and a byte offset
+    /// each. `None` with no selection.
+    pub fn static_selection_ends(&self) -> Option<((NodeId, usize), (NodeId, usize))> {
+        Some((self.static_selection.anchor?, self.static_selection.focus?))
+    }
+
+    /// The selectable text before (`forward == false`) or after `id` in
+    /// document order.
+    fn adjacent_selectable_text(&self, id: NodeId, forward: bool) -> Option<NodeId> {
+        let order = self.selectable_texts(self.root_of(id), [id, id]);
+        let at = order.iter().position(|n| *n == id)?;
+        if forward {
+            order.get(at + 1).copied()
+        } else {
+            at.checked_sub(1).and_then(|i| order.get(i).copied())
+        }
+    }
+
+    /// 0.5.4 (#131, #154): Shift+Left, Shift+Right, Shift+Home or Shift+End in
+    /// static text (`by_word`: with Ctrl, Left and Right move a word): moves the
+    /// selection's focus end, keeping its anchor. At the start or end of a text
+    /// it goes on into the neighbouring selectable text. `false` if there is no
+    /// selection or the key is not one of these.
+    pub fn extend_static_selection_by(&mut self, key: crate::Key, by_word: bool) -> bool {
         let (Some(anchor), Some((owner, focus))) =
             (self.static_selection.anchor, self.static_selection.focus)
         else {
@@ -932,20 +951,66 @@ impl Tree {
         };
         let content = &state.content;
         let focus = Self::char_boundary(content, focus);
-        let moved = match key {
-            crate::Key::ArrowLeft => content[..focus]
-                .char_indices()
-                .next_back()
-                .map_or(0, |(i, _)| i),
-            crate::Key::ArrowRight => content[focus..]
-                .chars()
-                .next()
-                .map_or(focus, |c| focus + c.len_utf8()),
-            crate::Key::Home => 0,
-            crate::Key::End => content.len(),
+        let target = match key {
+            crate::Key::ArrowLeft if focus == 0 => {
+                match self.adjacent_selectable_text(owner, false) {
+                    Some(prev) => (prev, self.text_len(prev).unwrap_or(0)),
+                    None => (owner, 0),
+                }
+            }
+            crate::Key::ArrowRight if focus == content.len() => {
+                match self.adjacent_selectable_text(owner, true) {
+                    Some(next) => (next, 0),
+                    None => (owner, focus),
+                }
+            }
+            crate::Key::ArrowLeft if by_word => (owner, word_start_before(content, focus)),
+            crate::Key::ArrowRight if by_word => (owner, word_start_after(content, focus)),
+            crate::Key::ArrowLeft => (
+                owner,
+                content[..focus]
+                    .char_indices()
+                    .next_back()
+                    .map_or(0, |(i, _)| i),
+            ),
+            crate::Key::ArrowRight => (
+                owner,
+                content[focus..]
+                    .chars()
+                    .next()
+                    .map_or(focus, |c| focus + c.len_utf8()),
+            ),
+            crate::Key::Home => (owner, 0),
+            crate::Key::End => (owner, content.len()),
             _ => return false,
         };
-        self.select_across(anchor, (owner, moved))
+        self.select_across(anchor, target)
+    }
+
+    /// [`extend_static_selection_by`](Self::extend_static_selection_by) by one
+    /// character.
+    pub fn extend_static_selection(&mut self, key: crate::Key) -> bool {
+        self.extend_static_selection_by(key, false)
+    }
+
+    /// 0.5.4 (#154): where Shift+Up (`forward == false`) or Shift+Down goes when
+    /// the text has no line to move to: the start or end of the text, and from
+    /// there into the neighbouring selectable text. `None` with no selection.
+    pub fn static_selection_vertical_edge(&self, forward: bool) -> Option<(NodeId, usize)> {
+        let (owner, focus) = self.static_selection.focus?;
+        let len = self.text_len(owner)?;
+        Some(match (forward, focus) {
+            (false, 0) => match self.adjacent_selectable_text(owner, false) {
+                Some(prev) => (prev, 0),
+                None => (owner, 0),
+            },
+            (false, _) => (owner, 0),
+            (true, f) if f >= len => match self.adjacent_selectable_text(owner, true) {
+                Some(next) => (next, self.text_len(next).unwrap_or(0)),
+                None => (owner, len),
+            },
+            (true, _) => (owner, len),
+        })
     }
 
     /// The text a Copy of the static selection would take, the nodes' pieces
@@ -971,4 +1036,47 @@ impl Tree {
         let end = Self::char_boundary(&state.content, end);
         (start < end).then(|| state.content[start..end].to_string())
     }
+}
+
+/// A character's kind for word moves: letters and digits run together,
+/// punctuation runs together, and whitespace is its own.
+fn word_class(c: char) -> u8 {
+    if c.is_alphanumeric() || c == '_' {
+        0
+    } else if c.is_whitespace() {
+        1
+    } else {
+        2
+    }
+}
+
+/// Ctrl+Right: past the rest of this word, then the whitespace after it, to
+/// the start of the next (or the end of the text).
+fn word_start_after(content: &str, from: usize) -> usize {
+    let mut chars = content[from..].char_indices().peekable();
+    let Some(&(_, first)) = chars.peek() else {
+        return from;
+    };
+    let class = word_class(first);
+    if class != 1 {
+        while chars.next_if(|&(_, c)| word_class(c) == class).is_some() {}
+    }
+    while chars.next_if(|&(_, c)| word_class(c) == 1).is_some() {}
+    chars.peek().map_or(content.len(), |&(i, _)| from + i)
+}
+
+/// Ctrl+Left: back over whitespace, then to the start of the word before it
+/// (or the start of the text).
+fn word_start_before(content: &str, from: usize) -> usize {
+    let mut chars = content[..from].char_indices().rev().peekable();
+    while chars.next_if(|&(_, c)| word_class(c) == 1).is_some() {}
+    let Some(&(_, last)) = chars.peek() else {
+        return 0;
+    };
+    let class = word_class(last);
+    let mut start = 0;
+    while let Some((i, _)) = chars.next_if(|&(_, c)| word_class(c) == class) {
+        start = i;
+    }
+    start
 }

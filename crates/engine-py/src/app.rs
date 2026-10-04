@@ -215,6 +215,59 @@ fn link_under(
     tree.text_link_at(hit, offset).map(str::to_owned)
 }
 
+/// 0.5.4 (#154): Shift+Up and Shift+Down in static text move the selection's
+/// moving end a line, which needs the shaped layout (so it runs here, with the
+/// text renderer, not in the tree). At the first or last line the end goes to
+/// that line's start or end, and from there on into the neighbouring selectable
+/// text. Returns whether it moved the selection.
+fn text_key_input(
+    event: &InputEvent,
+    tree: &Rc<RefCell<Tree>>,
+    text_renderer: &mut TextRenderer,
+) -> bool {
+    let InputEvent::KeyPressed {
+        key: key @ (engine_core::Key::ArrowUp | engine_core::Key::ArrowDown),
+        shift: true,
+    } = event
+    else {
+        return false;
+    };
+    let forward = *key == engine_core::Key::ArrowDown;
+    let (anchor, target) = {
+        let tree = tree.borrow();
+        if tree
+            .focused()
+            .is_some_and(|f| matches!(tree.get(f).map(|n| &n.kind), Some(NodeKind::TextField(_))))
+        {
+            return false;
+        }
+        let Some((anchor, (owner, focus))) = tree.static_selection_ends() else {
+            return false;
+        };
+        let Some(NodeKind::Text(state)) = tree.get(owner).map(|n| &n.kind) else {
+            return false;
+        };
+        let at = text_placement(&tree, owner);
+        let moved = text_renderer.move_focus_lines(
+            owner,
+            state,
+            at,
+            if anchor.0 == owner { anchor.1 } else { focus },
+            focus,
+            if forward { 1 } else { -1 },
+        );
+        // No line to go to: the text's edge, then the next text.
+        let target = if moved == focus {
+            tree.static_selection_vertical_edge(forward)
+                .unwrap_or((owner, focus))
+        } else {
+            (owner, moved)
+        };
+        (anchor, target)
+    };
+    tree.borrow_mut().select_across(anchor, target)
+}
+
 /// 0.5.4 (#153): the shaped lines of every text node the accessibility tree
 /// will expose as text, keyed by node.
 fn text_access_lines(
@@ -1700,6 +1753,8 @@ impl App {
                         std::time::Instant::now(),
                     ));
                 }
+                // 0.5.4 (#154): Shift+Up and Shift+Down in static text.
+                text_key_input(&event, &runtime.handles.tree, runtime.gpu.renderer.text());
                 // 0.5.4 (#131): the `link` events, after the click itself.
                 for click in link_clicks {
                     listeners::deliver(
@@ -2505,6 +2560,72 @@ mod tests {
             tree.borrow().static_selected_text().as_deref(),
             Some(copied.as_str())
         );
+    }
+
+    fn shift(key: engine_core::Key) -> engine_core::InputEvent {
+        engine_core::InputEvent::KeyPressed { key, shift: true }
+    }
+
+    #[test]
+    fn shift_up_and_down_move_the_selections_end_a_line_then_to_the_edge_then_on() {
+        let (tree, _root, first, second) = static_text_scene();
+        {
+            let mut tree = tree.borrow_mut();
+            for (id, content) in [
+                (first, "word ".repeat(40)),
+                (second, "next paragraph".to_string()),
+            ] {
+                if let Some(NodeKind::Text(state)) = tree.get_mut(id).map(|n| &mut n.kind) {
+                    state.content = content;
+                    state.options.selectable = true;
+                }
+            }
+            tree.set_text_selection(first, 8, 8);
+        }
+        let mut text = engine_render::TextRenderer::new();
+        let focus = |tree: &std::rc::Rc<std::cell::RefCell<Tree>>| {
+            tree.borrow().static_selection_ends().unwrap().1
+        };
+        // Down: a line further on (well past the first 8 bytes).
+        assert!(super::text_key_input(
+            &shift(engine_core::Key::ArrowDown),
+            &tree,
+            &mut text
+        ));
+        let (node, one_line) = focus(&tree);
+        assert_eq!(node, first);
+        assert!(one_line > 20, "moved a line, not a character: {one_line}");
+        // Up undoes it, to about where it was.
+        assert!(super::text_key_input(
+            &shift(engine_core::Key::ArrowUp),
+            &tree,
+            &mut text
+        ));
+        let (_, back) = focus(&tree);
+        assert!(back.abs_diff(8) <= 3, "back near the start column: {back}");
+        // Up on the first line goes to the text's start; again, nowhere (first text).
+        super::text_key_input(&shift(engine_core::Key::ArrowUp), &tree, &mut text);
+        assert_eq!(focus(&tree), (first, 0));
+        // Down to the last line, to its end, then into the next text's end.
+        for _ in 0..10 {
+            super::text_key_input(&shift(engine_core::Key::ArrowDown), &tree, &mut text);
+        }
+        assert_eq!(focus(&tree), (second, "next paragraph".len()));
+        assert!(tree.borrow().static_selected_text().unwrap().contains('\n'));
+        // Other keys and an unshifted arrow are not ours.
+        assert!(!super::text_key_input(
+            &engine_core::InputEvent::KeyPressed {
+                key: engine_core::Key::ArrowDown,
+                shift: false
+            },
+            &tree,
+            &mut text
+        ));
+        assert!(!super::text_key_input(
+            &shift(engine_core::Key::ArrowLeft),
+            &tree,
+            &mut text
+        ));
     }
 
     #[test]

@@ -267,3 +267,26 @@ def test_selecting_in_one_text_clears_the_selection_in_another():
     second.set(selection=(1, 4))
     assert first.get("selection") is None
     assert second.get("selection") == (1, 4)
+
+
+def test_ctrl_shift_arrows_move_the_selection_by_word_and_shift_arrows_cross_texts():
+    window = Window(width=300, height=120)
+    window.root.set(fill=WHITE, padding=0)
+    first = window.create("text", text="one  two, three", width=200, height=30, selectable=True)
+    second = window.create("text", text="next", width=200, height=30, selectable=True)
+    window.root.add_child(first)
+    window.root.add_child(second)
+    first.set(selection=(0, 0))
+    window.simulate("key_down", key="arrow_right", shift=True, ctrl=True)
+    assert first.get("selection") == (0, 5)
+    window.simulate("key_down", key="arrow_right", shift=True, ctrl=True)
+    assert first.get("selection") == (0, 8)
+    window.simulate("key_down", key="arrow_left", shift=True, ctrl=True)
+    assert first.get("selection") == (0, 5)
+    # Without Ctrl it is one character; at the end it goes into the next text.
+    window.simulate("key_down", key="end", shift=True)
+    window.simulate("key_down", key="arrow_right", shift=True)
+    assert first.get("selection") == (0, 15)
+    assert second.get("selection") == (0, 0)
+    window.simulate("key_down", key="arrow_right", shift=True)
+    assert second.get("selection") == (0, 1)
