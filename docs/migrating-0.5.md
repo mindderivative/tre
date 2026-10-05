@@ -120,3 +120,181 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.4
+
+- **An animating window is paced to the display.** The swapchain used the first
+  present mode the driver listed, which on Linux with Mesa is `Mailbox`: it never
+  waits for the display, so any continuous animation, even one box, ran the loop
+  at thousands of frames a second and used a whole CPU core (measured: 97.5% of a
+  core, now 7 to 9%). The default is now vsync. A still window was never affected
+  and still costs nothing. An app that wants the old behavior, the newest frame at
+  once, asks for it with `window.set(present_mode="low_latency")`, live or before
+  `App.run()`. macOS and Windows already listed a vsync mode first, so little
+  changes there.
+
+- **HiDPI scaling is available, and off.** `window.set(dpi_scaling=True)` lays
+  the window out in logical pixels and draws it at the display's
+  `scale_factor`, so an app written at 1x is the same size and sharp on a 2x
+  screen. `width`, `height`, pointer positions and pixel scroll deltas become
+  logical. It is off by default, so nothing changes for an app or framework that
+  already multiplies by `scale_factor` itself; turn it on only if yours does not.
+- **Animations cost what they run, not what the tree holds.** Each frame used to
+  visit every node to advance its animations (0.6 to 1.3 ms at 9,000 nodes, even
+  with one card animating). The tree now ticks only the nodes known to be
+  animating, plus the nodes a new animation could have started on (the ones
+  changed since the last tick), never a pass over the whole tree: 75 ns per frame
+  in the same case. Image and SVG nodes are likewise tracked, not searched for each
+  frame. Nothing to change in an app.
+- **Scrolling a big view redraws less.** A scroll that moves a whole view of
+  200 nodes or more is carried by copying the kept pixels, with only the strip
+  it uncovers and the scrollbar redrawn; see [Window](reference/window.md).
+  Pixels are identical, except that text edges in the copied area may differ by
+  one level in a pixel or two from a fresh draw. `TRE_SCROLL_BLIT_OFF=1`
+  turns it off.
+- **The damage walk is about 2.4x cheaper.** Working out what changed each frame
+  fingerprinted every visible node into a hashed map built from scratch: 3.7 ms
+  at 9,000 nodes, now 1.5 ms, from keeping the records in a slot-indexed array
+  reused between frames and not re-bounding nodes that paint only their box.
+  The result is unchanged; the cost still grows with the tree.
+- **Scrolling no longer runs layout.** A scroll view's or virtual list's offset used
+  to be written into its content's layout position, so every scrolled frame
+  re-ran layout (1.55 ms with 3,000 rows). The offset is now a paint-time shift,
+  `Tree::scroll_shift`, that painting, hit testing, accessibility bounds and
+  `absolute_position` all read, and layout skips a call whose answer it already
+  has: 8.5 µs per scrolled frame. One visible consequence for code that
+  reads layout directly: a scrolled child's layout position is where it sits
+  unscrolled; use `absolute_position` for where it is on screen.
+- **A node is 60% smaller.** `Node` went from 3,048 to 1,208 bytes: a running
+  animation is boxed and exists only while it runs (it was inline in every
+  animatable value, 1,640 bytes of paint state per node, now 304), and the two
+  largest node kinds, text inputs and terminals, are boxed so every other node
+  stops paying for them. 50,000 boxes now take about 120 MB (the baseline
+  measured about 210 MB). Rust code that builds a node from state by hand
+  wraps it: `NodeKind::TextField(Box::new(state))`.
+- **Colours are drawn as specified.** A window rendered into an sRGB surface
+  format, which is what the driver lists first on Linux and most desktops, so
+  the GPU encoded the renderer's already-encoded colours a second time: a
+  fill of `(103, 80, 164)` showed as `(170, 152, 210)`, and every colour was
+  lighter and flatter than asked. The engine now chooses a non-sRGB format
+  where one exists, and colours on screen are the ones you set. If you chose
+  colours by eye against the old output, expect them to look darker and more
+  saturated now; the numbers you wrote are what you get.
+- **A window can be read as pixels.** `window.snapshot()` returns what it draws
+  as RGBA bytes, offscreen and without a display, and `tre.write_png` saves it
+  (see [Window](reference/window.md#snapshot)).
+- **Fills can be gradients.** A box's `fill` takes a `tre.Gradient`
+  (`Gradient.linear`, `.radial`, `.sweep`) as well as a colour, and animates
+  between compatible ones (see [Gradients](reference/paint.md#gradients)).
+  Nothing changes for a fill set to a colour. A gradient is also accepted by a
+  path's or text node's `fill`, by `stroke_color` (borders and path strokes) and
+  by a canvas painter's `fill_rect`, `fill_circle` and `stroke_path`, each over
+  the shape's own bounds.
+- **Links, per-span size and family, and more static-text selection.** A text
+  span takes `link` (a click fires a bubbling `link` event with `href`),
+  `font_size` and `font_family`; selectable text selects a word on double-click and
+  a line on triple-click, Ctrl+A and Shift+arrows work on it, and the pointer is an
+  I-beam over it and a hand over a link; see
+  [Rich text and selectable text](guide/text.md#rich-text-and-selectable-text).
+  Nothing changes for text with no link and no new span fields, except the I-beam
+  over selectable text.
+- **Text selection and links reach screen readers.** Selectable text and text with
+  link spans are exposed as text runs and link nodes with a text selection, and a
+  screen reader can follow a link or set the selection; see
+  [Text, selection and links](guide/accessibility.md#text-selection-and-links).
+  Other text is unchanged.
+- **Selection across texts.** A drag that starts in one selectable text and moves
+  into others selects across them, and Copy joins the pieces with newlines; see
+  [Rich text and selectable text](guide/text.md#rich-text-and-selectable-text).
+  Before, only one text could hold a selection.
+- **More keyboard selection in static text.** Ctrl+Shift+Left/Right move the
+  selection a word and Shift+Up/Down a line, and Shift+arrows carry on into the next
+  selectable text; see [Rich text and selectable text](guide/text.md#rich-text-and-selectable-text).
+- **Text interaction in tests.** `Window.simulate` pointer, touch and key events now reach
+  text selection, links, double and triple click, and Shift+Up/Down, so an app can test
+  a link click or a drag selection headlessly; see
+  [Testing without a display](reference/events.md#testing-without-a-display).
+- **Colour filters.** `tre.Shader.filter(grayscale=1.0, ...)` is a ready-made
+  effect shader for the CSS filter functions `saturate`, `brightness`, `contrast`,
+  `grayscale`, `hue_rotate`, `invert` and `sepia`, applied in the order given; see
+  [Shader.filter](reference/shader.md#shaderfilterfilters). Nothing changes for
+  existing shaders.
+- **Blur, frosted glass, and blend modes.** A node takes `blur` (a Gaussian blur
+  of itself and its subtree), `backdrop_blur` (what is behind it, blurred,
+  inside its box) and `blend_mode` (CSS `mix-blend-mode`); see
+  [Blur, frosted glass, and blend modes](reference/paint.md#blur-frosted-glass-and-blend-modes).
+  All are off by default and change nothing for existing nodes.
+- **Text in any language, opt-in.** `tre.set_system_fonts(True)` lets text use
+  the machine's installed fonts for the glyphs the bundled fonts lack (CJK,
+  Hebrew, Indic, Thai, colour emoji), and the text guide has a recipe for
+  shipping fonts instead (see [Other languages and
+  emoji](guide/text.md#other-languages-and-emoji)). It is off by default, so
+  nothing changes unless you turn it on.
+- **Rich text and selectable text.** A text node's `spans` style ranges of its
+  content (colour, weight, italic, underline, strikethrough), and
+  `selectable=True` lets the user select and copy it; see [Rich text and
+  selectable text](guide/text.md#rich-text-and-selectable-text). Both are off by
+  default. A selectable text claims pointer events over its box; plain text still
+  never does.
+- **Touch and gestures.** Fingers arrive as `touch_start`, `touch_move`,
+  `touch_end` and `touch_cancel`; `tap`, `long_press`, `pan` and `pinch` are
+  recognized from them (a trackpad pinch too), the first finger also drives the
+  pointer so existing click and hover code works, and a pan scrolls what is under
+  it; see [Touch and gestures](guide/events-and-input.md#touch-and-gestures).
+  Nothing changes on a machine with no touch screen. Written against simulated
+  touches; not yet checked on touch hardware.
+- **Files dragged from the OS.** `file_hover`, `file_hover_cancel` and `file_drop`
+  events (with `paths`) reach the node under the pointer and the window; see
+  [Files dragged from the OS](guide/events-and-input.md#files-dragged-from-the-os).
+  They work on Windows, macOS and X11, not Wayland.
+- **The OS's reduced-motion and increased-contrast preferences.**
+  `window.get("reduced_motion")` and `get("high_contrast")` read them, and
+  `reduced_motion` and `high_contrast` window events report changes; see
+  [Window properties](reference/events.md#window-properties). The engine only
+  reports them; honouring them is the app's.
+- **Frame statistics.** `window.frame_stats()` reports what a window's frames cost
+  (stage times, redraw kind, damage, nodes, recent fps and percentiles), and a
+  `frame` window event fires per frame; see [frame_stats](reference/window.md#frame_stats).
+  Always on, a few clock reads a frame. It now also reports GPU time where the adapter
+  can measure it, can say which node kinds and nodes the scene-building time went to
+  (`window.set(profile_nodes=True)`), can write a Chrome / Perfetto trace
+  (`start_trace`/`stop_trace`), and can be read from another thread (`stats_handle()`).
+- **Flicked scrollers coast.** Lifting a finger mid-flick on a scroll view or
+  virtual list lets it coast to rest (see [Touch and
+  gestures](guide/events-and-input.md#touch-and-gestures)), and an animation of
+  a scroll offset is now stopped by a manual scroll instead of fighting it.
+- **Transparent windows.** `window.set(transparent=True)` before `App.run()` opens a
+  see-through window (with `get("transparent_active")` saying whether the surface
+  can blend), and `set(blur_behind=True)` asks the compositor to blur behind it
+  where it can; see [Window](reference/window.md). Two fixes ride along: the
+  surface format now prefers an 8-bit one (Mesa on Wayland listed a ten-bit
+  format first, which has two bits of alpha), and `snapshot()` now returns
+  true straight alpha, as documented (it had returned the renderer's
+  premultiplied pixels, so translucent pixels were too dark).
+- **Spring animation.** `easing="spring"` or `("spring", bounce)` animates with a
+  damped spring that lasts until it settles and, on a number, carries on the speed of
+  the animation it interrupts; see [Springs](guide/animation.md#springs). Existing
+  easings are unchanged.
+- **Sticky headers.** `node.set(sticky=inset)` holds a node at the start edge of
+  its scroll view while its parent scrolls past, like CSS `position: sticky`; see
+  [Sticky headers](guide/nodes-and-layout.md#sticky-headers). Off by default.
+- **Custom cursors.** `tre.CursorImage(rgba, width, height, hotspot)` is a pointer
+  shape drawn from pixels, accepted anywhere a node's `cursor` takes a name; see
+  [Cursors](reference/node.md#cursors). The named shapes are unchanged.
+- **SVG documents.** `window.create("svg", svg=...)` paints a whole SVG file as
+  one node (shapes, strokes, gradients, group opacity, clip paths), fitted into
+  its box; see [SVG documents](reference/paint.md#svg-documents). It is a new
+  kind, so nothing changes for existing nodes. It adds a dependency, `usvg`,
+  with its `text` feature, so an SVG's text is drawn from the engine's own
+  fonts (no system fonts). `svg_color` sets what `currentColor` is, `get("svg")`
+  reads the source back, and a node sized on one side takes the other from the
+  document. Masks and drop shadows are drawn too, and an SVG's text follows
+  `set_system_fonts` and registered fonts.
+  Raster pictures inside an SVG are the framework's to decode: pass the pixels
+  as `svg_images`, keyed by `href`.
+- **Click-through windows.** `window.set(click_through=True)` makes the whole
+  window ignore the pointer, so clicks reach what is behind it; see
+  [Transparent windows](reference/window.md). Off by default.
+- **Cheaper text.** `window.set(glyph_cache=True)` draws text from a glyph cache,
+  about four times cheaper to build per label, at the price of edge pixels that
+  differ slightly from the default outline drawing (up to about 45 of 255); see
+  [Window](reference/window.md). Off by default, so nothing changes unless asked.

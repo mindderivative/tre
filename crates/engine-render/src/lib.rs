@@ -25,10 +25,14 @@
 mod damage;
 mod fonts;
 mod geometry_cache;
+mod gpu_timer;
 mod gpu_watch;
 mod image_cache;
 mod persistent_target;
+mod present;
+mod profile;
 mod shader_pass;
+mod snapshot;
 mod text;
 mod walk;
 mod window_renderer;
@@ -41,13 +45,20 @@ use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Rect, RoundedRect, Shape, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
-pub use damage::{Damage, DamageTracker, MAX_RECTS};
-pub use fonts::{NoFontFacesFound, register_font};
+pub use damage::{Damage, DamageTracker, Extents, MAX_RECTS, SCROLL_BLIT_MIN_NODES, Shift};
+pub use fonts::{
+    NoFontFacesFound, all_fonts, generation as font_generation, register_font, set_system_fonts,
+    system_fonts,
+};
 pub use geometry_cache::GeometryCache;
+pub use gpu_timer::{GpuTimer, required_features as gpu_timer_features};
 pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
+pub use present::{PresentChoice, linear_surface_format, transparent_alpha_mode};
+pub use profile::{FrameProfile, KindCost, NodeCost, SLOWEST as PROFILE_SLOWEST};
 pub use shader_pass::{ShaderPasses, ShaderTextures};
+pub use snapshot::{Snapshot, snapshot, snapshot_with};
 pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 pub use window_renderer::WindowRenderer;
 
@@ -158,8 +169,11 @@ pub fn build_tree_scene(
         width,
         height,
         None,
+        None,
+        None,
         &ShaderTextures::none(),
         None,
+        1.0,
         resources,
         text,
         geometry,
@@ -188,8 +202,11 @@ pub fn build_tree_scene_in(
         width,
         height,
         Some(rects),
+        None,
+        None,
         &ShaderTextures::none(),
         None,
+        1.0,
         resources,
         text,
         geometry,
@@ -198,7 +215,9 @@ pub fn build_tree_scene_in(
 
 /// 0.5.1 (#67): `build_tree_scene` (`rects: None`) or `build_tree_scene_in`
 /// for a frame whose fill shaders ran: a node in `shaders` paints its box
-/// from its shader's texture, behind its own paint.
+/// from its shader's texture, behind its own paint. 0.5.4 (#102): `scale` is
+/// the display scale -- layout is in logical pixels and the scene, `width`,
+/// `height` and `rects` in physical ones.
 #[allow(clippy::too_many_arguments)]
 pub fn build_tree_scene_shaded(
     tree: &Tree,
@@ -206,13 +225,17 @@ pub fn build_tree_scene_shaded(
     width: u16,
     height: u16,
     rects: Option<&[Rect]>,
+    extents: Option<Extents<'_>>,
+    profile: Option<&mut FrameProfile>,
     shaders: &ShaderTextures,
+    scale: f64,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
 ) -> Scene {
     build_scene(
-        tree, root, width, height, rects, shaders, None, resources, text, geometry,
+        tree, root, width, height, rects, extents, profile, shaders, None, scale, resources, text,
+        geometry,
     )
 }
 
@@ -227,6 +250,7 @@ pub(crate) fn build_effect_content(
     width: u16,
     height: u16,
     shaders: &ShaderTextures,
+    scale: f64,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
@@ -237,8 +261,11 @@ pub(crate) fn build_effect_content(
         width,
         height,
         None,
+        None,
+        None,
         shaders,
         Some(node),
+        scale,
         resources,
         text,
         geometry,
@@ -252,8 +279,11 @@ fn build_scene(
     width: u16,
     height: u16,
     rects: Option<&[Rect]>,
+    extents: Option<Extents<'_>>,
+    profile: Option<&mut FrameProfile>,
     shaders: &ShaderTextures,
     effect_root: Option<NodeId>,
+    scale: f64,
     resources: &mut Resources,
     text: &mut TextRenderer,
     geometry: &mut GeometryCache,
@@ -277,6 +307,7 @@ fn build_scene(
     let mut painter = Painter {
         tree,
         rects,
+        extents,
         shaders,
         effect_root,
         scene: &mut scene,
@@ -284,16 +315,72 @@ fn build_scene(
         text,
         geometry,
         open: Vec::new(),
+        walk_root: root,
+        base: Affine::scale(scale),
+        window: visible,
+        stop_at: None,
+        stopped: false,
+        depth: 0,
     };
-    if effect_root.is_some() {
-        walk::walk_root(tree, root, &mut painter);
+    let base = Affine::scale(scale);
+    if let Some(profile) = profile {
+        // 0.5.4 (#135): the same walk, timing each node.
+        let mut timed = Profiled {
+            painter: &mut painter,
+            profile,
+            spent: Vec::new(),
+        };
+        if effect_root.is_some() {
+            walk::walk_root(tree, root, base, &mut timed);
+        } else {
+            walk::walk(tree, root, base, visible, &mut timed);
+        }
+    } else if effect_root.is_some() {
+        walk::walk_root(tree, root, base, &mut painter);
     } else {
-        walk::walk(tree, root, visible, &mut painter);
+        walk::walk(tree, root, base, visible, &mut painter);
     }
     if rects.is_some() {
         scene.pop_layer();
     }
     scene
+}
+
+/// The paint walk with each node's own time added to a [`FrameProfile`]
+/// (0.5.4, #135): what it spends in `enter` and `leave`, which is the node's
+/// work without its children's.
+struct Profiled<'p, 'a> {
+    painter: &'p mut Painter<'a>,
+    profile: &'p mut FrameProfile,
+    /// The time each node entered and not yet left spent entering.
+    spent: Vec<std::time::Duration>,
+}
+
+impl<'t> walk::Visitor<'t> for Profiled<'_, '_> {
+    fn skip(&mut self, child: NodeId) -> bool {
+        self.painter.skip(child)
+    }
+
+    fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
+        let began = std::time::Instant::now();
+        let descend = self.painter.enter(v);
+        let took = began.elapsed();
+        if descend {
+            self.spent.push(took);
+        } else {
+            // Not entered, so never left: its time is complete.
+            self.profile.add(v.id, v.node.kind.name(), false, took);
+        }
+        descend
+    }
+
+    fn leave(&mut self, v: &walk::Visit<'t>) {
+        let drew = self.painter.open.last().is_some_and(|open| open.2);
+        let began = std::time::Instant::now();
+        self.painter.leave(v);
+        let took = began.elapsed() + self.spent.pop().unwrap_or_default();
+        self.profile.add(v.id, v.node.kind.name(), drew, took);
+    }
 }
 
 /// CSS Backgrounds and Borders Module Level 3's own real conversion,
@@ -378,8 +465,35 @@ pub(crate) fn composed_transform(
     node: &engine_core::Node,
     w: f64,
     h: f64,
+    grid: f64,
 ) -> Affine {
-    parent * Affine::translate(position) * node.paint.local_transform(w, h)
+    snapped_offset(parent, position, grid) * node.paint.local_transform(w, h)
+}
+
+/// `parent` moved by a node's layout `position`, with that move rounded to
+/// whole device pixels when `parent` is a plain scale and shift (0.5.4,
+/// #102). At a fractional display scale a logical offset lands between
+/// device pixels (3 at 1.5x is 4.5), and an edge or a glyph there is
+/// smeared over two; rounding puts it on the grid. Only the layout offset
+/// is rounded, not the parent's own shift, so an animated transform still
+/// moves smoothly, and at a scale where offsets are already whole (1x, 2x)
+/// nothing changes. A parent that is rotated, skewed, or scaled by anything
+/// but the window's own scale `grid` (a node with a paint scale, say) is left
+/// exact: its children's offsets are not on the device grid to begin with,
+/// and rounding them would step them by whole pixels as the scale animates.
+fn snapped_offset(parent: Affine, position: (f64, f64), grid: f64) -> Affine {
+    let [a, b, c, d, e, f] = parent.as_coeffs();
+    if b != 0.0 || c != 0.0 || (a - grid).abs() > 1e-9 || (d - grid).abs() > 1e-9 {
+        return parent * Affine::translate(position);
+    }
+    Affine::new([
+        a,
+        b,
+        c,
+        d,
+        e + (position.0 * a).round(),
+        f + (position.1 * d).round(),
+    ])
 }
 
 /// The window-space bounding box of `rect` (node-local) under
@@ -397,12 +511,41 @@ pub(crate) fn clips_children(node: &engine_core::Node) -> bool {
     ) || node.paint.clip_children
 }
 
+/// `peniko`'s blend for a node's `Blend`: the mixing function over the
+/// backdrop (`SrcOver`).
+fn blend_mode(blend: engine_core::Blend) -> peniko::BlendMode {
+    use engine_core::Blend;
+    use peniko::Mix;
+    let mix = match blend {
+        Blend::Normal => Mix::Normal,
+        Blend::Multiply => Mix::Multiply,
+        Blend::Screen => Mix::Screen,
+        Blend::Overlay => Mix::Overlay,
+        Blend::Darken => Mix::Darken,
+        Blend::Lighten => Mix::Lighten,
+        Blend::ColorDodge => Mix::ColorDodge,
+        Blend::ColorBurn => Mix::ColorBurn,
+        Blend::HardLight => Mix::HardLight,
+        Blend::SoftLight => Mix::SoftLight,
+        Blend::Difference => Mix::Difference,
+        Blend::Exclusion => Mix::Exclusion,
+        Blend::Hue => Mix::Hue,
+        Blend::Saturation => Mix::Saturation,
+        Blend::Color => Mix::Color,
+        Blend::Luminosity => Mix::Luminosity,
+    };
+    peniko::BlendMode::new(mix, peniko::Compose::SrcOver)
+}
+
 /// The paint walk (`walk::Visitor`): each node's own paint, its group
 /// opacity layer, and its children's clip layer, which `leave` closes.
 struct Painter<'a> {
     tree: &'a Tree,
     /// A partial redraw's damage rects; `None` paints everything.
     rects: Option<&'a [Rect]>,
+    /// 0.5.4 (#149): what each subtree paints, to skip those that miss `rects`
+    /// without visiting them.
+    extents: Option<Extents<'a>>,
     /// 0.5.1 (#67): the nodes whose fill shader ran this frame.
     shaders: &'a ShaderTextures,
     /// 0.5.1 (#69): the effect node whose content this scene is. It draws
@@ -416,17 +559,109 @@ struct Painter<'a> {
     /// Per node entered and not yet left: whether it opened an opacity
     /// layer, whether it opened a clip layer, and whether it drew itself.
     open: Vec<(bool, bool, bool)>,
+    /// 0.5.4 (#110): what the walk started from, to walk again for a
+    /// backdrop blur (`paint_backdrop`).
+    walk_root: NodeId,
+    base: Affine,
+    window: Rect,
+    /// A backdrop pass paints everything behind this node and stops there:
+    /// nothing from `stop_at` on is drawn.
+    stop_at: Option<NodeId>,
+    stopped: bool,
+    /// How many backdrop passes this painter is inside of; one inside another
+    /// is allowed, a third is not.
+    depth: u8,
+}
+
+impl Painter<'_> {
+    /// 0.5.4 (#110): frosted glass. Paints, inside `v`'s box, everything behind
+    /// it blurred by `sigma`: the part of the tree that paints before `v`,
+    /// drawn again inside a blur layer clipped to the box. The nested walk
+    /// is limited to the box and the blur's reach (three standard deviations),
+    /// so its cost follows the box, not the window.
+    fn paint_backdrop(&mut self, v: &walk::Visit<'_>, sigma: f64) {
+        let reach = sigma * 3.0;
+        let region = v.bounds.inflate(reach, reach).intersect(self.window);
+        if region.width() <= 0.0 || region.height() <= 0.0 {
+            return;
+        }
+        self.scene.set_transform(v.composed);
+        let clip = box_path(v.node, v.id, v.w, v.h, self.geometry);
+        self.scene.push_layer(Some(clip), None, None, None, None);
+        self.scene.push_layer(
+            None,
+            None,
+            None,
+            None,
+            Some(vello_common::filter_effects::Filter::from_function(
+                vello_common::filter_effects::FilterFunction::Blur {
+                    radius: sigma as f32,
+                },
+            )),
+        );
+        self.scene.set_transform(Affine::IDENTITY);
+        let window_clip = region.to_path(0.1);
+        self.scene
+            .push_layer(Some(&window_clip), None, None, None, None);
+        let mut behind = Painter {
+            tree: self.tree,
+            rects: None,
+            extents: None,
+            shaders: self.shaders,
+            effect_root: None,
+            scene: &mut *self.scene,
+            resources: &mut *self.resources,
+            text: &mut *self.text,
+            geometry: &mut *self.geometry,
+            open: Vec::new(),
+            walk_root: self.walk_root,
+            base: self.base,
+            window: self.window,
+            stop_at: Some(v.id),
+            stopped: false,
+            depth: self.depth + 1,
+        };
+        walk::walk(self.tree, self.walk_root, self.base, region, &mut behind);
+        self.scene.pop_layer();
+        self.scene.pop_layer();
+        self.scene.pop_layer();
+    }
 }
 
 impl<'t> walk::Visitor<'t> for Painter<'_> {
+    fn skip(&mut self, child: NodeId) -> bool {
+        match (self.rects, &self.extents) {
+            (Some(rects), Some(extents)) => extents
+                .of(child)
+                .is_some_and(|extent| !rects.iter().any(|r| extent.overlaps(*r))),
+            _ => false,
+        }
+    }
+
     fn enter(&mut self, v: &walk::Visit<'t>) -> bool {
         let node = v.node;
+        // A backdrop pass draws what is behind its node, and nothing else.
+        if self.stopped {
+            return false;
+        }
+        if self.stop_at == Some(v.id) {
+            self.stopped = true;
+            return false;
+        }
         // 0.4.0 M5: in a partial redraw a node draws only if what it paints
         // (`damage::painted_rect`, the extent the damage walk records --
         // shadows and overflow included, not just its box) reaches a damage
         // rect. A node that clips its children confines its whole subtree to
         // that extent, so missing skips the subtree; any other node's children
         // may overflow it, and still decide for themselves.
+        // 0.5.4 (#149): a subtree whose whole extent misses every damage rect
+        // is not visited, so the cost follows the damage, not the tree.
+        if let (Some(rects), Some(extents)) = (self.rects, &self.extents)
+            && let Some(extent) = extents.of(v.id)
+            && !rects.iter().any(|r| extent.overlaps(*r))
+        {
+            return false;
+        }
         let draw_self = match self.rects {
             None => true,
             Some(rects) => {
@@ -452,10 +687,37 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
         } else {
             node.paint.opacity.current
         };
-        let layered = opacity < 1.0;
+        // 0.5.4 (#110): a blur or a blend mode makes the node and its subtree
+        // a layer too, with the opacity: they act on the group, not each paint.
+        let blur = if is_root {
+            0.0
+        } else {
+            node.paint.blur.current
+        };
+        let blend = if is_root {
+            engine_core::Blend::Normal
+        } else {
+            node.paint.blend
+        };
+        let layered = opacity < 1.0 || blur > 0.0 || blend != engine_core::Blend::Normal;
         if layered {
-            self.scene
-                .push_layer(None, None, Some(opacity as f32), None, None);
+            // A blur's width is in the node's own pixels: the layer takes the
+            // scene's current transform, so set the node's.
+            self.scene.set_transform(v.composed);
+            let filter = (blur > 0.0).then(|| {
+                vello_common::filter_effects::Filter::from_function(
+                    vello_common::filter_effects::FilterFunction::Blur {
+                        radius: blur as f32,
+                    },
+                )
+            });
+            self.scene.push_layer(
+                None,
+                (blend != engine_core::Blend::Normal).then(|| blend_mode(blend)),
+                (opacity < 1.0).then_some(opacity as f32),
+                None,
+                filter,
+            );
         }
         // 0.5.1 (#69): an effect node whose shader ran is its result: the
         // texture in place of the node and its subtree.
@@ -464,6 +726,13 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
         } else {
             self.shaders.texture_of(v.id)
         };
+        // 0.5.4 (#110): frosted glass, under the node's own paint.
+        if draw_self && !is_root && self.effect_root.is_none() && self.depth < 2 {
+            let sigma = node.paint.backdrop_blur.current;
+            if sigma > 0.0 {
+                self.paint_backdrop(v, sigma);
+            }
+        }
         if let Some((size, true)) = shader {
             if draw_self {
                 paint_shader_texture(
@@ -624,10 +893,7 @@ fn paint_shader_texture(
             region,
             true,
         ),
-        sampler: peniko::ImageSampler {
-            quality: peniko::ImageQuality::Medium,
-            ..Default::default()
-        },
+        sampler: image_sampler(),
     });
     scene.set_paint_transform(transform);
     scene.fill_rect(&Rect::new(0.0, 0.0, w, h));
@@ -655,8 +921,54 @@ fn fill_box(
     scene: &mut Scene,
     own_alpha: f64,
 ) {
-    scene.set_paint(with_opacity(node.paint.background.current, own_alpha));
+    // 0.5.4 (#109): a gradient replaces the flat colour; its stops' own alpha
+    // applies (`own_alpha` is 1 where it matters, as for every fill).
+    let gradient = node.paint.gradient.as_ref().map(|g| &g.current);
+    match gradient {
+        Some(gradient) => {
+            let (paint, transform) = gradient.resolve(w, h);
+            scene.set_paint(paint);
+            scene.set_paint_transform(transform);
+        }
+        None => scene.set_paint(with_opacity(node.paint.background.current, own_alpha)),
+    }
+    if gradient.is_none()
+        && node.paint.corner_radii_override.is_none()
+        && node.paint.corner_radius.current <= 0.0
+    {
+        scene.fill_rect(&Rect::new(0.0, 0.0, w, h));
+        return;
+    }
     scene.fill_path(box_path(node, id, w, h, geometry));
+    if gradient.is_some() {
+        // The paint transform is scene state: the next node must not inherit it.
+        scene.reset_paint_transform();
+    }
+}
+
+/// Sets the paint for a shape in `bounds` (0.5.4, #129): a gradient resolved
+/// against the bounds, or the flat colour at `own_alpha`. Returns whether a
+/// paint transform was set, which the caller resets after drawing (it is
+/// scene state, and the next shape must not inherit it).
+fn set_shape_paint(
+    scene: &mut Scene,
+    color: Color,
+    gradient: Option<&engine_core::Gradient>,
+    bounds: Rect,
+    own_alpha: f64,
+) -> bool {
+    match gradient {
+        Some(gradient) => {
+            let (paint, transform) = gradient.resolve(bounds.width(), bounds.height());
+            scene.set_paint(paint);
+            scene.set_paint_transform(Affine::translate((bounds.x0, bounds.y0)) * transform);
+            true
+        }
+        None => {
+            scene.set_paint(with_opacity(color, own_alpha));
+            false
+        }
+    }
 }
 
 /// The box's own rounded outline, for a fill or a clip.
@@ -702,6 +1014,12 @@ fn content_box(tree: &Tree, id: NodeId, w: f64, h: f64) -> ContentBox {
     }
 }
 
+/// The widest border drawn as four rects. `Stroke::new` joins with round
+/// joins, which round a border's outer corners by half its width: invisible
+/// at 1px, a visible difference from square rects at 2px and up, so wider
+/// borders keep the stroke and look as they always did.
+const SQUARE_BORDER_MAX: f64 = 1.0;
+
 /// A node's own border: `stroke_color` and `stroke_width`, drawn entirely
 /// inside its bounds (inset by half the stroke width, since strokes are
 /// centered on the path) and following the same rounded corners as the
@@ -719,6 +1037,36 @@ fn stroke_box(
     if border_width <= 0.0 {
         return;
     }
+    let border_gradient = node.paint.border_gradient.as_deref();
+    // 0.5.4 (#107): a square box's border is four rects, which vello fills far
+    // more cheaply than it expands a stroke (~2.4 us -> see the scene cost
+    // test), and covers exactly the pixels the stroke did.
+    if node.paint.corner_radii_override.is_none()
+        && node.paint.corner_radius.current <= 0.0
+        && border_width <= SQUARE_BORDER_MAX
+        && border_width * 2.0 < w.min(h)
+    {
+        let shaped = set_shape_paint(
+            scene,
+            node.paint.border_color.current,
+            border_gradient,
+            Rect::new(0.0, 0.0, w, h),
+            own_alpha,
+        );
+        let b = border_width;
+        for rect in [
+            Rect::new(0.0, 0.0, w, b),
+            Rect::new(0.0, h - b, w, h),
+            Rect::new(0.0, b, b, h - b),
+            Rect::new(w - b, b, w, h - b),
+        ] {
+            scene.fill_rect(&rect);
+        }
+        if shaped {
+            scene.reset_paint_transform();
+        }
+        return;
+    }
     let inset = border_width / 2.0;
     let border_path: &BezPath = match node
         .paint
@@ -732,9 +1080,18 @@ fn stroke_box(
             geometry.rounded_rect_border(id, w, h, radius, inset)
         }
     };
-    scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+    let shaped = set_shape_paint(
+        scene,
+        node.paint.border_color.current,
+        border_gradient,
+        Rect::new(0.0, 0.0, w, h),
+        own_alpha,
+    );
     scene.set_stroke(Stroke::new(border_width));
     scene.stroke_path(border_path);
+    if shaped {
+        scene.reset_paint_transform();
+    }
 }
 
 /// A node's own paint -- shadows, then what its kind draws -- in its own
@@ -806,7 +1163,9 @@ fn draw_own(
             // left; before, it drew at the node's corner across its full
             // width, and the padding was reserved but never used.
             let padding = tree.layout(id).padding;
-            text.draw(
+            // 0.5.4 (#129): a gradient `fill` paints the glyphs, across the text's own extent.
+            let gradient = node.paint.gradient.as_ref().map(|g| &g.current);
+            text.draw_painted(
                 scene,
                 resources,
                 state,
@@ -817,6 +1176,7 @@ fn draw_own(
                     color,
                 },
                 id,
+                gradient,
             );
             // 0.5.1 (#45): a text node's `stroke_*` and `corner_radius`
             // paint a border around its box; its `fill` is the glyph color.
@@ -961,23 +1321,45 @@ fn draw_own(
                         width,
                         height,
                         color,
+                        gradient,
                     } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
-                        scene.fill_path(&Rect::new(*x, *y, x + width, y + height).to_path(0.1));
+                        let rect = Rect::new(*x, *y, x + width, y + height);
+                        let shaped =
+                            set_shape_paint(scene, *color, gradient.as_ref(), rect, own_alpha);
+                        scene.fill_path(&rect.to_path(0.1));
+                        if shaped {
+                            scene.reset_paint_transform();
+                        }
                     }
                     DrawCommand::FillCircle {
                         cx,
                         cy,
                         radius,
                         color,
+                        gradient,
                     } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
+                        let bounds = Rect::new(cx - radius, cy - radius, cx + radius, cy + radius);
+                        let shaped =
+                            set_shape_paint(scene, *color, gradient.as_ref(), bounds, own_alpha);
                         scene.fill_path(&Circle::new((*cx, *cy), *radius).to_path(0.1));
+                        if shaped {
+                            scene.reset_paint_transform();
+                        }
                     }
-                    DrawCommand::StrokePath { path, color, width } => {
-                        scene.set_paint(with_opacity(*color, own_alpha));
+                    DrawCommand::StrokePath {
+                        path,
+                        color,
+                        width,
+                        gradient,
+                    } => {
+                        let bounds = path.bounding_box();
+                        let shaped =
+                            set_shape_paint(scene, *color, gradient.as_ref(), bounds, own_alpha);
                         scene.set_stroke(Stroke::new(*width));
                         scene.stroke_path(path);
+                        if shaped {
+                            scene.reset_paint_transform();
+                        }
                     }
                 }
             }
@@ -995,6 +1377,45 @@ fn draw_own(
         // shown (all of it, or `cover`'s crop), and `transform` maps its
         // texels onto the node box. The paint has no opacity of its own,
         // so an opacity layer wraps it, skipped when fully transparent.
+        // 0.5.4 (#141): an SVG document, painted as one retained scene:
+        // fitted into the content box (`xMidYMid meet`) and clipped to it,
+        // under the box's own background and border like an image.
+        NodeKind::Svg(state) => {
+            fill_box(node, id, w, h, geometry, scene, own_alpha);
+            let content = content_box(tree, id, w, h);
+            let rounded = node.paint.corner_radius.current > 0.0
+                || node.paint.corner_radii_override.is_some();
+            if rounded {
+                scene.push_layer(
+                    Some(box_path(node, id, w, h, geometry)),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+            }
+            if content.w > 0.0 && content.h > 0.0 && own_alpha > 0.0 {
+                let clip = Rect::new(
+                    content.x,
+                    content.y,
+                    content.x + content.w,
+                    content.y + content.h,
+                )
+                .to_path(0.1);
+                let opacity = (own_alpha < 1.0).then_some(own_alpha as f32);
+                scene.push_layer(Some(&clip), None, opacity, None, None);
+                let base = composed
+                    * Affine::translate((content.x, content.y))
+                    * state.document.fit(content.w, content.h);
+                paint_svg_group(&state.document.root, base, scene);
+                scene.pop_layer();
+            }
+            if rounded {
+                scene.pop_layer();
+            }
+            scene.set_transform(composed);
+            stroke_box(node, id, w, h, geometry, scene, own_alpha);
+        }
         NodeKind::Image(state) => {
             // 0.5.1 (#45): a background behind the image (it shows through
             // transparent pixels and letterbox bars), the image clipped to
@@ -1044,10 +1465,7 @@ fn draw_own(
                         source_region,
                         true,
                     ),
-                    sampler: peniko::ImageSampler {
-                        quality: peniko::ImageQuality::Medium,
-                        ..Default::default()
-                    },
+                    sampler: image_sampler(),
                 });
                 scene.set_paint_transform(transform);
                 scene.fill_rect(&transform.transform_rect_bbox(region));
@@ -1070,21 +1488,313 @@ fn draw_own(
             let (fill, stroke) = state.geometry(content.w, content.h);
             scene.set_transform(composed * Affine::translate((content.x, content.y)));
             let fill_color = node.paint.background.current;
-            if fill_color.components[3] > 0.0 {
-                scene.set_paint(with_opacity(fill_color, own_alpha));
+            let fill_gradient = node.paint.gradient.as_ref().map(|g| &g.current);
+            if fill_gradient.is_some() || fill_color.components[3] > 0.0 {
+                let shaped = set_shape_paint(
+                    scene,
+                    fill_color,
+                    fill_gradient,
+                    fill.bounding_box(),
+                    own_alpha,
+                );
                 scene.fill_path(&fill);
+                if shaped {
+                    scene.reset_paint_transform();
+                }
             }
             let stroke_width = node.paint.border_width.current;
             if stroke_width > 0.0 && !stroke.elements().is_empty() {
-                scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+                let shaped = set_shape_paint(
+                    scene,
+                    node.paint.border_color.current,
+                    node.paint.border_gradient.as_deref(),
+                    stroke.bounding_box(),
+                    own_alpha,
+                );
                 scene.set_stroke(
                     Stroke::new(stroke_width)
                         .with_caps(peniko::kurbo::Cap::Round)
                         .with_join(peniko::kurbo::Join::Round),
                 );
                 scene.stroke_path(&stroke);
+                if shaped {
+                    scene.reset_paint_transform();
+                }
             }
             scene.set_transform(composed);
+        }
+    }
+}
+
+/// How every image and texture is sampled: bilinear, extended by *reflecting*.
+/// The renderer's bilinear sampler (`external_bilinear_sample`) takes its
+/// coordinates after `Pad` has clamped them to the last texel's index, then
+/// moves them half a texel back to find the texel centres, so the last
+/// column and row always blend with their neighbours (a 4x1 red, green, blue,
+/// white image ended in a 50/50 mix of white and blue). Reflecting leaves a
+/// coordinate inside the image as it is, so the edge is exact; every image
+/// is drawn only over its own rectangle, so no coordinate is ever outside it.
+/// (#148; remove once vello fixes `Pad`.)
+fn image_sampler() -> peniko::ImageSampler {
+    peniko::ImageSampler {
+        x_extend: peniko::Extend::Reflect,
+        y_extend: peniko::Extend::Reflect,
+        quality: peniko::ImageQuality::Medium,
+        ..Default::default()
+    }
+}
+
+/// Paints an SVG group and everything under it. `parent` is the transform
+/// the group's own transform composes onto.
+fn paint_svg_group(group: &engine_core::SvgGroup, parent: Affine, scene: &mut Scene) {
+    use engine_core::SvgNode;
+    let here = parent * group.transform;
+    scene.set_transform(here);
+    // A clip inside a clip is one more layer; the outermost goes first.
+    let mut clips = Vec::new();
+    let mut next = group.clip.as_ref();
+    while let Some(clip) = next {
+        clips.push(clip);
+        next = clip.parent.as_deref();
+    }
+    let opacity = (group.opacity < 1.0).then_some(group.opacity);
+    let filter = group.blur.map(|radius| {
+        vello_common::filter_effects::Filter::from_function(
+            vello_common::filter_effects::FilterFunction::Blur { radius },
+        )
+    });
+    let effect = opacity.is_some() || filter.is_some();
+    let mut layers = 0;
+    for (i, clip) in clips.iter().rev().enumerate() {
+        scene.set_fill_rule(if clip.even_odd {
+            peniko::Fill::EvenOdd
+        } else {
+            peniko::Fill::NonZero
+        });
+        // The opacity and the blur ride on the innermost layer.
+        let last = i + 1 == clips.len();
+        scene.push_layer(
+            Some(&clip.path),
+            None,
+            if last { opacity } else { None },
+            None,
+            if last { filter.clone() } else { None },
+        );
+        layers += 1;
+    }
+    scene.set_fill_rule(peniko::Fill::NonZero);
+    if clips.is_empty() && effect {
+        scene.push_layer(None, None, opacity, None, filter);
+        layers += 1;
+    }
+    if let Some(shadow) = &group.shadow {
+        let at = here * Affine::translate((shadow.dx, shadow.dy));
+        scene.set_transform(at);
+        let blur = shadow.blur.map(|radius| {
+            vello_common::filter_effects::Filter::from_function(
+                vello_common::filter_effects::FilterFunction::Blur { radius },
+            )
+        });
+        let blurred = blur.is_some();
+        if blurred {
+            scene.push_layer(None, None, None, None, blur);
+        }
+        paint_svg_group(&shadow.root, at, scene);
+        if blurred {
+            scene.pop_layer();
+        }
+        scene.set_transform(here);
+    }
+    for child in &group.children {
+        match child {
+            SvgNode::Group(g) => paint_svg_group(g, here, scene),
+            SvgNode::Image(image) => {
+                scene.set_transform(here);
+                paint_svg_image(image, scene);
+            }
+            SvgNode::Path(p) => {
+                scene.set_transform(here);
+                let fill = |scene: &mut Scene| {
+                    let Some(fill) = &p.fill else { return };
+                    let rule = if fill.even_odd {
+                        peniko::Fill::EvenOdd
+                    } else {
+                        peniko::Fill::NonZero
+                    };
+                    paint_svg_shape(&fill.paint, &p.path, rule, here, scene, |scene| {
+                        scene.set_fill_rule(rule);
+                        scene.fill_path(&p.path);
+                        scene.set_fill_rule(peniko::Fill::NonZero);
+                    });
+                };
+                let stroke = |scene: &mut Scene| {
+                    let Some(stroke) = &p.stroke else { return };
+                    // A pattern needs the stroke as an outline to clip to.
+                    let outline =
+                        matches!(stroke.paint, engine_core::SvgPaint::Pattern(_)).then(|| {
+                            peniko::kurbo::stroke(
+                                p.path.iter(),
+                                &stroke.stroke,
+                                &peniko::kurbo::StrokeOpts::default(),
+                                0.25,
+                            )
+                        });
+                    paint_svg_shape(
+                        &stroke.paint,
+                        outline.as_ref().unwrap_or(&p.path),
+                        peniko::Fill::NonZero,
+                        here,
+                        scene,
+                        |scene| {
+                            scene.set_stroke(stroke.stroke.clone());
+                            scene.stroke_path(&p.path);
+                        },
+                    );
+                };
+                if p.stroke_first {
+                    stroke(scene);
+                    fill(scene);
+                } else {
+                    fill(scene);
+                    stroke(scene);
+                }
+            }
+        }
+    }
+    if let Some(mask) = &group.mask {
+        paint_svg_mask(mask, here, scene);
+    }
+    for _ in 0..layers {
+        scene.pop_layer();
+    }
+    scene.set_transform(here);
+}
+
+/// A raster image the caller decoded, scaled into its box at the origin.
+fn paint_svg_image(image: &engine_core::SvgImage, scene: &mut Scene) {
+    let (bw, bh) = (image.bitmap.image.width, image.bitmap.image.height);
+    // `MAX_IMAGE_DIMENSION` is below a `u16`; a larger one was never uploaded.
+    if bw == 0
+        || bh == 0
+        || bw > image_cache::MAX_IMAGE_DIMENSION
+        || bh > image_cache::MAX_IMAGE_DIMENSION
+        || image.width <= 0.0
+        || image.height <= 0.0
+    {
+        return;
+    }
+    let source = vello_common::paint::ImageSource::external_texture(
+        image_cache::svg_texture_id(image.bitmap.id),
+        vello_common::geometry::RectU16 {
+            x0: 0,
+            y0: 0,
+            x1: bw as u16,
+            y1: bh as u16,
+        },
+        true,
+    );
+    scene.set_paint(vello_common::paint::Image {
+        image: source,
+        sampler: image_sampler(),
+    });
+    scene.set_paint_transform(Affine::scale_non_uniform(
+        image.width / f64::from(bw),
+        image.height / f64::from(bh),
+    ));
+    scene.fill_rect(&Rect::new(0.0, 0.0, image.width, image.height));
+    scene.reset_paint_transform();
+}
+
+/// Masks what the current layer holds: the mask's shapes (whose alpha is the
+/// mask) are drawn over it with `DestIn`, which keeps the layer only where
+/// they are. Outside the mask's rectangle nothing is drawn, so nothing is
+/// kept. The renderer has no mask layer, so this stands in for one.
+fn paint_svg_mask(mask: &engine_core::SvgMask, here: Affine, scene: &mut Scene) {
+    scene.set_transform(here);
+    scene.push_layer(
+        None,
+        Some(peniko::BlendMode::new(
+            peniko::Mix::Normal,
+            peniko::Compose::DestIn,
+        )),
+        None,
+        None,
+        None,
+    );
+    let rect = mask.rect.to_path(0.1);
+    scene.push_layer(Some(&rect), None, None, None, None);
+    paint_svg_group(&mask.root, here, scene);
+    if let Some(inner) = &mask.mask {
+        paint_svg_mask(inner, here, scene);
+    }
+    scene.pop_layer();
+    scene.pop_layer();
+    scene.set_transform(here);
+}
+
+/// Paints one shape's fill or stroke with `paint`. A colour or a gradient
+/// is set as the scene's paint and `draw` fills or strokes with it; a
+/// pattern is drawn in tiles, clipped to `region` (the fill, or the
+/// stroke's outline).
+fn paint_svg_shape(
+    paint: &engine_core::SvgPaint,
+    region: &BezPath,
+    rule: peniko::Fill,
+    here: Affine,
+    scene: &mut Scene,
+    draw: impl FnOnce(&mut Scene),
+) {
+    use engine_core::SvgPaint;
+    // Past this many tiles a pattern is skipped: it would be a haze.
+    const MAX_TILES: i64 = 2500;
+    match paint {
+        SvgPaint::Color(c) => {
+            scene.set_paint(*c);
+            draw(scene);
+        }
+        SvgPaint::Gradient(g, t) => {
+            scene.set_paint(g.clone());
+            scene.set_paint_transform(*t);
+            draw(scene);
+            scene.reset_paint_transform();
+        }
+        SvgPaint::Pattern(pattern) => {
+            let (w, h) = (pattern.rect.width(), pattern.rect.height());
+            if w <= 0.0 || h <= 0.0 {
+                return;
+            }
+            // The region's box in the pattern's own space bounds the tiles.
+            // `region` is in the shape's own space, which `pattern.transform` maps
+            // the pattern's space into; `here` is applied by the scene.
+            let to_pattern = pattern.transform.inverse();
+            let bounds = to_pattern.transform_rect_bbox(region.bounding_box());
+            let first_x = ((bounds.x0 - pattern.rect.x0) / w).floor() as i64;
+            let last_x = ((bounds.x1 - pattern.rect.x0) / w).ceil() as i64;
+            let first_y = ((bounds.y0 - pattern.rect.y0) / h).floor() as i64;
+            let last_y = ((bounds.y1 - pattern.rect.y0) / h).ceil() as i64;
+            if (last_x - first_x).saturating_mul(last_y - first_y) > MAX_TILES {
+                return;
+            }
+            scene.set_fill_rule(rule);
+            scene.push_layer(Some(region), None, None, None, None);
+            scene.set_fill_rule(peniko::Fill::NonZero);
+            let tile_clip = Rect::new(0.0, 0.0, w, h).to_path(0.1);
+            for j in first_y..last_y {
+                for i in first_x..last_x {
+                    let tile = here
+                        * pattern.transform
+                        * Affine::translate((
+                            pattern.rect.x0 + i as f64 * w,
+                            pattern.rect.y0 + j as f64 * h,
+                        ));
+                    scene.set_transform(tile);
+                    scene.push_layer(Some(&tile_clip), None, None, None, None);
+                    paint_svg_group(&pattern.root, tile, scene);
+                    scene.pop_layer();
+                }
+            }
+            scene.pop_layer();
+            scene.set_transform(here);
         }
     }
 }
@@ -1370,6 +2080,7 @@ impl FrameRenderer {
         width: u16,
         height: u16,
         time: f32,
+        scale: f64,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         text: &mut TextRenderer,
@@ -1381,6 +2092,7 @@ impl FrameRenderer {
             width,
             height,
             time,
+            scale,
             device,
             queue,
             shader_pass::Gpu {

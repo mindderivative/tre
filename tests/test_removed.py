@@ -203,6 +203,6 @@ def test_the_switch_forbids_removed_names_and_keeps_the_rest() -> None:
     assert results["kept"] == [0.5, [1, 2, 3, 255], "click", None]
     assert results["hasattr add_button"] is False
     assert results["__all__"] == [
-        "App", "Painter", "Event", "LoopHandle", "MONOSPACE_FONT_FAMILY", "Node", "Shader", "ShaderError", "Window",
-        "register_font",
+        "App", "Painter", "CursorImage", "Event", "Gradient", "LoopHandle", "MONOSPACE_FONT_FAMILY", "Node", "Shader", "ShaderError", "StatsHandle", "Window",
+        "png_bytes", "register_font", "set_system_fonts", "system_fonts", "write_png",
     ]  # fmt: skip

@@ -37,10 +37,15 @@ __all__ = [
     "Node",
     "Painter",
     "Event",
+    "CursorImage",
+    "Gradient",
     "LoopHandle",
+    "StatsHandle",
     "Shader",
     "ShaderError",
     "register_font",
+    "set_system_fonts",
+    "system_fonts",
 ]
 
 Color = tuple[int, int, int, int]
@@ -108,6 +113,12 @@ class Event:
     """`resize`: the window's new width."""
     height: float | None
     dark: bool | None
+    stats: dict[str, Any] | None
+    """`frame`: the frame's costs, as `Window.frame_stats()`'s `last`."""
+    reduced_motion: bool | None
+    """`reduced_motion`: whether the OS now asks for less motion."""
+    high_contrast: bool | None
+    """`high_contrast`: whether the OS now asks for more contrast."""
     """`color_scheme`: whether the OS switched to dark mode."""
     maximized: bool | None
     """(0.5.0) `maximized`: whether the window is now maximized."""
@@ -135,6 +146,28 @@ class Event:
     technology (or programmatically, after keyboard input), `False` after
     a pointer press -- whether to show a focus indicator."""
     side: str | None
+    path: str | None
+    """`file_hover`/`file_drop`: the first dragged file's path."""
+    paths: list[str] | None
+    """`file_hover`/`file_drop`: every dragged file's path."""
+    href: str | None
+    """`link`: the `link` string of the clicked text span."""
+    pointer_id: int | None
+    """`touch_start`/`touch_move`/`touch_end`/`touch_cancel`: which finger."""
+    phase: str | None
+    """`pan` and `pinch`: `"began"`, `"changed"`, `"ended"` or `"cancelled"`."""
+    count: int | None
+    """`tap`: 1, or 2 for a double tap."""
+    scale: float | None
+    """`pinch`: the distance between fingers over what it was at the start."""
+    scale_delta: float | None
+    """`pinch`: `scale` over the previous event's -- the step to apply."""
+    total_x: float | None
+    """`pan`, `pinch`: how far the gesture has moved in all."""
+    total_y: float | None
+    velocity_x: float | None
+    """`pan` ending: the speed the finger lifted at, pixels a second."""
+    velocity_y: float | None
     """`dock_target`/`dock_drop`: the dock zone under the pointer
     (`"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`), or `None`
     when it's over no zone."""
@@ -160,17 +193,20 @@ class Node:
     def animate(
         self,
         property: str,
-        to: float | Color | Sequence[float] | Sequence[Any] | str,
+        to: float | Color | Gradient | Sequence[float] | Sequence[Any] | str,
         duration_ms: int = 0,
-        easing: str | tuple[float, float, float, float] | None = None,
+        easing: str | tuple[float, float, float, float] | tuple[str, float] | None = None,
         on_complete: Callable[[], object] | None = None,
     ) -> None:
         """Starts (or retargets) an animation on one property, from its
         current value. Returns immediately -- never blocks.
         `duration_ms=0` snaps instantly on the next tick rather than
         easing. `easing` is `"linear"` (the default) or a cubic bezier
-        `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it. Animatable:
-        `fill`, `stroke_color`, `stroke_width`, `opacity`,
+        `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it, or (0.5.4) a
+        spring: `"spring"` or `("spring", bounce)`, `bounce` from -1 to 1
+        (exclusive) -- `duration_ms` is its period and it lasts until it settles,
+        carrying the speed of a number's animation it interrupts. Animatable:
+        `fill`, `stroke_color`, `stroke_width`, `opacity`, `blur`, `backdrop_blur`,
         `corner_radius` (a number or a 4-tuple), `shadows`, the transform
         parts `translate_x`/`translate_y`/`scale`/`rotation_deg`, a
         scroll view's `scroll_offset`, and a path's `data`/`trim_start`/
@@ -230,7 +266,11 @@ class Node:
         `focus`, `unfocus`, `change`, `a11y_action`, `dismiss` (a layer
         asked to close), `scroll`, and (0.5.0) `pointer_cancel` -- the press
         was taken to move or resize the window, and no `pointer_up` or
-        `click` will follow it. All but `pointer_enter`/`pointer_leave`/
+        `click` will follow it. (0.5.4) Also `touch_start`, `touch_move`,
+        `touch_end`, `touch_cancel`, `tap`, `long_press`, `pan`, `pinch`,
+        `file_hover`, `file_hover_cancel`, `file_drop` and `link` (a click on
+        a text span's link); see the events reference for each one's fields.
+        All but `pointer_enter`/`pointer_leave`/
         `change`/`dismiss`/`scroll` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
@@ -300,14 +340,18 @@ class Window:
         ...
     def create(self, kind: str, **props: Any) -> Node:
         """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
-        `"text_input"`, `"image"`, `"path"`, `"canvas"`, `"scroll_view"`,
-        `"virtual_list"`, or `"terminal"` -- and applies `props`
+        `"text_input"`, `"image"`, `"path"`, `"svg"`, `"canvas"`,
+        `"scroll_view"`, `"virtual_list"`, or `"terminal"` -- and applies `props`
         atomically, as `Node.set` does. Required: `text` for a text,
         `rgba`/`pixel_width`/`pixel_height` for an image, `data` for a
-        path, `draw` for a canvas, `item_count`, `materialize`, and one of
+        path, `svg` (a `str` or `bytes` document) for an svg, `draw` for a
+        canvas, `item_count`, `materialize`, and one of
         `item_extent`/`size_hint` for a virtual list, and `shell`, `cols`,
         `rows` for a terminal (which also takes `scrollback_lines`, at
-        creation only). Attach it with `add_child`; until it's attached it
+        creation only). An svg also takes `svg_color` (what `currentColor`
+        is) and `svg_images` (`{href: (rgba, width, height)}`, the raster
+        pictures the document refers to: the framework decodes them, the
+        engine never does). Attach it with `add_child`; until it's attached it
         is freed once no handle points into it. Raises `ValueError` for an
         unknown kind or a bad property, creating nothing. See the
         Properties reference for every property.
@@ -360,6 +404,8 @@ class Window:
         title: str = ...,
         partial_redraw: bool = ...,
         show_damage: bool = ...,
+        profile_nodes: bool = ...,
+        glyph_cache: bool = ...,
         decorations: bool = ...,
         fullscreen: bool = ...,
         min_width: float = ...,
@@ -368,6 +414,11 @@ class Window:
         resize_border: float = ...,
         system_menu: bool = ...,
         gpu_watchdog: float | None = ...,
+        present_mode: str = ...,
+        dpi_scaling: bool = ...,
+        transparent: bool = ...,
+        blur_behind: bool = ...,
+        click_through: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -376,7 +427,13 @@ class Window:
         warning logged, whatever this says. (0.4.1) `show_damage`: `True`
         tints what each presented frame redrew -- its damage rects in
         magenta, a full redraw outlined in orange -- over the image, never
-        the kept frame; off by default. (0.5.0) `decorations`: whether the
+        the kept frame; off by default. (0.5.4) `profile_nodes`: `True` times each
+        node the paint walk reaches, so `frame_stats()['profile']` can say where
+        the scene-building time went; off by default (it costs two clock reads a
+        node). (0.5.4) `glyph_cache`: `True` draws text from a cache of rendered glyph
+        images instead of each glyph's outline: about four times cheaper to build, but
+        the images are rasterised once and then placed, so edge pixels differ slightly
+        from the default (the text is in the same place); off by default. (0.5.0) `decorations`: whether the
         OS draws the title bar and borders, live on an open window;
         `fullscreen`: borderless on the window's monitor; `min_width` and
         `min_height`: the smallest size the user can resize it to, 0 for
@@ -395,7 +452,27 @@ class Window:
         own. `gpu_watchdog`: (0.5.1) seconds, greater than 0, after which a
         submitted frame that hasn't completed fires `gpu_stalled` -- once, and
         it only reports, since stuck GPU work can't be cancelled; `None`, the
-        default, is off."""
+        default, is off. `present_mode`: (0.5.4) `"vsync"` (the default) paces
+        frames to the display; `"low_latency"` shows the newest frame at once
+        where the surface allows (`Mailbox`), at the cost of rendering as fast
+        as possible while something animates. Takes effect live. `dpi_scaling`:
+        (0.5.4) `True` lays the window out in logical pixels and draws it at the
+        display's `scale_factor`, so an app written at 1x looks the same size
+        and crisp on a HiDPI screen; `width`, `height` and every pointer
+        position are then logical. `False`, the default, leaves everything in
+        physical pixels, for a framework that multiplies by `scale_factor`
+        itself. Takes effect live. `transparent`: (0.5.4) `True` opens the window
+        see-through -- the OS gives it an alpha channel, so a root `fill` with
+        alpha below 255 (or `(0, 0, 0, 0)`) shows the desktop through it, for
+        rounded or shaped frameless windows; only before `App.run()` (the OS
+        fixes it when the window is made), a `ValueError` after. Read
+        `get("transparent_active")` once open: `False` where the surface can't
+        blend with the desktop and the window stays opaque. `blur_behind`:
+        (0.5.4) asks the compositor to blur what is behind the window, where it
+        can (Wayland with KDE's blur protocol, macOS; ignored elsewhere); live.
+        `click_through`: (0.5.4) `True` makes the whole window ignore the pointer,
+        so clicks, scrolls and hover reach what is behind it; live, and a
+        `ValueError` where the platform can't."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -406,12 +483,14 @@ class Window:
     @overload
     def get(self, name: Literal["partial_redraw_active"]) -> bool | None: ...
     @overload
-    def get(self, name: Literal["dark"]) -> bool | None: ...
+    def get(self, name: Literal["dark", "reduced_motion", "high_contrast"]) -> bool | None: ...
     @overload
     def get(
         self,
         name: Literal[
             "show_damage",
+            "profile_nodes",
+            "glyph_cache",
             "decorations",
             "maximized",
             "minimized",
@@ -425,6 +504,12 @@ class Window:
     def get(self, name: Literal["titlebar_inset"]) -> tuple[float, float]: ...
     @overload
     def get(self, name: Literal["gpu_watchdog"]) -> float | None: ...
+    @overload
+    def get(self, name: Literal["present_mode"]) -> str: ...
+    @overload
+    def get(self, name: Literal["dpi_scaling", "transparent", "blur_behind", "click_through"]) -> bool: ...
+    @overload
+    def get(self, name: Literal["transparent_active"]) -> bool | None: ...
     @overload
     def get(self, name: Literal["min_width", "min_height", "resize_border"]) -> float: ...
     @overload
@@ -499,6 +584,57 @@ class Window:
         and layout at the new time -- headless tests, where `App.run()`
         renders no frames. The first call pins the window's clock at the
         real current time; `App.run()` returns it to the real clock."""
+        ...
+    def frame_stats(self, reset: bool = False) -> dict[str, Any]:
+        """(0.5.4) What this window's frames cost, as a dict: `frames` (drawn
+        since the window opened), `skipped` (passes that found nothing to draw),
+        `last` (the last frame's stages, redraw kind and node count, or `None`)
+        and `recent` (the last 240 frames: `fps`, `total_ms` and `cpu_ms` as
+        `mean`/`p95`/`max`, `stage_ms` per stage -- `tick`, `layout`, `prepare`,
+        `acquire`, `draw`, `present` -- and how many `redraws` were `nothing`,
+        `full` or `partial`). `acquire` and `present` are where the loop waits
+        for the display; `cpu_ms` is a frame without them. `reset=True` clears
+        the history after reading it. Nothing is recorded before `App.run()`
+        opens the window. Also (0.5.4): `gpu_timing` (whether the adapter can time
+        the GPU), a frame's `gpu_ms` (measured on one frame in sixteen and read back a few
+        frames later, so `None` for the rest) and `recent["gpu_ms"]` (their mean), and `profile`: with
+        `window.set(profile_nodes=True)`, the last frame's scene-building time by
+        node kind and its slowest nodes (else `None`)."""
+        ...
+    def stats_handle(self) -> StatsHandle:
+        """(0.5.4) A handle any thread can use to read this window's frame
+        statistics (`handle.read()`) without waiting for the event loop. Make
+        it on the loop's thread, then pass it on."""
+        ...
+    def start_trace(self, path: str) -> None:
+        """(0.5.4) Writes every frame this window draws from now on to `path` as a
+        Chrome / Perfetto trace (open it at ui.perfetto.dev or `chrome://tracing`):
+        a slice for each frame with its stages inside, and the GPU's time on a
+        second track once it is read back. Raises `OSError` if the file can't be
+        created and `ValueError` if a trace is already running."""
+        ...
+    def stop_trace(self) -> int:
+        """(0.5.4) Closes the trace `start_trace` opened and returns how many frames
+        it holds (`0` if none is running). Raises `OSError` if writing failed."""
+        ...
+    def snapshot(
+        self,
+        width: float | None = None,
+        height: float | None = None,
+        scale: float | None = None,
+        time: float = 0.0,
+    ) -> tuple[bytes, int, int]:
+        """(0.5.4) What the window draws, as `(rgba, width, height)`:
+        straight-alpha RGBA8 bytes, `width * height * 4` of them, top row first.
+        Rendered offscreen from the window's tree, so it works before
+        `App.run()` and with no display. `width` and `height` are logical
+        pixels and default to the window's; `scale` (default the window's,
+        `1.0` before it opens or with `dpi_scaling` off) multiplies them into
+        the pixels returned; `time` is the clock an animated shader sees as
+        `frame.time`. Animations are drawn at their current values. Save it
+        with `tre.write_png`. Raises `ValueError` for a size or scale that
+        isn't greater than 0, and `RuntimeError` with no GPU or for a size
+        the GPU can't render."""
         ...
     def simulate(self, event: str, node: Node | None = None, **fields: Any) -> None:
         """M94: delivers a synthetic event exactly as real input would,
@@ -602,6 +738,18 @@ class App:
         ...
 
 @final
+class StatsHandle:
+    """(0.5.4) A thread-safe reader of one window's frame statistics, from
+    `Window.stats_handle()`. Like `LoopHandle`, an object a background thread may
+    hold."""
+
+    def read(self, reset: bool = False) -> dict[str, Any]:
+        """The dict `Window.frame_stats()` returns, except that `profile` is always
+        `None` (it names `Node`s, which belong to the loop's thread). Does not
+        wait for the event loop. `reset=True` clears the history after reading."""
+        ...
+
+@final
 class LoopHandle:
     """M87: a thread-safe handle to an `App`'s event loop, from
     `App.thread_handle()`. The one `tre` object a background thread
@@ -633,6 +781,87 @@ class ShaderError(ValueError):
     source_line: str | None
 
 @final
+class CursorImage:
+    """(0.5.4) A pointer shape drawn from pixels, for a node's `cursor`:
+    `node.set(cursor=CursorImage(rgba, 32, 32, hotspot=(4, 4)))`. `rgba` is
+    straight-alpha RGBA8 bytes, `width * height * 4` of them, each side 1 to
+    256 pixels; `hotspot` is the pixel that is the pointer's position. The same
+    image made twice is one cursor. The image is in device pixels, not scaled
+    for HiDPI, so give a larger one there. The engine decodes nothing: decode a
+    PNG yourself. The OS cursor is made once `App.run()` runs its loop (see
+    `ready`); the default shape shows until then. Raises `ValueError` for a bad
+    size, a wrong byte count, or a hotspot outside the image."""
+
+    def __new__(
+        cls, rgba: bytes, width: int, height: int, hotspot: tuple[int, int] = ...
+    ) -> CursorImage: ...
+    @property
+    def size(self) -> tuple[int, int]: ...
+    @property
+    def hotspot(self) -> tuple[int, int]: ...
+    @property
+    def ready(self) -> bool:
+        """Whether the OS cursor has been made."""
+        ...
+    def __eq__(self, other: object, /) -> bool: ...
+    def __hash__(self) -> int: ...
+
+@final
+class Gradient:
+    """(0.5.4) A gradient to give a box (`Rect`/`Container`, `window.create("box")`),
+    a path or a text node as its `fill` (a path's or box's `stroke_color` takes one
+    too, and so does a canvas painter call's color, each spanning the shape's own
+    bounds): `node.set(fill=Gradient.linear([...]))`. Build one with
+    `Gradient.linear`, `Gradient.radial` or `Gradient.sweep`. Positions are
+    relative to the box, so a gradient follows its box as layout resizes it.
+    Immutable; to change a fill, set or animate `fill` to another. Setting
+    `fill` to a colour replaces a gradient; `node.get("fill")` returns the
+    `Gradient` while one is set. Animating `fill` between gradients of the same
+    kind and number of stops interpolates their colours, positions and angles;
+    animating from a flat colour fades the gradient in."""
+
+    @staticmethod
+    def linear(
+        stops: Sequence[Color] | Sequence[tuple[float, Color]], angle: float = 180.0
+    ) -> Gradient:
+        """Along a line through the box's centre at `angle` degrees (0 up, 90 right,
+        180 down), spanning the box. `stops` are colours spaced evenly, or
+        `(offset, color)` pairs with offsets from 0 to 1 that don't decrease."""
+        ...
+    @staticmethod
+    def radial(
+        stops: Sequence[Color] | Sequence[tuple[float, Color]],
+        center: tuple[float, float] | None = None,
+        radius: float = 1.0,
+    ) -> Gradient:
+        """Outward from `center` (fractions of the box; `None` is `(0.5, 0.5)`, the middle). `radius` is a fraction of the
+        half-diagonal, so `1.0` reaches the far corner of a centred gradient."""
+        ...
+    @staticmethod
+    def sweep(
+        stops: Sequence[Color] | Sequence[tuple[float, Color]],
+        center: tuple[float, float] | None = None,
+        start: float = 0.0,
+    ) -> Gradient:
+        """Around `center` (`None` is the middle), starting `start` degrees clockwise from up."""
+        ...
+    @property
+    def kind(self) -> str:
+        """`"linear"`, `"radial"` or `"sweep"`."""
+        ...
+    @property
+    def stops(self) -> list[tuple[float, Color]]: ...
+    @property
+    def angle(self) -> float | None: ...
+    @property
+    def center(self) -> tuple[float, float] | None: ...
+    @property
+    def radius(self) -> float | None: ...
+    @property
+    def start(self) -> float | None: ...
+    def __eq__(self, other: object, /) -> bool: ...
+
+@final
 class Shader:
     """0.5.1: WGSL with one function, `fn shade(p: Pixel) -> vec4<f32>`,
     checked when it is made -- a mistake raises `ShaderError` with the line
@@ -656,6 +885,28 @@ class Shader:
         mode: str = "fill",
         animated: bool = False,
     ) -> Shader: ...
+    @staticmethod
+    def filter(
+        *,
+        saturate: float = ...,
+        brightness: float = ...,
+        contrast: float = ...,
+        grayscale: float = ...,
+        hue_rotate: float = ...,
+        invert: float = ...,
+        sepia: float = ...,
+    ) -> Shader:
+        """(0.5.4) A ready-made effect shader that applies CSS colour filters to a
+        node and its subtree: `node.set(shader=Shader.filter(grayscale=1.0))`.
+        Give the filters you want as keywords; they apply in the order given,
+        each as CSS defines it (1.0 is no change for `saturate`, `brightness` and
+        `contrast`; `grayscale`, `invert` and `sepia` run 0 to 1; `hue_rotate` is
+        in degrees). Each is a uniform of the same name, so
+        `shader.set(uniforms={...})` changes them live, naming every filter the
+        shader was made with. A node has one shader: this takes its place.
+        Raises `TypeError` for an unknown filter and `ValueError` for no filter
+        or a value out of range."""
+        ...
     @property
     def wgsl(self) -> str: ...
     @property
@@ -678,12 +929,12 @@ class Painter:
     constructed directly. M100 renamed it from `CanvasContext`.
     """
 
-    def fill_rect(self, x: float, y: float, width: float, height: float, color: Color) -> None: ...
-    def fill_circle(self, cx: float, cy: float, radius: float, color: Color) -> None: ...
+    def fill_rect(self, x: float, y: float, width: float, height: float, color: Color | Gradient) -> None: ...
+    def fill_circle(self, cx: float, cy: float, radius: float, color: Color | Gradient) -> None: ...
     def stroke_path(
         self,
         points: Sequence[Sequence[float]],
-        color: Color,
+        color: Color | Gradient,
         width: float,
     ) -> None:
         """Strokes a path in canvas-local coordinates. `points` starts
@@ -714,6 +965,23 @@ def register_font(data: bytes) -> list[str]:
     node's `font_family` must use to resolve to it.
     Registering identical bytes twice is a no-op that still returns the
     names. A window already running picks the font up on its next frame.
+    (0.5.4) A registered font also fills in glyphs that a node's own
+    `font_family` lacks: the registered families follow it in the node's
+    family stack, so one call per script is enough.
     Raises `ValueError` if `data` holds no parseable font face.
     """
+    ...
+
+def set_system_fonts(enabled: bool) -> None:
+    """(0.5.4) Lets text use the fonts installed on this machine: for the
+    glyphs the bundled and registered fonts lack (CJK, Hebrew, Indic, colour
+    emoji) and for family names that aren't registered. Off by default, so
+    text is the same on every machine -- turn it on for an app that must show
+    any language, and ship fonts with `register_font` where the same pixels
+    everywhere matter. Applies to every window in this process, live: open
+    windows repaint their text on their next frame."""
+    ...
+
+def system_fonts() -> bool:
+    """(0.5.4) Whether system fonts are on (`set_system_fonts`)."""
     ...

@@ -101,8 +101,14 @@ impl Scene {
 
     /// A transparent box at (x, y), w x h, in no parent yet.
     fn boxed(&mut self, x: f32, y: f32, w: f32, h: f32) -> NodeId {
+        self.boxed_of(NodeKind::Rect, x, y, w, h)
+    }
+
+    /// `boxed`, of a given kind (a node's kind is set when it is made: the tree
+    /// counts nodes by kind).
+    fn boxed_of(&mut self, kind: NodeKind, x: f32, y: f32, w: f32, h: f32) -> NodeId {
         self.tree.insert(
-            NodeKind::Rect,
+            kind,
             Style {
                 position: Position::Absolute,
                 inset: TaffyRect {
@@ -367,10 +373,14 @@ fn solid(rgba: [u8; 4]) -> peniko::ImageData {
 impl Scene {
     /// An image node (a 2x2 solid colour) at (x, y), w x h.
     fn image(&mut self, x: f32, y: f32, w: f32, h: f32, rgba: [u8; 4]) -> NodeId {
-        let id = self.node(x, y, w, h, tint(0.0, 0.0, 0.0, 0.0));
-        let node = self.tree.get_mut(id).unwrap();
-        node.shader = None;
-        node.kind = NodeKind::Image(engine_core::ImageState::new(solid(rgba)));
+        let id = self.boxed_of(
+            NodeKind::Image(engine_core::ImageState::new(solid(rgba))),
+            x,
+            y,
+            w,
+            h,
+        );
+        self.tree.add_child(self.root, id);
         id
     }
 }

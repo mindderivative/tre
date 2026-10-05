@@ -3260,7 +3260,7 @@ fn dispatch_reports_focus_changed_on_a_real_click_to_focus_transition() {
     let (_, _, root_paint) = leaf(0.0, 0.0);
     let root = tree.insert(NodeKind::Container, root_style, root_paint);
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new("hi", "Roboto", 400.0, 16.0))),
         Style {
             size: Size {
                 width: length(120.0),
@@ -3646,7 +3646,9 @@ fn build_access_update_reports_the_real_value_role_and_focus_action_for_a_text_f
     let mut tree = Tree::new();
     let (_, style, paint) = leaf(120.0, 32.0);
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("hello", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new(
+            "hello", "Roboto", 400.0, 16.0,
+        ))),
         style,
         paint,
     );
@@ -3686,7 +3688,9 @@ fn text_field_scene(content: &str) -> (Tree, NodeId, NodeId) {
     let root = tree.insert(NodeKind::Container, root_style, root_paint);
 
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new(content, "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new(
+            content, "Roboto", 400.0, 16.0,
+        ))),
         Style {
             size: Size {
                 width: length(120.0),
@@ -4574,7 +4578,7 @@ fn pointer_press_on_a_text_field_moves_focus_there() {
     let (_, _, root_paint) = leaf(0.0, 0.0);
     let root = tree.insert(NodeKind::Container, root_style, root_paint);
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new("hi", "Roboto", 400.0, 16.0))),
         Style {
             size: Size {
                 width: length(120.0),
@@ -4628,7 +4632,7 @@ fn pointer_right_click_on_a_text_field_also_moves_focus_there() {
     let (_, _, root_paint) = leaf(0.0, 0.0);
     let root = tree.insert(NodeKind::Container, root_style, root_paint);
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new("hi", "Roboto", 400.0, 16.0))),
         Style {
             size: Size {
                 width: length(120.0),
@@ -4796,7 +4800,7 @@ fn caret_follow_scene() -> (Tree, NodeId, NodeId) {
     let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
     state.multiline = true;
     let field = tree.insert(
-        NodeKind::TextField(state),
+        NodeKind::TextField(Box::new(state)),
         Style {
             size: Size {
                 width: length(200.0),
@@ -4845,7 +4849,7 @@ fn scroll_text_field_caret_into_view_uses_the_content_box_of_a_padded_field() {
     let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
     state.multiline = true;
     let field = tree.insert(
-        NodeKind::TextField(state),
+        NodeKind::TextField(Box::new(state)),
         Style {
             size: Size {
                 width: length(200.0),
@@ -4946,7 +4950,7 @@ fn horizontal_caret_follow_scene() -> (Tree, NodeId, NodeId) {
     let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
     state.multiline = true;
     let field = tree.insert(
-        NodeKind::TextField(state),
+        NodeKind::TextField(Box::new(state)),
         Style {
             size: Size {
                 width: length(100.0),
@@ -5139,7 +5143,7 @@ fn terminal_scene(rows: &[&str]) -> (Tree, NodeId) {
         }
     }
     let terminal = tree.insert(
-        NodeKind::Terminal(state),
+        NodeKind::Terminal(Box::new(state)),
         Style::default(),
         PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 1.0),
     );
@@ -5287,7 +5291,7 @@ fn terminal_selected_text_trims_real_trailing_blank_cells_per_row() {
         state.cells[col].ch = ch;
     }
     let term = tree.insert(
-        NodeKind::Terminal(state),
+        NodeKind::Terminal(Box::new(state)),
         Style::default(),
         PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 1.0),
     );
@@ -6019,6 +6023,46 @@ fn scroll_into_view_aligns_a_node_longer_than_its_view_to_its_start() {
     assert_eq!(offset_of(&tree, view), 250.0);
 }
 
+/// 0.5.4 (review): asking for scroll changes, and laying out, must not count a
+/// scroll view that did not move as touched -- it sent the damage tracker down
+/// its full walk on every frame of any tree that has one.
+#[test]
+fn an_idle_scroll_view_is_not_touched_by_scroll_changes_or_layout() {
+    let (mut tree, view, _) = scrollable_view(false);
+    tree.take_touched();
+    assert!(tree.take_scroll_changes().is_empty());
+    let touched = tree.take_touched();
+    assert!(
+        !touched.all && touched.ids.is_empty(),
+        "a quiet check touches nothing"
+    );
+    tree.compute_layout(
+        view,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    tree.take_touched();
+    tree.compute_layout(
+        view,
+        Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        },
+    );
+    let touched = tree.take_touched();
+    assert!(
+        !touched.all,
+        "a repeated layout of an unmoved view is not a full re-walk"
+    );
+    // A move is still reported, and then the node is touched.
+    tree.scroll_by_key(view, Key::ArrowDown);
+    tree.take_touched();
+    assert_eq!(tree.take_scroll_changes().len(), 1);
+    assert!(tree.take_touched().ids.contains(&view));
+}
+
 #[test]
 fn take_scroll_changes_reports_each_move_once() {
     let (mut tree, view, _) = scrollable_view(false);
@@ -6075,16 +6119,17 @@ fn a_wheel_over_a_carousel_it_cannot_move_scrolls_the_page_around_it() {
             height: AvailableSpace::Definite(100.0),
         },
     );
-    let wheel = |x: f64, y: f64| InputEvent::Scroll {
+    let wheel_at = |x: f64, y: f64, at_y: f64| InputEvent::Scroll {
         delta: ScrollDelta::Lines(x, y),
-        position: Point::new(50.0, 25.0),
+        position: Point::new(50.0, at_y),
     };
-    tree.dispatch(page, wheel(0.0, -2.0), Instant::now());
+    tree.dispatch(page, wheel_at(0.0, -2.0, 25.0), Instant::now());
     assert_eq!(
         (offset_of(&tree, page), offset_of(&tree, carousel)),
         (40.0, 0.0)
     );
-    tree.dispatch(page, wheel(-2.0, 0.0), Instant::now());
+    // The page scrolled 40, so the carousel now spans y -40..10.
+    tree.dispatch(page, wheel_at(-2.0, 0.0, 5.0), Instant::now());
     assert_eq!(
         (offset_of(&tree, page), offset_of(&tree, carousel)),
         (40.0, 40.0)
@@ -6309,4 +6354,1441 @@ fn a_text_nodes_width_set_after_creation_is_rounded_up_too() {
         tree.get(child).unwrap().layout_style.size.width,
         length(66.43)
     );
+}
+
+/// 0.5.4 (#103): `tick_all` ticks only known-animating nodes between full
+/// scans; an animation started anywhere, on any value, must still be seen.
+mod active_ticking {
+    use super::*;
+    use crate::animation::MotionCurve;
+    use std::time::Duration;
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    fn many(tree: &mut Tree, n: usize) -> Vec<NodeId> {
+        (0..n)
+            .map(|_| {
+                let (kind, style, paint) = leaf(5.0, 5.0);
+                tree.insert(kind, style, paint)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_animation_started_after_a_scan_is_still_ticked() {
+        let mut tree = Tree::new();
+        let ids = many(&mut tree, 50);
+        let t0 = Instant::now();
+        // A first tick with nothing running settles the scan.
+        assert!(!tree.tick_all(t0).0);
+        // Later starts on two different nodes, with ticks in between.
+        tree.get_mut(ids[7]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0,
+        );
+        let (active, _) = tree.tick_all(t0 + SECOND / 2);
+        assert!(active);
+        tree.get_mut(ids[41]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0 + SECOND / 2,
+        );
+        assert!(tree.tick_all(t0 + SECOND * 3 / 4).0);
+        let a = tree.get(ids[7]).unwrap().paint.opacity.current;
+        let b = tree.get(ids[41]).unwrap().paint.opacity.current;
+        assert!((a - 0.25).abs() < 0.01, "first keeps running: {a}");
+        assert!((b - 0.75).abs() < 0.01, "second runs from its start: {b}");
+        // Both finish, then the tree is idle.
+        let (active, _) = tree.tick_all(t0 + SECOND * 5);
+        assert!(!active);
+        assert_eq!(tree.get(ids[7]).unwrap().paint.opacity.current, 0.0);
+        assert_eq!(tree.get(ids[41]).unwrap().paint.opacity.current, 0.0);
+        assert!(!tree.tick_all(t0 + SECOND * 6).0);
+    }
+
+    /// 0.5.4 (review): a new animation used to be found by a pass over every
+    /// node, which counted every node as touched and sent the damage walk
+    /// down its full path for that frame.
+    #[test]
+    fn starting_an_animation_touches_only_the_nodes_it_could_have_started_on() {
+        let mut tree = Tree::new();
+        let ids = many(&mut tree, 400);
+        let t0 = Instant::now();
+        assert!(!tree.tick_all(t0).0, "a first tick settles the scan");
+        tree.take_touched();
+        tree.get_mut(ids[123]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0,
+        );
+        tree.take_touched();
+        let (active, _) = tree.tick_all(t0 + SECOND / 2);
+        assert!(active);
+        let touched = tree.take_touched();
+        assert!(!touched.all, "no pass over the whole tree");
+        assert_eq!(touched.ids, vec![ids[123]], "only the animating node");
+        let o = tree.get(ids[123]).unwrap().paint.opacity.current;
+        assert!((o - 0.5).abs() < 0.01, "and it advanced: {o}");
+        // A tick with nothing new touches only what still animates.
+        tree.take_touched();
+        tree.tick_all(t0 + SECOND * 3 / 4);
+        assert_eq!(tree.take_touched().ids, vec![ids[123]]);
+        // Once it has finished, ticks touch nothing at all.
+        tree.tick_all(t0 + SECOND * 2);
+        tree.take_touched();
+        assert!(!tree.tick_all(t0 + SECOND * 3).0);
+        let touched = tree.take_touched();
+        assert!(!touched.all && touched.ids.is_empty());
+    }
+
+    /// A node animating through two different nodes' starts in one frame, and
+    /// a start on a node inserted after the last scan, are both found.
+    #[test]
+    fn nodes_inserted_and_animated_between_ticks_are_found() {
+        let mut tree = Tree::new();
+        let _ = many(&mut tree, 20);
+        let t0 = Instant::now();
+        tree.tick_all(t0);
+        let fresh = many(&mut tree, 2);
+        for id in &fresh {
+            tree.get_mut(*id).unwrap().paint.opacity.animate_to(
+                0.0,
+                SECOND,
+                MotionCurve::Linear,
+                t0,
+            );
+        }
+        assert!(tree.tick_all(t0 + SECOND / 2).0);
+        for id in &fresh {
+            let o = tree.get(*id).unwrap().paint.opacity.current;
+            assert!((o - 0.5).abs() < 0.01, "{o}");
+        }
+        assert!(!tree.tick_all(t0 + SECOND * 2).0);
+    }
+
+    #[test]
+    fn a_finished_animation_is_not_ticked_again() {
+        let mut tree = Tree::new();
+        let ids = many(&mut tree, 3);
+        let t0 = Instant::now();
+        tree.get_mut(ids[1]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0,
+        );
+        assert!(!tree.tick_all(t0 + SECOND * 2).0);
+        // A value set directly after it finished stays put.
+        tree.get_mut(ids[1]).unwrap().paint.opacity.current = 0.9;
+        assert!(!tree.tick_all(t0 + SECOND * 3).0);
+        assert_eq!(tree.get(ids[1]).unwrap().paint.opacity.current, 0.9);
+    }
+
+    #[test]
+    fn a_removed_animating_node_is_skipped() {
+        let mut tree = Tree::new();
+        let ids = many(&mut tree, 3);
+        let t0 = Instant::now();
+        tree.get_mut(ids[0]).unwrap().paint.opacity.animate_to(
+            0.0,
+            SECOND,
+            MotionCurve::Linear,
+            t0,
+        );
+        assert!(tree.tick_all(t0 + SECOND / 2).0);
+        tree.remove(ids[0]);
+        assert!(!tree.tick_all(t0 + SECOND * 3 / 4).0);
+    }
+
+    #[test]
+    fn a_text_fields_tint_and_a_scroll_views_offset_are_ticked() {
+        let mut tree = Tree::new();
+        let (_, style, paint) = leaf(5.0, 5.0);
+        let field = tree.insert(
+            NodeKind::TextField(Box::new(TextFieldState::new("hi", "Roboto", 400.0, 16.0))),
+            style,
+            paint,
+        );
+        let (_, style, paint) = leaf(5.0, 5.0);
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(false)),
+            style,
+            paint,
+        );
+        let t0 = Instant::now();
+        assert!(!tree.tick_all(t0).0);
+        if let NodeKind::TextField(s) = &mut tree.get_mut(field).unwrap().kind {
+            s.text_tint.animate_to(
+                Color::from_rgba8(0, 0, 255, 255),
+                SECOND,
+                MotionCurve::Linear,
+                t0,
+            );
+        }
+        if let NodeKind::ScrollView(s) = &mut tree.get_mut(view).unwrap().kind {
+            s.scroll.animate_to(40.0, SECOND, MotionCurve::Linear, t0);
+        }
+        assert!(tree.tick_all(t0 + SECOND / 2).0);
+        assert!(!tree.tick_all(t0 + SECOND * 2).0);
+        let NodeKind::ScrollView(s) = &tree.get(view).unwrap().kind else {
+            unreachable!()
+        };
+        assert_eq!(s.scroll.current, 40.0);
+    }
+}
+
+/// 0.5.4 (#103): `cargo test -p engine-core --release tick_cost -- --ignored --nocapture`
+#[test]
+#[ignore = "timing, not correctness"]
+fn tick_cost_with_one_animating_node_in_9216() {
+    use crate::animation::MotionCurve;
+    use std::time::Duration;
+    let mut tree = Tree::new();
+    let ids: Vec<NodeId> = (0..9216)
+        .map(|_| {
+            let (kind, style, paint) = leaf(5.0, 5.0);
+            tree.insert(kind, style, paint)
+        })
+        .collect();
+    let t0 = Instant::now();
+    tree.get_mut(ids[100]).unwrap().paint.opacity.animate_to(
+        0.0,
+        Duration::from_secs(3600),
+        MotionCurve::Linear,
+        t0,
+    );
+    tree.tick_all(t0);
+    let runs = 2000;
+    let start = Instant::now();
+    for i in 0..runs {
+        tree.tick_all(t0 + Duration::from_millis(i));
+    }
+    println!("tick_all: {:?} per frame", start.elapsed() / runs as u32);
+}
+
+/// 0.5.4 (#105): a scroll offset moves what is painted and hit, and changes
+/// no layout.
+mod scroll_without_layout {
+    use super::*;
+
+    fn relayout(tree: &mut Tree, view: NodeId) {
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+    }
+
+    #[test]
+    fn scrolling_a_view_moves_its_content_and_not_its_layout() {
+        let (mut tree, view, boxes) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        let content = tree.get(view).unwrap().children[0];
+        let before = tree.layout(content).location;
+        assert_eq!(tree.absolute_position(boxes[2]), (0.0, 200.0));
+
+        tree.scroll_scroll_view_by(view, 150.0);
+        relayout(&mut tree, view);
+
+        assert_eq!(
+            tree.layout(content).location,
+            before,
+            "layout is unchanged by a scroll"
+        );
+        assert_eq!(tree.scroll_shift(content), (0.0, -150.0));
+        assert_eq!(tree.scroll_shift(view), (0.0, 0.0));
+        assert_eq!(tree.absolute_position(boxes[2]), (0.0, 50.0));
+        // A point where box 2 now is hits box 2; its old place hits box 0/1.
+        let hit = tree.hit_test_at(view, Point::new(10.0, 60.0), Affine::IDENTITY);
+        assert_eq!(hit.map(|(id, _)| id), Some(boxes[2]));
+    }
+
+    #[test]
+    fn a_view_scroll_leaves_taffy_with_nothing_to_redo() {
+        let (mut tree, view, _boxes) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        tree.scroll_scroll_view_by(view, 50.0);
+        relayout(&mut tree, view);
+        // The sync passes found nothing to change: no second layout pass.
+        assert!(!tree.sync_scroll_view_layouts());
+        assert!(!tree.sync_virtual_list_layouts());
+    }
+
+    #[test]
+    fn a_horizontal_view_shifts_sideways() {
+        let mut tree = Tree::new();
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(true)),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(50.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        let (k, s, p) = leaf(400.0, 50.0);
+        let strip = tree.insert(k, s, p);
+        tree.add_child(view, strip);
+        relayout(&mut tree, view);
+        tree.scroll_scroll_view_by(view, 120.0);
+        relayout(&mut tree, view);
+        assert_eq!(tree.scroll_shift(strip), (-120.0, 0.0));
+        assert_eq!(tree.absolute_position(strip), (-120.0, 0.0));
+    }
+
+    #[test]
+    fn a_node_outside_a_scroller_is_not_shifted() {
+        let (tree, view, boxes) = view_over_boxes(&[100.0]);
+        assert_eq!(tree.scroll_shift(boxes[0]), (0.0, 0.0));
+        assert_eq!(tree.scroll_shift(view), (0.0, 0.0));
+    }
+}
+
+/// 0.5.4 (#112): selection in static text.
+mod static_selection {
+    use super::*;
+
+    fn text(tree: &mut Tree, content: &str) -> NodeId {
+        let (_, style, paint) = leaf(100.0, 20.0);
+        tree.insert(
+            NodeKind::Text(crate::TextState {
+                content: content.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: 400.0,
+                font_size: 16.0,
+                align: crate::TextAlign::Start,
+                line_height: None,
+                options: Default::default(),
+            }),
+            style,
+            paint,
+        )
+    }
+
+    #[test]
+    fn a_selection_selects_clamps_and_copies() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "héllo world");
+        assert!(tree.set_text_selection(id, 0, 6));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("héllo"));
+        // Either order, and inside the two-byte 'é' (bytes 1..3) snaps back.
+        assert!(tree.set_text_selection(id, 6, 2));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("éllo"));
+        // Past the end is clamped; an empty selection copies nothing.
+        assert!(tree.set_text_selection(id, 8, 400));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("orld"));
+        tree.set_text_selection(id, 3, 3);
+        assert_eq!(tree.static_selected_text(), None);
+    }
+
+    #[test]
+    fn extending_keeps_the_anchor() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "abcdef");
+        tree.set_text_selection(id, 2, 2);
+        tree.extend_text_selection(id, 5);
+        tree.extend_text_selection(id, 4);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("cd"));
+    }
+
+    #[test]
+    fn one_node_owns_the_selection_at_a_time() {
+        let mut tree = Tree::new();
+        let (a, b) = (text(&mut tree, "first"), text(&mut tree, "second"));
+        tree.set_text_selection(a, 0, 5);
+        tree.set_text_selection(b, 0, 3);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("sec"));
+        assert_eq!(tree.text_selected_text(a), None, "the first was cleared");
+        tree.clear_text_selection();
+        assert_eq!(tree.static_selected_text(), None);
+    }
+
+    #[test]
+    fn select_all_takes_the_whole_text_of_the_selected_node() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "héllo world");
+        assert!(!tree.select_all_static_text(), "nothing is selected yet");
+        tree.set_text_selection(id, 2, 2);
+        assert!(tree.select_all_static_text());
+        assert_eq!(tree.static_selected_text().as_deref(), Some("héllo world"));
+    }
+
+    #[test]
+    fn shift_arrows_home_and_end_move_the_focus_end_by_character() {
+        use crate::Key;
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "aéb");
+        tree.set_text_selection(id, 1, 1);
+        assert!(tree.extend_static_selection(Key::ArrowRight));
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("é"),
+            "a two-byte char at once"
+        );
+        assert!(tree.extend_static_selection(Key::ArrowRight));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("éb"));
+        assert!(
+            tree.extend_static_selection(Key::ArrowRight),
+            "at the end it stays"
+        );
+        assert_eq!(tree.static_selected_text().as_deref(), Some("éb"));
+        assert!(tree.extend_static_selection(Key::ArrowLeft));
+        assert!(tree.extend_static_selection(Key::ArrowLeft));
+        assert_eq!(tree.static_selected_text(), None, "back to the anchor");
+        tree.extend_static_selection(Key::ArrowLeft);
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("a"),
+            "past it, the other way"
+        );
+        tree.extend_static_selection(Key::End);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("éb"));
+        tree.extend_static_selection(Key::Home);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("a"));
+        assert!(
+            !tree.extend_static_selection(Key::ArrowUp),
+            "other keys are not ours"
+        );
+    }
+
+    #[test]
+    fn a_shifted_arrow_key_event_extends_the_selection_unless_an_input_is_focused() {
+        use crate::{InputEvent, Key};
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "abcdef");
+        tree.set_text_selection(id, 2, 2);
+        let key = |tree: &mut Tree, shift| {
+            tree.dispatch(
+                id,
+                InputEvent::KeyPressed {
+                    key: Key::ArrowRight,
+                    shift,
+                },
+                Instant::now(),
+            )
+        };
+        key(&mut tree, false);
+        assert_eq!(tree.static_selected_text(), None, "no shift, no extension");
+        key(&mut tree, true);
+        key(&mut tree, true);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("cd"));
+    }
+
+    #[test]
+    fn a_link_is_found_by_offset_and_the_last_overlapping_one_wins() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "Visit the docs now");
+        let link = |start, end, href: &str| crate::TextSpan {
+            start,
+            end,
+            link: Some(href.to_string()),
+            ..Default::default()
+        };
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.spans = vec![
+                link(0, 14, "outer"),
+                link(10, 14, "inner"),
+                crate::TextSpan {
+                    start: 5,
+                    end: 8,
+                    ..Default::default()
+                },
+            ];
+        }
+        assert_eq!(tree.text_link_at(id, 2), Some("outer"));
+        assert_eq!(tree.text_link_at(id, 10), Some("inner"));
+        assert_eq!(tree.text_link_at(id, 13), Some("inner"));
+        assert_eq!(tree.text_link_at(id, 14), None, "the end is exclusive");
+        assert_eq!(
+            tree.text_link_at(id, 6),
+            Some("outer"),
+            "a styling span adds no link of its own"
+        );
+    }
+
+    #[test]
+    fn text_with_a_link_takes_hits_and_plain_text_does_not() {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(60.0),
+                },
+                flex_direction: taffy::FlexDirection::Column,
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
+        );
+        let (linked, plain) = (text(&mut tree, "link"), text(&mut tree, "plain"));
+        tree.add_child(root, linked);
+        tree.add_child(root, plain);
+        if let NodeKind::Text(state) = &mut tree.get_mut(linked).unwrap().kind {
+            state.options.spans = vec![crate::TextSpan {
+                start: 0,
+                end: 4,
+                link: Some("x".into()),
+                ..Default::default()
+            }];
+        }
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(60.0),
+            },
+        );
+        assert_eq!(tree.hit_test(root, Point::new(5.0, 5.0)), Some(linked));
+        assert_eq!(
+            tree.hit_test(root, Point::new(5.0, 25.0)),
+            Some(root),
+            "plain text is decoration"
+        );
+    }
+
+    #[test]
+    fn ctrl_arrows_move_the_selection_by_word() {
+        use crate::Key;
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "one  two, three");
+        tree.set_text_selection(id, 0, 0);
+        let word = |tree: &mut Tree, key| {
+            tree.extend_static_selection_by(key, true);
+            tree.static_selection_ends().unwrap().1.1
+        };
+        assert_eq!(
+            word(&mut tree, Key::ArrowRight),
+            5,
+            "past 'one' and its spaces, to 'two'"
+        );
+        assert_eq!(
+            word(&mut tree, Key::ArrowRight),
+            8,
+            "the comma is its own word"
+        );
+        assert_eq!(word(&mut tree, Key::ArrowRight), 10, "then 'three'");
+        assert_eq!(word(&mut tree, Key::ArrowRight), 15, "to the end");
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 10);
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 8);
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 5);
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 0);
+        assert_eq!(word(&mut tree, Key::ArrowLeft), 0, "stays at the start");
+    }
+
+    #[test]
+    fn a_horizontal_move_at_the_end_of_a_text_goes_on_into_the_next() {
+        use crate::Key;
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.set_text_selection(a, 3, 3);
+        tree.extend_static_selection(Key::End);
+        tree.extend_static_selection(Key::ArrowRight);
+        assert_eq!(tree.static_selection_ends().unwrap().1, (b, 0));
+        tree.extend_static_selection(Key::ArrowRight);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("ha\nb"));
+        tree.extend_static_selection_by(Key::ArrowRight, true);
+        assert_eq!(range_of(&tree, b), Some((0, 5)));
+        tree.extend_static_selection(Key::End);
+        tree.extend_static_selection(Key::ArrowRight);
+        assert_eq!(tree.static_selection_ends().unwrap().1, (c, 0));
+        // And back, over the boundary.
+        tree.extend_static_selection(Key::ArrowLeft);
+        assert_eq!(tree.static_selection_ends().unwrap().1, (b, 5));
+        // The first text's start has nowhere to go: it stays.
+        tree.set_text_selection(a, 0, 0);
+        assert!(tree.extend_static_selection(Key::ArrowLeft));
+        assert_eq!(tree.static_selection_ends().unwrap().1, (a, 0));
+    }
+
+    #[test]
+    fn with_no_line_to_move_to_the_vertical_edge_is_the_text_edge_then_the_next_text() {
+        let mut tree = Tree::new();
+        let (_, [a, b, _]) = paragraphs(&mut tree);
+        tree.set_text_selection(a, 2, 2);
+        assert_eq!(tree.static_selection_vertical_edge(false), Some((a, 0)));
+        assert_eq!(tree.static_selection_vertical_edge(true), Some((a, 5)));
+        tree.set_text_selection(a, 0, 5);
+        assert_eq!(
+            tree.static_selection_vertical_edge(true),
+            Some((b, 5)),
+            "already at the end"
+        );
+        tree.set_text_selection(b, 0, 0);
+        assert_eq!(tree.static_selection_vertical_edge(false), Some((a, 0)));
+        tree.clear_text_selection();
+        assert_eq!(tree.static_selection_vertical_edge(true), None);
+    }
+
+    /// A selectable "Visit the docs now" with "docs" (10..14) a link.
+    fn linked(tree: &mut Tree) -> NodeId {
+        let id = text(tree, "Visit the docs now");
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.selectable = true;
+            state.options.spans = vec![crate::TextSpan {
+                start: 10,
+                end: 14,
+                link: Some("https://example.com/docs".into()),
+                ..Default::default()
+            }];
+        }
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        id
+    }
+
+    fn node_of(update: &accesskit::TreeUpdate, id: accesskit::NodeId) -> &accesskit::Node {
+        &update
+            .nodes
+            .iter()
+            .find(|(i, _)| *i == id)
+            .expect("in the update")
+            .1
+    }
+
+    #[test]
+    fn plain_text_makes_no_text_runs_and_keeps_its_role() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "plain");
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        let update = tree.build_access_update(id);
+        assert_eq!(update.nodes.len(), 1);
+        assert_eq!(
+            node_of(&update, to_access_id(id)).role(),
+            accesskit::Role::Unknown
+        );
+    }
+
+    #[test]
+    fn linked_text_is_a_label_of_runs_and_a_link_with_its_url() {
+        let mut tree = Tree::new();
+        let id = linked(&mut tree);
+        let update = tree.build_access_update(id);
+        let container = node_of(&update, to_access_id(id));
+        assert_eq!(container.role(), accesskit::Role::Label);
+        let kids = container.children().to_vec();
+        assert_eq!(kids.len(), 3, "before, the link, after");
+        let roles: Vec<_> = kids.iter().map(|k| node_of(&update, *k).role()).collect();
+        assert_eq!(
+            roles,
+            [
+                accesskit::Role::TextRun,
+                accesskit::Role::Link,
+                accesskit::Role::TextRun
+            ]
+        );
+        let link = node_of(&update, kids[1]);
+        assert_eq!(link.url(), Some("https://example.com/docs"));
+        assert!(link.supports_action(accesskit::Action::Click));
+        assert_eq!(link.label(), Some("docs"));
+        let inner = node_of(&update, link.children()[0]);
+        assert_eq!(inner.value(), Some("docs"));
+        assert_eq!(inner.character_lengths(), &[1u8, 1, 1, 1]);
+        // The runs cover the content.
+        let all: String = kids
+            .iter()
+            .map(|k| {
+                let n = node_of(&update, *k);
+                let run = if n.role() == accesskit::Role::Link {
+                    node_of(&update, n.children()[0])
+                } else {
+                    n
+                };
+                run.value().unwrap().to_string()
+            })
+            .collect();
+        assert_eq!(all, "Visit the docs now");
+    }
+
+    #[test]
+    fn a_selection_is_reported_as_run_positions_and_multibyte_text_counts_characters() {
+        let mut tree = Tree::new();
+        let id = text(&mut tree, "héllo wörld");
+        tree.set_text_selection(id, 0, 0);
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.selectable = true;
+        }
+        // "héllo" is 6 bytes, 5 characters; select through the space.
+        tree.set_text_selection(id, 1, 7);
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        let update = tree.build_access_update(id);
+        let selection = *node_of(&update, to_access_id(id))
+            .text_selection()
+            .expect("a selection");
+        assert_eq!(selection.anchor.character_index, 1);
+        assert_eq!(
+            selection.focus.character_index, 6,
+            "byte 7 is the 7th character boundary after 'é'"
+        );
+        assert_eq!(selection.anchor.node, selection.focus.node);
+        let run = node_of(&update, selection.anchor.node);
+        assert_eq!(run.value(), Some("héllo wörld"));
+        assert_eq!(run.character_lengths()[1], 2, "é is two bytes");
+        assert!(
+            node_of(&update, to_access_id(id)).supports_action(accesskit::Action::SetTextSelection)
+        );
+    }
+
+    /// The tree as AccessKit's own consumer (what the platform adapters use)
+    /// reads it: positions must resolve or it panics.
+    #[test]
+    fn the_consumer_reads_the_selected_text_back() {
+        let mut tree = Tree::new();
+        let id = linked(&mut tree);
+        tree.set_text_selection(id, 6, 16);
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        let consumer = accesskit_consumer::Tree::new(tree.build_access_update(id), true);
+        let root = consumer.state().root();
+        let range = root.text_selection().expect("a selection");
+        // Across a link, from the plain run, through the link's, into the next.
+        assert_eq!(range.text(), "the docs n");
+        assert_eq!(root.document_range().text(), "Visit the docs now");
+    }
+
+    #[test]
+    fn the_ids_of_runs_and_links_resolve_and_real_ids_do_not() {
+        let mut tree = Tree::new();
+        let id = linked(&mut tree);
+        let update = tree.build_access_update(id);
+        let kids = node_of(&update, to_access_id(id)).children().to_vec();
+        assert_eq!(
+            tree.resolve_text_part(kids[1]),
+            Some(crate::TextPart::Link {
+                owner: id,
+                href: "https://example.com/docs".into(),
+                start: 10,
+                end: 14,
+            })
+        );
+        assert_eq!(
+            tree.resolve_text_part(kids[2]),
+            Some(crate::TextPart::Run {
+                owner: id,
+                start: 14,
+                end: 18
+            })
+        );
+        assert_eq!(
+            tree.resolve_text_part(to_access_id(id)),
+            None,
+            "a real node is not a part"
+        );
+        // Ids are unique across the update.
+        let mut ids: Vec<_> = update.nodes.iter().map(|(i, _)| *i).collect();
+        ids.sort();
+        let n = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), n);
+    }
+
+    #[test]
+    fn a_screen_readers_text_selection_selects_the_text() {
+        let mut tree = Tree::new();
+        let id = linked(&mut tree);
+        let update = tree.build_access_update(id);
+        let kids = node_of(&update, to_access_id(id)).children().to_vec();
+        let link_run = node_of(&update, kids[1]).children()[0];
+        let position = |node, character_index| accesskit::TextPosition {
+            node,
+            character_index,
+        };
+        // From the third character of "docs" to the first of " now".
+        let selection = accesskit::TextSelection {
+            anchor: position(link_run, 2),
+            focus: position(kids[2], 1),
+        };
+        assert!(tree.set_text_selection_from_access(&selection));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("cs "));
+        // A position in no text node refuses and changes nothing.
+        let bogus = accesskit::TextSelection {
+            anchor: position(to_access_id(id), 0),
+            focus: position(kids[2], 1),
+        };
+        assert!(!tree.set_text_selection_from_access(&bogus));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("cs "));
+    }
+
+    /// A column holding paragraphs "alpha", "bravo", "charlie", all selectable.
+    fn paragraphs(tree: &mut Tree) -> (NodeId, [NodeId; 3]) {
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                flex_direction: taffy::FlexDirection::Column,
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
+        );
+        let ids = ["alpha", "bravo", "charlie"].map(|content| {
+            let id = text(tree, content);
+            if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+                state.options.selectable = true;
+            }
+            tree.add_child(root, id);
+            id
+        });
+        (root, ids)
+    }
+
+    fn range_of(tree: &Tree, id: NodeId) -> Option<(usize, usize)> {
+        match &tree.get(id).unwrap().kind {
+            NodeKind::Text(state) => state.options.selection,
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_selection_runs_from_one_text_into_another_taking_what_lies_between() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        assert!(tree.select_across((a, 2), (c, 3)));
+        assert_eq!(
+            range_of(&tree, a),
+            Some((2, 5)),
+            "from the anchor to the end"
+        );
+        assert_eq!(range_of(&tree, b), Some((0, 5)), "the middle whole");
+        assert_eq!(range_of(&tree, c), Some((0, 3)), "the start to the focus");
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("pha\nbravo\ncha")
+        );
+    }
+
+    #[test]
+    fn a_backwards_selection_covers_the_same_text() {
+        let mut tree = Tree::new();
+        let (_, [a, _, c]) = paragraphs(&mut tree);
+        assert!(tree.select_across((c, 3), (a, 2)));
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("pha\nbravo\ncha")
+        );
+    }
+
+    #[test]
+    fn extending_a_drag_into_other_texts_and_back_selects_and_releases_them() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.set_text_selection(a, 1, 1);
+        tree.extend_text_selection(a, 3);
+        assert_eq!(range_of(&tree, b), None);
+        tree.extend_text_selection(c, 2);
+        assert_eq!(range_of(&tree, b), Some((0, 5)));
+        assert_eq!(range_of(&tree, c), Some((0, 2)));
+        tree.extend_text_selection(b, 2);
+        assert_eq!(range_of(&tree, c), None, "the third is let go");
+        assert_eq!(range_of(&tree, b), Some((0, 2)));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("lpha\nbr"));
+        tree.extend_text_selection(a, 3);
+        assert_eq!(range_of(&tree, b), None);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("lp"));
+    }
+
+    #[test]
+    fn texts_that_are_not_selectable_or_not_visible_are_skipped_between() {
+        let mut tree = Tree::new();
+        let (root, [a, b, c]) = paragraphs(&mut tree);
+        if let NodeKind::Text(state) = &mut tree.get_mut(b).unwrap().kind {
+            state.options.selectable = false;
+        }
+        let d = text(&mut tree, "delta");
+        if let NodeKind::Text(state) = &mut tree.get_mut(d).unwrap().kind {
+            state.options.selectable = true;
+        }
+        tree.add_child(root, d);
+        tree.get_mut(c).unwrap().visible = false;
+        assert!(tree.select_across((a, 0), (d, 5)));
+        assert_eq!(range_of(&tree, b), None);
+        assert_eq!(range_of(&tree, c), None);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("alpha\ndelta"));
+    }
+
+    #[test]
+    fn a_new_selection_or_a_clear_releases_every_text_and_other_trees_are_refused() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.select_across((a, 0), (c, 7));
+        tree.set_text_selection(b, 1, 3);
+        assert_eq!((range_of(&tree, a), range_of(&tree, c)), (None, None));
+        assert_eq!(tree.static_selected_text().as_deref(), Some("ra"));
+        tree.select_across((a, 0), (c, 7));
+        tree.clear_text_selection();
+        assert!([a, b, c].iter().all(|id| range_of(&tree, *id).is_none()));
+        assert_eq!(tree.static_selected_text(), None);
+        let (_, [other, ..]) = paragraphs(&mut tree);
+        assert!(
+            !tree.select_across((a, 0), (other, 1)),
+            "two separate trees"
+        );
+    }
+
+    #[test]
+    fn a_screen_reader_can_select_from_one_text_to_another() {
+        let mut tree = Tree::new();
+        let (root, [a, _, c]) = paragraphs(&mut tree);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(60.0),
+            },
+        );
+        let update = tree.build_access_update(root);
+        let run_of = |id: NodeId| node_of(&update, to_access_id(id)).children()[0];
+        let at = |node, character_index| accesskit::TextPosition {
+            node,
+            character_index,
+        };
+        let selection = accesskit::TextSelection {
+            anchor: at(run_of(a), 3),
+            focus: at(run_of(c), 2),
+        };
+        assert!(tree.set_text_selection_from_access(&selection));
+        assert_eq!(
+            tree.static_selected_text().as_deref(),
+            Some("ha\nbravo\nch")
+        );
+    }
+
+    #[test]
+    fn removing_a_selected_text_releases_the_selection_and_its_lines() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.select_across((a, 1), (c, 2));
+        tree.remove(a);
+        assert_eq!(tree.static_selected_text(), None, "the start node is gone");
+        assert!(tree.static_selection_ends().is_none());
+        assert_eq!((range_of(&tree, b), range_of(&tree, c)), (None, None));
+        // Removing an unrelated node leaves a selection alone.
+        tree.select_across((b, 0), (c, 2));
+        let (_, [other, ..]) = paragraphs(&mut tree);
+        tree.remove(other);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("bravo\nch"));
+    }
+
+    #[test]
+    fn word_starts_past_255_characters_are_left_out_not_wrapped() {
+        let mut tree = Tree::new();
+        let words = "ab ".repeat(150);
+        let id = text(&mut tree, &words);
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.selectable = true;
+        }
+        tree.compute_layout(
+            id,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+        let update = tree.build_access_update(id);
+        let run = update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == accesskit::Role::TextRun)
+            .unwrap();
+        let starts = run.1.word_starts();
+        assert!(!starts.is_empty());
+        assert!(
+            starts.windows(2).all(|w| w[0] < w[1]),
+            "still sorted, nothing wrapped: {starts:?}"
+        );
+        assert_eq!(
+            *starts.last().unwrap(),
+            255,
+            "the last word that fits in a u8"
+        );
+    }
+
+    #[test]
+    fn a_drag_within_one_text_touches_only_that_text_and_matches_a_fresh_selection() {
+        let mut tree = Tree::new();
+        let (_, [a, b, c]) = paragraphs(&mut tree);
+        tree.set_text_selection(a, 1, 1);
+        tree.extend_text_selection(c, 2);
+        tree.take_touched();
+        // Moving the end within the last text: only it changes.
+        tree.extend_text_selection(c, 4);
+        let touched = tree.take_touched();
+        assert!(!touched.all, "no whole-tree touch");
+        assert_eq!(touched.ids, vec![c], "only the text the end moved in");
+        // The same position again changes nothing at all.
+        tree.extend_text_selection(c, 4);
+        let touched = tree.take_touched();
+        assert!(!touched.all && touched.ids.is_empty(), "{:?}", touched.ids);
+        assert_eq!(range_of(&tree, b), Some((0, 5)));
+
+        // A long wandering drag across the three texts, forwards and back,
+        // agrees at every step with selecting the same ends from scratch.
+        let mut seed = 7u32;
+        let mut next = move |n: usize| {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            ((seed >> 16) as usize) % n
+        };
+        let nodes = [a, b, c];
+        let lens = [5usize, 5, 7];
+        tree.set_text_selection(b, 2, 2);
+        for _ in 0..200 {
+            let k = next(3);
+            let offset = next(lens[k] + 1);
+            tree.extend_text_selection(nodes[k], offset);
+            let mut fresh = Tree::new();
+            let (_, f) = paragraphs(&mut fresh);
+            fresh.select_across((f[1], 2), (f[k], offset));
+            for i in 0..3 {
+                assert_eq!(
+                    range_of(&tree, nodes[i]),
+                    range_of(&fresh, f[i]),
+                    "step to ({k}, {offset}), text {i}"
+                );
+            }
+            assert_eq!(tree.static_selected_text(), fresh.static_selected_text());
+        }
+    }
+
+    #[test]
+    fn a_non_text_node_is_refused_and_a_selection_set_directly_can_be_adopted() {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let rect = tree.insert(kind, style, paint);
+        assert!(!tree.set_text_selection(rect, 0, 1));
+        let id = text(&mut tree, "abc");
+        if let NodeKind::Text(state) = &mut tree.get_mut(id).unwrap().kind {
+            state.options.selection = Some((0, 2));
+        }
+        assert_eq!(tree.static_selected_text(), None, "not the owner yet");
+        tree.adopt_text_selection(id);
+        assert_eq!(tree.static_selected_text().as_deref(), Some("ab"));
+    }
+}
+
+/// 0.5.4 (#136): momentum scrolling.
+mod momentum {
+    use super::*;
+    use crate::tree::scroll::fling_plan;
+    use std::time::Duration;
+
+    fn relayout(tree: &mut Tree, view: NodeId) {
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+    }
+
+    #[test]
+    fn a_plan_starts_at_the_flick_speed_and_ends_at_rest() {
+        let (distance, duration, k) = fling_plan(1000.0, 0.0, 1e9).expect("a fast flick coasts");
+        assert!(distance > 0.0);
+        // Initial speed of distance * f(x) with f(x) = (1 - e^-kx)/(1 - e^-k):
+        // f'(0) = k / (1 - e^-k), per second: / duration.
+        let initial = distance * (k / (1.0 - (-k).exp())) / duration.as_secs_f64();
+        assert!(
+            (initial - 1000.0).abs() < 1.0,
+            "starts at the flick speed: {initial}"
+        );
+        // Ends at the stop speed.
+        let end = distance * (k * (-k).exp() / (1.0 - (-k).exp())) / duration.as_secs_f64();
+        assert!((end - 30.0).abs() < 1.0, "ends at the stop speed: {end}");
+        assert!(duration > Duration::from_millis(500) && duration < Duration::from_secs(3));
+        // A faster flick goes further and lasts longer; direction is the sign.
+        let (faster, longer, _) = fling_plan(3000.0, 0.0, 1e9).unwrap();
+        assert!(faster > distance && longer > duration);
+        let (back, ..) = fling_plan(-1000.0, 5000.0, 1e9).unwrap();
+        assert_eq!(back, -distance);
+    }
+
+    #[test]
+    fn a_slow_flick_or_one_with_no_room_does_not_coast() {
+        assert!(
+            fling_plan(100.0, 0.0, 1000.0).is_none(),
+            "below the minimum"
+        );
+        assert!(fling_plan(f64::NAN, 0.0, 1000.0).is_none());
+        assert!(
+            fling_plan(1000.0, 500.0, 500.0).is_none(),
+            "already at the end"
+        );
+        assert!(
+            fling_plan(-1000.0, 0.0, 500.0).is_none(),
+            "already at the start"
+        );
+    }
+
+    #[test]
+    fn a_coast_that_would_pass_the_end_stops_there_sooner() {
+        let free = fling_plan(1000.0, 0.0, 1e9).unwrap();
+        let (distance, duration, _) = fling_plan(1000.0, 0.0, 100.0).unwrap();
+        assert!((distance - 100.0).abs() < 1e-9, "only the room there is");
+        assert!(duration < free.1, "and in less time");
+    }
+
+    #[test]
+    fn a_fling_animates_a_scroll_view_and_it_comes_to_rest_at_the_target() {
+        let (mut tree, view, _) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        let content = tree.get(view).unwrap().children[0];
+        let t0 = Instant::now();
+        // The finger moves up at 800 px/s: the content follows, toward the end.
+        assert!(tree.fling_scroll(content, peniko::kurbo::Vec2::new(0.0, -800.0), t0));
+        let offset = |tree: &Tree| match &tree.get(view).unwrap().kind {
+            NodeKind::ScrollView(state) => state.scroll.current,
+            _ => unreachable!(),
+        };
+        assert_eq!(offset(&tree), 0.0, "it has not moved yet");
+        tree.tick_all(t0 + Duration::from_millis(100));
+        let early = offset(&tree);
+        assert!(early > 20.0, "fast at first: {early}");
+        tree.tick_all(t0 + Duration::from_millis(300));
+        let later = offset(&tree);
+        assert!(later > early);
+        let (still, _) = tree.tick_all(t0 + Duration::from_secs(10));
+        assert!(!still, "it stops");
+        let rest = offset(&tree);
+        assert!(
+            rest > later && rest <= 300.0,
+            "at rest within the content: {rest}"
+        );
+    }
+
+    #[test]
+    fn a_fling_slows_down() {
+        let (mut tree, view, _) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        let content = tree.get(view).unwrap().children[0];
+        let t0 = Instant::now();
+        tree.fling_scroll(content, peniko::kurbo::Vec2::new(0.0, -1500.0), t0);
+        let at = |tree: &mut Tree, ms| {
+            tree.tick_all(t0 + Duration::from_millis(ms));
+            match &tree.get(view).unwrap().kind {
+                NodeKind::ScrollView(state) => state.scroll.current,
+                _ => unreachable!(),
+            }
+        };
+        let (a, b, c) = (at(&mut tree, 50), at(&mut tree, 100), at(&mut tree, 150));
+        assert!(b - a > c - b, "each step covers less than the one before");
+    }
+
+    #[test]
+    fn a_hand_on_the_content_stops_a_fling_where_it_is() {
+        let (mut tree, view, _) = view_over_boxes(&[100.0, 100.0, 100.0, 100.0]);
+        let content = tree.get(view).unwrap().children[0];
+        let t0 = Instant::now();
+        tree.fling_scroll(content, peniko::kurbo::Vec2::new(0.0, -1500.0), t0);
+        tree.tick_all(t0 + Duration::from_millis(100));
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            unreachable!()
+        };
+        let caught = state.scroll.current;
+        tree.stop_scroll_animation(content);
+        let (active, _) = tree.tick_all(t0 + Duration::from_millis(400));
+        assert!(!active);
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            unreachable!()
+        };
+        assert_eq!(
+            state.scroll.current, caught,
+            "it stayed where it was caught"
+        );
+
+        // A manual scroll also stops one in flight.
+        tree.fling_scroll(
+            content,
+            peniko::kurbo::Vec2::new(0.0, -1500.0),
+            t0 + Duration::from_secs(1),
+        );
+        tree.scroll_scroll_view_by(view, 5.0);
+        assert!(!tree.tick_all(t0 + Duration::from_secs(5)).0);
+    }
+
+    #[test]
+    fn nothing_scrolls_when_nothing_can_and_a_flick_toward_a_blocked_end_is_refused() {
+        let (mut tree, view, boxes) = view_over_boxes(&[100.0]);
+        let t0 = Instant::now();
+        // At the start, a finger moving down (content toward the start) can't scroll.
+        assert!(!tree.fling_scroll(boxes[0], peniko::kurbo::Vec2::new(0.0, 900.0), t0));
+        // A node that is in no scroller.
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let lone = tree.insert(kind, style, paint);
+        assert!(!tree.fling_scroll(lone, peniko::kurbo::Vec2::new(0.0, -900.0), t0));
+        relayout(&mut tree, view);
+    }
+}
+
+/// 0.5.4 (#139): sticky positioning.
+mod sticky {
+    use super::*;
+
+    /// A 100 px tall vertical scroll view over four 100 px sections, each with
+    /// a 20 px sticky header at its top and a body under it.
+    fn sections() -> (Tree, NodeId, Vec<NodeId>) {
+        let mut tree = Tree::new();
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(false)),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        let content = tree.insert(
+            NodeKind::Container,
+            Style {
+                flex_direction: FlexDirection::Column,
+                size: Size {
+                    width: length(100.0),
+                    height: length(400.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        tree.add_child(view, content);
+        let mut headers = Vec::new();
+        for _ in 0..4 {
+            let section = tree.insert(
+                NodeKind::Container,
+                Style {
+                    flex_direction: FlexDirection::Column,
+                    flex_shrink: 0.0,
+                    size: Size {
+                        width: length(100.0),
+                        height: length(100.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+            );
+            tree.add_child(content, section);
+            let (k, mut s, p) = leaf(100.0, 20.0);
+            s.flex_shrink = 0.0;
+            let header = tree.insert(k, s, p);
+            tree.add_child(section, header);
+            tree.set_sticky(header, Some(0.0));
+            headers.push(header);
+            let (k, mut s, p) = leaf(100.0, 80.0);
+            s.flex_shrink = 0.0;
+            let body = tree.insert(k, s, p);
+            tree.add_child(section, body);
+        }
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        (tree, view, headers)
+    }
+
+    fn scroll_to(tree: &mut Tree, view: NodeId, offset: f64) {
+        tree.scroll_scroll_view_by(view, -1000.0);
+        tree.scroll_scroll_view_by(view, offset);
+    }
+
+    /// Where `id` is on screen, vertically.
+    fn y(tree: &Tree, id: NodeId) -> f64 {
+        tree.absolute_position(id).1
+    }
+
+    #[test]
+    fn a_header_holds_the_edge_while_the_next_has_not_arrived() {
+        let (mut tree, view, headers) = sections();
+        scroll_to(&mut tree, view, 0.0);
+        assert_eq!((y(&tree, headers[0]), y(&tree, headers[1])), (0.0, 100.0));
+        // Scrolled 60: the first header would be at -60; it sticks at 0. The
+        // second is at 100 - 60 = 40, not there yet.
+        scroll_to(&mut tree, view, 60.0);
+        assert_eq!(y(&tree, headers[0]), 0.0);
+        assert_eq!(y(&tree, headers[1]), 40.0);
+    }
+
+    #[test]
+    fn a_stuck_header_leaves_with_its_section() {
+        let (mut tree, view, headers) = sections();
+        // At 90 the section ends at 10 on screen: its header (20 tall) can be
+        // no lower than touching that, so it is at -10, pushed up; the next
+        // header is at 10.
+        scroll_to(&mut tree, view, 90.0);
+        assert_eq!(y(&tree, headers[0]), -10.0);
+        assert_eq!(y(&tree, headers[1]), 10.0);
+        // At 150 the first is long gone and the second holds the edge.
+        scroll_to(&mut tree, view, 150.0);
+        assert_eq!(y(&tree, headers[0]), -70.0);
+        assert_eq!(y(&tree, headers[1]), 0.0);
+        // At the end, the last header is at the edge.
+        scroll_to(&mut tree, view, 300.0);
+        assert_eq!(y(&tree, headers[3]), 0.0);
+    }
+
+    #[test]
+    fn an_inset_holds_it_that_far_from_the_edge() {
+        let (mut tree, view, headers) = sections();
+        tree.set_sticky(headers[0], Some(12.0));
+        scroll_to(&mut tree, view, 40.0);
+        assert_eq!(y(&tree, headers[0]), 12.0);
+        // Even barely scrolled, the first header (natural 0) is already inside
+        // the inset, so it is pushed down to hold it.
+        scroll_to(&mut tree, view, 5.0);
+        assert_eq!(y(&tree, headers[0]), 12.0);
+        // The second (natural 100) only reaches the inset at a scroll of 88.
+        scroll_to(&mut tree, view, 50.0);
+        assert_eq!(y(&tree, headers[1]), 50.0);
+        tree.set_sticky(headers[1], Some(12.0));
+        scroll_to(&mut tree, view, 88.0);
+        assert_eq!(y(&tree, headers[1]), 12.0);
+    }
+
+    #[test]
+    fn a_pointer_over_the_stuck_header_hits_it() {
+        let (mut tree, view, headers) = sections();
+        scroll_to(&mut tree, view, 60.0);
+        // As in CSS, content that paints later covers a stuck header unless the
+        // header is above it: give it a z_index.
+        let covered = tree.hit_test_local(view, Point::new(10.0, 5.0));
+        assert_ne!(
+            covered.map(|(id, _)| id),
+            Some(headers[0]),
+            "the body paints over it"
+        );
+        tree.get_mut(headers[0]).unwrap().z_index = 1;
+        let hit = tree.hit_test_local(view, Point::new(10.0, 5.0));
+        assert_eq!(hit.map(|(id, _)| id), Some(headers[0]));
+        // Where the header was before it stuck is the body under the edge now.
+        let below = tree.hit_test_local(view, Point::new(10.0, 30.0));
+        assert_ne!(below.map(|(id, _)| id), Some(headers[0]));
+    }
+
+    #[test]
+    fn making_it_ordinary_again_scrolls_it_with_the_content() {
+        let (mut tree, view, headers) = sections();
+        tree.set_sticky(headers[0], None);
+        scroll_to(&mut tree, view, 60.0);
+        assert_eq!(y(&tree, headers[0]), -60.0);
+    }
+
+    #[test]
+    fn a_direct_child_of_the_scroller_or_a_node_outside_one_does_not_stick() {
+        let (mut tree, view, _) = sections();
+        let content = tree.get(view).unwrap().children[0];
+        tree.set_sticky(content, Some(0.0));
+        scroll_to(&mut tree, view, 60.0);
+        assert_eq!(y(&tree, content), -60.0, "it IS the content");
+
+        let (k, s, p) = leaf(10.0, 10.0);
+        let lone = tree.insert(k, s, p);
+        tree.set_sticky(lone, Some(0.0));
+        assert_eq!(tree.scroll_shift(lone), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_horizontal_scroller_sticks_along_x() {
+        let mut tree = Tree::new();
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(true)),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(50.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0),
+        );
+        let (k, mut s, p) = leaf(400.0, 50.0);
+        s.flex_direction = FlexDirection::Row;
+        let strip = tree.insert(k, s, p);
+        tree.add_child(view, strip);
+        let (k, s, p) = leaf(30.0, 50.0);
+        let label = tree.insert(k, s, p);
+        tree.add_child(strip, label);
+        tree.set_sticky(label, Some(0.0));
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+        tree.scroll_scroll_view_by(view, 120.0);
+        // Natural x 0; scrolled 120 it would be at -120; it sticks at 0 -- but is
+        // bounded by its parent (the 400 px strip): 400 - 30 = 370 room.
+        assert_eq!(tree.absolute_position(label).0, 0.0);
+    }
+}
+
+/// 0.5.4 (#150): `has_images`/`has_svgs` let a per-frame consumer skip a scan,
+/// so they must follow insertions and removals, including a removed subtree's.
+#[test]
+fn image_and_svg_counters_follow_insert_and_remove() {
+    let paint = || PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
+    let mut tree = Tree::new();
+    assert!(!tree.has_images() && !tree.has_svgs());
+    let parent = tree.insert(NodeKind::Container, Style::default(), paint());
+    let image = tree.insert(
+        NodeKind::Image(ImageState::blank()),
+        Style::default(),
+        paint(),
+    );
+    let svg = tree.insert(
+        NodeKind::Svg(crate::SvgState::empty()),
+        Style::default(),
+        paint(),
+    );
+    tree.add_child(parent, image);
+    tree.add_child(parent, svg);
+    assert!(tree.has_images() && tree.has_svgs());
+    // The sets the per-frame sync walks hold exactly those nodes, among many.
+    for _ in 0..500 {
+        tree.insert(NodeKind::Rect, Style::default(), paint());
+    }
+    let more = tree.insert(
+        NodeKind::Image(ImageState::blank()),
+        Style::default(),
+        paint(),
+    );
+    let ids: Vec<NodeId> = tree.image_nodes().map(|(id, _)| id).collect();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&image) && ids.contains(&more));
+    tree.remove(more);
+    assert_eq!(tree.image_nodes().count(), 1);
+    // Removing the parent removes both, counted once each.
+    tree.remove(parent);
+    assert!(!tree.has_images() && !tree.has_svgs());
+    assert_eq!((tree.image_count, tree.svg_count), (0, 0));
+    assert_eq!(tree.image_nodes().count(), 0);
+    assert!(tree.svg_bitmaps().is_empty());
+    assert!(tree.image_ids.is_empty() && tree.svg_ids.is_empty());
 }

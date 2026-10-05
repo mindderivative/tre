@@ -109,10 +109,27 @@ pub(crate) struct WindowHandles {
     /// 0.4.1 M8: `window.set(show_damage=True)` -- each presented frame
     /// shows what it redrew. Read every frame, like `partial_redraw`.
     pub(crate) show_damage: Rc<Cell<bool>>,
+    /// 0.5.4 (#135): `window.set(profile_nodes=True)` -- time each node the
+    /// paint walk reaches, for `frame_stats()['profile']`.
+    pub(crate) profile_nodes: Rc<Cell<bool>>,
+    /// 0.5.4 (#127): `window.set(glyph_cache=True)` -- draw text from the
+    /// glyph cache.
+    pub(crate) glyph_cache: Rc<Cell<bool>>,
     /// 0.5.0 M2 (issue #28): whether the OS draws the window's title bar
     /// and borders -- `Window(decorations=False)` or a live `set` turns them
     /// off for the framework to draw its own.
     pub(crate) decorations: Rc<Cell<bool>>,
+    /// 0.5.4 (#137): whether the window opens see-through, and (once open)
+    /// whether its surface can show it.
+    pub(crate) transparent: Rc<Cell<bool>>,
+    pub(crate) transparent_active: Rc<Cell<Option<bool>>>,
+    /// 0.5.4 (#137): whether the compositor is asked to blur behind the window.
+    pub(crate) blur_behind: Rc<Cell<bool>>,
+    /// 0.5.4 (#142): `click_through`.
+    pub(crate) click_through: Rc<Cell<bool>>,
+    /// 0.5.4 (#146): the font generation this window's SVG text was last
+    /// outlined for.
+    pub(crate) svg_font_generation: Rc<Cell<u64>>,
     /// 0.5.0 M2: whether the window is maximized, and minimized -- before
     /// `App.run()` opens it, what it opens as.
     pub(crate) maximized: Rc<Cell<bool>>,
@@ -130,6 +147,17 @@ pub(crate) struct WindowHandles {
     /// 0.5.1 (#65): the stall watchdog's limit in seconds; `None` (the
     /// default) is off.
     pub(crate) gpu_watchdog: Rc<Cell<Option<f64>>>,
+    /// 0.5.4 (#101): how the swapchain paces frames; `vsync` (the default)
+    /// or `low_latency`. Read every frame, so `set` takes effect live.
+    pub(crate) present_mode: Rc<Cell<engine_render::PresentChoice>>,
+    /// 0.5.4 (#102): whether layout is in logical pixels and the frame is
+    /// drawn at the display's scale. Off by default, so an app (or a
+    /// framework) that scales for itself is unchanged.
+    pub(crate) dpi_scaling: Rc<Cell<bool>>,
+    /// 0.5.4 (#102): the scale in effect: the window's scale factor when
+    /// `dpi_scaling` is on and the window is open, else `1.0`. Refreshed by
+    /// `refresh_scale`.
+    pub(crate) scale: Rc<Cell<f64>>,
     /// 0.5.1 (#65): set by the private `_lose_gpu`, a test hook: the frame
     /// loop destroys the device, which then reports itself lost.
     pub(crate) lose_gpu: Rc<Cell<bool>>,
@@ -142,6 +170,18 @@ pub(crate) struct WindowHandles {
     /// (`pointer_cancel`), so its release, if the platform delivers one at
     /// all, reaches no listener. The next press clears it.
     pub(crate) press_cancelled: Rc<Cell<bool>>,
+    /// 0.5.4 (#113): this window's fingers and gesture recognizer.
+    pub(crate) touch: Rc<RefCell<crate::touch::TouchRouter>>,
+    /// 0.5.4 (review): what a drag, a link press and a run of clicks in text
+    /// remember between events, for the live loop and `simulate` alike.
+    pub(crate) text_interaction: Rc<RefCell<crate::text_interaction::TextInteraction>>,
+    /// 0.5.4 (review): the text renderer `simulate` asks for hit tests and line
+    /// moves when no live renderer is at hand. Made on first use.
+    pub(crate) sim_text: Rc<RefCell<Option<engine_render::TextRenderer>>>,
+    /// 0.5.4 (#114): files being dragged over, or just dropped on, this window.
+    pub(crate) files: Rc<RefCell<crate::files::FileDrops>>,
+    /// 0.5.4 (#116): this window's recent frames' costs.
+    pub(crate) frame_stats: crate::frame_stats::SharedStats,
     /// 0.5.0 M3: how many pixels along each edge resize an undecorated
     /// window; 0 for none.
     pub(crate) resize_border: Rc<Cell<f64>>,
@@ -167,6 +207,41 @@ pub(crate) type IconPixels = (Vec<u8>, u32, u32);
 
 /// M94: see `PyWindow::os_window`.
 pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window::Window>>>>;
+
+impl WindowHandles {
+    /// 0.5.4 (#102): the scale in effect right now, from `dpi_scaling` and the
+    /// open window; updates `scale` and says whether it changed.
+    pub(crate) fn refresh_scale(&self) -> bool {
+        let wanted = if self.dpi_scaling.get() {
+            self.os_window
+                .borrow()
+                .as_ref()
+                .map_or(1.0, |window| window.scale_factor())
+        } else {
+            1.0
+        };
+        let wanted = if wanted.is_finite() && wanted > 0.0 {
+            wanted
+        } else {
+            1.0
+        };
+        if wanted == self.scale.get() {
+            return false;
+        }
+        self.scale.set(wanted);
+        true
+    }
+
+    /// 0.5.4 (#102): the window's size in logical pixels -- what layout
+    /// sees. `width`/`height` hold the physical size once the window is open.
+    pub(crate) fn logical_size(&self) -> (f64, f64) {
+        let scale = self.scale.get();
+        (
+            f64::from(self.width.get()) / scale,
+            f64::from(self.height.get()) / scale,
+        )
+    }
+}
 
 #[pymethods]
 impl PyWindow {
@@ -221,17 +296,32 @@ impl PyWindow {
                 partial_redraw: Rc::new(Cell::new(true)),
                 surface_partial: Rc::new(Cell::new(None)),
                 show_damage: Rc::new(Cell::new(false)),
+                profile_nodes: Rc::new(Cell::new(false)),
+                glyph_cache: Rc::new(Cell::new(false)),
                 decorations: Rc::new(Cell::new(decorations)),
+                transparent: Rc::new(Cell::new(false)),
+                transparent_active: Rc::new(Cell::new(None)),
+                blur_behind: Rc::new(Cell::new(false)),
+                click_through: Rc::new(Cell::new(false)),
+                svg_font_generation: Rc::new(Cell::new(0)),
                 maximized: Rc::new(Cell::new(false)),
                 minimized: Rc::new(Cell::new(false)),
                 active: Rc::new(Cell::new(false)),
                 fullscreen: Rc::new(Cell::new(false)),
                 titlebar_inset: Rc::new(Cell::new((0.0, 0.0))),
                 gpu_watchdog: Rc::new(Cell::new(None)),
+                present_mode: Rc::new(Cell::new(engine_render::PresentChoice::default())),
+                dpi_scaling: Rc::new(Cell::new(false)),
+                scale: Rc::new(Cell::new(1.0)),
                 lose_gpu: Rc::new(Cell::new(false)),
                 min_size: Rc::new(Cell::new((0.0, 0.0))),
                 icon: Rc::new(RefCell::new(None)),
                 press_cancelled: Rc::new(Cell::new(false)),
+                touch: Rc::new(RefCell::new(crate::touch::TouchRouter::default())),
+                text_interaction: Rc::new(RefCell::new(Default::default())),
+                sim_text: Rc::new(RefCell::new(None)),
+                files: Rc::new(RefCell::new(crate::files::FileDrops::default())),
+                frame_stats: Default::default(),
                 resize_border: Rc::new(Cell::new(0.0)),
                 last_drag_press: Rc::new(Cell::new(None)),
                 system_menu: Rc::new(Cell::new(false)),

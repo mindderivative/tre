@@ -259,6 +259,32 @@ view.on("scroll", lambda e: status.set(text=f"{e.new_value:.0f} px down"))
 
 See `examples/scroll_keys.py`.
 
+### Sticky headers
+
+`node.set(sticky=inset)` (0.5.4) makes a node hold the start edge of the scroll view
+around it, as CSS's `position: sticky` does: it scrolls with its content until it
+reaches `inset` pixels from the top (the left, in a horizontal view), then stays
+there while its own parent scrolls past, and is pushed out by the end of that parent.
+Put a header in each section and give it `sticky=0`:
+
+```python
+for title, items in sections:
+    section = window.create("box", flex_direction="vertical")
+    header = window.create("box", height=32, fill=HEADER, z_index=1, sticky=0)
+    section.add_child(header)
+    ...
+    content.add_child(section)
+```
+
+The node moves at paint time only: its layout position, and so its siblings', never
+change, and hit testing and accessibility bounds follow where it is drawn. As in CSS,
+content that comes later in the section paints over a stuck header unless the header
+is above it, so give it a `z_index`. Details: it sticks within the nearest scroll view
+or virtual list (a direct child of the view is the content itself and can't stick);
+transforms between it and the view are not accounted for, and a sticky node inside
+another sticky node ignores the outer one's movement. `sticky=None` makes it ordinary
+again. See `examples/sticky_headers.py`.
+
 ## Virtual lists
 
 A `"virtual_list"` has `item_count` rows but builds only the ones its viewport

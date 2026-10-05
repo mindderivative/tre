@@ -20,3 +20,18 @@ smallvec = "1"
 slotmap = "1.1.1"
 naga = { workspace = true }
 taffy = "0.14.0"
+# 0.5.4 (#141): parses an SVG document into groups and paths. `text` (#143)
+# turns an SVG's text into outlines, from the engine's own fonts; system and
+# memory-mapped font loading stay off, so text looks the same on every machine.
+# Reads an SVGZ to recolour it; already in the lock through usvg.
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+# Lets an SVG's text use installed fonts, when the app turns that on; the
+# same crate (and version) usvg builds its font database with.
+fontdb = { version = "0.23.0", default-features = false, features = ["fs", "fontconfig"] }
+usvg = { version = "0.47.0", default-features = false, features = ["text"] }
+
+[dev-dependencies]
+# 0.5.4 (#151): reads a text node's accessibility subtree the way a screen
+# reader's adapter does, to check the runs and selection are well formed. Already
+# in the lock through the platform adapters.
+accesskit_consumer = "0.39.0"

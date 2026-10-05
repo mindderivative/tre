@@ -1,11 +1,135 @@
 //! Scrolling: scroll views and virtual lists, their windows of rows, and their scrollbar-thumb drags.
 
 use super::*;
+use std::time::Duration;
 
 /// 0.4.2 M12: how far an arrow key scrolls a scroll view, in pixels.
 pub const KEY_SCROLL_LINE: f64 = 40.0;
 
+/// 0.5.4 (#136): how a flick at `speed` (pixels a second, signed along the
+/// scroller's axis, positive toward the end) coasts: velocity decays
+/// exponentially with time constant `FLING_TAU` until it falls below
+/// `FLING_STOP`. Returns `(distance, duration, k)` for an animation from `at`
+/// along `0..=max`, as `MotionCurve::Decay(k)` over `duration`; cut short, with
+/// the same curve, if it would run past an end. `None` for a flick too slow to
+/// coast.
+pub(crate) fn fling_plan(speed: f64, at: f64, max: f64) -> Option<(f64, Duration, f64)> {
+    let v0 = speed.abs();
+    if !v0.is_finite() || v0 < FLING_MIN {
+        return None;
+    }
+    // Speed is v0 * e^(-t/tau); it ends when that reaches FLING_STOP.
+    let remaining = FLING_STOP / v0;
+    let full_time = FLING_TAU * (1.0 / remaining).ln();
+    let full_distance = v0 * FLING_TAU * (1.0 - remaining);
+    let room = if speed > 0.0 { max - at } else { at };
+    if room <= 0.0 {
+        return None;
+    }
+    let (time, distance) = if full_distance <= room {
+        (full_time, full_distance)
+    } else {
+        // Reaches the end first: the time at which the coast covers `room`.
+        let fraction = room / full_distance;
+        let t = -FLING_TAU * (1.0 - fraction * (1.0 - remaining)).ln();
+        (t, room)
+    };
+    let k = time / FLING_TAU;
+    Some((distance * speed.signum(), Duration::from_secs_f64(time), k))
+}
+
+/// How quickly a flick slows: the time constant of its decay, in seconds.
+const FLING_TAU: f64 = 0.35;
+/// A flick coasts to a stop at this speed, pixels a second.
+const FLING_STOP: f64 = 30.0;
+/// A flick slower than this does not coast at all.
+const FLING_MIN: f64 = 150.0;
+
 impl Tree {
+    /// 0.5.4 (#136): lets the scroller under a lifted finger coast. `from` is the
+    /// node the touch was on; `velocity` the finger's speed in pixels a second.
+    /// Finds the nearest scroll view or virtual list that can move that way, as
+    /// the wheel does, and animates its offset on a decay curve. `true` if one
+    /// took it.
+    pub fn fling_scroll(
+        &mut self,
+        from: NodeId,
+        velocity: peniko::kurbo::Vec2,
+        now: Instant,
+    ) -> bool {
+        let mut current = Some(from);
+        while let Some(id) = current {
+            let Some(node) = self.nodes.get(id) else {
+                return false;
+            };
+            // The finger moves with the content: dragging up scrolls toward the end.
+            let along = match &node.kind {
+                NodeKind::ScrollView(state) => {
+                    -(if state.horizontal {
+                        velocity.x
+                    } else {
+                        velocity.y
+                    })
+                }
+                NodeKind::VirtualList(_) => -velocity.y,
+                _ => 0.0,
+            };
+            if along != 0.0 && self.can_scroll(id, along) {
+                let (at, max) = match &self.nodes[id].kind {
+                    NodeKind::ScrollView(state) => {
+                        (state.scroll.current, self.max_scroll(id).unwrap_or(0.0))
+                    }
+                    NodeKind::VirtualList(state) => {
+                        let viewport = f64::from(self.layout(id).size.height);
+                        (
+                            state.scroll_offset.current,
+                            (state.total_extent() - viewport).max(0.0),
+                        )
+                    }
+                    _ => unreachable!("checked above"),
+                };
+                if let Some((distance, duration, k)) = fling_plan(along, at, max) {
+                    let curve = crate::MotionCurve::Decay(k);
+                    match &mut self.nodes[id].kind {
+                        NodeKind::ScrollView(state) => {
+                            state.scroll.animate_to(at + distance, duration, curve, now);
+                        }
+                        NodeKind::VirtualList(state) => {
+                            state
+                                .scroll_offset
+                                .animate_to(at + distance, duration, curve, now);
+                        }
+                        _ => unreachable!("checked above"),
+                    }
+                    self.dirty = true;
+                    return true;
+                }
+                // Too slow to coast: nothing more to try outward.
+                return false;
+            }
+            current = node.parent;
+        }
+        false
+    }
+
+    /// 0.5.4 (#136): stops a fling (or any scroll animation) in the scrollers
+    /// around `from`, leaving them where they are: a finger landing on moving
+    /// content catches it.
+    pub fn stop_scroll_animation(&mut self, from: NodeId) {
+        let mut current = Some(from);
+        while let Some(id) = current {
+            let Some(node) = self.nodes.get_mut(id) else {
+                return;
+            };
+            match &mut node.kind {
+                NodeKind::ScrollView(state) => state.scroll.stop(),
+                NodeKind::VirtualList(state) => state.scroll_offset.stop(),
+                _ => {}
+            }
+            current = node.parent;
+        }
+    }
+
     /// M36 Phase 1 (§5, §7, §11.7): moves `id`'s own real `ScrollView`
     /// scroll position by `delta` real pixels along its own configured
     /// axis, clamped to `[0.0, max_scroll]` -- the identical real
@@ -47,6 +171,8 @@ impl Tree {
         let NodeKind::ScrollView(state) = &mut self.nodes[id].kind else {
             unreachable!("checked above")
         };
+        // A hand on the content stops a fling in flight.
+        state.scroll.stop();
         state.scroll.current = (state.scroll.current + delta).clamp(0.0, max_scroll);
     }
 
@@ -385,6 +511,7 @@ impl Tree {
         let NodeKind::VirtualList(state) = &mut self.nodes[id].kind else {
             unreachable!("checked above")
         };
+        state.scroll_offset.stop();
         state.scroll_offset.current =
             (state.scroll_offset.current + delta_y).clamp(0.0, max_offset);
     }
@@ -679,10 +806,19 @@ impl Tree {
         if self.scroll_view_count == 0 {
             return changes;
         }
-        for (id, node) in &mut self.nodes {
-            if let NodeKind::ScrollView(state) = &mut node.kind
-                && state.scroll.current != state.reported
-            {
+        // Found with a read-only pass: iterating `&mut self.nodes` counts every
+        // node as touched, which sent the damage tracker down its full walk on
+        // every frame of any tree that has a scroll view.
+        let moved: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| {
+                matches!(&node.kind, NodeKind::ScrollView(s) if s.scroll.current != s.reported)
+            })
+            .map(|(id, _)| id)
+            .collect();
+        for id in moved {
+            if let NodeKind::ScrollView(state) = &mut self.nodes[id].kind {
                 changes.push((id, state.reported, state.scroll.current));
                 state.reported = state.scroll.current;
             }

@@ -26,10 +26,11 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 44] = [
+const SETTABLE: [&str; 48] = [
     "visible",
     "z_index",
     "clip_children",
+    "sticky",
     "translate_x",
     "translate_y",
     "scale",
@@ -40,6 +41,9 @@ const SETTABLE: [&str; 44] = [
     "opacity",
     "corner_radius",
     "shadows",
+    "blur",
+    "backdrop_blur",
+    "blend_mode",
     "data",
     "view_box",
     "trim_start",
@@ -137,6 +141,8 @@ pub(crate) enum Change {
     Visible(bool),
     ZIndex(i32),
     ClipChildren(bool),
+    /// 0.5.4 (#139): `sticky`, an inset from the scroller's start edge, or `None`.
+    Sticky(Option<f64>),
     TranslateX(f64),
     TranslateY(f64),
     Scale(f64),
@@ -146,7 +152,14 @@ pub(crate) enum Change {
     TrimStart(f64),
     TrimEnd(f64),
     Fill(Color),
+    /// 0.5.4 (#110).
+    Blur(f64),
+    BackdropBlur(f64),
+    BlendMode(engine_core::Blend),
+    /// 0.5.4 (#109): `fill` set to a `Gradient`.
+    FillGradient(engine_core::Gradient),
     StrokeColor(Color),
+    StrokeGradient(engine_core::Gradient),
     StrokeWidth(f64),
     Opacity(f64),
     CornerRadius(Radius),
@@ -331,13 +344,22 @@ pub(crate) fn animatable_to_py(
     }
     let number = |v: f64| -> PyResult<Py<PyAny>> { Ok(v.into_pyobject(py)?.into_any().unbind()) };
     let value = match name {
-        "fill" => color_to_py(
-            match &node.kind {
-                NodeKind::TextField(state) => *pick(&state.text_tint, target),
-                _ => *pick(&node.paint.background, target),
-            },
-            py,
-        )?,
+        "fill" => match &node.paint.gradient {
+            Some(gradient) => Py::new(
+                py,
+                crate::gradient::PyGradient {
+                    inner: pick(gradient, target).clone(),
+                },
+            )?
+            .into_any(),
+            None => color_to_py(
+                match &node.kind {
+                    NodeKind::TextField(state) => *pick(&state.text_tint, target),
+                    _ => *pick(&node.paint.background, target),
+                },
+                py,
+            )?,
+        },
         "scroll_offset" => {
             let NodeKind::ScrollView(state) = &node.kind else {
                 return Err(PyValueError::new_err(
@@ -346,13 +368,24 @@ pub(crate) fn animatable_to_py(
             };
             number(*pick(&state.scroll, target))?
         }
-        "stroke_color" => color_to_py(*pick(&node.paint.border_color, target), py)?,
+        "stroke_color" => match &node.paint.border_gradient {
+            Some(gradient) => Py::new(
+                py,
+                crate::gradient::PyGradient {
+                    inner: (**gradient).clone(),
+                },
+            )?
+            .into_any(),
+            None => color_to_py(*pick(&node.paint.border_color, target), py)?,
+        },
         "stroke_width" => number(*pick(&node.paint.border_width, target))?,
         "translate_x" => number(*pick(&node.paint.node_transform.translate_x, target))?,
         "translate_y" => number(*pick(&node.paint.node_transform.translate_y, target))?,
         "scale" => number(*pick(&node.paint.node_transform.scale, target))?,
         "rotation_deg" => number(*pick(&node.paint.node_transform.rotation_deg, target))?,
         "opacity" => number(*pick(&node.paint.opacity, target))?,
+        "blur" => number(*pick(&node.paint.blur, target))?,
+        "backdrop_blur" => number(*pick(&node.paint.backdrop_blur, target))?,
         "corner_radius" => match &node.paint.corner_radii_override {
             Some(radii) => {
                 let [a, b, c, d] = pick(radii, target).0;
@@ -398,10 +431,15 @@ pub(crate) fn animatable_to_py(
 /// no animation to stop.
 pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyResult<bool> {
     match name {
-        "fill" => match &mut node.kind {
-            NodeKind::TextField(state) => state.text_tint.stop(),
-            _ => node.paint.background.stop(),
-        },
+        "fill" => {
+            if let Some(gradient) = &mut node.paint.gradient {
+                gradient.stop();
+            }
+            match &mut node.kind {
+                NodeKind::TextField(state) => state.text_tint.stop(),
+                _ => node.paint.background.stop(),
+            }
+        }
         "scroll_offset" => {
             let NodeKind::ScrollView(state) = &mut node.kind else {
                 return Err(PyValueError::new_err(
@@ -417,6 +455,8 @@ pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyRes
         "scale" => node.paint.node_transform.scale.stop(),
         "rotation_deg" => node.paint.node_transform.rotation_deg.stop(),
         "opacity" => node.paint.opacity.stop(),
+        "blur" => node.paint.blur.stop(),
+        "backdrop_blur" => node.paint.backdrop_blur.stop(),
         "corner_radius" => {
             node.paint.corner_radius.stop();
             if let Some(radii) = &mut node.paint.corner_radii_override {
@@ -461,6 +501,12 @@ impl Change {
         fn terminal(kind: &NodeKind) -> bool {
             matches!(kind, NodeKind::Terminal(_))
         }
+        fn box_node(kind: &NodeKind) -> bool {
+            matches!(
+                kind,
+                NodeKind::Rect | NodeKind::Container | NodeKind::Path(_) | NodeKind::Text(_)
+            )
+        }
         Some(match self {
             Change::Data(_) => ("data", "path", path),
             Change::ViewBox(_) => ("view_box", "path", path),
@@ -474,6 +520,7 @@ impl Change {
             Change::ScrollbarFill(_) => ("scrollbar_fill", "scroll_view", scroll_view),
             Change::ScrollbarWidth(_) => ("scrollbar_width", "scroll_view", scroll_view),
             Change::Palette(_) => ("palette", "terminal", terminal),
+            Change::FillGradient(_) => ("fill", "box, path or text", box_node),
             _ => return None,
         })
     }
@@ -558,6 +605,16 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             Change::ZIndex(required(value, name, "an int")?)
         }
         "clip_children" => Change::ClipChildren(boolean(value, name)?),
+        "sticky" => Change::Sticky(if value.is_none() {
+            None
+        } else if value.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(invalid(name, "a non-negative number of pixels, or None"));
+        } else {
+            Some(
+                parse_non_negative(value, name)
+                    .map_err(|_| invalid(name, "a non-negative number of pixels, or None"))?,
+            )
+        }),
         "translate_x" => Change::TranslateX(number("a number")?),
         "translate_y" => Change::TranslateY(number("a number")?),
         "scale" => Change::Scale(parse_non_negative(value, name)?),
@@ -612,8 +669,19 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "a11y_hidden" => Change::A11yHidden(boolean(value, name)?),
         "focusable" => Change::Focusable(boolean(value, name)?),
         "tab_index" => Change::TabIndex(required(value, name, "an int")?),
+        // 0.5.4 (#140): a `CursorImage` is a cursor too.
+        "cursor"
+            if value
+                .extract::<crate::cursor_image::PyCursorImage>()
+                .is_ok() =>
+        {
+            let image = value
+                .extract::<crate::cursor_image::PyCursorImage>()
+                .expect("checked");
+            Change::Cursor(Some(Cursor::Custom(image.id)))
+        }
         "cursor" => {
-            let cursor: Option<String> = optional(value, name, "a str or None")?;
+            let cursor: Option<String> = optional(value, name, "a str, a CursorImage, or None")?;
             Change::Cursor(match cursor {
                 None => None,
                 Some(cursor) => Some(Cursor::from_name(&cursor).ok_or_else(|| {
@@ -656,10 +724,27 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         }),
         "trim_start" => Change::TrimStart(fraction(value, name)?),
         "trim_end" => Change::TrimEnd(fraction(value, name)?),
-        "fill" => Change::Fill(parse_color(value, name)?),
-        "stroke_color" => Change::StrokeColor(parse_color(value, name)?),
+        "fill" => match value.extract::<crate::gradient::PyGradient>() {
+            Ok(gradient) => Change::FillGradient(gradient.inner),
+            Err(_) => Change::Fill(parse_color(value, name).map_err(|_| {
+                invalid(name, "an (r, g, b, a) tuple of 0-255 ints, or a Gradient")
+            })?),
+        },
+        "stroke_color" => match value.extract::<crate::gradient::PyGradient>() {
+            Ok(gradient) => Change::StrokeGradient(gradient.inner),
+            Err(_) => Change::StrokeColor(parse_color(value, name)?),
+        },
         "stroke_width" => Change::StrokeWidth(parse_non_negative(value, name)?),
         "opacity" => Change::Opacity(fraction(value, name)?),
+        "blur" => Change::Blur(parse_non_negative(value, name)?),
+        "backdrop_blur" => Change::BackdropBlur(parse_non_negative(value, name)?),
+        "blend_mode" => {
+            let mode: String = required(value, name, "a blend mode name")?;
+            Change::BlendMode(engine_core::Blend::from_name(&mode).ok_or_else(|| {
+                let valid: Vec<&str> = engine_core::Blend::ALL.iter().map(|(n, _)| *n).collect();
+                invalid(name, &format!("one of: {}", valid.join(", ")))
+            })?)
+        }
         "corner_radius" => Change::CornerRadius(parse_radius(value, name)?),
         "shadows" => Change::Shadows(parse_shadows(value, name)?),
         "placeholder" => Change::Placeholder(required(value, name, "a str")?),
@@ -879,12 +964,16 @@ impl Node {
                     any(focusable.into_pyobject(py)?.to_owned().into_any())
                 }
                 "tab_index" => any(access.tab_index.into_pyobject(py)?.into_any()),
-                "cursor" => node
-                    .cursor
-                    .map(Cursor::name)
-                    .into_pyobject(py)?
-                    .into_any()
-                    .unbind(),
+                "cursor" => match node.cursor {
+                    Some(Cursor::Custom(id)) => {
+                        Py::new(py, crate::cursor_image::PyCursorImage::from_id(id))?.into_any()
+                    }
+                    other => other
+                        .map(Cursor::name)
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind(),
+                },
                 "shader" => match &node.shader {
                     None => py.None(),
                     Some(core) => Py::new(
@@ -899,6 +988,7 @@ impl Node {
                     WindowRegion::Drag => any("drag".into_pyobject(py)?.into_any()),
                     WindowRegion::NoDrag => any("none".into_pyobject(py)?.into_any()),
                 },
+                "blend_mode" => any(node.paint.blend.name().into_pyobject(py)?.into_any()),
                 "visible" => any(node.visible.into_pyobject(py)?.to_owned().into_any()),
                 "z_index" => any(node.z_index.into_pyobject(py)?.into_any()),
                 "clip_children" => any(node
@@ -907,6 +997,7 @@ impl Node {
                     .into_pyobject(py)?
                     .to_owned()
                     .into_any()),
+                "sticky" => node.sticky.into_pyobject(py)?.into_any().into(),
                 "layout_x" | "layout_y" | "layout_width" | "layout_height" => {
                     drop(tree);
                     let (x, y, w, h) = self.layout_box(py);
@@ -1141,7 +1232,23 @@ impl Node {
                 Change::Kind(kind_change) => {
                     resize_terminal |= kind_change.resizes_terminal;
                     reset_rows |= kind_change.resets_rows;
+                    let old_ratio = match &node.kind {
+                        NodeKind::Svg(state) => Some(state.document.width / state.document.height),
+                        _ => None,
+                    };
                     (kind_change.edit)(node);
+                    // A document's shape sizes the node's other side, unless
+                    // the app chose an aspect ratio of its own.
+                    if let (Some(ratio), Some(old)) = (kind_change.svg_ratio, old_ratio) {
+                        let current = style
+                            .as_ref()
+                            .map_or(node.layout_style.aspect_ratio, |s| s.aspect_ratio);
+                        if current.is_none_or(|c| (f64::from(c) - old).abs() < 1e-4) {
+                            style
+                                .get_or_insert_with(|| node.layout_style.clone())
+                                .aspect_ratio = Some(ratio as f32);
+                        }
+                    }
                 }
                 Change::Callback(key, callback) => {
                     if key == HandlerKey::SizeHint
@@ -1166,6 +1273,7 @@ impl Node {
                 }
                 Change::ZIndex(z) => node.z_index = z,
                 Change::ClipChildren(clip) => node.paint.clip_children = clip,
+                Change::Sticky(inset) => node.sticky = inset,
                 Change::TranslateX(v) => node.paint.node_transform.translate_x = Animated::new(v),
                 Change::TranslateY(v) => node.paint.node_transform.translate_y = Animated::new(v),
                 Change::Scale(v) => node.paint.node_transform.scale = Animated::new(v),
@@ -1192,13 +1300,29 @@ impl Node {
                         state.trim_end = Animated::new(end);
                     }
                 }
-                Change::Fill(color) => match &mut node.kind {
-                    NodeKind::TextField(state) => state.text_tint = Animated::new(color),
-                    _ => node.paint.background = Animated::new(color),
-                },
-                Change::StrokeColor(color) => node.paint.border_color = Animated::new(color),
+                Change::Fill(color) => {
+                    match &mut node.kind {
+                        NodeKind::TextField(state) => state.text_tint = Animated::new(color),
+                        _ => node.paint.background = Animated::new(color),
+                    }
+                    // A colour replaces any gradient.
+                    node.paint.gradient = None;
+                }
+                Change::FillGradient(gradient) => {
+                    node.paint.gradient = Some(Box::new(Animated::new(gradient)));
+                }
+                Change::StrokeColor(color) => {
+                    node.paint.border_color = Animated::new(color);
+                    node.paint.border_gradient = None;
+                }
+                Change::StrokeGradient(gradient) => {
+                    node.paint.border_gradient = Some(Box::new(gradient));
+                }
                 Change::StrokeWidth(width) => node.paint.border_width = Animated::new(width),
                 Change::Opacity(opacity) => node.paint.opacity = Animated::new(opacity),
+                Change::Blur(blur) => node.paint.blur = Animated::new(blur),
+                Change::BackdropBlur(blur) => node.paint.backdrop_blur = Animated::new(blur),
+                Change::BlendMode(mode) => node.paint.blend = mode,
                 Change::CornerRadius(Radius::Uniform(radius)) => {
                     node.paint.corner_radius = Animated::new(radius);
                     node.paint.corner_radii_override = None;
@@ -1272,6 +1396,7 @@ impl Node {
         for &row in &released {
             tree.detach_collectible(row);
         }
+        tree.adopt_text_selection(self.id);
         drop(tree);
         if !callbacks.is_empty() {
             let mut handlers = self.handlers.borrow_mut();

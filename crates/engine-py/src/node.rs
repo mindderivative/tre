@@ -131,7 +131,7 @@ impl Node {
     /// Starts (or retargets) an animation on one property, from its
     /// current value, and returns immediately. The animatable properties
     /// are the paint names (`fill`, `stroke_color`, `stroke_width`,
-    /// `opacity`, `corner_radius`, `shadows`), the transform parts, a
+    /// `opacity`, `blur`, `backdrop_blur`, `corner_radius`, `shadows`), the transform parts, a
     /// scroll view's `scroll_offset`, and a path's `data`/`trim_*`; any
     /// other name raises `ValueError`. `on_complete` is called with no
     /// arguments exactly once, the frame (or `Window.advance`) this
@@ -148,7 +148,7 @@ impl Node {
     ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
         let now = crate::clock::now(&self.tree);
-        let curve = parse_easing(easing.as_ref())?;
+        let curve = parse_easing(easing.as_ref(), duration)?;
         // 0.4.3 M15: a scroll view eases to the real end, not past it --
         // layout would clamp it there each frame, stalling the curve.
         let scroll_max = if property == "scroll_offset" {
@@ -212,6 +212,45 @@ impl Node {
                 }
             }
             // M95: the target API's paint names.
+            "fill" if to.extract::<crate::gradient::PyGradient>().is_ok() => {
+                let target = to
+                    .extract::<crate::gradient::PyGradient>()
+                    .expect("checked")
+                    .inner;
+                if !matches!(
+                    node.kind,
+                    NodeKind::Rect | NodeKind::Container | NodeKind::Path(_) | NodeKind::Text(_)
+                ) {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `fill` takes a Gradient only on a box, path or text node",
+                    ));
+                }
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                match &mut node.paint.gradient {
+                    Some(current) => {
+                        if !current.current.animates_to(&target) {
+                            return Err(pyo3::exceptions::PyValueError::new_err(
+                                "a gradient fill can animate only to a gradient of the same kind \
+                                 with the same number of stops; set `fill` to the new one instead",
+                            ));
+                        }
+                        animate_field(current, target, duration, curve, now, handle);
+                    }
+                    // From a flat colour: fade in, from the target's own shape
+                    // and stops in that colour.
+                    none => {
+                        let mut from =
+                            engine_core::Animated::new(target.solid(node.paint.background.current));
+                        animate_field(&mut from, target, duration, curve, now, handle);
+                        *none = Some(Box::new(from));
+                    }
+                }
+            }
+            "fill" if node.paint.gradient.is_some() => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "a gradient fill can't animate to a color; set `fill` to the color instead",
+                ));
+            }
             "fill" => {
                 let value = crate::node_props::parse_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
@@ -228,6 +267,16 @@ impl Node {
                         handle,
                     ),
                 }
+            }
+            "stroke_color" if to.extract::<crate::gradient::PyGradient>().is_ok() => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "a gradient stroke can't be animated; set `stroke_color` to it instead",
+                ));
+            }
+            "stroke_color" if node.paint.border_gradient.is_some() => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "a gradient stroke can't animate to a color; set `stroke_color` to the color instead",
+                ));
             }
             "stroke_color" => {
                 let value = crate::node_props::parse_color(&to, property)?;
@@ -268,6 +317,16 @@ impl Node {
                     "translate_y" => &mut parts.translate_y,
                     "scale" => &mut parts.scale,
                     _ => &mut parts.rotation_deg,
+                };
+                animate_field(field, value, duration, curve, now, handle);
+            }
+            "blur" | "backdrop_blur" => {
+                let value = crate::node_props::parse_non_negative(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let field = if property == "blur" {
+                    &mut node.paint.blur
+                } else {
+                    &mut node.paint.backdrop_blur
                 };
                 animate_field(field, value, duration, curve, now, handle);
             }
@@ -448,27 +507,46 @@ impl Node {
 /// M95: `animate`'s `easing` -- `None` or `"linear"`, or a cubic bezier
 /// `(x1, y1, x2, y2)` with `x1` and `x2` in `0.0..=1.0`, as CSS
 /// `cubic-bezier()` takes them.
-fn parse_easing(easing: Option<&Bound<'_, PyAny>>) -> PyResult<MotionCurve> {
-    let expected = "easing must be \"linear\" or a cubic bezier (x1, y1, x2, y2) with x1 and x2 \
+fn parse_easing(easing: Option<&Bound<'_, PyAny>>, duration: Duration) -> PyResult<MotionCurve> {
+    let expected = "easing must be \"linear\", \"spring\", (\"spring\", bounce) with bounce from \
+                    -1 to 1 (exclusive), or a cubic bezier (x1, y1, x2, y2) with x1 and x2 \
                     from 0.0 to 1.0";
+    let invalid = || pyo3::exceptions::PyValueError::new_err(expected);
     let Some(easing) = easing else {
         return Ok(MotionCurve::Linear);
     };
     if easing.is_none() {
         return Ok(MotionCurve::Linear);
     }
-    if let Ok(name) = easing.extract::<String>() {
-        return if name == "linear" {
-            Ok(MotionCurve::Linear)
+    // 0.5.4 (#138): a spring takes `duration` as its period and bounce for how
+    // much it overshoots; a zero duration still snaps.
+    let spring = |bounce: f64| -> PyResult<MotionCurve> {
+        if !(bounce > -1.0 && bounce < 1.0) {
+            return Err(invalid());
+        }
+        Ok(if duration.is_zero() {
+            MotionCurve::Linear
         } else {
-            Err(pyo3::exceptions::PyValueError::new_err(expected))
+            MotionCurve::spring_for(duration, bounce)
+        })
+    };
+    if let Ok(name) = easing.extract::<String>() {
+        return match name.as_str() {
+            "linear" => Ok(MotionCurve::Linear),
+            "spring" => spring(0.2),
+            _ => Err(invalid()),
         };
     }
-    let (x1, y1, x2, y2): (f64, f64, f64, f64) = easing
-        .extract()
-        .map_err(|_| pyo3::exceptions::PyValueError::new_err(expected))?;
+    if let Ok((name, bounce)) = easing.extract::<(String, f64)>() {
+        return if name == "spring" {
+            spring(bounce)
+        } else {
+            Err(invalid())
+        };
+    }
+    let (x1, y1, x2, y2): (f64, f64, f64, f64) = easing.extract().map_err(|_| invalid())?;
     if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
-        return Err(pyo3::exceptions::PyValueError::new_err(expected));
+        return Err(invalid());
     }
     Ok(MotionCurve::Bezier(x1, y1, x2, y2))
 }
@@ -520,18 +598,7 @@ pub(crate) fn validate_rgba_frame_len(
 /// M97: `get("kind")` -- a node's kind by the name `window.create` takes
 /// it under.
 pub(crate) fn kind_id(kind: &NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Rect => "box",
-        NodeKind::Container => "container",
-        NodeKind::Text(_) => "text",
-        NodeKind::VirtualList(_) => "virtual_list",
-        NodeKind::Canvas(_) => "canvas",
-        NodeKind::TextField(_) => "text_input",
-        NodeKind::Image(_) => "image",
-        NodeKind::Path(_) => "path",
-        NodeKind::Terminal(_) => "terminal",
-        NodeKind::ScrollView(_) => "scroll_view",
-    }
+    kind.name()
 }
 
 fn type_name_of(value: &Bound<'_, PyAny>) -> String {

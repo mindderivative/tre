@@ -58,3 +58,25 @@ def test_a_created_image_takes_a_new_frame_through_set():
     window = Window(width=200, height=200)
     node = add(window, "image", rgba=_solid_rgba(4, 2, 0xFF), pixel_width=4, pixel_height=2, width=40, height=40)
     node.set(rgba=_solid_rgba(4, 2, 0x80), pixel_width=4, pixel_height=2)
+
+
+def test_an_images_last_column_and_row_are_not_blended_with_their_neighbours():
+    """0.5.4 (#148): the renderer's `Pad` clamp blended the final texel at the
+    right and bottom edges; a 4x1 red, green, blue, white image ended in a mix."""
+    row = bytes([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255])
+    window = Window(width=100, height=100)
+    add(window, "image", rgba=row, pixel_width=4, pixel_height=1, width=100, height=100,
+        position="absolute", x=0, y=0, fit="fill")
+    rgba, width, _ = window.snapshot()
+    at = lambda x, y: tuple(rgba[(y * width + x) * 4 : (y * width + x) * 4 + 3])  # noqa: E731
+    assert at(10, 50) == (255, 0, 0)
+    assert at(90, 50) == (255, 255, 255)
+    assert at(99, 50) == (255, 255, 255)
+
+    column = bytes([255, 0, 0, 255, 0, 0, 255, 255])  # 1x2: red over blue
+    window = Window(width=100, height=100)
+    add(window, "image", rgba=column, pixel_width=1, pixel_height=2, width=100, height=100,
+        position="absolute", x=0, y=0, fit="fill")
+    rgba, width, _ = window.snapshot()
+    assert at(50, 90) == (0, 0, 255)
+    assert at(50, 99) == (0, 0, 255)

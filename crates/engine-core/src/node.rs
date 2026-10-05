@@ -68,7 +68,7 @@ pub enum NodeKind {
     /// real caret/highlight paint geometry, the same "engine-core holds
     /// inert data, engine-render re-derives it" split `TextState`
     /// itself already uses.
-    TextField(TextFieldState),
+    TextField(Box<TextFieldState>),
     /// M22 Phase 1 (§5): decoded pixels, painted as an external GPU
     /// texture (`engine-render`'s `image_cache`) -- see
     /// `ImageState`'s own doc comment for the real crate-boundary
@@ -77,13 +77,16 @@ pub enum NodeKind {
     Image(ImageState),
     /// M95 (D4): any vector path -- fill, stroke, trim, morph.
     Path(crate::path::PathState),
+    /// 0.5.4 (#141): a whole SVG document, parsed once and painted as one
+    /// retained scene, fitted into the node's box.
+    Svg(crate::svg::SvgState),
     /// M30 Phase 9 Step 4 (§5, §8, §10): a real, live terminal -- see
     /// `TerminalState`'s own doc comment for the real crate-boundary
     /// reasoning (the identical "engine-core holds inert data,
     /// engine-render re-derives paint geometry" split `TextFieldState`
     /// already established, extended to a whole cell grid instead of
     /// one string).
-    Terminal(TerminalState),
+    Terminal(Box<TerminalState>),
     /// M36 Phase 1 (§5, §7, §11.7): a real, general scrollable
     /// viewport over one oversized child -- see `ScrollViewState`'s
     /// own doc comment for the real design (grounded directly in the
@@ -92,6 +95,26 @@ pub enum NodeKind {
     /// is made real against `taffy` without the hit-test-after-scroll
     /// gap this phase's own investigation found in `VirtualList`.
     ScrollView(ScrollViewState),
+}
+
+impl NodeKind {
+    /// The kind's name as `window.create` takes it (0.5.4, #135: one list, for
+    /// `get("kind")` and for statistics by kind).
+    pub fn name(&self) -> &'static str {
+        match self {
+            NodeKind::Rect => "box",
+            NodeKind::Container => "container",
+            NodeKind::Text(_) => "text",
+            NodeKind::VirtualList(_) => "virtual_list",
+            NodeKind::Canvas(_) => "canvas",
+            NodeKind::TextField(_) => "text_input",
+            NodeKind::Image(_) => "image",
+            NodeKind::Path(_) => "path",
+            NodeKind::Svg(_) => "svg",
+            NodeKind::Terminal(_) => "terminal",
+            NodeKind::ScrollView(_) => "scroll_view",
+        }
+    }
 }
 
 /// M30 Phase 9 Step 4 (§5, §8, §10): one real, already-VT-interpreted
@@ -428,6 +451,17 @@ impl ScrollViewState {
     /// too rather than cached, since neither crate can hold the
     /// other's own cross-frame state).
     pub fn thumb_geometry(&self, viewport_extent: f64, content_extent: f64) -> (f64, f64, f64) {
+        self.thumb_geometry_at(viewport_extent, content_extent, self.scroll.current)
+    }
+
+    /// `thumb_geometry` as it would be at scroll offset `offset` (0.5.4, #126:
+    /// where the thumb was, for a frame that moved it).
+    pub fn thumb_geometry_at(
+        &self,
+        viewport_extent: f64,
+        content_extent: f64,
+        offset: f64,
+    ) -> (f64, f64, f64) {
         let track = viewport_extent - SCROLLBAR_MARGIN * 2.0;
         if track <= 0.0 {
             return (0.0, 0.0, 0.0);
@@ -440,7 +474,7 @@ impl ScrollViewState {
         };
         let thumb = thumb.min(track);
         let progress = if max_scroll > 0.0 {
-            self.scroll.current / max_scroll
+            offset / max_scroll
         } else {
             0.0
         };
@@ -819,6 +853,11 @@ impl VirtualListState {
     /// wheel-scroll clamping can never disagree about the real content
     /// extent.
     pub fn thumb_geometry(&self, viewport_extent: f64) -> (f64, f64, f64) {
+        self.thumb_geometry_at(viewport_extent, self.scroll_offset.current)
+    }
+
+    /// `thumb_geometry` as it would be at scroll offset `offset`.
+    pub fn thumb_geometry_at(&self, viewport_extent: f64, offset: f64) -> (f64, f64, f64) {
         let track = viewport_extent - SCROLLBAR_MARGIN * 2.0;
         if track <= 0.0 {
             return (0.0, 0.0, 0.0);
@@ -832,7 +871,7 @@ impl VirtualListState {
         };
         let thumb = thumb.min(track);
         let progress = if max_scroll > 0.0 {
-            self.scroll_offset.current / max_scroll
+            offset / max_scroll
         } else {
             0.0
         };
@@ -923,6 +962,67 @@ pub struct TextOptions {
     /// Ends a cut last line -- by `max_lines`, or by the width when not
     /// wrapping -- with "…".
     pub ellipsis: bool,
+    /// 0.5.4 (#112): styles for ranges of the text, over the node's own.
+    /// Later spans win where they overlap.
+    pub spans: Vec<TextSpan>,
+    /// 0.5.4 (#112): whether a press and drag on the text selects it, and
+    /// Copy takes the selection. Paint and input state, not layout: see
+    /// `same_layout`.
+    pub selectable: bool,
+    /// 0.5.4 (#112): the selected bytes as `(anchor, focus)`, either order.
+    /// `Some((n, n))` is an empty selection.
+    pub selection: Option<(usize, usize)>,
+}
+
+impl TextOptions {
+    /// Whether `other` shapes and lays out text the same way: every field but
+    /// the selection state, which only changes what is painted over the
+    /// glyphs, so a selection drag doesn't reshape the text.
+    pub fn same_layout(&self, other: &Self) -> bool {
+        let Self {
+            italic,
+            letter_spacing,
+            wrap,
+            max_lines,
+            ellipsis,
+            spans,
+            selectable: _,
+            selection: _,
+        } = self;
+        *italic == other.italic
+            && *letter_spacing == other.letter_spacing
+            && *wrap == other.wrap
+            && *max_lines == other.max_lines
+            && *ellipsis == other.ellipsis
+            && *spans == other.spans
+    }
+}
+
+/// 0.5.4 (#112): a style for the part of a text node's content from byte
+/// offset `start` to `end` (UTF-8 offsets, like a text input's selection and
+/// `syntax_spans`; offsets outside the text or inside a character are
+/// clamped). Each field left `None` or `false` leaves the node's own style.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TextSpan {
+    pub start: usize,
+    pub end: usize,
+    /// The glyph colour.
+    pub color: Option<Color>,
+    /// An OpenType weight (`100.0..=950.0`).
+    pub weight: Option<f32>,
+    /// `Some(true)` italic, `Some(false)` upright.
+    pub italic: Option<bool>,
+    pub underline: bool,
+    pub strikethrough: bool,
+    /// 0.5.4 (#131): the font size in pixels, for this range. A larger one
+    /// makes its line taller.
+    pub font_size: Option<f32>,
+    /// 0.5.4 (#131): the font family for this range.
+    pub font_family: Option<String>,
+    /// 0.5.4 (#131): makes the range a link: a click on it fires a `link`
+    /// event carrying this string. It adds no styling of its own: colour and
+    /// underline it with the other fields.
+    pub link: Option<String>,
 }
 
 impl Default for TextOptions {
@@ -933,6 +1033,9 @@ impl Default for TextOptions {
             wrap: true,
             max_lines: None,
             ellipsis: false,
+            spans: Vec::new(),
+            selectable: false,
+            selection: None,
         }
     }
 }
@@ -1149,6 +1252,81 @@ pub struct PaintProperties {
     /// spilling out. Not `Animated`: nothing needs a *smooth
     /// transition* into/out of clipping, only a static per-node choice.
     pub clip_children: bool,
+    /// 0.5.4 (#109): a gradient painted in place of `background`'s colour,
+    /// which stays what a fill set back to a colour starts from. Boxed: most
+    /// nodes have none.
+    pub gradient: Option<Box<Animated<crate::Gradient>>>,
+    /// 0.5.4 (#129): a gradient painted in place of `border_color`, over the
+    /// node's bounds (a path's stroke: over the stroke's own bounds). Not
+    /// animated: set `stroke_color` to another to change it.
+    pub border_gradient: Option<Box<crate::Gradient>>,
+    /// 0.5.4 (#110): a Gaussian blur of the node and its subtree, as a
+    /// standard deviation in the node's own pixels. `0.0` is none.
+    pub blur: Animated<f64>,
+    /// 0.5.4 (#110): how the node and its subtree mix with what is behind.
+    pub blend: Blend,
+    /// 0.5.4 (#110): frosted glass -- a Gaussian blur, standard deviation
+    /// in the node's own pixels, of everything painted behind the node,
+    /// shown inside its box. `0.0` is none.
+    pub backdrop_blur: Animated<f64>,
+}
+
+/// How a node mixes with what is behind it (CSS `mix-blend-mode`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Blend {
+    #[default]
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    ColorDodge,
+    ColorBurn,
+    HardLight,
+    SoftLight,
+    Difference,
+    Exclusion,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
+}
+
+impl Blend {
+    /// Every mode, with the name Python uses.
+    pub const ALL: [(&'static str, Blend); 16] = [
+        ("normal", Blend::Normal),
+        ("multiply", Blend::Multiply),
+        ("screen", Blend::Screen),
+        ("overlay", Blend::Overlay),
+        ("darken", Blend::Darken),
+        ("lighten", Blend::Lighten),
+        ("color_dodge", Blend::ColorDodge),
+        ("color_burn", Blend::ColorBurn),
+        ("hard_light", Blend::HardLight),
+        ("soft_light", Blend::SoftLight),
+        ("difference", Blend::Difference),
+        ("exclusion", Blend::Exclusion),
+        ("hue", Blend::Hue),
+        ("saturation", Blend::Saturation),
+        ("color", Blend::Color),
+        ("luminosity", Blend::Luminosity),
+    ];
+
+    pub fn name(self) -> &'static str {
+        Self::ALL
+            .iter()
+            .find(|(_, mode)| *mode == self)
+            .map_or("normal", |(name, _)| name)
+    }
+
+    pub fn from_name(name: &str) -> Option<Blend> {
+        Self::ALL
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, mode)| *mode)
+    }
 }
 
 impl PaintProperties {
@@ -1164,6 +1342,11 @@ impl PaintProperties {
             shadows: Animated::new(Shadows::default()),
             node_transform: NodeTransform::default(),
             clip_children: false,
+            gradient: None,
+            border_gradient: None,
+            blur: Animated::new(0.0),
+            blend: Blend::Normal,
+            backdrop_blur: Animated::new(0.0),
         }
     }
 
@@ -1195,7 +1378,15 @@ impl PaintProperties {
             .is_some_and(|radii| radii.tick(now, completed));
         let shadows = self.shadows.tick(now, completed);
         let node_transform = self.node_transform.tick(now, completed);
-        radii
+        let gradient = self
+            .gradient
+            .as_mut()
+            .is_some_and(|gradient| gradient.tick(now, completed));
+        let blur = self.blur.tick(now, completed);
+        let backdrop_blur = self.backdrop_blur.tick(now, completed);
+        blur || backdrop_blur
+            || gradient
+            || radii
             || shadows
             || node_transform
             || background
@@ -1218,6 +1409,8 @@ pub struct Node {
     /// M96: paint and hit-test order among siblings -- higher paints later,
     /// on top; equal values keep child order.
     pub z_index: i32,
+    /// What the node is. Set it when the node is made (`Tree::insert`): the tree
+    /// counts nodes by kind, and a kind changed afterwards is not counted.
     pub kind: NodeKind,
     pub layout_style: Style,
     pub paint: PaintProperties,
@@ -1235,6 +1428,12 @@ pub struct Node {
     /// is a true no-op -- only `Tree::set_hit_testable(id, false)`
     /// changes anything.
     pub hit_testable: bool,
+    /// 0.5.4 (#139): `Some(inset)` makes the node stick: inside a scrolling
+    /// ancestor it stays `inset` pixels from the scroller's start edge once
+    /// scrolled there, until its own parent's box scrolls away (see
+    /// `Tree::scroll_shift`). `None`, the default, is a node that scrolls with
+    /// its content.
+    pub sticky: Option<f64>,
     /// M94: the pointer shape shown over this node; `None` inherits the
     /// nearest ancestor's, and the default arrow when none sets one.
     pub cursor: Option<Cursor>,
@@ -1291,6 +1490,9 @@ pub enum Cursor {
     ZoomIn,
     ZoomOut,
     AllScroll,
+    /// 0.5.4 (#140): a cursor image the app registered (`engine_platform::
+    /// cursors`), by id. Not in `ALL`: it has no name to parse.
+    Custom(u64),
 }
 
 impl Cursor {
@@ -1345,6 +1547,7 @@ impl Cursor {
             Self::ZoomIn => "zoom_in",
             Self::ZoomOut => "zoom_out",
             Self::AllScroll => "all_scroll",
+            Self::Custom(_) => "custom",
         }
     }
 

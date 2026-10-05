@@ -66,7 +66,9 @@ complete switch.
 - **Declarative views and state** — views, bindings, and reactivity sit on
   top of `window.create`, `node.set`, and `insert_child`.
 - **Files** — images arrive as decoded pixels and fonts as bytes; Tesserae Engine
-  reads no files and chooses no formats.
+  reads no files and chooses no formats. This includes the pictures inside an SVG
+  document: a framework decodes them and hands over the pixels (see
+  [SVG documents](reference/paint.md#svg-documents)).
 
 ## Where to go next
 

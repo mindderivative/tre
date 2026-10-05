@@ -236,6 +236,20 @@ impl Tree {
                 outcome
             }
             InputEvent::KeyPressed { key, shift } => {
+                // 0.5.4 (#131): Shift+arrows, Home and End extend a selection
+                // in static text, unless a text input has the keys.
+                if shift
+                    && matches!(key, Key::ArrowLeft | Key::ArrowRight | Key::Home | Key::End)
+                    && !self.focused.is_some_and(|f| {
+                        matches!(
+                            self.nodes.get(f).map(|n| &n.kind),
+                            Some(NodeKind::TextField(_))
+                        )
+                    })
+                    && self.extend_static_selection(key)
+                {
+                    return DispatchOutcome::None;
+                }
                 // M15 Phase 2 (§8, §10): a focused `TextField` gets
                 // first refusal on most keys -- its own real "Enter"/
                 // "Space" meaning (insert a character) is genuinely
@@ -445,6 +459,17 @@ impl Tree {
             // ThemeChanged`'s own doc comment -- `engine-py` reports
             // the raw event to window listeners.
             InputEvent::ThemeChanged { .. } => DispatchOutcome::None,
+            // 0.5.4 (#113): touches and trackpad pinches are recognized and
+            // delivered by the window (`engine-py`); the tree has nothing to do.
+            InputEvent::Touch { .. } | InputEvent::TrackpadPinch { .. } => DispatchOutcome::None,
+            // 0.5.4 (#115): OS preferences are reported by the window (`engine-py`).
+            InputEvent::ReducedMotionChanged { .. } | InputEvent::HighContrastChanged { .. } => {
+                DispatchOutcome::None
+            }
+            // 0.5.4 (#114): files are delivered by the window (`engine-py`).
+            InputEvent::FileHovered { .. }
+            | InputEvent::FileHoverCancelled
+            | InputEvent::FileDropped { .. } => DispatchOutcome::None,
             // 0.5.0 M2: plumbing only, like `ThemeChanged`.
             InputEvent::Focused { .. } => DispatchOutcome::None,
             // M32 Phase 2 (§4, §5): unlike `ThemeChanged`, a real

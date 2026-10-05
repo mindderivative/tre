@@ -21,7 +21,7 @@ use peniko::kurbo::{Affine, Rect, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Scene};
 
 use crate::{
-    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, ShaderTextures,
+    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, ShaderTextures, Shift,
     TextRenderer, build_tree_scene_shaded,
 };
 
@@ -38,8 +38,19 @@ pub struct WindowRenderer {
     geometry: GeometryCache,
     target: Option<PersistentTarget>,
     tracker: DamageTracker,
+    /// 0.5.4 (#126): the scroll shift this frame's `prepare` found, for `draw`.
+    shift: Option<Shift>,
+    /// The shift the last frame used, for statistics and tests.
+    last_shift: Option<Shift>,
+    /// 0.5.4 (#135): whether to time each node the paint walk reaches, and the
+    /// last frame's result.
+    profiling: bool,
+    profile: Option<crate::FrameProfile>,
     /// 0.5.1 (#67): the window's clock, for shaders that read `frame.time`.
     time: f32,
+    /// 0.5.4 (#102): the display scale. Layout is in logical pixels; this
+    /// multiplies them into the physical pixels the frame is drawn in.
+    scale: f64,
 }
 
 /// A window extent as the renderer takes it (`u16`), clamped rather than
@@ -74,7 +85,22 @@ impl WindowRenderer {
             geometry: GeometryCache::new(),
             target: persistent.then(|| PersistentTarget::new(device, format, width, height)),
             tracker: DamageTracker::new(),
+            shift: None,
+            last_shift: None,
+            profiling: false,
+            profile: None,
             time: 0.0,
+            scale: 1.0,
+        }
+    }
+
+    /// Sets the display scale (default `1.0`): layout stays in logical
+    /// pixels and everything drawn, culled and damaged is in physical ones.
+    /// A change redraws the next frame in full.
+    pub fn set_scale(&mut self, scale: f64) {
+        if self.scale != scale {
+            self.scale = scale;
+            self.tracker.set_scale(scale);
         }
     }
 
@@ -144,14 +170,60 @@ impl WindowRenderer {
         self.frame_renderer.sync_image_textures(tree, device, queue);
         self.text.evict_stale_layouts(tree);
         self.geometry.evict_stale(tree);
+        self.shift = None;
+        self.last_shift = None;
         if self.target.is_none() || !partial {
             // No walk: its answer would go unused. The reset makes the
             // first frame after partial redraw comes back on a full one.
             self.tracker.reset();
             return Damage::Full;
         }
-        self.tracker
-            .damage(tree, root, width, height, &mut self.text)
+        let damage = self
+            .tracker
+            .damage(tree, root, width, height, &mut self.text);
+        // A scroll shift goes with `Rects`; with anything else the whole
+        // frame is drawn and there is nothing to move.
+        let shift = self.tracker.take_shift();
+        if matches!(damage, Damage::Rects(_)) {
+            self.shift = shift;
+            self.last_shift = shift;
+        }
+        damage
+    }
+
+    /// How many nodes must move with a scroll for it to be carried by a copy
+    /// instead of redrawn (default `SCROLL_BLIT_MIN_NODES`); `0` always does.
+    pub fn set_scroll_blit_min_nodes(&mut self, nodes: usize) {
+        self.tracker.set_scroll_blit_min_nodes(nodes);
+    }
+
+    /// Draws text from the glyph cache (see `TextRenderer::set_glyph_cache`).
+    pub fn set_glyph_cache(&mut self, on: bool) {
+        if self.text.glyph_cache() != on {
+            self.text.set_glyph_cache(on);
+            // Every glyph draws differently now though nothing in the tree
+            // changed, so what the tracker kept says nothing: redraw it all.
+            self.tracker.reset();
+        }
+    }
+
+    /// Turns the per-node timing of the paint walk on or off (default off:
+    /// it costs two clock reads a node).
+    pub fn set_profiling(&mut self, on: bool) {
+        self.profiling = on;
+        if !on {
+            self.profile = None;
+        }
+    }
+
+    /// What the last `draw` spent per node, when profiling was on for it.
+    pub fn take_profile(&mut self) -> Option<crate::FrameProfile> {
+        self.profile.take()
+    }
+
+    /// The scroll shift the last `prepare` found and `draw` applied, if any.
+    pub fn last_shift(&self) -> Option<Shift> {
+        self.last_shift
     }
 
     /// A frame's second half: renders what `damage` (this frame's
@@ -176,6 +248,19 @@ impl WindowRenderer {
             Damage::Rects(rects) => Some(rects.as_slice()),
             _ => None,
         };
+        // 0.5.4 (#126): a scrolled view's content is moved in the kept frame
+        // first; the damage then holds only what the move does not explain.
+        if let (Some(shift), Some(target)) = (self.shift.take(), &mut self.target)
+            && rects.is_some()
+        {
+            let region = (
+                shift.region.x0 as u32,
+                shift.region.y0 as u32,
+                shift.region.x1 as u32,
+                shift.region.y1 as u32,
+            );
+            target.shift_region(device, encoder, region, shift.dx as i32, shift.dy as i32);
+        }
         // Shaders run first (each pass and offscreen render submitted in order), so the scene can
         // draw their textures.
         let shaders = match damage {
@@ -189,12 +274,15 @@ impl WindowRenderer {
                 width,
                 height,
                 self.time,
+                self.scale,
                 device,
                 queue,
                 &mut self.text,
                 &mut self.geometry,
             ),
         };
+        // 0.5.4 (#135): when asked, time each node the paint walk reaches.
+        let mut profile = self.profiling.then(crate::FrameProfile::default);
         let scene = match damage {
             // Nothing changed: the kept frame is copied as it is.
             Damage::None => None,
@@ -204,12 +292,16 @@ impl WindowRenderer {
                 width,
                 height,
                 rects,
+                self.tracker.extents(),
+                profile.as_mut(),
                 &shaders,
+                self.scale,
                 self.frame_renderer.resources_mut(),
                 &mut self.text,
                 &mut self.geometry,
             )),
         };
+        self.profile = profile;
         let view = self
             .target
             .as_ref()

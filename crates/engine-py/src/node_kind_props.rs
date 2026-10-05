@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 26] = [
+pub(crate) const KIND_PROPS: [&str; 32] = [
     "text",
     "font_family",
     "font_weight",
@@ -28,6 +28,8 @@ pub(crate) const KIND_PROPS: [&str; 26] = [
     "wrap",
     "max_lines",
     "overflow",
+    "spans",
+    "selectable",
     "multiline",
     "selection",
     "show_whitespace",
@@ -43,6 +45,10 @@ pub(crate) const KIND_PROPS: [&str; 26] = [
     "rows",
     "item_count",
     "item_extent",
+    "svg",
+    "svg_size",
+    "svg_color",
+    "svg_images",
 ];
 
 const TEXT_ALIGN: [(&str, TextAlign); 3] = [
@@ -80,6 +86,9 @@ pub(crate) struct KindChange {
     /// Changes a virtual list's rows, so every built one is released and
     /// rebuilt at the next layout.
     pub(crate) resets_rows: bool,
+    /// A new SVG document's width over height: the node's `aspect_ratio`
+    /// follows it unless the app set its own.
+    pub(crate) svg_ratio: Option<f64>,
 }
 
 fn change(edit: impl FnOnce(&mut engine_core::Node) + 'static) -> PyResult<KindChange> {
@@ -88,7 +97,151 @@ fn change(edit: impl FnOnce(&mut engine_core::Node) + 'static) -> PyResult<KindC
         late: false,
         resizes_terminal: false,
         resets_rows: false,
+        svg_ratio: None,
     })
+}
+
+fn parse_svg_color(value: &Bound<'_, PyAny>) -> PyResult<Option<Color>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+    parse_color(value, "svg_color").map(Some)
+}
+
+fn parse_svg_images(value: &Bound<'_, PyAny>) -> PyResult<engine_core::SvgImages> {
+    let expected = "a dict of href -> (rgba bytes, width, height)";
+    let dict = value
+        .cast::<PyDict>()
+        .map_err(|_| invalid("svg_images", expected))?;
+    let mut images = Vec::new();
+    for (href, entry) in dict.iter() {
+        let href: String = href
+            .extract()
+            .map_err(|_| invalid("svg_images", "keyed by str hrefs"))?;
+        let (rgba, width, height): (Vec<u8>, u32, u32) = entry
+            .extract()
+            .map_err(|_| invalid("svg_images", expected))?;
+        validate_rgba_frame_len(
+            &format!("node property `svg_images` entry {href:?}"),
+            rgba.len(),
+            width,
+            height,
+        )?;
+        images.push((
+            href,
+            std::sync::Arc::new(engine_core::SvgBitmap::new(rgba, width, height)),
+        ));
+    }
+    Ok(engine_core::SvgImages(std::sync::Arc::new(images)))
+}
+
+/// `svg`, `svg_color` and `svg_images`: whichever comes first in the call
+/// parses the document with the new value of each one given, and the node's
+/// current value of each one not.
+fn svg_properties(name: &str, kind: &NodeKind, props: &Bound<'_, PyDict>) -> PyResult<KindChange> {
+    let owner = ["svg", "svg_color", "svg_images"]
+        .into_iter()
+        .find(|n| props.contains(*n).unwrap_or(false));
+    if owner != Some(name) {
+        return change(|_| {});
+    }
+    let current = match kind {
+        NodeKind::Svg(state) => Some(state),
+        _ => None,
+    };
+    let (source, is_text) = match props.get_item("svg")? {
+        Some(value) => match value.extract::<String>() {
+            Ok(text) => (text.into_bytes(), true),
+            Err(_) => (
+                value
+                    .extract::<Vec<u8>>()
+                    .map_err(|_| invalid("svg", "an SVG document as a str or bytes"))?,
+                false,
+            ),
+        },
+        None => match current {
+            Some(state) => (state.source.to_vec(), state.source_is_text),
+            None => return change(|_| {}),
+        },
+    };
+    let color = match props.get_item("svg_color")? {
+        Some(v) => parse_svg_color(&v)?,
+        None => current.and_then(|state| state.color),
+    };
+    let images = match props.get_item("svg_images")? {
+        Some(v) => parse_svg_images(&v)?,
+        None => current
+            .map(|state| state.images.clone())
+            .unwrap_or_default(),
+    };
+    svg_change(source, is_text, color, images)
+}
+
+/// Parses `source` (raising for a bad document) into a change that installs
+/// it, and the aspect ratio the node should follow.
+fn svg_change(
+    source: Vec<u8>,
+    is_text: bool,
+    color: Option<Color>,
+    images: engine_core::SvgImages,
+) -> PyResult<KindChange> {
+    let document = engine_core::SvgDocument::parse_full(&source, &svg_fonts(), color, &images)
+        .map_err(|reason| {
+            PyValueError::new_err(format!("node property `svg` isn't a valid SVG: {reason}"))
+        })?;
+    let ratio = document.width / document.height;
+    let mut kind_change = change(move |node| {
+        if let NodeKind::Svg(state) = &mut node.kind {
+            *state = engine_core::SvgState {
+                document,
+                source: std::sync::Arc::new(source),
+                source_is_text: is_text,
+                color,
+                images,
+            };
+        }
+    })?;
+    kind_change.svg_ratio = Some(ratio);
+    Ok(kind_change)
+}
+
+/// An SVG's text is outlined when its document is parsed, so when the fonts
+/// have changed since `seen` (a font registered, system fonts turned on or
+/// off) every document with text is parsed again. One atomic load when
+/// nothing changed.
+pub(crate) fn refresh_svg_text(
+    tree: &std::cell::RefCell<engine_core::Tree>,
+    seen: &std::cell::Cell<u64>,
+) {
+    let generation = engine_render::font_generation();
+    if generation == seen.get() {
+        return;
+    }
+    seen.set(generation);
+    let fonts = svg_fonts();
+    tree.borrow_mut().reparse_svgs(|state| {
+        engine_core::SvgDocument::parse_full(&state.source, &fonts, state.color, &state.images).ok()
+    });
+}
+
+/// The fonts an SVG's text is shaped with: the engine's own, rebuilt only
+/// when a font is registered.
+pub(crate) fn svg_fonts() -> engine_core::SvgFonts {
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<(u64, engine_core::SvgFonts)>> = Mutex::new(None);
+    let mut cache = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let generation = engine_render::font_generation();
+    if let Some((cached, fonts)) = cache.as_ref()
+        && *cached == generation
+    {
+        return fonts.clone();
+    }
+    let (generation, files) = engine_render::all_fonts();
+    let fonts = engine_core::SvgFonts::new(&files, engine_render::system_fonts());
+    *cache = Some((generation, fonts.clone()));
+    fonts
 }
 
 fn invalid(name: &str, expected: &str) -> PyErr {
@@ -172,10 +325,16 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         )
     }
     fn selectable(kind: &NodeKind) -> bool {
-        matches!(kind, NodeKind::TextField(_) | NodeKind::Terminal(_))
+        matches!(
+            kind,
+            NodeKind::TextField(_) | NodeKind::Terminal(_) | NodeKind::Text(_)
+        )
     }
     fn image(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Image(_))
+    }
+    fn svg(kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Svg(_))
     }
     fn scroll_view(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::ScrollView(_))
@@ -190,12 +349,13 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         "text" | "font_family" | "font_weight" => ("a text or text_input", text_like),
         "font_size" => ("a text, text_input, or terminal", sized_text),
         "line_height" | "text_align" | "font_style" | "letter_spacing" | "wrap" | "max_lines"
-        | "overflow" => ("a text", text),
+        | "overflow" | "spans" | "selectable" => ("a text", text),
         "multiline" | "show_whitespace" | "syntax_spans" | "folded_ranges" => {
             ("a text_input", text_input)
         }
-        "selection" => ("a text_input or terminal", selectable),
+        "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
+        "svg" | "svg_size" | "svg_color" | "svg_images" => ("an svg", svg),
         "orientation" | "scroll_offset" => ("a scroll_view", scroll_view),
         "item_count" | "item_extent" => ("a virtual_list", virtual_list),
         _ => ("a terminal", terminal),
@@ -229,6 +389,13 @@ fn parse_known(
     props: &Bound<'_, PyDict>,
 ) -> PyResult<KindChange> {
     match name {
+        "svg_size" => Err(PyValueError::new_err(
+            "node property `svg_size` is read-only",
+        )),
+        // 0.5.4 (#141, #144, #147): the document, what `currentColor` is, and
+        // the decoded images it refers to. They parse together, once, so the
+        // first of them in a call does it all with the others' new values.
+        "svg" | "svg_color" | "svg_images" => svg_properties(name, kind, props),
         "text" => {
             let text = string(value, name)?;
             change(move |node| match &mut node.kind {
@@ -362,6 +529,29 @@ fn parse_known(
         "selection" => {
             let mut selection = if let NodeKind::Terminal(state) = kind {
                 parse_terminal_selection(value, name, state.cols, state.rows)?
+            } else if matches!(kind, NodeKind::Text(_)) {
+                // 0.5.4 (#112): a static text's selection, or `None` for none.
+                let selection = if value.is_none() {
+                    None
+                } else {
+                    let text = match props.get_item("text")? {
+                        Some(text) => string(&text, "text")?,
+                        None => match kind {
+                            NodeKind::Text(state) => state.content.clone(),
+                            _ => String::new(),
+                        },
+                    };
+                    let (start, end): (usize, usize) = value.extract().map_err(|_| {
+                        invalid(name, "a (start, end) tuple of byte offsets, or None")
+                    })?;
+                    let range = byte_range(&text, start, end, name)?;
+                    Some((range.start, range.end))
+                };
+                change(move |node| {
+                    if let NodeKind::Text(state) = &mut node.kind {
+                        state.options.selection = selection;
+                    }
+                })?
             } else {
                 // Checked against the text this same call sets, if any.
                 let text = match props.get_item("text")? {
@@ -384,6 +574,91 @@ fn parse_known(
             };
             selection.late = true;
             Ok(selection)
+        }
+        "selectable" => {
+            let on = boolean(value, name)?;
+            change(move |node| {
+                if let NodeKind::Text(state) = &mut node.kind {
+                    state.options.selectable = on;
+                    if !on {
+                        state.options.selection = None;
+                    }
+                }
+            })
+        }
+        "spans" => {
+            let expected = "a list of (start, end, style) tuples, each style a dict with any of \
+                            color, weight, italic, underline, strikethrough, font_size, \
+                            font_family, link";
+            let items: Vec<Bound<'_, PyAny>> =
+                value.extract().map_err(|_| invalid(name, expected))?;
+            let mut spans = Vec::with_capacity(items.len());
+            for item in &items {
+                let (start, end, style): (usize, usize, Bound<'_, pyo3::types::PyDict>) =
+                    item.extract().map_err(|_| invalid(name, expected))?;
+                if start > end {
+                    return Err(invalid(name, expected));
+                }
+                let mut span = engine_core::TextSpan {
+                    start,
+                    end,
+                    ..Default::default()
+                };
+                for (key, v) in style.iter() {
+                    let key: String = key.extract().map_err(|_| invalid(name, expected))?;
+                    match key.as_str() {
+                        "color" => span.color = Some(parse_color(&v, name)?),
+                        "weight" => {
+                            not_bool(&v, name, "a weight from 100 to 950")?;
+                            span.weight = Some(
+                                v.extract::<f32>()
+                                    .ok()
+                                    .filter(|w| (1.0..=1000.0).contains(w))
+                                    .ok_or_else(|| invalid(name, "a weight from 1 to 1000"))?,
+                            );
+                        }
+                        "italic" => span.italic = Some(boolean(&v, name)?),
+                        "underline" => span.underline = boolean(&v, name)?,
+                        "strikethrough" => span.strikethrough = boolean(&v, name)?,
+                        "font_size" => {
+                            not_bool(&v, name, "a font size above 0")?;
+                            span.font_size = Some(
+                                v.extract::<f32>()
+                                    .ok()
+                                    .filter(|s| s.is_finite() && *s > 0.0)
+                                    .ok_or_else(|| invalid(name, "a font size above 0"))?,
+                            );
+                        }
+                        "font_family" => {
+                            span.font_family = Some(
+                                v.extract::<String>()
+                                    .map_err(|_| invalid(name, "a font family name (a str)"))?,
+                            );
+                        }
+                        "link" => {
+                            span.link = Some(
+                                v.extract::<String>()
+                                    .map_err(|_| invalid(name, "a link target (a str)"))?,
+                            );
+                        }
+                        other => {
+                            return Err(invalid(
+                                name,
+                                &format!(
+                                    "spans styled with color, weight, italic, underline, \
+                                     strikethrough, font_size, font_family or link, not {other:?}"
+                                ),
+                            ));
+                        }
+                    }
+                }
+                spans.push(span);
+            }
+            change(move |node| {
+                if let NodeKind::Text(state) = &mut node.kind {
+                    state.options.spans = spans;
+                }
+            })
         }
         "syntax_spans" => {
             let expected = "a list of (start, end, color) tuples";
@@ -612,6 +887,40 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
         ("letter_spacing", NodeKind::Text(s)) => to_py(f64::from(s.options.letter_spacing), py),
         ("wrap", NodeKind::Text(s)) => to_py(name_of(&WRAP, &s.options.wrap), py),
         ("max_lines", NodeKind::Text(s)) => to_py(s.options.max_lines, py),
+        ("selectable", NodeKind::Text(s)) => to_py(s.options.selectable, py),
+        ("selection", NodeKind::Text(s)) => to_py(s.options.selection, py),
+        ("spans", NodeKind::Text(s)) => {
+            let mut out = Vec::with_capacity(s.options.spans.len());
+            for span in &s.options.spans {
+                let style = pyo3::types::PyDict::new(py);
+                if let Some(color) = span.color {
+                    style.set_item("color", color_to_py(color, py)?)?;
+                }
+                if let Some(weight) = span.weight {
+                    style.set_item("weight", f64::from(weight))?;
+                }
+                if let Some(italic) = span.italic {
+                    style.set_item("italic", italic)?;
+                }
+                if span.underline {
+                    style.set_item("underline", true)?;
+                }
+                if span.strikethrough {
+                    style.set_item("strikethrough", true)?;
+                }
+                if let Some(size) = span.font_size {
+                    style.set_item("font_size", f64::from(size))?;
+                }
+                if let Some(family) = &span.font_family {
+                    style.set_item("font_family", family)?;
+                }
+                if let Some(link) = &span.link {
+                    style.set_item("link", link)?;
+                }
+                out.push((span.start, span.end, style));
+            }
+            to_py(out, py)
+        }
         ("overflow", NodeKind::Text(s)) => to_py(name_of(&OVERFLOW, &s.options.ellipsis), py),
         ("multiline", NodeKind::TextField(s)) => to_py(s.multiline, py),
         ("show_whitespace", NodeKind::TextField(s)) => to_py(s.show_whitespace, py),
@@ -634,6 +943,30 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
                 s.folded_ranges.iter().map(|r| (r.start, r.end)).collect();
             to_py(ranges, py)
         }
+        ("svg_size", NodeKind::Svg(s)) => to_py((s.document.width, s.document.height), py),
+        ("svg", NodeKind::Svg(s)) if s.source_is_text => {
+            to_py(String::from_utf8_lossy(&s.source).into_owned(), py)
+        }
+        ("svg", NodeKind::Svg(s)) => to_py(pyo3::types::PyBytes::new(py, &s.source), py),
+        ("svg_images", NodeKind::Svg(s)) => {
+            let out = PyDict::new(py);
+            for (href, bitmap) in s.images.0.iter() {
+                let image = &bitmap.image;
+                out.set_item(
+                    href,
+                    (
+                        pyo3::types::PyBytes::new(py, image.data.data()),
+                        image.width,
+                        image.height,
+                    ),
+                )?;
+            }
+            to_py(out, py)
+        }
+        ("svg_color", NodeKind::Svg(s)) => match s.color {
+            Some(c) => color_to_py(c, py),
+            None => Ok(py.None()),
+        },
         ("rgba", NodeKind::Image(s)) => {
             to_py(pyo3::types::PyBytes::new(py, s.image.data.data()), py)
         }

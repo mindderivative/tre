@@ -67,7 +67,7 @@ fn a_text_input_draws_inside_its_padding() {
         let (mut tree, root) = scene();
         let mut state = TextFieldState::new("Hi", "Roboto", 400.0, 16.0);
         state.text_tint = Animated::new(WHITE);
-        padded(&mut tree, root, NodeKind::TextField(state));
+        padded(&mut tree, root, NodeKind::TextField(Box::new(state)));
         let frame = frame(&mut tree, root).await;
         assert_inside_the_content_box(&frame, "text input");
     });
@@ -79,7 +79,7 @@ fn a_terminal_draws_its_cells_inside_its_padding() {
         let (mut tree, root) = scene();
         let mut state = TerminalState::new(4, 2, "Hack Nerd Font Mono", 12.0);
         state.cells[0].bg = CellColor::Rgb(RED); // the first cell
-        padded(&mut tree, root, NodeKind::Terminal(state));
+        padded(&mut tree, root, NodeKind::Terminal(Box::new(state)));
         let frame = frame(&mut tree, root).await;
         assert_inside_the_content_box(&frame, "terminal");
         assert_eq!(
@@ -151,6 +151,7 @@ fn a_canvas_paints_from_the_content_box() {
             width: 10.0,
             height: 10.0,
             color: Color::from_rgba8(0xFF, 0, 0, 0xFF),
+            gradient: None,
         });
         padded(&mut tree, root, NodeKind::Canvas(state));
         let frame = frame(&mut tree, root).await;
@@ -176,6 +177,7 @@ fn unpadded_content_is_where_it_was() {
             width: 10.0,
             height: 10.0,
             color: Color::from_rgba8(0xFF, 0, 0, 0xFF),
+            gradient: None,
         });
         let id = tree.insert(
             NodeKind::Canvas(state),

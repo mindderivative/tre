@@ -85,6 +85,9 @@ nav:
   - Design:
       - Custom windowing: design/custom-windowing.md
       - WGSL shaders: design/wgsl.md
+      - Scene building: design/scene-building.md
+      - Blur and blend effects: design/effects.md
+      - The smaller gaps: design/gaps.md
       - Performance baseline: design/performance-baseline.md
   - Contributing: contributing.md
 

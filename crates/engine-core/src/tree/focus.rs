@@ -58,8 +58,12 @@ impl Tree {
             return None;
         }
         let layout = self.layout(id);
+        let (sx, sy) = self.scroll_shift(id);
         let composed = parent_transform
-            * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
+            * Affine::translate((
+                f64::from(layout.location.x) + sx,
+                f64::from(layout.location.y) + sy,
+            ))
             * node
                 .paint
                 .local_transform(f64::from(layout.size.width), f64::from(layout.size.height));
@@ -115,7 +119,13 @@ impl Tree {
                 // take its clicks as `hit_test`'s target). `TextField` is
                 // unaffected, a distinct `NodeKind` with its own real
                 // click-to-focus need.
-                NodeKind::Text(_) => false,
+                // 0.5.4 (#112): unless it opted in to being selected, which
+                // needs the press to reach it; (#131) or it holds a link.
+                NodeKind::Text(state) => {
+                    (state.options.selectable
+                        || state.options.spans.iter().any(|s| s.link.is_some()))
+                        && rect_contains(layout, local_point)
+                }
                 _ => rect_contains(layout, local_point),
             }
         };

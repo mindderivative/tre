@@ -27,8 +27,8 @@ or set the layout and let it snap. Any other name raises `ValueError`.
 
 ## Easing
 
-`easing` is `"linear"` (the default) or a cubic bezier `(x1, y1, x2, y2)`,
-exactly as CSS `cubic-bezier()` takes it. Design systems publish their
+`easing` is `"linear"` (the default), a cubic bezier `(x1, y1, x2, y2)`,
+exactly as CSS `cubic-bezier()` takes it, or a [spring](#springs). Design systems publish their
 motion curves as bezier values, so they drop straight in:
 
 ```python
@@ -36,6 +36,31 @@ STANDARD = (0.2, 0.0, 0.0, 1.0)
 EMPHASIZED_DECELERATE = (0.05, 0.7, 0.1, 1.0)
 drawer.animate("translate_x", 0, 400, easing=EMPHASIZED_DECELERATE)
 ```
+
+## Springs
+
+`easing="spring"` or `easing=("spring", bounce)` (0.5.4) animates with a damped
+spring instead of a fixed curve. `duration_ms` is the spring's period, about one
+cycle of its main motion, and `bounce` is how far it overshoots, from `-1` to `1`
+(exclusive): `0.0` is the quickest settle with no overshoot, towards `1.0` rings more
+and for longer, and a negative value is slower and softer. The plain string is a
+spring with `bounce=0.2`.
+
+```python
+card.animate("translate_y", -24, 350, easing=("spring", 0.35))   # lifts and settles
+panel.animate("scale", 1.0, 300, easing="spring")
+```
+
+A spring lasts until it has settled (within a tenth of a percent of its target), so
+it runs longer than `duration_ms`, and `on_complete` fires then. A `duration_ms` of
+`0` still snaps. Springs work on every animatable property, colours included.
+
+Springs also fix what a retargeted animation looked like. Animating a number again
+while it is moving starts the new spring at the speed the old motion had, so a card
+you drag away and let go, or a hover that reverses mid-way, carries on smoothly
+instead of stalling and restarting. That carry applies to numbers (opacity, the
+transform parts, a scroll offset, a stroke width and so on); a colour or a shadow
+list springs without it.
 
 ## Retargeting and reading back
 

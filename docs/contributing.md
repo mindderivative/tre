@@ -27,6 +27,14 @@ python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
 mkdocs build --strict
 ```
 
+The damage tracker walks only the nodes that changed (see
+`crates/engine-render/src/damage.rs`). `TRE_DAMAGE_VERIFY=1` makes every
+tracker also walk the whole tree and panic if the two disagree, so run the
+suites that way after touching anything that writes to a node, the layout or
+the tracker, and CI does: `TRE_DAMAGE_VERIFY=1 cargo test --workspace`. The
+randomised `damage_incremental` tests drive it with thousands of edits.
+`TRE_DAMAGE_FULL=1` turns the shortcut off, to compare timings.
+
 `stubtest` compares the type stub with the built extension, so run it after
 `maturin develop`; CI runs it and `mypy --strict` on Linux.
 
@@ -50,6 +58,15 @@ Building on Linux needs a few system packages; see
 Every real engine capability has its own headless, GPU-backed pixel test
 under `crates/engine-render/tests/`, proving it actually paints what it
 claims to, not just that the code compiles.
+
+## Checking transparent windows on a new platform
+
+Transparency, blur-behind and click-through depend on the OS and compositor, and
+the test suite can only prove them on the machine it runs on. On Windows, macOS,
+GNOME or any other desktop, run `python tools/check_transparency.py`: it opens
+a frameless transparent window, steps through three phases (normal,
+click-through, normal) and prints a report to paste into the issue. The lines
+marked LOOK need your eyes.
 
 ## Building this documentation site
 

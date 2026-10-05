@@ -105,7 +105,7 @@ fn build_tree(focus_field: bool) -> (Tree, engine_core::NodeId, engine_core::Nod
     // Empty content -- the real caret then sits exactly at the field's
     // own local x=0, no glyph-shaping math needed to locate it.
     let field = tree.insert(
-        NodeKind::TextField(TextFieldState::new("", "Roboto", 400.0, 16.0)),
+        NodeKind::TextField(Box::new(TextFieldState::new("", "Roboto", 400.0, 16.0))),
         Style {
             size: Size {
                 width: length(100.0),
@@ -193,7 +193,7 @@ fn build_tree_with_state(
         PaintProperties::new(BACKGROUND, 0.0, 1.0),
     );
     let field = tree.insert(
-        NodeKind::TextField(state),
+        NodeKind::TextField(Box::new(state)),
         Style {
             size: Size {
                 width: length(100.0),
@@ -587,7 +587,7 @@ fn a_genuinely_overflowing_multiline_field_clips_its_own_content_to_its_own_box(
             PaintProperties::new(BACKGROUND, 0.0, 1.0),
         );
         let field = tree.insert(
-            NodeKind::TextField(state),
+            NodeKind::TextField(Box::new(state)),
             Style {
                 size: Size {
                     width: length(100.0),
@@ -654,7 +654,7 @@ fn a_nonzero_scroll_offset_paints_genuinely_different_pixels_than_unscrolled() {
                 PaintProperties::new(BACKGROUND, 0.0, 1.0),
             );
             let field = tree.insert(
-                NodeKind::TextField(state),
+                NodeKind::TextField(Box::new(state)),
                 Style {
                     size: Size {
                         width: length(100.0),
@@ -717,7 +717,7 @@ fn a_nonzero_horizontal_scroll_offset_paints_genuinely_different_pixels_than_uns
                 PaintProperties::new(BACKGROUND, 0.0, 1.0),
             );
             let field = tree.insert(
-                NodeKind::TextField(state),
+                NodeKind::TextField(Box::new(state)),
                 Style {
                     size: Size {
                         width: length(100.0),

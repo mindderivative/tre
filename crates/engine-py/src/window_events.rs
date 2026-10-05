@@ -40,12 +40,21 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 26] = [
+const SIMULATED_EVENTS: [&str; 37] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
     "pointer_enter",
     "pointer_leave",
+    "touch_start",
+    "touch_move",
+    "touch_end",
+    "touch_cancel",
+    "trackpad_pinch",
+    "file_hover",
+    "file_hover_cancel",
+    "file_drop",
+    "link",
     "click",
     "secondary_click",
     "wheel",
@@ -57,6 +66,8 @@ const SIMULATED_EVENTS: [&str; 26] = [
     "a11y_action",
     "resize",
     "color_scheme",
+    "reduced_motion",
+    "high_contrast",
     "scale_factor",
     "close_requested",
     "closed",
@@ -117,6 +128,10 @@ impl<'py> Fields<'py> {
 
     fn bool(&mut self, name: &str) -> PyResult<Option<bool>> {
         self.typed(name, "a bool")
+    }
+
+    fn u64(&mut self, name: &str) -> PyResult<Option<u64>> {
+        self.typed(name, "a non-negative int")
     }
 
     fn string(&mut self, name: &str) -> PyResult<Option<String>> {
@@ -224,16 +239,18 @@ fn pointer_point(
 impl PyWindow {
     /// The window's size, as layout's available space.
     fn available(&self) -> Size<AvailableSpace> {
+        let (width, height) = self.handles.logical_size();
         Size {
-            width: AvailableSpace::Definite(self.handles.width.get() as f32),
-            height: AvailableSpace::Definite(self.handles.height.get() as f32),
+            width: AvailableSpace::Definite(width as f32),
+            height: AvailableSpace::Definite(height as f32),
         }
     }
 }
 
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
-const SETTABLE: &str = "title, partial_redraw, show_damage, decorations, fullscreen, \
-    min_width, min_height, icon, resize_border, system_menu, gpu_watchdog";
+const SETTABLE: &str = "title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, \
+    min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
+    dpi_scaling, transparent, blur_behind, click_through";
 
 /// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
 /// RGBA8 bytes, `width * height * 4` of them.
@@ -316,6 +333,20 @@ pub(crate) fn grow_to_minimum(handles: &crate::window::WindowHandles) {
 
 /// 0.5.1 (#65): the stall watchdog's limit: `None` turns it off, otherwise a
 /// number of seconds greater than 0.
+/// 0.5.4 (#101): `present_mode`, `"vsync"` or `"low_latency"`.
+fn parse_present_mode(
+    name: &str,
+    value: &Bound<'_, PyAny>,
+) -> PyResult<engine_render::PresentChoice> {
+    let bad = || {
+        PyValueError::new_err(format!(
+            "window property `{name}` must be \"vsync\" or \"low_latency\""
+        ))
+    };
+    let text: String = value.extract().map_err(|_| bad())?;
+    engine_render::PresentChoice::from_name(&text).ok_or_else(bad)
+}
+
 fn parse_watchdog(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Option<f64>> {
     if value.is_none() {
         return Ok(None);
@@ -374,7 +405,7 @@ impl PyWindow {
         py: Python<'_>,
     ) -> PyResult<Node> {
         const KINDS: &str =
-            "box, text, text_input, image, path, canvas, scroll_view, virtual_list, terminal";
+            "box, text, text_input, image, path, svg, canvas, scroll_view, virtual_list, terminal";
         let props = match props {
             Some(props) => props.copy()?,
             None => PyDict::new(py),
@@ -398,6 +429,10 @@ impl PyWindow {
                 require(&["data"])?;
                 NodeKind::Path(PathState::new(PathData(BezPath::new())))
             }
+            "svg" => {
+                require(&["svg"])?;
+                NodeKind::Svg(engine_core::SvgState::empty())
+            }
             "text" => {
                 require(&["text"])?;
                 // A text's fill is its glyph color: opaque black, like CSS.
@@ -415,7 +450,7 @@ impl PyWindow {
             "text_input" => {
                 let mut state = TextFieldState::new("", "Roboto", 400.0, 16.0);
                 state.text_tint = Animated::new(Color::from_rgba8(0, 0, 0, 255));
-                NodeKind::TextField(state)
+                NodeKind::TextField(Box::new(state))
             }
             "image" => {
                 require(&["rgba", "pixel_width", "pixel_height"])?;
@@ -463,12 +498,12 @@ impl PyWindow {
                     .and_then(|v| v.extract().ok())
                     .unwrap_or(1);
                 session = Some((shell, cols, rows, scrollback));
-                NodeKind::Terminal(TerminalState::new(
+                NodeKind::Terminal(Box::new(TerminalState::new(
                     cols.max(1),
                     rows.max(1),
                     MONOSPACE_FONT_FAMILY,
                     14.0,
-                ))
+                )))
             }
             _ => {
                 return Err(PyValueError::new_err(format!(
@@ -612,12 +647,19 @@ impl PyWindow {
         let mut title = None;
         let mut partial_redraw = None;
         let mut show_damage = None;
+        let mut profile_nodes = None;
+        let mut glyph_cache = None;
         let mut decorations = None;
         let mut fullscreen = None;
         let (mut min_width, mut min_height) = (None, None);
         let mut icon = None;
         let mut resize_border = None;
         let mut gpu_watchdog = None;
+        let mut present_mode = None;
+        let mut dpi_scaling = None;
+        let mut transparent = None;
+        let mut blur_behind = None;
+        let mut click_through = None;
         let mut system_menu = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
@@ -638,6 +680,16 @@ impl PyWindow {
                             PyValueError::new_err("window property `show_damage` must be a bool")
                         })?);
                     }
+                    "profile_nodes" => {
+                        profile_nodes = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `profile_nodes` must be a bool")
+                        })?);
+                    }
+                    "glyph_cache" => {
+                        glyph_cache = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `glyph_cache` must be a bool")
+                        })?);
+                    }
                     "decorations" => {
                         decorations = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `decorations` must be a bool")
@@ -652,6 +704,27 @@ impl PyWindow {
                     "min_height" => min_height = Some(parse_min_edge(&name, &value)?),
                     "resize_border" => resize_border = Some(parse_min_edge(&name, &value)?),
                     "gpu_watchdog" => gpu_watchdog = Some(parse_watchdog(&name, &value)?),
+                    "present_mode" => present_mode = Some(parse_present_mode(&name, &value)?),
+                    "transparent" => {
+                        transparent = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `transparent` must be a bool")
+                        })?);
+                    }
+                    "blur_behind" => {
+                        blur_behind = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `blur_behind` must be a bool")
+                        })?);
+                    }
+                    "click_through" => {
+                        click_through = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `click_through` must be a bool")
+                        })?);
+                    }
+                    "dpi_scaling" => {
+                        dpi_scaling = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("window property `dpi_scaling` must be a bool")
+                        })?);
+                    }
                     "system_menu" => {
                         system_menu = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `system_menu` must be a bool")
@@ -665,7 +738,7 @@ impl PyWindow {
                         });
                     }
                     "width" | "height" | "scale_factor" | "maximized" | "minimized" | "active"
-                    | "platform" | "titlebar_inset" | "native_controls" => {
+                    | "platform" | "titlebar_inset" | "native_controls" | "transparent_active" => {
                         return Err(PyValueError::new_err(format!(
                             "window property `{name}` is read-only -- settable: {SETTABLE}"
                         )));
@@ -690,6 +763,14 @@ impl PyWindow {
         if let Some(on) = show_damage {
             self.handles.show_damage.set(on);
         }
+        if let Some(on) = profile_nodes {
+            self.handles.profile_nodes.set(on);
+        }
+        if let Some(on) = glyph_cache {
+            self.handles.glyph_cache.set(on);
+            // The next frame is drawn again from the cache (or not).
+            self.handles.tree.borrow_mut().mark_dirty();
+        }
         if let Some(on) = decorations {
             if let Some(window) = self.handles.os_window.borrow().as_ref() {
                 engine_platform::titlebar::set_decorations(window, on);
@@ -698,6 +779,40 @@ impl PyWindow {
         }
         if let Some(seconds) = gpu_watchdog {
             self.handles.gpu_watchdog.set(seconds);
+        }
+        if let Some(choice) = present_mode {
+            self.handles.present_mode.set(choice);
+        }
+        if let Some(on) = transparent {
+            // The OS gives a window its alpha channel when it is made.
+            if self.handles.os_window.borrow().is_some() {
+                return Err(PyValueError::new_err(
+                    "window property `transparent` can only be set before the window opens (App.run())",
+                ));
+            }
+            self.handles.transparent.set(on);
+        }
+        if let Some(on) = blur_behind {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                window.set_blur(on);
+            }
+            self.handles.blur_behind.set(on);
+        }
+        if let Some(on) = click_through {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                window.set_cursor_hittest(!on).map_err(|err| {
+                    PyValueError::new_err(format!(
+                        "window property `click_through` isn't supported here: {err}"
+                    ))
+                })?;
+            }
+            self.handles.click_through.set(on);
+        }
+        if let Some(on) = dpi_scaling {
+            self.handles.dpi_scaling.set(on);
+            self.handles.refresh_scale();
+            // Layout, the frame and the input all change units.
+            self.handles.tree.borrow_mut().mark_dirty();
         }
         if let Some(border) = resize_border {
             self.handles.resize_border.set(border);
@@ -743,11 +858,17 @@ impl PyWindow {
     /// (0.4.0) `partial_redraw_active`, or (0.4.1) `show_damage`.
     fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
         Ok(match name {
-            "width" => f64::from(self.handles.width.get())
+            "width" => self
+                .handles
+                .logical_size()
+                .0
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
-            "height" => f64::from(self.handles.height.get())
+            "height" => self
+                .handles
+                .logical_size()
+                .1
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
@@ -837,6 +958,53 @@ impl PyWindow {
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
+            "dpi_scaling" => self
+                .handles
+                .dpi_scaling
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "transparent" => self
+                .handles
+                .transparent
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "transparent_active" => self
+                .handles
+                .transparent_active
+                .get()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "click_through" => self
+                .handles
+                .click_through
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "blur_behind" => self
+                .handles
+                .blur_behind
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "present_mode" => self
+                .handles
+                .present_mode
+                .get()
+                .name()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
             "min_height" => self
                 .handles
                 .min_size
@@ -893,6 +1061,22 @@ impl PyWindow {
                 .to_owned()
                 .into_any()
                 .unbind(),
+            "glyph_cache" => self
+                .handles
+                .glyph_cache
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "profile_nodes" => self
+                .handles
+                .profile_nodes
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "partial_redraw_active" => self
                 .handles
                 .surface_partial
@@ -917,13 +1101,28 @@ impl PyWindow {
                     .into_any()
                     .unbind()
             }
+            "reduced_motion" => {
+                let window = self.handles.os_window.borrow().clone();
+                engine_platform::appearance::current_reduced_motion(window.as_deref())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
+            "high_contrast" => {
+                let window = self.handles.os_window.borrow().clone();
+                engine_platform::appearance::current_high_contrast(window.as_deref())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
             _ => {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
-                     scale_factor, dark, partial_redraw, partial_redraw_active, show_damage, \
+                     scale_factor, dark, reduced_motion, high_contrast, partial_redraw, partial_redraw_active, show_damage, profile_nodes, glyph_cache, \
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
-                     native_controls, gpu_watchdog"
+                     native_controls, gpu_watchdog, present_mode, dpi_scaling, transparent, \
+                     transparent_active, blur_behind, click_through"
                 )));
             }
         })
@@ -964,6 +1163,7 @@ impl PyWindow {
             wrap: word(&WRAP, "wrap", wrap)?,
             max_lines: max_lines.filter(|n| *n > 0),
             ellipsis: word(&OVERFLOW, "overflow", overflow)?,
+            ..Default::default()
         };
         if !(font_size > 0.0 && font_size.is_finite()) {
             return Err(PyValueError::new_err(
@@ -1001,16 +1201,85 @@ impl PyWindow {
         let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
         let (_, completed) = tree.borrow_mut().tick_all(now);
         run_completions(&self.handles.completions, completed, py);
-        node_callbacks::layout(&tree, root, self.available(), &handlers, py);
-        listeners::fire_scroll_changes(
-            &NodeContext {
-                tree: &tree,
-                handlers: &handlers,
-                completions: &self.handles.completions,
+        // 0.5.4 (#113): time passing can make a held touch a long press.
+        let ctx = NodeContext {
+            tree: &tree,
+            handlers: &handlers,
+            completions: &self.handles.completions,
+        };
+        crate::touch::poll(
+            &ctx,
+            &WindowIo {
+                dock: &self.handles.dock,
+                listeners: &self.handles.window_listeners,
+                terminals: &self.handles.terminals,
+                window: &self.handles,
             },
+            root,
+            now,
             py,
         );
+        node_callbacks::layout(&tree, root, self.available(), &handlers, py);
+        listeners::fire_scroll_changes(&ctx, py);
         Ok(())
+    }
+
+    /// 0.5.4 (#116): what this window's frames cost, as a dict: `frames`
+    /// (drawn since the window opened), `skipped` (passes that found nothing to
+    /// draw), `last` (the last frame's stages, redraw and node count, or
+    /// `None`) and `recent` (the last 240 frames: `fps`, `total_ms` and `cpu_ms`
+    /// as `mean`/`p95`/`max`, `stage_ms` per stage, and how many `redraws` were
+    /// `nothing`, `full` or `partial`). `reset=True` clears the history after
+    /// reading it. Nothing is drawn, so nothing is recorded, before
+    /// `App.run()` opens the window.
+    #[pyo3(signature = (reset=false))]
+    fn frame_stats<'py>(&self, py: Python<'py>, reset: bool) -> PyResult<Bound<'py, PyDict>> {
+        let mut stats = crate::frame_stats::lock(&self.handles.frame_stats);
+        let dict = crate::frame_stats::stats_dict(py, &stats)?;
+        if let Some((frame, profile)) = stats.profile() {
+            dict.set_item(
+                "profile",
+                crate::frame_stats::profile_dict(py, &self.handles, *frame, profile)?,
+            )?;
+        }
+        if reset {
+            stats.reset();
+        }
+        Ok(dict)
+    }
+
+    /// 0.5.4 (#135): a handle any thread can use to read this window's frame
+    /// statistics (`handle.read()`, the dict `frame_stats()` returns) without
+    /// waiting for the event loop. Make it on the loop's thread, then pass it
+    /// on.
+    fn stats_handle(&self) -> crate::frame_stats::StatsHandle {
+        crate::frame_stats::StatsHandle::new(self.handles.frame_stats.clone())
+    }
+
+    /// 0.5.4 (#135): writes every frame this window draws from now on to `path`
+    /// as a Chrome / Perfetto trace (open it at ui.perfetto.dev or
+    /// `chrome://tracing`): a slice for each frame with its stages (tick,
+    /// layout, prepare, acquire, draw, present) inside, and the GPU's time on a
+    /// second track once the adapter has read it back. Raises `OSError` if
+    /// the file can't be created and `ValueError` if a trace is already
+    /// running. `stop_trace()` closes it.
+    fn start_trace(&self, path: &str) -> PyResult<()> {
+        let file = std::fs::File::create(path)?;
+        let started = crate::frame_stats::lock(&self.handles.frame_stats)
+            .start_trace(Box::new(std::io::BufWriter::new(file)))?;
+        if !started {
+            return Err(PyValueError::new_err(
+                "a trace is already running -- stop_trace() first",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Closes the trace `start_trace` opened and returns how many frames it
+    /// holds; `0` if none is running. Raises `OSError` if writing to the file
+    /// failed (the trace stopped when it did).
+    fn stop_trace(&self) -> PyResult<u64> {
+        Ok(crate::frame_stats::lock(&self.handles.frame_stats).stop_trace()?)
     }
 
     /// Delivers a synthetic `event` exactly as real input would -- for
@@ -1098,8 +1367,100 @@ impl PyWindow {
                 with_modifiers(modifiers, || {
                     for input in &inputs {
                         process_input(&ctx, &io, root, input, py);
+                        // 0.5.4 (review): text selection, links and Shift+Up/Down,
+                        // which need a text renderer; a headless one stands in.
+                        crate::text_interaction::process_simulated(&self.handles, input, py);
                     }
                 });
+            }
+            // 0.5.4 (#113): a finger. `id` tells fingers apart (default 0).
+            "touch_start" | "touch_move" | "touch_end" | "touch_cancel" => {
+                let (x, y) = (f.f64("x")?, f.f64("y")?);
+                let position = pointer_point(&tree.borrow(), node_id, x, y, event)?;
+                let id = f.u64("id")?.unwrap_or(0);
+                f.done()?;
+                let phase = match event {
+                    "touch_start" => engine_core::TouchPhase::Started,
+                    "touch_move" => engine_core::TouchPhase::Moved,
+                    "touch_end" => engine_core::TouchPhase::Ended,
+                    _ => engine_core::TouchPhase::Cancelled,
+                };
+                let input = InputEvent::Touch {
+                    id,
+                    phase,
+                    position,
+                };
+                process_input(&ctx, &io, root, &input, py);
+                // The pointer events the finger stood in for reach text too.
+                crate::text_interaction::process_simulated(&self.handles, &input, py);
+            }
+            // 0.5.4 (#113): a trackpad pinch (what macOS reports), `delta` a
+            // magnification step and `phase` `"started"`, `"moved"`, `"ended"`
+            // or `"cancelled"` (default `"moved"`).
+            "trackpad_pinch" => {
+                let (x, y) = (f.f64("x")?, f.f64("y")?);
+                let position = pointer_point(&tree.borrow(), node_id, x, y, event)?;
+                let delta = f.f64("delta")?.unwrap_or(0.0);
+                let phase = match f.string("phase")?.as_deref().unwrap_or("moved") {
+                    "started" => engine_core::TouchPhase::Started,
+                    "moved" => engine_core::TouchPhase::Moved,
+                    "ended" => engine_core::TouchPhase::Ended,
+                    "cancelled" => engine_core::TouchPhase::Cancelled,
+                    other => {
+                        return Err(PyValueError::new_err(format!(
+                            "`trackpad_pinch` `phase` must be \"started\", \"moved\", \"ended\" or \"cancelled\", got {other:?}"
+                        )));
+                    }
+                };
+                f.done()?;
+                process_input(
+                    &ctx,
+                    &io,
+                    root,
+                    &InputEvent::TrackpadPinch {
+                        delta,
+                        phase,
+                        position,
+                    },
+                    py,
+                );
+            }
+            // 0.5.4 (#114): files dragged from the OS. `paths` is a list of
+            // paths (or `path` for one), aimed like a pointer event.
+            "file_hover" | "file_drop" => {
+                let (x, y) = (f.f64("x")?, f.f64("y")?);
+                let position = pointer_point(&tree.borrow(), node_id, x, y, event)?;
+                let mut paths: Vec<std::path::PathBuf> = match f.take("paths") {
+                    Some(paths) => paths.extract().map_err(|_| {
+                        PyValueError::new_err(format!(
+                            "simulate({event:?}): `paths` must be a list of str paths"
+                        ))
+                    })?,
+                    None => Vec::new(),
+                };
+                if let Some(path) = f.string("path")? {
+                    paths.push(path.into());
+                }
+                if paths.is_empty() {
+                    return Err(PyValueError::new_err(format!(
+                        "simulate({event:?}) needs `paths` or `path`"
+                    )));
+                }
+                f.done()?;
+                for path in paths {
+                    let input = if event == "file_hover" {
+                        InputEvent::FileHovered { path, position }
+                    } else {
+                        InputEvent::FileDropped { path, position }
+                    };
+                    process_input(&ctx, &io, root, &input, py);
+                }
+                crate::files::flush(&ctx, &io, root, py);
+            }
+            "file_hover_cancel" => {
+                f.done()?;
+                process_input(&ctx, &io, root, &InputEvent::FileHoverCancelled, py);
+                crate::files::flush(&ctx, &io, root, py);
             }
             "pointer_leave" => {
                 f.done()?;
@@ -1149,6 +1510,9 @@ impl PyWindow {
                 with_modifiers(modifiers, || {
                     for input in &inputs {
                         process_input(&ctx, &io, root, input, py);
+                        // 0.5.4 (review): text selection, links and Shift+Up/Down,
+                        // which need a text renderer; a headless one stands in.
+                        crate::text_interaction::process_simulated(&self.handles, input, py);
                     }
                 });
             }
@@ -1194,6 +1558,15 @@ impl PyWindow {
                 listeners::deliver_a11y_action(&ctx, id, &action, value, py);
                 listeners::fire_scroll_changes(&ctx, py);
             }
+            "link" => {
+                let id = need_node(&f)?;
+                let href = f.string("href")?;
+                let href = f.required("href", href)?;
+                f.done()?;
+                listeners::deliver(&ctx, py, listeners::EventType::Link, id, None, |e| {
+                    e.href = Some(href);
+                });
+            }
             "change" => {
                 return Err(PyValueError::new_err(
                     "`change` fires when a text_input's text changes -- simulate `input` or `key_down` instead",
@@ -1210,8 +1583,15 @@ impl PyWindow {
                         "`resize` needs a finite, non-negative width and height",
                     ));
                 }
-                self.handles.width.set(width as u32);
-                self.handles.height.set(height as u32);
+                // 0.5.4 (#102): `width` and `height` are logical; the stored
+                // size is the physical one.
+                let scale = self.handles.scale.get();
+                self.handles
+                    .width
+                    .set(crate::scale::to_physical(width, scale));
+                self.handles
+                    .height
+                    .set(crate::scale::to_physical(height, scale));
                 tree.borrow_mut().dispatch(
                     root,
                     InputEvent::Resized {
@@ -1241,6 +1621,28 @@ impl PyWindow {
                     WindowEventType::ColorScheme,
                     |e| e.dark = Some(dark),
                 );
+            }
+            // 0.5.4 (#115): what the live window reports when the OS's motion or
+            // contrast preference changes.
+            "reduced_motion" | "high_contrast" => {
+                let value = f.bool("value")?;
+                let value = f.required("value", value)?;
+                f.done()?;
+                if event == "reduced_motion" {
+                    listeners::deliver_window(
+                        &self.handles.window_listeners,
+                        py,
+                        WindowEventType::ReducedMotion,
+                        |e| e.reduced_motion = Some(value),
+                    );
+                } else {
+                    listeners::deliver_window(
+                        &self.handles.window_listeners,
+                        py,
+                        WindowEventType::HighContrast,
+                        |e| e.high_contrast = Some(value),
+                    );
+                }
             }
             // 0.5.0 M2: what the live window reports when it's maximized or
             // restored, or gains or loses focus -- the state changes, and

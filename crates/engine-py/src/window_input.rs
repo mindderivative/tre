@@ -27,8 +27,15 @@ impl PyWindow {
     /// winit-driven resize's own `.set()` call (`app.rs`'s `InputEvent::
     /// Resized` arm) is immediately visible here too, and vice versa.
     fn resize(&mut self, width: u32, height: u32, py: Python<'_>) {
-        self.handles.width.set(width);
-        self.handles.height.set(height);
+        // 0.5.4 (#102): `width` and `height` are logical; the stored size is
+        // the physical one.
+        let scale = self.handles.scale.get();
+        self.handles
+            .width
+            .set(crate::scale::to_physical(f64::from(width), scale));
+        self.handles
+            .height
+            .set(crate::scale::to_physical(f64::from(height), scale));
         let (tree, root, handlers) = (
             self.handles.tree.clone(),
             self.handles.root,

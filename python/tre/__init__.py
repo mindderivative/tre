@@ -19,14 +19,20 @@ the reactivity layer (`Signal`, `Computed`, `Effect`, `ViewModel`, `batch`,
 from tre._core import (
     App,
     Painter,
+    CursorImage,
     Event,
+    Gradient,
     LoopHandle,
     Node,
     Shader,
     ShaderError,
+    StatsHandle,
     Window,
     register_font,
+    set_system_fonts,
+    system_fonts,
 )
+from tre.snapshot import png_bytes, write_png
 
 #: M32 Phase 1 (§5, §8, §10): the bundled monospace face a terminal always
 #: shapes with (`engine_render::MONOSPACE_FONT_FAMILY`, "Hack Nerd Font
@@ -38,14 +44,21 @@ MONOSPACE_FONT_FAMILY = "Hack Nerd Font Mono"
 __all__ = [
     "App",
     "Painter",
+    "CursorImage",
     "Event",
+    "Gradient",
     "LoopHandle",
     "MONOSPACE_FONT_FAMILY",
     "Node",
     "Shader",
     "ShaderError",
+    "StatsHandle",
     "Window",
+    "png_bytes",
     "register_font",
+    "set_system_fonts",
+    "system_fonts",
+    "write_png",
 ]
 
 # M97: the migration gate's switch -- see `tre/_removed.py`.

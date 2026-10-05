@@ -10,10 +10,13 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | --- | --- |
 | [`App`](#app) | Opens and drives one or more windows together in one blocking `run()`. |
 | [`LoopHandle`](#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s loop. |
+| [`StatsHandle`](#statshandle) | Reads a window's frame statistics from any thread, without waiting for the loop. |
 | [`Window`](#window) | Owns a node tree and its size and title; creates nodes, shows layers, docks panels. |
 | [`Node`](#node) | A handle to one node in a window's tree: properties, animation, events, structure. |
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
 | [`Painter`](#painter) | The drawing surface a canvas node's `draw` callback receives. |
+| [`Gradient`](#gradient) | A linear, radial or sweep gradient to give a box as its `fill`. |
+| [`CursorImage`](#cursorimage) | A pointer shape drawn from pixels, for a node's `cursor`. |
 | [`Shader`](#shader) | WGSL that paints a node (a fill) or transforms its rendered content (an effect). |
 | [`ShaderError`](#shadererror) | A shader's source or names are wrong, positioned in the WGSL you gave. |
 
@@ -46,6 +49,20 @@ The one thread-safe object: queues a callable onto a running `App`'s loop.
 | Method | Description |
 | --- | --- |
 | `call_soon(callback: Callable[[], object]) -> None` | Queues `callback` (called with no arguments) to run on the `App`'s event-loop thread, and wakes the loop. |
+
+**Events:** none.
+
+## StatsHandle { #statshandle }
+
+Reads a window's frame statistics from any thread, without waiting for the loop.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [StatsHandle reference](../reference/window.md#frame_stats)
+
+**Methods:**
+
+| Method | Description |
+| --- | --- |
+| `read(reset: bool=False) -> dict[str, Any]` | The dict `Window.frame_stats()` returns, except that `profile` is always `None` (it names `Node`s, which belong to the loop's… |
 
 **Events:** none.
 
@@ -82,6 +99,13 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `resize_border`, `system_menu` | set, get | Border width for undecorated windows; the OS window menu. |
 | `titlebar_inset`, `native_controls` | get | macOS traffic-light area; whether the OS shows its controls. |
 | `gpu_watchdog` | set, get | Seconds before a stuck frame fires `gpu_stalled`; `None` is off. |
+| `present_mode` | set, get | `"vsync"` (default) paces frames to the display; `"low_latency"` shows the newest frame at once. |
+| `dpi_scaling` | set, get | Layout in logical pixels, drawn at the display's scale (0.5.4); off by default. |
+| `glyph_cache` | set, get | Draw text from the glyph cache: about 4x cheaper, edge pixels differ slightly (0.5.4); off by default. |
+| `profile_nodes` | set, get | Time each node the paint walk reaches, for `frame_stats()` (0.5.4). |
+| `transparent`, `transparent_active` | set, get / get | A see-through window background, and whether it took effect (0.5.4). |
+| `blur_behind`, `click_through` | set, get | Ask the compositor to blur behind a transparent window; ignore the pointer entirely (0.5.4). |
+| `reduced_motion`, `high_contrast` | get | The OS's motion and contrast preferences (0.5.4). |
 
 **Methods:**
 
@@ -92,6 +116,7 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `close() -> None` | Closes the window as if the user had: `close_requested` fires first, and a listener that cancels it keeps the window open. |
 | `create(kind: str, **props: Any) -> Node` | Makes a detached node of a kind; attach it with `add_child`. |
 | `dock_panel(side: str, panel: Node) -> None` | Docks `panel` into `side`'s zone and shows it. |
+| `frame_stats(reset: bool=False) -> dict[str, Any]` | What this window's frames cost, as a dict: `frames` (drawn since the window opened), `skipped` (passes that found nothing to… |
 | `hide_layer(node: Node) -> None` | Hides a layer, detaching it, and returns focus to where it was. |
 | `maximize() -> None` | Maximizes the window — or opens it maximized. |
 | `measure_text(text, font_family, font_size, font_weight, font_style, letter_spacing, line_height, max_width, wrap, max_lines, overflow) -> tuple[float, float]` | Returns the `(width, height)` a text node with these properties would take. |
@@ -101,11 +126,15 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `read_clipboard() -> str \| None` | Returns the OS clipboard's text, or `None` when there is none or it can't be reached. |
 | `resize(width: int, height: int) -> None` | Sets the window's size from code; the root's layout box follows. |
 | `restore() -> None` | Restores a minimized or maximized window to its normal size; before `App.run()`, undoes `minimize()`/`maximize()`. |
-| `set(*, title, partial_redraw, show_damage, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
+| `set(*, title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, dpi_scaling, transparent, blur_behind, click_through) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
 | `set_active_panel(side: str, index: int) -> None` | Shows the `index`th panel docked in `side`'s zone (was `set_active_tab`). |
 | `show_layer(node, anchor, placement, modal, dismissible) -> None` | Shows `node` over the window's content, above every layer already open. |
 | `simulate(event: str, node: Node \| None=None, **fields: Any) -> None` | Delivers a synthetic event as real input would, for tests with no display. |
+| `snapshot(width, height, scale, time) -> tuple[bytes, int, int]` | What the window draws, as `(rgba, width, height)`: straight-alpha RGBA8 bytes, `width * height * 4` of them, top row first. |
 | `start_panel_drag(panel: Node) -> None` | Starts dragging `panel`, a docked panel. |
+| `start_trace(path: str) -> None` | Writes every frame this window draws from now on to `path` as a Chrome / Perfetto trace (open it at ui.perfetto.dev or… |
+| `stats_handle() -> StatsHandle` | A handle any thread can use to read this window's frame statistics (`handle.read()`) without waiting for the event loop. |
+| `stop_trace() -> int` | Closes the trace `start_trace` opened and returns how many frames it holds (`0` if none is running). |
 | `undock_panel(panel: Node) -> None` | Takes `panel` out of docking. |
 | `write_clipboard(text: str) -> bool` | Puts `text` on the OS clipboard; `False` when it can't be reached (logged, never raised). |
 
@@ -124,6 +153,9 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `gpu_lost` | `reason`, `message` | The GPU was lost; the run is ending. |
 | `gpu_error` | `message` | The GPU reported an error; the draw was skipped. |
 | `gpu_stalled` | `seconds` | A submitted frame has not completed after `gpu_watchdog` seconds. |
+| `file_hover`, `file_hover_cancel`, `file_drop` | `paths`, `path` | Files dragged over, away from, or dropped on the window (0.5.4). |
+| `reduced_motion`, `high_contrast` | `reduced_motion`, `high_contrast` | The OS's motion or contrast preference changed (0.5.4). |
+| `frame` | `stats` | A frame was drawn and presented; `stats` holds its costs (0.5.4). |
 
 ## Node { #node }
 
@@ -144,6 +176,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | `"scroll_view"` | — | Clips and scrolls one child. |
 | `"virtual_list"` | `item_count`, `materialize` | Builds only the rows its viewport shows. |
 | `"terminal"` | `shell`, `cols`, `rows` | A PTY-backed terminal emulator. |
+| `"svg"` | `svg`, `svg_color`, `svg_images` | A whole SVG document, fitted into the node's box (0.5.4). |
 
 **Settable properties** (`node.set(...)`, `node.get(name)`; `node.animate(...)` for the animatable ones):
 
@@ -284,6 +317,11 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | `scroll` | no | A scroll view's offset changed, once a frame. |
 | `dismiss` | no | An outside press or Escape asked a layer to close. |
 | `a11y_action` | yes | Assistive technology asked for an action (increment, expand, set value…). |
+| `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | yes | A finger touches, moves, lifts or is taken away (0.5.4); `pointer_id`. |
+| `tap`, `long_press` | yes | A quick touch and release in place (`count`), or one held half a second (0.5.4). |
+| `pan`, `pinch` | yes | A dragging or pinching gesture (0.5.4); `phase`, deltas, `scale`. |
+| `file_hover`, `file_hover_cancel`, `file_drop` | yes | Files dragged from the OS over, away from, or dropped on the node (0.5.4); `paths`. |
+| `link` | yes | A click on a text span that has a `link` (0.5.4); `href`. |
 
 ## Event { #event }
 
@@ -319,6 +357,9 @@ What a listener receives when it takes one argument; never constructed directly.
 | `width` | `float \| None` | New size on `resize`. |
 | `height` | `float \| None` | New size on `resize`. |
 | `dark` | `bool \| None` | New appearance on `color_scheme`. |
+| `stats` | `dict[str, Any] \| None` |  |
+| `reduced_motion` | `bool \| None` |  |
+| `high_contrast` | `bool \| None` |  |
 | `maximized` | `bool \| None` | New state on `maximized`. |
 | `active` | `bool \| None` | New state on `active`. |
 | `titlebar_inset` | `tuple[float, float] \| None` | New `(height, width)` on `titlebar_inset`. |
@@ -329,6 +370,18 @@ What a listener receives when it takes one argument; never constructed directly.
 | `related_target` | `Node \| None` | The node on the other side of a `focus` / `unfocus` move. |
 | `focus_visible` | `bool \| None` | Whether `focus` arrived by keyboard. |
 | `side` | `str \| None` | The dock zone under the pointer, or `None`. |
+| `path` | `str \| None` |  |
+| `paths` | `list[str] \| None` |  |
+| `href` | `str \| None` |  |
+| `pointer_id` | `int \| None` |  |
+| `phase` | `str \| None` |  |
+| `count` | `int \| None` |  |
+| `scale` | `float \| None` |  |
+| `scale_delta` | `float \| None` |  |
+| `total_x` | `float \| None` |  |
+| `total_y` | `float \| None` |  |
+| `velocity_x` | `float \| None` |  |
+| `velocity_y` | `float \| None` |  |
 | `panel` | `Node \| None` | The dragged panel on `dock_drop`. |
 
 **Methods:**
@@ -350,11 +403,56 @@ The drawing surface a canvas node's `draw` callback receives.
 
 | Method | Description |
 | --- | --- |
-| `fill_circle(cx: float, cy: float, radius: float, color: Color) -> None` | Fills a circle in canvas-local coordinates. |
-| `fill_rect(x: float, y: float, width: float, height: float, color: Color) -> None` | Fills a rectangle in canvas-local coordinates. |
+| `fill_circle(cx: float, cy: float, radius: float, color: Color \| Gradient) -> None` | Fills a circle in canvas-local coordinates. |
+| `fill_rect(x: float, y: float, width: float, height: float, color: Color \| Gradient) -> None` | Fills a rectangle in canvas-local coordinates. |
 | `set_hit_test_circle(cx: float, cy: float, radius: float) -> None` | Replaces this canvas's default rectangular hit test with a circular one. |
 | `set_hit_test_path(points: Sequence[Sequence[float]], tolerance: float) -> None` | Replaces this canvas's default rectangular hit test with a stroke-shaped one. |
-| `stroke_path(points: Sequence[Sequence[float]], color: Color, width: float) -> None` | Strokes a path in canvas-local coordinates. |
+| `stroke_path(points: Sequence[Sequence[float]], color: Color \| Gradient, width: float) -> None` | Strokes a path in canvas-local coordinates. |
+
+**Events:** none.
+
+## Gradient { #gradient }
+
+A linear, radial or sweep gradient to give a box as its `fill`.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [Gradient reference](../reference/paint.md#gradients)
+
+**Properties:**
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `kind` | `str` | `"linear"`, `"radial"` or `"sweep"`. |
+| `stops` | `list[tuple[float, Color]]` |  |
+| `angle` | `float \| None` |  |
+| `center` | `tuple[float, float] \| None` |  |
+| `radius` | `float \| None` |  |
+| `start` | `float \| None` |  |
+
+**Methods:**
+
+| Method | Description |
+| --- | --- |
+| `linear(stops: Sequence[Color] \| Sequence[tuple[float, Color]], angle: float=180.0) -> Gradient` | Along a line through the box's centre at `angle` degrees (0 up, 90 right, 180 down), spanning the box. |
+| `radial(stops, center, radius) -> Gradient` | Outward from `center` (fractions of the box; `None` is `(0.5, 0.5)`, the middle). |
+| `sweep(stops, center, start) -> Gradient` | Around `center` (`None` is the middle), starting `start` degrees clockwise from up. |
+
+**Events:** none.
+
+## CursorImage { #cursorimage }
+
+A pointer shape drawn from pixels, for a node's `cursor`.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [CursorImage reference](../reference/node.md#cursors)
+
+**Constructor:** `CursorImage(rgba: bytes, width: int, height: int, hotspot: tuple[int, int]=...)`
+
+**Properties:**
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `size` | `tuple[int, int]` |  |
+| `hotspot` | `tuple[int, int]` |  |
+| `ready` | `bool` | Whether the OS cursor has been made. |
 
 **Events:** none.
 
@@ -380,6 +478,7 @@ WGSL that paints a node (a fill) or transforms its rendered content (an effect).
 
 | Method | Description |
 | --- | --- |
+| `filter(*, saturate, brightness, contrast, grayscale, hue_rotate, invert, sepia) -> Shader` | A ready-made effect shader that applies CSS colour filters to a node and its subtree… |
 | `set(*, uniforms: dict[str, float \| tuple[float, ...]]) -> None` | Replaces the uniforms all at once; a mistake raises and changes nothing. |
 
 **Events:** none.
@@ -405,5 +504,7 @@ A shader's source or names are wrong, positioned in the WGSL you gave.
 | Name | Description |
 | --- | --- |
 | `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded. |
+| `set_system_fonts(enabled: bool) -> None` | Lets text use the fonts installed on this machine: for the glyphs the bundled and registered fonts lack (CJK, Hebrew, Indic… |
+| `system_fonts() -> bool` | Whether system fonts are on (`set_system_fonts`). |
 | `MONOSPACE_FONT_FAMILY` | The bundled monospace family a terminal always shapes with. |
 | `Color` | A type alias: an `(r, g, b, a)` tuple of ints, 0–255, straight alpha. |

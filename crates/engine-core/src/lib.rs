@@ -21,33 +21,45 @@ mod access;
 mod animation;
 mod canvas;
 mod dock;
+mod gesture;
+mod gradient;
 mod input;
 mod node;
 mod overlay;
 mod path;
 mod shader;
+mod svg;
 mod tree;
 
 pub use access::{AccessNodeData, AccessStates, AccessValue, Action, ActionData, Live, Role};
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
+pub use gesture::{
+    Gesture, GestureConfig, GestureKind, GesturePhase, GestureRecognizer, TouchPhase,
+};
+pub use gradient::{Gradient, GradientShape, GradientStop};
 pub use input::{
     ChangedValue, DispatchOutcome, InputEvent, Key, Modifiers, PointerButton, ScrollDelta,
     ctrl_shortcut,
 };
 pub use node::{
-    CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Node, NodeId, NodeKind,
-    NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
-    SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, TerminalCell, TerminalPalette,
-    TerminalState, TextAlign, TextFieldState, TextOptions, TextState, VirtualListState,
-    WindowRegion,
+    Blend, CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Node, NodeId,
+    NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
+    SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, TerminalCell,
+    TerminalPalette, TerminalState, TextAlign, TextFieldState, TextOptions, TextSpan, TextState,
+    VirtualListState, WindowRegion,
 };
 pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
 pub use shader::{
     FRAME_BLOCK_SIZE, Shader, ShaderError, ShaderMode, UniformKind, UniformValue, frame_block,
 };
+pub use svg::{
+    SvgBitmap, SvgClip, SvgDocument, SvgFill, SvgFonts, SvgGroup, SvgImage, SvgImages, SvgMask,
+    SvgNode, SvgPaint, SvgPath, SvgPattern, SvgShadow, SvgState, SvgStroke,
+};
 pub use tree::{
-    FocusDirection, KEY_SCROLL_LINE, Tree, from_access_id, node_id_as_u64, to_access_id,
+    AccessLine, FocusDirection, KEY_SCROLL_LINE, TextPart, Touched, Tree, from_access_id,
+    node_id_as_u64, to_access_id,
 };

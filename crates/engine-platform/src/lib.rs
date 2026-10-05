@@ -79,6 +79,7 @@
 //! update_if_active`, which already gates on activation state.
 
 pub mod appearance;
+pub mod cursors;
 pub mod titlebar;
 
 use std::cell::RefCell;
@@ -187,6 +188,16 @@ fn translate_clipboard_shortcut(logical_key: &WinitKey, shift: bool) -> Option<I
 /// collapsing it. `PixelDelta`'s own `PhysicalPosition<f64>` -> plain
 /// `(f64, f64)` is a field copy, the same "no unit conversion needed"
 /// shape `CursorMoved`'s own translation already uses.
+/// 0.5.4 (#113): `winit`'s touch phase as the engine's.
+fn translate_touch_phase(phase: winit::event::TouchPhase) -> engine_core::TouchPhase {
+    match phase {
+        winit::event::TouchPhase::Started => engine_core::TouchPhase::Started,
+        winit::event::TouchPhase::Moved => engine_core::TouchPhase::Moved,
+        winit::event::TouchPhase::Ended => engine_core::TouchPhase::Ended,
+        winit::event::TouchPhase::Cancelled => engine_core::TouchPhase::Cancelled,
+    }
+}
+
 fn translate_scroll_delta(delta: MouseScrollDelta) -> ScrollDelta {
     match delta {
         MouseScrollDelta::LineDelta(x, y) => ScrollDelta::Lines(f64::from(x), f64::from(y)),
@@ -285,6 +296,16 @@ pub struct WindowOptions {
     /// used on Windows and X11; Wayland and macOS take the app's icon from
     /// its desktop file or bundle.
     pub icon: Option<(Vec<u8>, u32, u32)>,
+    /// 0.5.4 (#137): whether the window can be see-through: asks the OS for a
+    /// window with an alpha channel. Fixed when the window opens (X11 can only
+    /// choose it then).
+    pub transparent: bool,
+    /// 0.5.4 (#137): asks the compositor to blur what is behind the window,
+    /// where it can (Wayland with KDE's blur protocol, macOS).
+    pub blur: bool,
+    /// 0.5.4 (#142): the window ignores the pointer: clicks, scrolls and hover
+    /// pass to whatever is behind it.
+    pub click_through: bool,
 }
 
 impl Default for WindowOptions {
@@ -295,6 +316,9 @@ impl Default for WindowOptions {
             fullscreen: false,
             min_size: None,
             icon: None,
+            transparent: false,
+            blur: false,
+            click_through: false,
         }
     }
 }
@@ -386,6 +410,12 @@ enum PlatformEvent {
     /// window is told, as the OS tells each window on macOS and Windows.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     ThemeChanged(bool),
+    /// 0.5.4 (#115): the portal announced a new reduced-motion or contrast
+    /// preference; every open window is told.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    ReducedMotionChanged(bool),
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    HighContrastChanged(bool),
     /// 0.5.0 M2 (issue #28): the app asked to close a window
     /// (`EventLoopWaker::close_window`) -- handled exactly as the user
     /// closing it, `CloseRequested` first, which the app may refuse.
@@ -609,8 +639,14 @@ where
     #[cfg(target_os = "linux")]
     {
         let proxy = proxy.clone();
-        appearance::portal::watch(move |dark| {
-            proxy.send_event(PlatformEvent::ThemeChanged(dark)).is_ok()
+        appearance::portal::watch(move |change| {
+            use appearance::portal::Change;
+            let event = match change {
+                Change::Dark(dark) => PlatformEvent::ThemeChanged(dark),
+                Change::ReducedMotion(reduced) => PlatformEvent::ReducedMotionChanged(reduced),
+                Change::HighContrast(high) => PlatformEvent::HighContrastChanged(high),
+            };
+            proxy.send_event(event).is_ok()
         });
     }
 
@@ -711,6 +747,10 @@ struct PerWindow {
     /// put the pointer -- so this is tracked here and read when
     /// translating a press/release into an `InputEvent`.
     last_cursor_position: Point,
+    /// 0.5.4 (#115): the OS preferences as last seen, to report a change when
+    /// the window regains focus (Windows and macOS announce none).
+    reduced_motion: Option<bool>,
+    high_contrast: Option<bool>,
     /// M29 Phase 2 (§5, §6): this window's own last-reported `on_frame`
     /// return -- `true` until the first real `RedrawRequested` settles
     /// it, so a freshly created window (which already gets one explicit
@@ -779,11 +819,13 @@ where
         self.attach();
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        cursors::flush(event_loop);
         self.park();
     }
 
-    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        cursors::flush(event_loop);
         self.attach();
         // Windows are created lazily, in `user_event`, as `OpenWindow`
         // requests arrive -- not eagerly here. `setup`'s own
@@ -793,6 +835,7 @@ where
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PlatformEvent) {
+        cursors::flush(event_loop);
         self.attach();
         match event {
             PlatformEvent::OpenWindow(request) => {
@@ -817,6 +860,8 @@ where
                         .with_window_icon(options.icon.clone().and_then(|(rgba, w, h)| {
                             winit::window::Icon::from_rgba(rgba, w, h).ok()
                         }))
+                        .with_transparent(options.transparent)
+                        .with_blur(options.blur)
                         .with_visible(false);
                 if let Some((w, h)) = options.min_size {
                     attrs = attrs.with_min_inner_size(winit::dpi::LogicalSize::new(w, h));
@@ -861,6 +906,10 @@ where
                 // mutually exclusive at the `winit` level, nothing this
                 // codebase needs to coordinate itself.
                 window.set_ime_allowed(true);
+                if options.click_through {
+                    // Not every platform can; the property reports it on `set`.
+                    let _ = window.set_cursor_hittest(false);
+                }
                 window.set_visible(true);
                 window.request_redraw();
                 let id = window.id();
@@ -881,6 +930,8 @@ where
                         max_frames: request.config.max_frames,
                         modifiers: ModifiersState::empty(),
                         last_cursor_position: Point::ZERO,
+                        reduced_motion: None,
+                        high_contrast: None,
                         animating: true,
                     },
                 );
@@ -946,6 +997,20 @@ where
                     win.window.request_redraw();
                 }
             }
+            PlatformEvent::ReducedMotionChanged(reduced) => {
+                for (&id, win) in &mut self.windows {
+                    win.reduced_motion = Some(reduced);
+                    (self.on_input)(id, InputEvent::ReducedMotionChanged { reduced });
+                    win.window.request_redraw();
+                }
+            }
+            PlatformEvent::HighContrastChanged(high) => {
+                for (&id, win) in &mut self.windows {
+                    win.high_contrast = Some(high);
+                    (self.on_input)(id, InputEvent::HighContrastChanged { high });
+                    win.window.request_redraw();
+                }
+            }
             PlatformEvent::ReportSize(id) => {
                 if let Some(win) = self.windows.get(&id) {
                     let size = win.window.inner_size();
@@ -981,6 +1046,7 @@ where
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        cursors::flush(event_loop);
         self.attach();
         let Self {
             windows,
@@ -1078,6 +1144,49 @@ where
                 // event actually changed anything worth a repaint --
                 // `Tree`'s own dirty flag, Phase 1, already makes an
                 // extra request here free if it turns out nothing did).
+                win.request_redraw();
+            }
+            // 0.5.4 (#113): a finger on the screen. Positions are the
+            // window's pixels, as the pointer's are.
+            WindowEvent::Touch(touch) => {
+                let position = Point::new(touch.location.x, touch.location.y);
+                on_input(
+                    window_id,
+                    InputEvent::Touch {
+                        id: touch.id,
+                        phase: translate_touch_phase(touch.phase),
+                        position,
+                    },
+                );
+                win.request_redraw();
+            }
+            // 0.5.4 (#113): a trackpad pinch (macOS, iOS), at the cursor.
+            WindowEvent::PinchGesture { delta, phase, .. } => {
+                on_input(
+                    window_id,
+                    InputEvent::TrackpadPinch {
+                        delta,
+                        phase: translate_touch_phase(phase),
+                        position: win.last_cursor_position,
+                    },
+                );
+                win.request_redraw();
+            }
+            // 0.5.4 (#114): files dragged over and dropped on the window.
+            // `winit` gives them no position; the pointer's last is the best
+            // there is.
+            WindowEvent::HoveredFile(path) => {
+                let position = win.last_cursor_position;
+                on_input(window_id, InputEvent::FileHovered { path, position });
+                win.request_redraw();
+            }
+            WindowEvent::HoveredFileCancelled => {
+                on_input(window_id, InputEvent::FileHoverCancelled);
+                win.request_redraw();
+            }
+            WindowEvent::DroppedFile(path) => {
+                let position = win.last_cursor_position;
+                on_input(window_id, InputEvent::FileDropped { path, position });
                 win.request_redraw();
             }
             WindowEvent::ModifiersChanged(modifiers) => {
@@ -1206,6 +1315,30 @@ where
             }
             // 0.5.0 M2 (issue #28): the window gained or lost focus.
             WindowEvent::Focused(focused) => {
+                if focused {
+                    // 0.5.4 (#115): coming back from the system settings is when
+                    // a changed preference is noticed where the OS says nothing.
+                    let motion = appearance::current_reduced_motion(Some(&win.window));
+                    if let Some(reduced) = motion
+                        && win.reduced_motion != Some(reduced)
+                    {
+                        let changed = win.reduced_motion.is_some();
+                        win.reduced_motion = Some(reduced);
+                        if changed {
+                            on_input(window_id, InputEvent::ReducedMotionChanged { reduced });
+                        }
+                    }
+                    let contrast = appearance::current_high_contrast(Some(&win.window));
+                    if let Some(high) = contrast
+                        && win.high_contrast != Some(high)
+                    {
+                        let changed = win.high_contrast.is_some();
+                        win.high_contrast = Some(high);
+                        if changed {
+                            on_input(window_id, InputEvent::HighContrastChanged { high });
+                        }
+                    }
+                }
                 on_input(window_id, InputEvent::Focused { focused });
                 win.request_redraw();
             }

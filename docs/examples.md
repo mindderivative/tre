@@ -20,6 +20,21 @@ what should happen before opening a window for a few seconds. Run one with
 | `pan_zoom.py` | The transform parts animating independently |
 | `shadows.py` | Layered shadows easing between elevation levels |
 | `show_damage.py` | What partial redraw repaints each frame, tinted; `--watch` keeps the window open for checking on a real desktop |
+| `hidpi.py` | `dpi_scaling`: a card laid out in logical pixels and drawn sharp at the display's scale; `--watch` keeps the window open to drag between monitors |
+| `snapshot.py` | `window.snapshot()` and `tre.write_png`: a window's pixels at 1x and 2x, with no display |
+| `svg_document.py` | An `svg` node painting a document with gradients, a clip, dashes and group opacity, at two aspect ratios |
+| `gradients.py` | `Gradient.linear`, `.radial` and `.sweep` fills, one animating between two gradients |
+| `effects.py` | `blur`, `backdrop_blur` (frosted glass, animating) and `blend_mode` over a striped background |
+| `languages.py` | `set_system_fonts`: Latin, CJK, Hebrew, Indic, Thai and colour emoji in one window |
+| `rich_text.py` | `spans` (colour, weight, italic, underline, strikethrough) and `selectable` text |
+| `touch.py` | `tap`, `long_press`, `pan` and `pinch`, driven by simulated fingers (or real ones with `--watch`) |
+| `file_drop.py` | `file_hover`, `file_hover_cancel` and `file_drop` for a drop zone (simulated, or real files with `--watch`) |
+| `accessibility_preferences.py` | `get("reduced_motion")`, `get("high_contrast")` and their events: snap instead of ease, swap to a high-contrast palette |
+| `frame_stats.py` | `window.frame_stats()`: stage times, redraw kind, fps and percentiles for a window that animates |
+| `transparent_window.py` | `transparent=True`: a rounded, undecorated card on the desktop, with a close button |
+| `spring.py` | `easing=("spring", bounce)`: overshoot, and a retarget that keeps its speed |
+| `sticky_headers.py` | `sticky=0`: section headers that hold the top of a scroll view |
+| `custom_cursor.py` | `tre.CursorImage`: a reticle cursor drawn in Python, on a card |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |

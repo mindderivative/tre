@@ -46,7 +46,7 @@ pixel above it. Percentage and `auto` widths, and every other kind of node
 ## Fonts
 
 Tesserae Engine bundles Roboto (regular and medium), Noto Sans Arabic, and Hack Nerd
-Font Mono, and never loads system fonts, so text renders the same on every
+Font Mono, and by default never loads system fonts, so text renders the same on every
 machine. `tre.MONOSPACE_FONT_FAMILY` names the monospace face, which
 terminals use — use it for anything that must line up with one, such as an
 editor's line numbers.
@@ -64,6 +64,127 @@ families = tre.register_font(Path("fonts/Inter-Regular.ttf").read_bytes())
 Registration is for the whole process: every window sees the font, and one
 already running picks it up on its next frame. Until a family is registered,
 a `font_family` naming it falls back to a bundled face.
+
+## Other languages and emoji
+
+The bundled fonts cover Latin, Cyrillic, Greek and Arabic. Hebrew, CJK, Indic
+scripts, Thai, colour emoji and the rest have no bundled font, so text in them
+draws as missing-glyph boxes or nothing. There are two ways to supply them.
+
+**Use the machine's fonts (0.5.4).** One switch lets text fall back to whatever
+is installed, for exactly the glyphs the bundled and registered fonts lack:
+
+```python
+tre.set_system_fonts(True)     # for every window in this process, live
+```
+
+A node whose text mixes scripts then needs no special handling: with
+`font_family="Roboto"`, Latin comes from Roboto and the rest from a system font
+chosen for its script, so `"Hello 漢字 😀 שלום"` shows all of it. Colour emoji
+(including the COLR and bitmap formats) draw in colour, and a right-to-left
+paragraph (Arabic, Hebrew) lays out right to left and aligns its start on the
+right. The switch is off by default because it makes text depend on the machine:
+the same app shows different pixels where different fonts are installed, and
+where no installed font has a script it still shows boxes. Text the bundled
+fonts cover is unaffected either way, and turning the switch off again returns
+to the exact same frames.
+
+**Ship the fonts with the app.** For the same pixels everywhere, register
+font files you bundle, such as subsets of [Noto](https://fonts.google.com/noto):
+
+```python
+from importlib.resources import files
+import tre
+
+for name in ("NotoSansJP-Regular.otf", "NotoSansHebrew-Regular.ttf", "NotoEmoji-Regular.ttf"):
+    tre.register_font(files("myapp.fonts").joinpath(name).read_bytes())
+```
+
+Registered fonts take part in fallback too: a glyph that `font_family` lacks is
+taken from any registered font that has it, so one call per script is enough and
+no node needs to name them. Subset a font to the glyphs you need
+(`pyftsubset`) to keep an app small; a full CJK font is many megabytes.
+
+## Rich text and selectable text
+
+One text node can mix styles. `spans` styles ranges of its content (0.5.4),
+given as UTF-8 byte offsets, as a text input's `selection` and `syntax_spans`
+are:
+
+```python
+label = window.create("text", text="Sale: $12 $9, ends Friday", font_size=18, width=300)
+label.set(spans=[
+    (0, 5, {"weight": 500}),                              # "Sale:"
+    (6, 9, {"strikethrough": True}),                       # "$12"
+    (10, 12, {"color": (0xB3, 0x26, 0x1E, 0xFF), "weight": 500}),
+    (20, 26, {"italic": True, "underline": True}),
+])
+```
+
+A style may set any of `color`, `weight` (an OpenType weight, 100 to 950),
+`italic`, `underline`, `strikethrough`, `font_size` (pixels), `font_family` and
+`link`; what it leaves out stays the node's
+own, and a later span wins where two overlap. Offsets past the text, or inside a
+multi-byte character, are clamped, so a span survives a shorter `text`. Spans
+change the shape of the text (a heavier weight is wider), so the node's width
+is yours to size, as it is for any text. Underline and strikethrough follow the
+text's own font metrics and are drawn in the span's colour.
+
+`selectable=True` lets the user select the text with the pointer and copy it
+(0.5.4):
+
+```python
+help_text.set(selectable=True)          # press and drag selects; Ctrl+C copies
+help_text.get("selection")              # (start, end) or None; equal ends are a caret
+help_text.set(selection=(0, 5))         # select from code; None clears
+```
+
+**Links** (0.5.4). A span with a `link` makes its range clickable. A click (press
+and release on it, with no selection made between) fires a `link` event on the
+text node, which bubbles, and `event.href` is the span's `link` string. tre opens
+nothing and styles nothing: colour and underline the span yourself, and decide
+in the listener what `href` means. The pointer shows as a hand over a link
+(unless the node sets its own `cursor`), and text with a link takes pointer
+events, as selectable text does.
+
+```python
+label.set(spans=[(10, 14, {"link": "docs", "color": BLUE, "underline": True})])
+label.on("link", lambda event: open_page(event.href))
+```
+
+A span's `font_size` makes its line taller when it is larger than the rest, and
+`font_family` picks another face for the range.
+
+Selected text shows the text colour at 30% behind it. Double-click selects a
+word and triple-click a line. With a selection showing, Ctrl+A selects all of
+that text, and Shift+Left, Shift+Right, Shift+Home and Shift+End move the end
+of the selection a character, or to the start or end of the text. Ctrl+Shift+Left
+and Ctrl+Shift+Right move it a word (a run of letters and digits, a run of
+punctuation, then the spaces after it), and Shift+Up and Shift+Down a line, keeping
+the column. Moving past the start or end of a text goes on into the neighbouring
+selectable text, and Shift+Up on the first line goes to the start of the text, as
+Shift+Down on the last goes to its end, before they do. While a selection in static
+text exists these keys belong to it: a scroll view does not also scroll for Shift+Up
+and Shift+Down, and Ctrl+Shift+Left and Right are consumed by the selection, so no
+`key_down` listener hears them (the other Shift keys still reach `key_down`
+listeners). The pointer
+is an I-beam over selectable text, unless the node sets a `cursor`. A press anywhere else
+clears the selection.
+
+A drag that starts in one selectable text and moves on into others (0.5.4) selects
+across them, so a document with a text node per paragraph selects like one text:
+the start text from the press to its end, every selectable text between whole, and
+the last text up to the pointer. Copy joins the pieces with a newline, and each
+node's own range reads back from `node.get("selection")`. The drag follows the
+pointer only while it is over selectable text; over anything else it keeps what it
+had, and it does not scroll the view. Setting `selection` from code selects within
+that one text and clears the rest. Ctrl+A and the Shift keys act on the text the
+selection started in. A selectable text
+claims the pointer events over its box, which plain text never does (so a label
+inside a button doesn't swallow the button's clicks): turn it on for text that
+stands alone. A text input's own selection is separate, and Copy takes the
+focused input's selection first. A screen reader sees the selection (see
+[Text, selection and links](accessibility.md#text-selection-and-links)).
 
 ## Text input
 

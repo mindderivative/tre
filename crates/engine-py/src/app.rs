@@ -27,13 +27,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use std::time::Instant;
 
-use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
+use engine_core::{Cursor, InputEvent, NodeId, Tree, from_access_id};
 use engine_platform::{
     EventLoopWaker, IdleHooks, WindowConfig, WindowLifecycle, WindowOptions, WindowRequest,
     run_windowed_multi_with,
 };
-use engine_render::{GpuReport, GpuWatch, TextPlacement, TextRenderer, WindowRenderer};
+use engine_render::{GpuReport, GpuWatch, PresentChoice, WindowRenderer};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
@@ -42,6 +43,7 @@ use winit::window::{Window, WindowId};
 use crate::dispatch::{WindowIo, process_input, run_completions, run_dispatch_outcome};
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType};
+use crate::text_interaction::{text_access_lines, text_cursor_at};
 use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
 use crate::window::{PyWindow, WindowHandles};
@@ -81,194 +83,6 @@ struct WindowSetup {
     title: String,
 }
 
-/// M18 Phase 1/2 (§8, §10, §11.9, §11.10): the real per-glyph hit-test
-/// `engine-core` structurally can't do itself (§4) -- shared by
-/// `PointerPressed`'s click-to-position and `PointerMoved`'s drag-
-/// extend, both of which need the exact same "is `hit` a `TextField`,
-/// and if so what real byte offset does `local_point` land on"
-/// answer. Mirrors `draw_own`'s own real `TextPlacement { x: 0.0,
-/// y: 0.0, max_width: <the node's own real computed layout width> }`
-/// exactly -- a hit-test using different placement values than what
-/// was actually painted would resolve to the wrong character.
-fn text_field_hit_offset(
-    tree: &Rc<RefCell<Tree>>,
-    text_renderer: &mut TextRenderer,
-    hit: NodeId,
-    local_point: Point,
-) -> Option<usize> {
-    // M38 Phase 7 (§5, §8): no longer clones `state` out of the borrow
-    // -- `TextFieldState` stopped deriving `Clone` once it gained a
-    // real `Animated<f64>` field (`scroll_offset`), the identical real
-    // reason `ScrollViewState` never derived it either. Holds `tree.borrow()` for this whole function's body
-    // instead, released when it returns, before either real caller's
-    // own subsequent `borrow_mut()`.
-    let tree = tree.borrow();
-    let node = tree.get(hit)?;
-    let NodeKind::TextField(state) = &node.kind else {
-        return None;
-    };
-    // The placement the field is painted at (`engine-render`'s `draw_own`):
-    // inside its padding, and shifted by how far a multiline field has
-    // scrolled. A click is resolved against what is painted, so it must use
-    // the same one; before, it used the node's corner and ignored the scroll.
-    let layout = tree.layout(hit);
-    let pad = layout.padding;
-    let at = TextPlacement {
-        x: f64::from(pad.left) - state.horizontal_scroll_offset.current,
-        y: f64::from(pad.top) - state.scroll_offset.current,
-        max_width: (layout.size.width - pad.left - pad.right).max(0.0),
-        color: peniko::Color::TRANSPARENT,
-    };
-    Some(text_renderer.hit_test_position(state, at, local_point))
-}
-
-/// M32 Phase 6 (§4, §5, §8): `text_field_hit_offset`'s own real
-/// `Terminal` sibling -- turns a real local click/drag point into the
-/// exact real `(row, col)` cell it lands on, via `engine-render`'s own
-/// `terminal_hit_cell` (real font metrics only that crate has, §4).
-/// `None` for anything that isn't a real, present `Terminal`, the
-/// identical "not the kind this needs" contract `text_field_hit_offset`
-/// already has.
-fn terminal_hit_cell(
-    tree: &Rc<RefCell<Tree>>,
-    text_renderer: &mut TextRenderer,
-    hit: NodeId,
-    local_point: Point,
-) -> Option<(u16, u16)> {
-    let tree_ref = tree.borrow();
-    match tree_ref.get(hit).map(|n| &n.kind) {
-        Some(NodeKind::Terminal(state)) => {
-            // The cell grid starts inside the node's padding.
-            let pad = tree_ref.layout(hit).padding;
-            let inside = Point::new(
-                local_point.x - f64::from(pad.left),
-                local_point.y - f64::from(pad.top),
-            );
-            Some(text_renderer.terminal_hit_cell(state, inside))
-        }
-        _ => None,
-    }
-}
-
-/// A real pointer press, move, or release over a text field or a terminal:
-/// click-to-position, drag-to-select, and the end of a drag. Needs the text
-/// renderer's font metrics, which `process_input` doesn't have, so it runs
-/// here, after it. Takes the tree, the root, and the two drag trackers
-/// rather than the whole window runtime, so a test can drive it without a
-/// window.
-fn text_pointer_input(
-    event: &InputEvent,
-    tree: &Rc<RefCell<Tree>>,
-    root: NodeId,
-    text: &mut TextRenderer,
-    text_drag: &mut Option<NodeId>,
-    terminal_drag: &mut Option<NodeId>,
-) {
-    match *event {
-        InputEvent::PointerPressed {
-            position,
-            button: PointerButton::Primary,
-        } => {
-            // M18 Phase 1 (§8, §10, §11.9, §11.10): widened
-            // from `hit_test` to `hit_test_local` -- the
-            // extra local-space point is exactly what a
-            // real click-to-position hit-test needs below.
-            // The hit is taken in its own statement: held in the `if let`'s
-            // scrutinee, the tree's `Ref` would still be alive in its body,
-            // and the `borrow_mut` there panicked (0.4.4, 0.5.0).
-            let hit = tree.borrow().hit_test_local(root, position);
-            if let Some((hit, local_point)) = hit {
-                if let Some(offset) = text_field_hit_offset(tree, text, hit, local_point) {
-                    tree.borrow_mut().set_text_field_cursor(hit, offset);
-                    // M18 Phase 2 (§8, §10): a real press
-                    // on a TextField always ARMS drag
-                    // tracking -- whether it turns into a
-                    // real selection depends entirely on
-                    // whether a genuine PointerMoved to a
-                    // different position follows before
-                    // release (below); a plain click never
-                    // does, so `selection_anchor` stays
-                    // `None` exactly as `set_text_field_
-                    // cursor` already left it.
-                    *text_drag = Some(hit);
-                } else if let Some((row, col)) = terminal_hit_cell(tree, text, hit, local_point) {
-                    // M32 Phase 6 (§4, §5, §8): a real press
-                    // on a `Terminal` -- the identical real
-                    // "collapsed selection, arm drag
-                    // tracking" shape `TextField`'s own
-                    // press handling just above already
-                    // has.
-                    tree.borrow_mut()
-                        .set_terminal_selection_start(hit, row, col);
-                    *terminal_drag = Some(hit);
-                }
-            }
-        }
-        InputEvent::PointerMoved { position } => {
-            // M18 Phase 2 (§8, §10): the real drag-select
-            // half of click-to-position. Lives here, not
-            // inside `Tree::dispatch`'s own existing
-            // `self.dragging`/`update_drag` mechanism
-            // (scrollbar thumbs) -- that mechanism is pure
-            // geometry with zero rendering knowledge, but
-            // this needs the identical real per-glyph
-            // hit-test `PointerPressed` above already uses,
-            // which only `engine-render` can do (§4).
-            //
-            // **Real, stated scope boundary:** a real drag
-            // that leaves the field's own bounds mid-drag
-            // simply stops updating the selection until it
-            // re-enters (`hit_test_local` returning a
-            // different node, or `None`, is a genuine
-            // no-op below) -- it does not clamp to the
-            // field's own nearest edge the way some real
-            // desktop editors do. A further, real,
-            // un-scoped refinement beyond this phase.
-            if let Some(field) = *text_drag {
-                let hit = tree.borrow().hit_test_local(root, position);
-                if let Some((hit, local_point)) = hit
-                    && hit == field
-                    && let Some(offset) = text_field_hit_offset(tree, text, hit, local_point)
-                {
-                    tree.borrow_mut().extend_text_field_selection(hit, offset);
-                }
-            }
-            // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
-            // real `Terminal` sibling -- the identical real
-            // "still over the same node, extend" shape.
-            if let Some(terminal) = *terminal_drag {
-                let hit = tree.borrow().hit_test_local(root, position);
-                if let Some((hit, local_point)) = hit
-                    && hit == terminal
-                    && let Some((row, col)) = terminal_hit_cell(tree, text, hit, local_point)
-                {
-                    tree.borrow_mut().extend_terminal_selection(hit, row, col);
-                }
-            }
-        }
-        InputEvent::PointerReleased {
-            button: PointerButton::Primary,
-            ..
-        } => {
-            // M18 Phase 2 (§8, §10): a real mouse-up always
-            // ends any in-progress text drag, wherever it
-            // happens -- the same "not conditioned on still
-            // hitting the original node" real mouse-up
-            // semantics `Tree::dispatch`'s own `self.
-            // dragging = None` already established for
-            // its own drags (M4 Phase 3).
-            *text_drag = None;
-            // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
-            // real `Terminal` sibling -- the real selection
-            // itself stays visible (`TerminalState.
-            // selection_start`/`end` are untouched here),
-            // only the drag-tracking itself ends.
-            *terminal_drag = None;
-        }
-        _ => {}
-    }
-}
-
 struct GpuState {
     /// 0.4.0 M6: kept to recreate a lost `surface` for `window`.
     instance: wgpu::Instance,
@@ -291,12 +105,26 @@ struct GpuState {
     /// 0.5.1 (#65): this device's health: its lost and error handlers, and
     /// the stall watchdog. Installed the moment the device exists.
     watch: GpuWatch,
+    /// 0.5.4 (#101): how the swapchain paces frames, and the modes this
+    /// surface supports (the choice picks one of them).
+    present: PresentChoice,
+    present_modes: Vec<wgpu::PresentMode>,
+    /// 0.5.4 (#137): whether the surface blends with what is behind the window.
+    transparent_active: bool,
+    /// 0.5.4 (#135): times each frame's GPU work, where the device can.
+    timer: Option<engine_render::GpuTimer>,
 }
 
 impl GpuState {
     /// 0.4.0: an `Err` (no adapter, no device, or a surface this adapter
     /// can't drive) ends the run, and `App.run()` raises it.
-    fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self, String> {
+    fn new(
+        window: Arc<Window>,
+        width: u32,
+        height: u32,
+        present: PresentChoice,
+        transparent: bool,
+    ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = instance
             .create_surface(window.clone())
@@ -316,7 +144,8 @@ impl GpuState {
         .map_err(|err| format!("no GPU adapter available: {err}"))?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("engine-py app device"),
-            required_features: wgpu::Features::empty(),
+            // 0.5.4 (#135): timestamp queries, where the adapter has them.
+            required_features: adapter.features() & engine_render::gpu_timer_features(),
             ..Default::default()
         }))
         .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
@@ -331,12 +160,20 @@ impl GpuState {
         let mut config = surface
             .get_default_config(&adapter, width, height)
             .ok_or("the window's surface isn't supported by this GPU adapter")?;
+        // 0.5.4 (#101): `get_default_config` takes the first mode the driver
+        // lists, which is `Mailbox` on Linux with Mesa: it never waits for the
+        // display, so one animating box ran the loop at ~3,500 frames a second
+        // and used a whole CPU core. Choose the mode ourselves.
+        let capabilities = surface.get_capabilities(&adapter);
+        config.present_mode = present.mode(&capabilities.present_modes);
+        // 0.5.4 (#128): not an sRGB format, which would encode every colour twice.
+        if let Some(format) = engine_render::linear_surface_format(&capabilities.formats) {
+            config.format = format;
+        }
+        tracing::debug!(mode = ?config.present_mode, choice = present.name(), "present mode");
         // 0.4.0 M3: render into a persistent target and copy it into the
         // swapchain image, where the surface allows copies into it.
-        let copyable = surface
-            .get_capabilities(&adapter)
-            .usages
-            .contains(wgpu::TextureUsages::COPY_DST);
+        let copyable = capabilities.usages.contains(wgpu::TextureUsages::COPY_DST);
         if copyable {
             config.usage |= wgpu::TextureUsages::COPY_DST;
             tracing::debug!("rendering through a persistent target, copied to the surface");
@@ -346,8 +183,25 @@ impl GpuState {
                  every frame in full (no partial redraw)"
             );
         }
+        // 0.5.4 (#137): a see-through window needs a surface that blends with
+        // what is behind it. The renderer writes premultiplied alpha, which is
+        // what `PreMultiplied` expects; `Inherit` leaves it to the window
+        // system (X11's compositing and most Wayland ones read premultiplied).
+        // With neither, the window stays opaque and the app is told.
+        let alpha = engine_render::transparent_alpha_mode(&capabilities.alpha_modes);
+        let transparent_active = transparent && alpha.is_some();
+        if transparent {
+            match alpha {
+                Some(mode) => config.alpha_mode = mode,
+                None => tracing::warn!(
+                    modes = ?capabilities.alpha_modes,
+                    "this surface can't blend with what is behind the window: it stays opaque"
+                ),
+            }
+        }
         surface.configure(&device, &config);
         let renderer = WindowRenderer::new(&device, config.format, width, height, copyable);
+        let timer = engine_render::GpuTimer::new(&device, &queue);
 
         Ok(Self {
             instance,
@@ -358,7 +212,26 @@ impl GpuState {
             queue,
             renderer,
             watch,
+            present,
+            present_modes: capabilities.present_modes,
+            transparent_active,
+            timer,
         })
+    }
+
+    /// 0.5.4 (#101): switches how the swapchain paces frames, live. A no-op
+    /// when the choice is the one in effect, so it can be called every frame.
+    fn set_present(&mut self, choice: PresentChoice) {
+        if choice == self.present {
+            return;
+        }
+        self.present = choice;
+        let mode = choice.mode(&self.present_modes);
+        if mode != self.surface_config.present_mode {
+            self.surface_config.present_mode = mode;
+            self.surface.configure(&self.device, &self.surface_config);
+            tracing::debug!(?mode, choice = choice.name(), "present mode changed");
+        }
     }
 
     /// M32 Phase 2 (§4, §5): reconfigures the real wgpu surface to a
@@ -494,10 +367,23 @@ fn border_cursor(direction: winit::window::ResizeDirection) -> Cursor {
     }
 }
 
-/// M94: `winit`'s icon for each of the engine's cursor shapes.
+/// M94: `winit`'s cursor for each of the engine's cursor shapes; 0.5.4 (#140) a
+/// custom image's, once the loop has built it (the default shape until then).
+fn winit_cursor(cursor: Cursor) -> winit::window::Cursor {
+    match cursor {
+        Cursor::Custom(id) => engine_platform::cursors::get(id).map_or(
+            winit::window::Cursor::Icon(winit::window::CursorIcon::Default),
+            winit::window::Cursor::Custom,
+        ),
+        shape => winit::window::Cursor::Icon(cursor_icon(shape)),
+    }
+}
+
+/// M94: `winit`'s icon for each of the engine's named cursor shapes.
 fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
     use winit::window::CursorIcon as Icon;
     match cursor {
+        Cursor::Custom(_) => Icon::Default,
         Cursor::Default => Icon::Default,
         Cursor::Pointer => Icon::Pointer,
         Cursor::Text => Icon::Text,
@@ -618,24 +504,6 @@ struct WindowRuntime {
     /// 0.5.1 (#70): when the window opened, on the window's clock: a
     /// shader's `frame.time` is the seconds since.
     opened: std::time::Instant,
-    /// M18 Phase 2 (§8, §10): which `TextField` (if any) a real
-    /// press-and-drag is currently extending a selection in -- plain,
-    /// not `RefCell`-wrapped, since only `on_input`'s own closure ever
-    /// reads or writes it. Lives here rather than `engine-core`'s
-    /// existing `Tree.dragging` (scrollbar-thumb drags): that
-    /// mechanism's own `update_drag` is pure geometry with zero
-    /// rendering knowledge, but a real drag-selection needs the exact
-    /// same per-glyph hit-test Phase 1 already established only
-    /// `engine-render` can do (§4) -- `engine-core` structurally can't
-    /// own this drag's own per-frame tracking.
-    text_drag: Option<NodeId>,
-    /// M32 Phase 6 (§4, §5, §8): `text_drag`'s own real `Terminal`
-    /// sibling -- which terminal (if any) a real press-and-drag is
-    /// currently extending a real cell-range selection in. A separate
-    /// field, not a shared one, since a single real press can only
-    /// ever hit one real `NodeKind` at a time (`text_field_hit_offset`/
-    /// `terminal_hit_cell` are mutually exclusive per node).
-    terminal_drag: Option<NodeId>,
     /// M94: the pointer shape last applied to this window, so it's set on
     /// the OS window only when it changes.
     cursor: Cursor,
@@ -794,10 +662,21 @@ impl App {
                 if setup.handles.minimized.get() {
                     window.set_minimized(true);
                 }
+                // 0.5.4 (#102): from here the stored size is the window's real
+                // (physical) one, not the logical size it was asked for, and
+                // the scale is the window's if `dpi_scaling` is on.
+                let inner = window.inner_size();
+                if inner.width > 0 && inner.height > 0 {
+                    setup.handles.width.set(inner.width);
+                    setup.handles.height.set(inner.height);
+                }
+                setup.handles.refresh_scale();
                 let gpu = match GpuState::new(
                     window,
                     setup.handles.width.get(),
                     setup.handles.height.get(),
+                    setup.handles.present_mode.get(),
+                    setup.handles.transparent.get(),
                 ) {
                     Ok(gpu) => gpu,
                     Err(err) => {
@@ -805,6 +684,10 @@ impl App {
                         return false;
                     }
                 };
+                setup
+                    .handles
+                    .transparent_active
+                    .set(Some(gpu.transparent_active));
                 setup
                     .handles
                     .surface_partial
@@ -815,8 +698,6 @@ impl App {
                         handles: setup.handles.clone(),
                         gpu,
                         opened: crate::clock::now(&setup.handles.tree),
-                        text_drag: None,
-                        terminal_drag: None,
                         cursor: Cursor::Default,
                     },
                 );
@@ -864,8 +745,48 @@ impl App {
                     return false;
                 }
 
+                // 0.5.4 (#116): this pass's start, for the frame statistics.
+                let frame_began = Instant::now();
                 let now = crate::clock::now(&runtime.handles.tree);
                 let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                // 0.5.4 (#113): a finger held down becomes a long press as time
+                // passes, and the loop keeps running until it does.
+                crate::touch::poll(
+                    &crate::event::NodeContext {
+                        tree: &runtime.handles.tree,
+                        handlers: &runtime.handles.handlers,
+                        completions: &runtime.handles.completions,
+                    },
+                    &WindowIo {
+                        dock: &runtime.handles.dock,
+                        listeners: &runtime.handles.window_listeners,
+                        terminals: &runtime.handles.terminals,
+                        window: &runtime.handles,
+                    },
+                    runtime.handles.root,
+                    now,
+                    py,
+                );
+                // 0.5.4 (#114): files dragged over or dropped since the last frame.
+                if runtime.handles.files.borrow().pending() {
+                    let handles = &runtime.handles;
+                    crate::files::flush(
+                        &crate::event::NodeContext {
+                            tree: &handles.tree,
+                            handlers: &handles.handlers,
+                            completions: &handles.completions,
+                        },
+                        &WindowIo {
+                            dock: &handles.dock,
+                            listeners: &handles.window_listeners,
+                            terminals: &handles.terminals,
+                            window: handles,
+                        },
+                        handles.root,
+                        py,
+                    );
+                }
+                let any_active = any_active || runtime.handles.touch.borrow().needs_frames();
                 // 0.5.1 (#70): a shader's time is the window's clock; and a
                 // window drawing an `animated` shader keeps running -- a frame
                 // per display refresh, repainting just that node -- exactly
@@ -947,6 +868,14 @@ impl App {
                 // work when the surface's own configured size has
                 // fallen behind the window's true current one, even if
                 // nothing else changed.
+                // 0.5.4 (#102): the display scale (the window's, when
+                // `dpi_scaling` is on): a change relays out and redraws.
+                if runtime.handles.refresh_scale() {
+                    runtime.handles.tree.borrow_mut().mark_dirty();
+                }
+                runtime.gpu.renderer.set_scale(runtime.handles.scale.get());
+                // 0.5.4 (#101): `window.set(present_mode=...)` takes effect live.
+                runtime.gpu.set_present(runtime.handles.present_mode.get());
                 let resized = runtime
                     .gpu
                     .needs_resize(runtime.handles.width.get(), runtime.handles.height.get());
@@ -956,22 +885,31 @@ impl App {
                 // face now, so this frame must repaint. One atomic load
                 // when nothing was registered.
                 let fonts_changed = runtime.gpu.renderer.text().sync_registered_fonts();
+                crate::node_kind_props::refresh_svg_text(
+                    &runtime.handles.tree,
+                    &runtime.handles.svg_font_generation,
+                );
                 let dirty = runtime.handles.tree.borrow_mut().take_dirty();
                 let changed = dirty || resized || fonts_changed;
                 // 0.4.0 M6: an OS redraw (an expose) with nothing changed
                 // still gets the kept frame presented again -- the surface
                 // image may have lost it -- where there is a kept frame.
                 if !changed && !(os_requested && runtime.gpu.renderer.has_persistent_target()) {
+                    crate::frame_stats::lock(&runtime.handles.frame_stats).skipped_one();
                     return any_active;
                 }
+                let after_tick = Instant::now();
 
                 // M96: also builds virtual lists' newly visible rows.
                 crate::node_callbacks::layout(
                     &runtime.handles.tree,
                     runtime.handles.root,
-                    Size {
-                        width: AvailableSpace::Definite(runtime.handles.width.get() as f32),
-                        height: AvailableSpace::Definite(runtime.handles.height.get() as f32),
+                    {
+                        let (width, height) = runtime.handles.logical_size();
+                        Size {
+                            width: AvailableSpace::Definite(width as f32),
+                            height: AvailableSpace::Definite(height as f32),
+                        }
                     },
                     &runtime.handles.handlers,
                     py,
@@ -991,6 +929,8 @@ impl App {
                         .resize(runtime.handles.width.get(), runtime.handles.height.get());
                 }
 
+                let after_layout = Instant::now();
+
                 // 0.4.0 M5: what changed since the last frame
                 // (`WindowRenderer::prepare`). A newly registered font can
                 // reshape text no node's state records, so it redraws
@@ -1002,6 +942,14 @@ impl App {
                 if fonts_changed {
                     runtime.gpu.renderer.reset();
                 }
+                runtime
+                    .gpu
+                    .renderer
+                    .set_profiling(runtime.handles.profile_nodes.get());
+                runtime
+                    .gpu
+                    .renderer
+                    .set_glyph_cache(runtime.handles.glyph_cache.get());
                 let damage = {
                     let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;
@@ -1015,6 +963,7 @@ impl App {
                         &gpu.queue,
                     )
                 };
+                let after_prepare = Instant::now();
                 tracing::trace!(?damage, os_requested, "frame damage");
                 // 0.4.0 M6: nothing to show that isn't already shown, only
                 // this loop asked, and nothing is animating -- no image to
@@ -1022,9 +971,11 @@ impl App {
                 // is kept: its wait for the display is what paces the loop,
                 // which would otherwise spin through unchanged frames.
                 if damage == engine_render::Damage::None && !os_requested && !any_active {
+                    crate::frame_stats::lock(&runtime.handles.frame_stats).skipped_one();
                     return any_active;
                 }
 
+                let acquire_began = Instant::now();
                 let gpu = &mut runtime.gpu;
                 let (output, reconfigure) = match gpu.surface.get_current_texture() {
                     wgpu::CurrentSurfaceTexture::Success(output) => (output, false),
@@ -1051,6 +1002,7 @@ impl App {
                         return any_active || retry;
                     }
                 };
+                let draw_began = Instant::now();
                 let view = output
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1059,6 +1011,11 @@ impl App {
                     .gpu
                     .device
                     .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+                let frame_number =
+                    crate::frame_stats::lock(&runtime.handles.frame_stats).drawn() + 1;
+                if let Some(timer) = &mut runtime.gpu.timer {
+                    timer.begin(&mut encoder, frame_number);
+                }
                 {
                     let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;
@@ -1075,8 +1032,21 @@ impl App {
                         &view,
                     );
                 }
+                if let Some(timer) = &mut runtime.gpu.timer {
+                    timer.end(&mut encoder);
+                }
                 runtime.gpu.queue.submit([encoder.finish()]);
                 runtime.gpu.watch.submitted(&runtime.gpu.queue);
+                // 0.5.4 (#135): GPU times of earlier frames that have arrived.
+                if let Some(timer) = &mut runtime.gpu.timer {
+                    timer.submitted();
+                    let finished = timer.collect(&runtime.gpu.device);
+                    let mut stats = crate::frame_stats::lock(&runtime.handles.frame_stats);
+                    stats.set_gpu_timing(true);
+                    for (frame, took) in finished {
+                        stats.set_gpu(frame, took);
+                    }
+                }
                 // 0.4.1 M8: what this frame redrew, over the image but never
                 // the kept frame; its own submit, after the frame's.
                 if runtime.handles.show_damage.get() {
@@ -1092,13 +1062,50 @@ impl App {
                     // The overlay submits its own work.
                     gpu.watch.submitted(&gpu.queue);
                 }
+                let present_began = Instant::now();
                 runtime.gpu.queue.present(output);
+                let frame_ended = Instant::now();
                 if reconfigure {
                     runtime
                         .gpu
                         .surface
                         .configure(&runtime.gpu.device, &runtime.gpu.surface_config);
                 }
+                // 0.5.4 (#116): this frame's costs, by stage.
+                let record = crate::frame_stats::FrameRecord {
+                    index: 0,
+                    at: frame_began,
+                    tick: after_tick.saturating_duration_since(frame_began),
+                    layout: after_layout.saturating_duration_since(after_tick),
+                    prepare: after_prepare.saturating_duration_since(after_layout),
+                    acquire: draw_began.saturating_duration_since(acquire_began),
+                    draw: present_began.saturating_duration_since(draw_began),
+                    present: frame_ended.saturating_duration_since(present_began),
+                    total: frame_ended.saturating_duration_since(frame_began),
+                    redraw: match &damage {
+                        engine_render::Damage::None => crate::frame_stats::Redraw::Nothing,
+                        engine_render::Damage::Full => crate::frame_stats::Redraw::Full,
+                        engine_render::Damage::Rects(rects) => {
+                            crate::frame_stats::Redraw::Partial {
+                                rects: rects.len(),
+                                area: rects.iter().map(|r| r.area()).sum::<f64>()
+                                    / (f64::from(width) * f64::from(height)).max(1.0),
+                            }
+                        }
+                    },
+                    shader_passes: runtime.gpu.renderer.shader_pass_count(),
+                    nodes: runtime.handles.tree.borrow().node_count(),
+                    size: (u32::from(width), u32::from(height)),
+                    gpu: None,
+                };
+                let mut stats = crate::frame_stats::lock(&runtime.handles.frame_stats);
+                let record = stats.drew(record);
+                if let Some(profile) = runtime.gpu.renderer.take_profile() {
+                    stats.set_profile(record.index, profile);
+                }
+                drop(stats);
+                // A listener on the window's `frame` event hears each one.
+                crate::frame_stats::announce(&runtime.handles, &record, py);
                 any_active
             },
             // §14 step 7: every window this framework opens reports a
@@ -1106,15 +1113,43 @@ impl App {
             // own `Tree` -- unchanged by the multi-window split, just
             // looked up per `WindowId` now instead of assumed singular.
             move |window_id| {
+                // 0.5.4 (#153): the shaped lines of text that is exposed as
+                // text come from the window's text renderer, which needs the
+                // runtime mutably; if something already holds it, the update is
+                // built without them (one run per link segment).
+                let mut lines_fresh = false;
+                if let Ok(mut runtimes) = runtimes_for_access.try_borrow_mut() {
+                    let runtime = runtimes
+                        .get_mut(&window_id)
+                        .expect("build_access_update requested for a window with no runtime state");
+                    let lines =
+                        text_access_lines(&runtime.handles.tree, runtime.gpu.renderer.text());
+                    runtime
+                        .handles
+                        .tree
+                        .borrow_mut()
+                        .set_text_access_lines(lines);
+                    lines_fresh = true;
+                }
                 let runtimes = runtimes_for_access.borrow();
                 let runtime = runtimes
                     .get(&window_id)
                     .expect("build_access_update requested for a window with no runtime state");
+                if !lines_fresh {
+                    // Without a renderer to ask, drop the last frame's lines (they
+                    // may not fit the text any more) so the one-run shape applies.
+                    runtime
+                        .handles
+                        .tree
+                        .borrow_mut()
+                        .set_text_access_lines(Default::default());
+                }
+                // 0.5.4 (#102): bounds in physical pixels, like the window.
                 runtime
                     .handles
                     .tree
                     .borrow()
-                    .build_access_update(runtime.handles.root)
+                    .build_access_update_scaled(runtime.handles.root, runtime.handles.scale.get())
             },
             // M4 Phase 1 step 3: the real "meaning-dependent" half
             // `Tree::dispatch` leaves for its own caller (§2 Design
@@ -1136,6 +1171,20 @@ impl App {
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return;
                 };
+
+                // 0.5.4 (#102): input arrives in physical pixels; the engine
+                // speaks logical ones. A resize first records the physical
+                // size the surface needs.
+                if runtime.handles.refresh_scale() {
+                    // Consumed here, so the frame won't see it change: the
+                    // logical size moved, and layout must follow.
+                    runtime.handles.tree.borrow_mut().mark_dirty();
+                }
+                if let InputEvent::Resized { width, height } = &event {
+                    runtime.handles.width.set(*width as u32);
+                    runtime.handles.height.set(*height as u32);
+                }
+                let event = crate::scale::to_logical(event, runtime.handles.scale.get());
 
                 // M94: modifier state is shared by every window's event
                 // routing (`listeners::modifiers`), nothing more to do.
@@ -1175,6 +1224,20 @@ impl App {
                     // 0.5.0 M3: the resize border's cursors come first.
                     let wanted = crate::dispatch::border_direction(&runtime.handles, *position)
                         .map(border_cursor)
+                        .or_else(|| {
+                            // 0.5.4 (#131): text asks for a pointer over a link and
+                            // an I-beam over selectable text, unless its node (or
+                            // a pointer capture) says otherwise.
+                            if runtime.handles.tree.borrow().pointer_capture().is_some() {
+                                return None;
+                            }
+                            text_cursor_at(
+                                &runtime.handles.tree,
+                                runtime.gpu.renderer.text(),
+                                runtime.handles.root,
+                                *position,
+                            )
+                        })
                         .unwrap_or_else(|| {
                             cursor_at(
                                 &runtime.handles.tree.borrow(),
@@ -1184,20 +1247,19 @@ impl App {
                         });
                     if wanted != runtime.cursor {
                         if let Some(window) = runtime.handles.os_window.borrow().as_ref() {
-                            window.set_cursor(cursor_icon(wanted));
+                            window.set_cursor(winit_cursor(wanted));
                         }
                         runtime.cursor = wanted;
                     }
                 }
-                // Text-field and terminal pointer handling that needs the
-                // text renderer, which `process_input` has no access to.
-                text_pointer_input(
-                    &event,
-                    &runtime.handles.tree,
-                    runtime.handles.root,
+                // Text-field, terminal and static-text interaction that needs
+                // the text renderer, which `process_input` has no access to:
+                // `Window.simulate` runs the same code with a headless one.
+                crate::text_interaction::process(
+                    &runtime.handles,
                     runtime.gpu.renderer.text(),
-                    &mut runtime.text_drag,
-                    &mut runtime.terminal_drag,
+                    &event,
+                    py,
                 );
                 match event {
                     // A real OS appearance change: tre themes nothing
@@ -1208,6 +1270,23 @@ impl App {
                             py,
                             WindowEventType::ColorScheme,
                             |e| e.dark = Some(dark),
+                        );
+                    }
+                    // 0.5.4 (#115): the OS's motion or contrast preference changed.
+                    InputEvent::ReducedMotionChanged { reduced } => {
+                        listeners::deliver_window(
+                            &runtime.handles.window_listeners,
+                            py,
+                            WindowEventType::ReducedMotion,
+                            |e| e.reduced_motion = Some(reduced),
+                        );
+                    }
+                    InputEvent::HighContrastChanged { high } => {
+                        listeners::deliver_window(
+                            &runtime.handles.window_listeners,
+                            py,
+                            WindowEventType::HighContrast,
+                            |e| e.high_contrast = Some(high),
                         );
                     }
                     // 0.5.0 M2 (issue #28): the window gained or lost focus.
@@ -1261,8 +1340,8 @@ impl App {
                     // either sibling project's own size-bucketing
                     // approach).
                     InputEvent::Resized { width, height } => {
-                        runtime.handles.width.set(width as u32);
-                        runtime.handles.height.set(height as u32);
+                        // (The physical size was stored above; `width` and
+                        // `height` here are logical.)
                         listeners::deliver_window(
                             &runtime.handles.window_listeners,
                             py,
@@ -1333,6 +1412,40 @@ impl App {
                     runtime.handles.tree.clone(),
                     runtime.handles.handlers.clone(),
                 );
+                // 0.5.4 (#151): a screen reader following a link, or selecting
+                // text, in a text node.
+                // Looked up in its own statement: held in the `if let`'s
+                // scrutinee, the tree's `Ref` would still be alive while the
+                // listener runs, and a listener that changes the tree would
+                // panic on its `borrow_mut` (as the pointer path's did).
+                let text_part = tree_rc.borrow().resolve_text_part(request.target_node);
+                if let Some(engine_core::TextPart::Link { owner, href, .. }) = text_part {
+                    if request.action == engine_core::Action::Click {
+                        listeners::deliver(
+                            &NodeContext {
+                                tree: &tree_rc,
+                                handlers: &handlers,
+                                completions: &runtime.handles.completions,
+                            },
+                            py,
+                            listeners::EventType::Link,
+                            owner,
+                            None,
+                            |e| e.href = Some(href),
+                        );
+                    }
+                    return;
+                }
+                if request.action == engine_core::Action::SetTextSelection {
+                    if let Some(engine_core::ActionData::SetTextSelection(selection)) =
+                        &request.data
+                    {
+                        tree_rc
+                            .borrow_mut()
+                            .set_text_selection_from_access(selection);
+                    }
+                    return;
+                }
                 let node = from_access_id(request.target_node);
                 let mut tree = tree_rc.borrow_mut();
                 match request.action {
@@ -1484,6 +1597,9 @@ impl App {
                                 min_size: Some(setup.handles.min_size.get())
                                     .filter(|size| *size != (0.0, 0.0)),
                                 icon: setup.handles.icon.borrow().clone(),
+                                transparent: setup.handles.transparent.get(),
+                                blur: setup.handles.blur_behind.get(),
+                                click_through: setup.handles.click_through.get(),
                             },
                         },
                         token: index as u64,
@@ -1545,290 +1661,6 @@ mod tests {
     use peniko::Color;
     use peniko::kurbo::Point;
     use taffy::prelude::{AvailableSpace, Size, Style, length};
-
-    /// A window with one 200x30 text field at its top-left corner and one
-    /// 200x60 terminal under it; a real pointer press on either runs
-    /// `text_pointer_input`, which needs the tree *not* borrowed while it
-    /// writes. `simulate` never reaches it, so only a real window did.
-    type Scene = (
-        std::rc::Rc<std::cell::RefCell<Tree>>,
-        engine_core::NodeId,
-        engine_core::NodeId,
-        engine_core::NodeId,
-    );
-
-    fn field_and_terminal() -> Scene {
-        field_and_terminal_padded(0.0, 0.0)
-    }
-
-    /// The same, with `padding` left and top on the field and the terminal.
-    fn field_and_terminal_padded(pad_left: f32, pad_top: f32) -> Scene {
-        let mut tree = Tree::new();
-        let sized = |w: f32, h: f32| Style {
-            size: Size {
-                width: length(w),
-                height: length(h),
-            },
-            padding: taffy::geometry::Rect {
-                left: length(pad_left),
-                top: length(pad_top),
-                right: length(0.0),
-                bottom: length(0.0),
-            },
-            ..Default::default()
-        };
-        let paint = || PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0);
-        let root = tree.insert(
-            NodeKind::Container,
-            Style {
-                flex_direction: taffy::FlexDirection::Column,
-                size: Size {
-                    width: length(300.0),
-                    height: length(200.0),
-                },
-                ..Default::default()
-            },
-            paint(),
-        );
-        let field = tree.insert(
-            NodeKind::TextField(engine_core::TextFieldState::new(
-                "hello world",
-                "Roboto",
-                400.0,
-                16.0,
-            )),
-            sized(200.0, 30.0),
-            paint(),
-        );
-        let terminal = tree.insert(
-            NodeKind::Terminal(engine_core::TerminalState::new(
-                20,
-                4,
-                engine_render::MONOSPACE_FONT_FAMILY,
-                14.0,
-            )),
-            sized(200.0, 60.0),
-            paint(),
-        );
-        tree.add_child(root, field);
-        tree.add_child(root, terminal);
-        tree.compute_layout(
-            root,
-            Size {
-                width: AvailableSpace::Definite(300.0),
-                height: AvailableSpace::Definite(200.0),
-            },
-        );
-        (
-            std::rc::Rc::new(std::cell::RefCell::new(tree)),
-            root,
-            field,
-            terminal,
-        )
-    }
-
-    fn pointer(
-        event: engine_core::InputEvent,
-        tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
-        root: engine_core::NodeId,
-        drags: &mut (Option<engine_core::NodeId>, Option<engine_core::NodeId>),
-    ) {
-        let mut text = engine_render::TextRenderer::new();
-        super::text_pointer_input(&event, tree, root, &mut text, &mut drags.0, &mut drags.1);
-    }
-
-    fn press(position: Point) -> engine_core::InputEvent {
-        engine_core::InputEvent::PointerPressed {
-            position,
-            button: engine_core::PointerButton::Primary,
-        }
-    }
-
-    /// A real click in a text field puts the caret there and arms a drag.
-    /// It panicked with `RefCell already borrowed` (0.4.4 and 0.5.0).
-    #[test]
-    fn a_press_in_a_text_field_positions_the_caret_and_arms_a_drag() {
-        let (tree, root, field, _) = field_and_terminal();
-        let mut drags = (None, None);
-        pointer(press(Point::new(60.0, 10.0)), &tree, root, &mut drags);
-        assert_eq!(drags.0, Some(field), "the drag is armed");
-        let tree = tree.borrow();
-        let Some(NodeKind::TextField(state)) = tree.get(field).map(|n| &n.kind) else {
-            unreachable!()
-        };
-        assert!(state.cursor > 0, "the caret moved to the click");
-        assert_eq!(
-            state.selection_anchor, None,
-            "a plain click selects nothing"
-        );
-    }
-
-    /// Dragging from a press across the field selects what it passes over.
-    #[test]
-    fn a_drag_in_a_text_field_extends_the_selection() {
-        let (tree, root, field, _) = field_and_terminal();
-        let mut drags = (None, None);
-        pointer(press(Point::new(20.0, 10.0)), &tree, root, &mut drags);
-        pointer(
-            engine_core::InputEvent::PointerMoved {
-                position: Point::new(120.0, 10.0),
-            },
-            &tree,
-            root,
-            &mut drags,
-        );
-        {
-            let tree = tree.borrow();
-            let Some(NodeKind::TextField(state)) = tree.get(field).map(|n| &n.kind) else {
-                unreachable!()
-            };
-            assert!(state.selection_anchor.is_some(), "a selection began");
-            assert_ne!(Some(state.cursor), state.selection_anchor);
-        }
-        pointer(
-            engine_core::InputEvent::PointerReleased {
-                position: Point::new(120.0, 10.0),
-                button: engine_core::PointerButton::Primary,
-            },
-            &tree,
-            root,
-            &mut drags,
-        );
-        assert_eq!(drags, (None, None), "a release ends the drag");
-    }
-
-    /// The same for a terminal: a press starts a selection, a drag grows it.
-    #[test]
-    fn a_press_and_drag_in_a_terminal_select_cells() {
-        let (tree, root, _, terminal) = field_and_terminal();
-        let mut drags = (None, None);
-        pointer(press(Point::new(10.0, 40.0)), &tree, root, &mut drags);
-        assert_eq!(drags.1, Some(terminal), "the drag is armed");
-        pointer(
-            engine_core::InputEvent::PointerMoved {
-                position: Point::new(90.0, 60.0),
-            },
-            &tree,
-            root,
-            &mut drags,
-        );
-        let tree = tree.borrow();
-        let Some(NodeKind::Terminal(state)) = tree.get(terminal).map(|n| &n.kind) else {
-            unreachable!()
-        };
-        assert!(state.selection_start.is_some());
-        assert_ne!(
-            state.selection_start, state.selection_end,
-            "the selection grew"
-        );
-    }
-
-    fn state_of_field(
-        tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
-        field: engine_core::NodeId,
-    ) -> usize {
-        let tree = tree.borrow();
-        let Some(NodeKind::TextField(state)) = tree.get(field).map(|n| &n.kind) else {
-            unreachable!()
-        };
-        state.cursor
-    }
-
-    /// 0.5.1 (#53): with `padding`, a click lands on the character under it:
-    /// the same glyph, clicked where it now is, gives the same offset.
-    #[test]
-    fn a_click_in_a_padded_text_input_lands_on_the_character_under_it() {
-        let (plain, root, field, _) = field_and_terminal();
-        let mut drags = (None, None);
-        pointer(press(Point::new(60.0, 10.0)), &plain, root, &mut drags);
-        let expected = state_of_field(&plain, field);
-        assert!(expected > 0, "the click is inside the text");
-
-        let (padded, root, field, _) = field_and_terminal_padded(40.0, 10.0);
-        let mut drags = (None, None);
-        pointer(
-            press(Point::new(60.0 + 40.0, 10.0 + 10.0)),
-            &padded,
-            root,
-            &mut drags,
-        );
-        assert_eq!(state_of_field(&padded, field), expected);
-    }
-
-    /// The same for a terminal: the cell under the pointer, inside the padding.
-    #[test]
-    fn a_click_in_a_padded_terminal_lands_on_the_cell_under_it() {
-        fn cell(
-            tree: &std::rc::Rc<std::cell::RefCell<Tree>>,
-            terminal: engine_core::NodeId,
-        ) -> Option<(u16, u16)> {
-            let tree = tree.borrow();
-            let Some(NodeKind::Terminal(state)) = tree.get(terminal).map(|n| &n.kind) else {
-                unreachable!()
-            };
-            state.selection_start
-        }
-        let (plain, root, _, terminal) = field_and_terminal();
-        let mut drags = (None, None);
-        pointer(press(Point::new(60.0, 50.0)), &plain, root, &mut drags);
-        let expected = cell(&plain, terminal);
-        assert!(expected.is_some());
-
-        let (padded, root, _, terminal) = field_and_terminal_padded(20.0, 10.0);
-        let mut drags = (None, None);
-        pointer(
-            press(Point::new(60.0 + 20.0, 50.0 + 10.0)),
-            &padded,
-            root,
-            &mut drags,
-        );
-        assert_eq!(cell(&padded, terminal), expected);
-    }
-
-    /// Found while doing #53: the hit test ignored a multiline field's scroll,
-    /// so a click in a scrolled field landed on the line it would have under
-    /// an unscrolled one. It must resolve against what is painted.
-    #[test]
-    fn a_click_in_a_scrolled_multiline_field_lands_on_the_line_under_it() {
-        fn click_at_the_top(scroll: f64) -> usize {
-            let mut tree = Tree::new();
-            let content = (0..40)
-                .map(|i| format!("line{i}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let mut state = engine_core::TextFieldState::new(content, "Roboto", 400.0, 14.0);
-            state.multiline = true;
-            state.scroll_offset.current = scroll;
-            let field = tree.insert(
-                NodeKind::TextField(state),
-                Style {
-                    size: Size {
-                        width: length(200.0),
-                        height: length(100.0),
-                    },
-                    ..Default::default()
-                },
-                PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0),
-            );
-            tree.compute_layout(
-                field,
-                Size {
-                    width: AvailableSpace::Definite(200.0),
-                    height: AvailableSpace::Definite(100.0),
-                },
-            );
-            let tree = std::rc::Rc::new(std::cell::RefCell::new(tree));
-            let mut drags = (None, None);
-            pointer(press(Point::new(5.0, 5.0)), &tree, field, &mut drags);
-            state_of_field(&tree, field)
-        }
-        let unscrolled = click_at_the_top(0.0);
-        let scrolled = click_at_the_top(100.0);
-        assert!(
-            scrolled > unscrolled,
-            "scrolled content: line {scrolled} vs {unscrolled}"
-        );
-    }
 
     /// M94: the cursor comes from the node under the pointer or its nearest
     /// ancestor that sets one, the capturing node wins while it holds

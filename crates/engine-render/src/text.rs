@@ -37,6 +37,16 @@ const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../assets/fonts/NotoSansArabic-R
 /// name confirmed by direct read of the font's own `name` table (Python
 /// `fontTools.ttLib.TTFont(...)['name']`, nameID 1), not assumed from
 /// the filename: `"Hack Nerd Font Mono"` (below).
+/// The faces every renderer registers, as raw files.
+pub(crate) fn bundled_fonts() -> [&'static [u8]; 4] {
+    [
+        ROBOTO_REGULAR,
+        ROBOTO_MEDIUM,
+        NOTO_SANS_ARABIC,
+        HACK_NERD_FONT_MONO,
+    ]
+}
+
 const HACK_NERD_FONT_MONO: &[u8] = include_bytes!("../assets/fonts/HackNerdFontMono-Regular.ttf");
 /// The real family name `Hack Nerd Font Mono`'s own `name` table
 /// reports -- what every `FontFamily::named(...)` call below must pass
@@ -67,18 +77,17 @@ struct LayoutCacheKey {
     /// resolves to, which `draw_field`'s own paint loop reads directly
     /// (`shaped_layout`'s own real build below).
     spans: Vec<(Range<usize>, Color)>,
-    /// M31 Phase 4 (§5, §8): the real default brush every glyph
-    /// outside every real span resolves to -- without pushing this
-    /// explicitly, an un-spanned glyph's own real `style_index` would
-    /// point at `Style::default()`'s own `[u8; 4]::default()` brush
-    /// (`[0, 0, 0, 0]`, fully transparent), not `at.color`. Part of
-    /// the cache key since a real color change changes it.
-    default_color: Color,
     /// M96: italics, letter spacing, wrapping, and the line limit.
     options: TextOptions,
 }
 
+/// A node's accessibility lines, with what they were made from: the layout's
+/// `built` number and the placement's `x` and `y` bits.
+type CachedAccessLines = ((u64, u64, u64), Vec<engine_core::AccessLine>);
+
 struct CachedLayout {
+    /// Which layout this is, by the renderer's running count (`shapes`).
+    built: u64,
     key: LayoutCacheKey,
     layout: parley::Layout<[u8; 4]>,
 }
@@ -115,6 +124,92 @@ pub struct FontSpec<'a> {
     pub options: &'a TextOptions,
 }
 
+/// 0.5.4 (#111): a node's family followed by every registered family, so a glyph
+/// the node's family lacks (CJK in Roboto text, say) is taken from a registered
+/// font that has it -- hermetic, unlike the system's fallback. With nothing
+/// registered it is the one family, as before.
+fn family_stack<'a>(primary: &'a str, registered: &'a [String]) -> FontFamily<'a> {
+    if registered.is_empty() {
+        return FontFamily::named(primary);
+    }
+    let names: Vec<parley::FontFamilyName<'a>> = std::iter::once(primary)
+        .chain(
+            registered
+                .iter()
+                .map(String::as_str)
+                .filter(|n| *n != primary),
+        )
+        .map(parley::FontFamilyName::named)
+        .collect();
+    FontFamily::List(std::borrow::Cow::Owned(names))
+}
+
+/// 0.5.4 (#112): the underline and strikethrough a run's style asks for, as
+/// rules the width of the run, in the decoration's brush (the run's own when
+/// it has none), at the run font's own offset and thickness unless the style
+/// gives them.
+fn paint_decorations(
+    scene: &mut Scene,
+    glyph_run: &parley::GlyphRun<'_, [u8; 4]>,
+    x: f64,
+    y: f64,
+    default: Color,
+) {
+    let style = glyph_run.style();
+    let metrics = glyph_run.run().metrics();
+    let (left, width) = (
+        x + f64::from(glyph_run.offset()),
+        f64::from(glyph_run.advance()),
+    );
+    for (decoration, offset, size) in [
+        (
+            &style.underline,
+            metrics.underline_offset,
+            metrics.underline_size,
+        ),
+        (
+            &style.strikethrough,
+            metrics.strikethrough_offset,
+            metrics.strikethrough_size,
+        ),
+    ] {
+        let Some(decoration) = decoration else {
+            continue;
+        };
+        let offset = decoration.offset.unwrap_or(offset);
+        let size = decoration.size.unwrap_or(size).max(1.0);
+        scene.set_paint(resolve_brush(decoration.brush, default));
+        let top = y + f64::from(glyph_run.baseline() - offset);
+        scene.fill_rect(&Rect::new(left, top, left + width, top + f64::from(size)));
+    }
+}
+
+/// The brush of text that has no colour of its own: shaped with this, and
+/// painted in whatever colour the node has at paint time, so a colour change
+/// never reshapes the text (0.5.4, review).
+const NO_BRUSH: [u8; 4] = [0, 0, 0, 0];
+
+/// `color` as a brush. A span that really is `(0, 0, 0, 0)` becomes the other
+/// fully transparent value, so it is never mistaken for "no colour".
+fn brush_of(color: Color) -> [u8; 4] {
+    let rgba = color.to_rgba8();
+    let brush = [rgba.r, rgba.g, rgba.b, rgba.a];
+    if brush == NO_BRUSH {
+        [1, 1, 1, 0]
+    } else {
+        brush
+    }
+}
+
+/// A glyph run's colour: its own brush, or `default` where it has none.
+fn resolve_brush(brush: [u8; 4], default: Color) -> Color {
+    if brush == NO_BRUSH {
+        default
+    } else {
+        Color::from_rgba8(brush[0], brush[1], brush[2], brush[3])
+    }
+}
+
 /// Shapes `content` with every style pushed, before line breaking.
 fn shape_text(
     font_cx: &mut FontContext,
@@ -122,10 +217,13 @@ fn shape_text(
     content: &str,
     font: &FontSpec<'_>,
     spans: &[(Range<usize>, Color)],
-    default_color: Color,
 ) -> parley::Layout<[u8; 4]> {
     let mut builder = layout_cx.ranged_builder(font_cx, content, 1.0, true);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::named(font.family)));
+    let fallback = fonts::fallback_families();
+    builder.push_default(StyleProperty::FontFamily(family_stack(
+        font.family,
+        &fallback,
+    )));
     builder.push_default(StyleProperty::FontWeight(FontWeight::new(font.weight)));
     builder.push_default(StyleProperty::FontSize(font.size));
     // M62 Phase 1 (§7.1, §16.3): `None` pushes nothing, keeping `parley`'s
@@ -144,14 +242,56 @@ fn shape_text(
     // M31 Phase 4 (§5, §8): a default brush over the whole content, then a
     // per-range override for each syntax span -- every glyph needs a real
     // brush, since painting reads each glyph's own back.
-    let rgba = default_color.to_rgba8();
-    builder.push_default(StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]));
+    builder.push_default(StyleProperty::Brush(NO_BRUSH));
     for (range, color) in spans {
-        let rgba = color.to_rgba8();
-        builder.push(
-            StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]),
-            range.clone(),
-        );
+        builder.push(StyleProperty::Brush(brush_of(*color)), range.clone());
+    }
+    // 0.5.4 (#112): a text node's own spans, over the node's style.
+    let len = content.len();
+    let clamp = |mut offset: usize| {
+        offset = offset.min(len);
+        while !content.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    };
+    for span in &font.options.spans {
+        let range = clamp(span.start)..clamp(span.end);
+        if range.is_empty() {
+            continue;
+        }
+        if let Some(color) = span.color {
+            builder.push(StyleProperty::Brush(brush_of(color)), range.clone());
+        }
+        if let Some(weight) = span.weight {
+            builder.push(
+                StyleProperty::FontWeight(FontWeight::new(weight)),
+                range.clone(),
+            );
+        }
+        if let Some(italic) = span.italic {
+            let style = if italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            };
+            builder.push(StyleProperty::FontStyle(style), range.clone());
+        }
+        if let Some(size) = span.font_size {
+            builder.push(StyleProperty::FontSize(size), range.clone());
+        }
+        if let Some(family) = &span.font_family {
+            builder.push(
+                StyleProperty::FontFamily(family_stack(family, &fallback)),
+                range.clone(),
+            );
+        }
+        if span.underline {
+            builder.push(StyleProperty::Underline(true), range.clone());
+        }
+        if span.strikethrough {
+            builder.push(StyleProperty::Strikethrough(true), range);
+        }
     }
     builder.build(content)
 }
@@ -207,9 +347,8 @@ fn build_text_layout(
     max_width: f32,
     align: TextAlign,
     spans: &[(Range<usize>, Color)],
-    default_color: Color,
 ) -> parley::Layout<[u8; 4]> {
-    let mut layout = shape_text(font_cx, layout_cx, content, font, spans, default_color);
+    let mut layout = shape_text(font_cx, layout_cx, content, font, spans);
     break_and_align(&mut layout, font, max_width, align);
     if !font.options.ellipsis {
         return layout;
@@ -231,7 +370,7 @@ fn build_text_layout(
     }
     // The widest single-line width of `text`.
     let mut width_of = |text: &str| {
-        let mut probe = shape_text(font_cx, layout_cx, text, font, &[], default_color);
+        let mut probe = shape_text(font_cx, layout_cx, text, font, &[]);
         probe.break_all_lines(None);
         probe.width()
     };
@@ -264,7 +403,7 @@ fn build_text_layout(
         display.push_str(text[..boundaries[lo]].trim_end());
         display.push('…');
     }
-    let mut layout = shape_text(font_cx, layout_cx, &display, font, &[], default_color);
+    let mut layout = shape_text(font_cx, layout_cx, &display, font, &[]);
     break_and_align(&mut layout, font, max_width, align);
     layout
 }
@@ -284,6 +423,10 @@ fn build_text_layout(
 /// same headless-CI-safe discipline this codebase already applies to
 /// GPU/display absence (TRE v1 finding #261).
 pub struct TextRenderer {
+    /// 0.5.4 (#127): draw glyphs from the renderer's cache of rendered glyph
+    /// images instead of drawing each glyph's outline every frame. Cheaper
+    /// (see `set_glyph_cache`) and not pixel-identical; off by default.
+    glyph_cache: bool,
     font_cx: FontContext,
     layout_cx: LayoutContext<[u8; 4]>,
     /// M28 Phase 1 (review follow-through, §5/§6): one shaped `Layout`
@@ -295,6 +438,17 @@ pub struct TextRenderer {
     /// distinct strings a live-updating label has ever shown; see
     /// `evict_stale_layouts`.
     layout_cache: HashMap<NodeId, CachedLayout>,
+    /// How many text layouts have been built so far. Each cached layout
+    /// remembers which one it is (`built`), so what is derived from a layout
+    /// can tell when it has been replaced; a working cache leaves the count
+    /// alone when only a colour changes.
+    shapes: u64,
+    /// The accessibility lines last made for a node, with what they were made
+    /// from (the layout's `built` and the placement), so an unchanged node is
+    /// not walked again on every accessibility refresh.
+    access_cache: HashMap<NodeId, CachedAccessLines>,
+    /// How many times lines were really worked out, for tests.
+    access_builds: u64,
     /// M32 Phase 1 (§5, §8, §10): real per-`(font_family, font_size)`
     /// monospace cell metrics, memoized -- see `monospace_cell_size`.
     /// Unbounded like `layout_cache` was before `evict_stale_layouts`
@@ -322,6 +476,11 @@ pub struct TextRenderer {
     /// append-only, so the next sync only needs the ones past this).
     font_generation: u64,
     registered_font_count: usize,
+    /// 0.5.4 (#111): the faces this renderer was built with, and whether its
+    /// collection reads the system's fonts -- to rebuild the collection when
+    /// `fonts::set_system_fonts` changes.
+    bundled: Vec<Blob<u8>>,
+    system_fonts: bool,
 }
 
 impl Default for TextRenderer {
@@ -345,29 +504,65 @@ impl TextRenderer {
     /// family, to prove a later `fonts::register_font` is what supplies
     /// it. Every font already in the M86 registry is registered too.
     fn with_bundled_fonts(bundled: &[&[u8]]) -> Self {
-        let mut collection = Collection::new(CollectionOptions {
-            shared: false,
-            system_fonts: false,
-        });
-        for bytes in bundled {
-            collection.register_fonts(Blob::new(Arc::new(bytes.to_vec())), None);
-        }
+        let bundled: Vec<Blob<u8>> = bundled
+            .iter()
+            .map(|bytes| Blob::new(Arc::new(bytes.to_vec())))
+            .collect();
+        let system_fonts = fonts::system_fonts();
         let (font_generation, registered_font_count, registered) = fonts::registered_since(0);
-        for blob in registered {
-            collection.register_fonts(blob, None);
-        }
+        let collection = Self::collection(&bundled, &registered, system_fonts);
         Self {
+            glyph_cache: false,
             font_cx: FontContext {
                 collection,
                 source_cache: Default::default(),
             },
             layout_cx: LayoutContext::new(),
             layout_cache: HashMap::new(),
+            shapes: 0,
+            access_cache: HashMap::new(),
+            access_builds: 0,
             monospace_cell_cache: HashMap::new(),
             terminal_run_cache: HashMap::new(),
             font_generation,
             registered_font_count,
+            bundled,
+            system_fonts,
         }
+    }
+
+    /// A collection of the bundled faces and the registered ones, reading
+    /// the system's installed fonts too when `system_fonts`.
+    fn collection(bundled: &[Blob<u8>], registered: &[Blob<u8>], system_fonts: bool) -> Collection {
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts,
+        });
+        for blob in bundled.iter().chain(registered) {
+            collection.register_fonts(blob.clone(), None);
+        }
+        collection
+    }
+
+    /// 0.5.4 (#125): which fonts this renderer has synced to; it changes
+    /// when the set (and so every measured text) does.
+    pub(crate) fn font_generation(&self) -> u64 {
+        self.font_generation
+    }
+
+    /// 0.5.4 (#127): draws glyphs from a cache of rendered glyph images (the
+    /// renderer's glyph atlas) instead of drawing every glyph's outline every
+    /// frame. About four times cheaper to build (a 36-character label: 28 us ->
+    /// 6 us), but the images are rasterised once and then placed, so edge pixels
+    /// differ from drawing the outline (measured: up to about 45 of 255 on an
+    /// antialiased edge, 80 at 2x, the text in the same place) and the upstream
+    /// code calls itself experimental. Off by default.
+    pub fn set_glyph_cache(&mut self, on: bool) {
+        self.glyph_cache = on;
+    }
+
+    pub fn glyph_cache(&self) -> bool {
+        self.glyph_cache
     }
 
     /// M86: registers any fonts added to the process-global registry
@@ -380,13 +575,24 @@ impl TextRenderer {
         if fonts::generation() == self.font_generation {
             return false;
         }
-        let (font_generation, registered_font_count, new_blobs) =
-            fonts::registered_since(self.registered_font_count);
-        for blob in new_blobs {
-            self.font_cx.collection.register_fonts(blob, None);
+        let system_fonts = fonts::system_fonts();
+        if system_fonts != self.system_fonts {
+            // The set of fonts a collection reads from is fixed when it is
+            // made: build another, with everything registered so far.
+            let (font_generation, registered_font_count, all) = fonts::registered_since(0);
+            self.font_cx.collection = Self::collection(&self.bundled, &all, system_fonts);
+            self.system_fonts = system_fonts;
+            self.font_generation = font_generation;
+            self.registered_font_count = registered_font_count;
+        } else {
+            let (font_generation, registered_font_count, new_blobs) =
+                fonts::registered_since(self.registered_font_count);
+            for blob in new_blobs {
+                self.font_cx.collection.register_fonts(blob, None);
+            }
+            self.font_generation = font_generation;
+            self.registered_font_count = registered_font_count;
         }
-        self.font_generation = font_generation;
-        self.registered_font_count = registered_font_count;
         self.layout_cache.clear();
         self.monospace_cell_cache.clear();
         self.terminal_run_cache.clear();
@@ -412,7 +618,6 @@ impl TextRenderer {
             width,
             TextAlign::Start,
             &[],
-            Color::BLACK,
         );
         let shown = visible_lines(&layout, font.options);
         let widest = (0..shown)
@@ -479,7 +684,6 @@ impl TextRenderer {
         align: TextAlign,
         line_height: Option<f32>,
         spans: &[(Range<usize>, Color)],
-        default_color: Color,
         options: &TextOptions,
     ) -> &parley::Layout<[u8; 4]> {
         let stale = self.layout_cache.get(&node_id).is_none_or(|cached| {
@@ -491,19 +695,25 @@ impl TextRenderer {
                 || cached.key.align != align
                 || cached.key.line_height != line_height
                 || cached.key.spans != spans
-                || cached.key.default_color != default_color
-                || cached.key.options != *options
+                || !cached.key.options.same_layout(options)
         });
         let Self {
+            glyph_cache: _,
             font_cx,
             layout_cx,
             layout_cache,
+            shapes,
+            access_cache: _,
+            access_builds: _,
             monospace_cell_cache: _,
             terminal_run_cache: _,
             font_generation: _,
             registered_font_count: _,
+            bundled: _,
+            system_fonts: _,
         } = self;
         if stale {
+            *shapes += 1;
             let font = FontSpec {
                 family: font_family,
                 weight: font_weight,
@@ -511,19 +721,12 @@ impl TextRenderer {
                 line_height,
                 options,
             };
-            let layout = build_text_layout(
-                font_cx,
-                layout_cx,
-                content,
-                &font,
-                max_width,
-                align,
-                spans,
-                default_color,
-            );
+            let layout =
+                build_text_layout(font_cx, layout_cx, content, &font, max_width, align, spans);
             layout_cache.insert(
                 node_id,
                 CachedLayout {
+                    built: *shapes,
                     key: LayoutCacheKey {
                         content: content.to_string(),
                         font_family: font_family.to_string(),
@@ -533,7 +736,6 @@ impl TextRenderer {
                         align,
                         line_height,
                         spans: spans.to_vec(),
-                        default_color,
                         options: options.clone(),
                     },
                     layout,
@@ -557,6 +759,7 @@ impl TextRenderer {
     /// `sync_image_textures`.
     pub fn evict_stale_layouts(&mut self, tree: &Tree) {
         self.layout_cache.retain(|id, _| tree.get(*id).is_some());
+        self.access_cache.retain(|id, _| tree.get(*id).is_some());
         // M64 (§8, §11.3): the terminal run cache's own real eviction
         // -- drop every entry whose terminal node no longer exists at
         // all (the identical "NodeId removed" case `layout_cache`
@@ -636,14 +839,13 @@ impl TextRenderer {
     /// 0.4.0 M4: the size of what `draw` paints for a text node with
     /// these inputs, from its box's origin -- the shown lines' width and
     /// height, or the box width where `draw` clips an overflowing line.
-    /// Asks `shaped_layout` exactly as `draw` does (`color` included, as
-    /// `draw`'s `TextPlacement` passes it), so it reuses the same cached
-    /// layout rather than shaping again.
+    /// Asks `shaped_layout` exactly as `draw` does, so it reuses the same
+    /// cached layout rather than shaping again (colour is not part of what is
+    /// shaped).
     pub(crate) fn text_extent(
         &mut self,
         state: &TextState,
         max_width: f32,
-        color: Color,
         node_id: NodeId,
     ) -> (f32, f32) {
         let layout = self.shaped_layout(
@@ -656,7 +858,6 @@ impl TextRenderer {
             state.align,
             state.line_height,
             &[],
-            color,
             &state.options,
         );
         let clips_width =
@@ -690,6 +891,23 @@ impl TextRenderer {
         at: TextPlacement,
         node_id: NodeId,
     ) {
+        self.draw_painted(scene, resources, state, at, node_id, None);
+    }
+
+    /// `draw`, with the glyphs painted by a gradient (0.5.4, #129) instead of
+    /// the flat `at.color`, resolved against the shaped text's own extent
+    /// (not the node's box, which a text sized by its content can leave
+    /// zero wide). A rich-text span with its own colour keeps it.
+    pub fn draw_painted(
+        &mut self,
+        scene: &mut Scene,
+        resources: &mut Resources,
+        state: &TextState,
+        at: TextPlacement,
+        node_id: NodeId,
+        gradient: Option<&engine_core::Gradient>,
+    ) {
+        let glyph_cache = self.glyph_cache;
         // M28 Phase 1: `shaped_layout` reuses the prior frame's
         // `Layout` unchanged whenever nothing about this node's real
         // shaping inputs moved -- see its own doc comment. The
@@ -706,7 +924,6 @@ impl TextRenderer {
             state.align,
             state.line_height,
             &[],
-            at.color,
             &state.options,
         );
 
@@ -725,7 +942,47 @@ impl TextRenderer {
             );
             scene.push_layer(Some(&clip.to_path(0.1)), None, None, None, None);
         }
-        scene.set_paint(at.color);
+        // 0.5.4 (#112): the selection, behind the glyphs, in the text colour at 30%.
+        if let Some((anchor, focus)) = state.options.selection
+            && anchor != focus
+        {
+            let len = state.content.len();
+            let clamp = |offset: usize| {
+                let mut offset = offset.min(len);
+                while !state.content.is_char_boundary(offset) {
+                    offset -= 1;
+                }
+                offset
+            };
+            let selection = Selection::new(
+                Cursor::from_byte_index(layout, clamp(anchor), Affinity::Downstream),
+                Cursor::from_byte_index(layout, clamp(focus), Affinity::Downstream),
+            );
+            scene.set_paint(crate::with_opacity(at.color, 0.3));
+            for (bounds, _line) in selection.geometry(layout) {
+                scene.fill_rect(&Rect::new(
+                    bounds.x0 + at.x,
+                    bounds.y0 + at.y,
+                    bounds.x1 + at.x,
+                    bounds.y1 + at.y,
+                ));
+            }
+        }
+        // What a run with no colour of its own is painted with: the gradient
+        // across the text, or the node's colour.
+        let base = gradient.map(|gradient| {
+            let (w, h) = (f64::from(layout.width()), f64::from(layout.height()));
+            gradient.resolve(w, h)
+        });
+        let shaped = base.is_some();
+        match &base {
+            Some((paint, transform)) => {
+                scene.set_paint(paint.clone());
+                scene.set_paint_transform(Affine::translate((at.x, at.y)) * *transform);
+            }
+            None => scene.set_paint(at.color),
+        }
+        let rich = !state.options.spans.is_empty();
         for line in layout.lines().take(shown) {
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
@@ -739,7 +996,21 @@ impl TextRenderer {
                     x: g.x + at.x as f32,
                     y: g.y + at.y as f32,
                 });
-                let mut builder = scene.glyph_run(resources, font).font_size(font_size);
+                // 0.5.4 (#112): a span's colour is the run's brush.
+                if rich {
+                    let brush = glyph_run.style().brush;
+                    if brush != NO_BRUSH {
+                        scene.set_paint(Color::from_rgba8(brush[0], brush[1], brush[2], brush[3]));
+                    } else if let Some((paint, _)) = &base {
+                        scene.set_paint(paint.clone());
+                    } else {
+                        scene.set_paint(at.color);
+                    }
+                }
+                let mut builder = scene
+                    .glyph_run(resources, font)
+                    .font_size(font_size)
+                    .atlas_cache(glyph_cache);
                 // M96: italics with no italic face -- slanted by the angle
                 // font matching suggests (y-down, so the shear is negated;
                 // see `draw_terminal`'s own synthetic italic).
@@ -748,7 +1019,13 @@ impl TextRenderer {
                     builder = builder.glyph_transform(Affine::skew(shear, 0.0));
                 }
                 report_glyph_errors(builder.fill_glyphs(glyphs));
+                if rich {
+                    paint_decorations(scene, &glyph_run, at.x, at.y, at.color);
+                }
             }
+        }
+        if shaped {
+            scene.reset_paint_transform();
         }
         if clipped {
             scene.pop_layer();
@@ -772,7 +1049,11 @@ impl TextRenderer {
         let mut builder = self
             .layout_cx
             .ranged_builder(&mut self.font_cx, content, 1.0, true);
-        builder.push_default(StyleProperty::FontFamily(FontFamily::named(font_family)));
+        let fallback = fonts::fallback_families();
+        builder.push_default(StyleProperty::FontFamily(family_stack(
+            font_family,
+            &fallback,
+        )));
         builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
         builder.push_default(StyleProperty::FontSize(font_size));
         let mut layout = builder.build(content);
@@ -840,6 +1121,218 @@ impl TextRenderer {
             display_offset
         };
         from_display_offset_folded(state.content.len(), &state.folded_ranges, folded_offset)
+    }
+
+    /// 0.5.4 (#112): the byte offset in a text node's content nearest `point`,
+    /// a local point in the node, resolved against the layout the node paints
+    /// (`draw`): how a press or drag in selectable text finds its place.
+    pub fn hit_test_text(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+        point: Point,
+    ) -> usize {
+        let layout = self.shaped_layout(
+            node_id,
+            &state.content,
+            &state.font_family,
+            state.font_weight,
+            state.font_size,
+            at.max_width,
+            state.align,
+            state.line_height,
+            &[],
+            &state.options,
+        );
+        Cursor::from_point(layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index()
+    }
+
+    /// 0.5.4 (#131): the layout `draw` paints for a static text node, for the
+    /// point queries below.
+    fn static_layout(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: &TextPlacement,
+    ) -> &parley::Layout<[u8; 4]> {
+        self.shaped_layout(
+            node_id,
+            &state.content,
+            &state.font_family,
+            state.font_weight,
+            state.font_size,
+            at.max_width,
+            state.align,
+            state.line_height,
+            &[],
+            &state.options,
+        )
+    }
+
+    /// 0.5.4 (#131): the byte offset of the character *under* `point` (a local
+    /// point in the node), or `None` when the point is past the text. Unlike
+    /// `hit_test_text`, which returns the nearest caret position (the right
+    /// half of a character is the offset after it), this is for asking what was
+    /// clicked: a link's last character.
+    pub fn text_offset_under(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+        point: Point,
+    ) -> Option<usize> {
+        let layout = self.static_layout(node_id, state, &at);
+        let (x, y) = ((point.x - at.x) as f32, (point.y - at.y) as f32);
+        if x < 0.0 || y < 0.0 || y > layout.height() {
+            return None;
+        }
+        let (cluster, _) = parley::Cluster::from_point(layout, x, y)?;
+        // `from_point` clamps to the nearest cluster on the line; past the
+        // end of the line is not "on" it.
+        let line = cluster.path().line(layout)?;
+        (x <= line.metrics().offset + line.metrics().advance).then(|| cluster.text_range().start)
+    }
+
+    /// 0.5.4 (#153): the shown lines of a static text node, with where each
+    /// character sits, for its accessibility runs. Coordinates are in the node
+    /// (`at` included). Assumes left-to-right text: a right-to-left run's
+    /// characters are placed in logical order from the run's start.
+    pub fn access_lines(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+    ) -> Vec<engine_core::AccessLine> {
+        // The lines follow from the shaped layout and where it is placed; when
+        // neither has changed since they were last made, they are the same.
+        let _ = self.static_layout(node_id, state, &at);
+        let built = self.layout_cache.get(&node_id).map_or(0, |c| c.built);
+        let key = (built, at.x.to_bits(), at.y.to_bits());
+        if let Some((cached, lines)) = self.access_cache.get(&node_id)
+            && *cached == key
+        {
+            return lines.clone();
+        }
+        self.access_builds += 1;
+        let lines = self.build_access_lines(node_id, state, &at);
+        self.access_cache.insert(node_id, (key, lines.clone()));
+        lines
+    }
+
+    fn build_access_lines(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: &TextPlacement,
+    ) -> Vec<engine_core::AccessLine> {
+        let layout = self.static_layout(node_id, state, at);
+        let shown = visible_lines(layout, &state.options);
+        let content = &state.content;
+        let mut out = Vec::new();
+        for line in layout.lines().take(shown) {
+            let range = line.text_range();
+            let (start, end) = (range.start.min(content.len()), range.end.min(content.len()));
+            if start >= end || !content.is_char_boundary(start) || !content.is_char_boundary(end) {
+                continue;
+            }
+            let metrics = line.metrics();
+            // (byte offset, left edge, advance) per character, from the clusters.
+            let mut placed: Vec<(usize, f32, f32)> = Vec::new();
+            for item in line.items() {
+                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                    continue;
+                };
+                let mut x = glyph_run.offset();
+                for cluster in glyph_run.run().visual_clusters() {
+                    let cluster_range = cluster.text_range();
+                    if cluster_range.start < start || cluster_range.end > end {
+                        continue;
+                    }
+                    let advance = cluster.advance();
+                    let chars: Vec<usize> = content[cluster_range.clone()]
+                        .char_indices()
+                        .map(|(i, _)| cluster_range.start + i)
+                        .collect();
+                    let each = advance / chars.len().max(1) as f32;
+                    for (k, byte) in chars.into_iter().enumerate() {
+                        placed.push((byte, x + each * k as f32, each));
+                    }
+                    x += advance;
+                }
+            }
+            placed.sort_by_key(|p| p.0);
+            // One entry per character of the line; a character no cluster
+            // placed (a trailing newline) sits at the line's end, no wide.
+            let line_end = metrics.offset + metrics.advance;
+            let chars: Vec<(f32, f32)> = content[start..end]
+                .char_indices()
+                .map(|(i, _)| {
+                    placed
+                        .binary_search_by_key(&(start + i), |p| p.0)
+                        .map_or((line_end, 0.0), |at| (placed[at].1, placed[at].2))
+                })
+                .collect();
+            out.push(engine_core::AccessLine {
+                start,
+                end,
+                x0: at.x,
+                y0: at.y + f64::from(metrics.block_min_coord),
+                x1: at.x + f64::from(line_end),
+                y1: at.y + f64::from(metrics.block_max_coord),
+                chars,
+            });
+        }
+        out
+    }
+
+    /// 0.5.4 (#154): where the selection's moving end goes when moved `delta`
+    /// lines (negative up) in a static text node, keeping the horizontal place
+    /// it was at: the new byte offset. At the first or last line it goes to that
+    /// line's start or end.
+    pub fn move_focus_lines(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+        anchor: usize,
+        focus: usize,
+        delta: isize,
+    ) -> usize {
+        let layout = self.static_layout(node_id, state, &at);
+        let len = state.content.len();
+        let cursor = |offset: usize| {
+            let mut offset = offset.min(len);
+            while !state.content.is_char_boundary(offset) {
+                offset -= 1;
+            }
+            Cursor::from_byte_index(layout, offset, Affinity::Downstream)
+        };
+        Selection::new(cursor(anchor), cursor(focus))
+            .move_lines(layout, delta, true)
+            .focus()
+            .index()
+    }
+
+    /// 0.5.4 (#131): the bytes of the word (`lines == false`) or the visual
+    /// line (`lines == true`) at `point`, for a double or triple click.
+    pub fn text_range_at(
+        &mut self,
+        node_id: NodeId,
+        state: &TextState,
+        at: TextPlacement,
+        point: Point,
+        line: bool,
+    ) -> (usize, usize) {
+        let layout = self.static_layout(node_id, state, &at);
+        let (x, y) = ((point.x - at.x) as f32, (point.y - at.y) as f32);
+        let selection = if line {
+            Selection::line_from_point(layout, x, y)
+        } else {
+            Selection::word_from_point(layout, x, y)
+        };
+        let range = selection.text_range();
+        (range.start, range.end)
     }
 
     /// M15 Phase 1 (§5, §16.7): `draw`'s own real editable-field
@@ -976,7 +1469,6 @@ impl TextRenderer {
             // pre-M62 behavior, never wired to any real per-field value.
             None,
             &display_spans,
-            text_color,
             &TextOptions::default(),
         );
 
@@ -1033,10 +1525,9 @@ impl TextRenderer {
                 // draw call per glyph.
                 let styles = layout.styles();
                 let mut batch: Vec<glifo::Glyph> = Vec::new();
-                let mut batch_color = at.color;
+                let mut batch_color = text_color;
                 for g in glyph_run.positioned_glyphs() {
-                    let [r, gr, b, a] = styles[g.style_index as usize].brush;
-                    let color = Color::from_rgba8(r, gr, b, a);
+                    let color = resolve_brush(styles[g.style_index as usize].brush, text_color);
                     if !batch.is_empty() && color != batch_color {
                         scene.set_paint(batch_color);
                         report_glyph_errors(
@@ -1138,6 +1629,7 @@ impl TextRenderer {
         show_caret: bool,
         node_id: NodeId,
     ) {
+        let glyph_cache = self.glyph_cache;
         let (cell_width, cell_height) =
             self.monospace_cell_size(&state.font_family, state.font_size);
         let cell_width = f64::from(cell_width);
@@ -1284,7 +1776,10 @@ impl TextRenderer {
                                 x: g.x + x0 as f32,
                                 y: g.y + y0 as f32,
                             });
-                            let mut builder = scene.glyph_run(resources, font).font_size(font_size);
+                            let mut builder = scene
+                                .glyph_run(resources, font)
+                                .font_size(font_size)
+                                .atlas_cache(glyph_cache);
                             if italic {
                                 // M39 Phase 4 (§5, §7): a real synthetic-
                                 // italic shear -- the bundled monospace
@@ -1760,7 +2255,7 @@ mod tests {
     /// what the eviction tests below need a real `NodeId` for.
     fn terminal_node(tree: &mut Tree, state: TerminalState) -> engine_core::NodeId {
         tree.insert(
-            NodeKind::Terminal(state),
+            NodeKind::Terminal(Box::new(state)),
             Style {
                 size: Size {
                     width: length(200.0),
@@ -1913,7 +2408,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
 
@@ -1927,7 +2421,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -1945,7 +2438,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -1963,7 +2455,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -1981,7 +2472,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(renderer.layout_cache.get(&id).unwrap().key.font_size, 24.0);
@@ -1996,7 +2486,6 @@ mod tests {
             TextAlign::Start,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(renderer.layout_cache.get(&id).unwrap().key.max_width, 50.0);
@@ -2011,7 +2500,6 @@ mod tests {
             TextAlign::Center,
             None,
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -2029,7 +2517,6 @@ mod tests {
             TextAlign::Center,
             Some(1.5),
             &base_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
@@ -2049,31 +2536,99 @@ mod tests {
             TextAlign::Center,
             Some(1.5),
             &changed_spans,
-            Color::from_rgba8(0, 0, 0, 255),
             &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.spans,
             changed_spans
         );
+    }
 
-        renderer.shaped_layout(
-            id,
-            "goodbye",
-            MONOSPACE_FONT_FAMILY,
-            700.0,
-            24.0,
-            50.0,
-            TextAlign::Center,
-            Some(1.5),
-            &changed_spans,
-            Color::from_rgba8(255, 255, 255, 255),
-            &TextOptions::default(),
-        );
-        assert_eq!(
-            renderer.layout_cache.get(&id).unwrap().key.default_color,
-            Color::from_rgba8(255, 255, 255, 255)
-        );
+    /// 0.5.4 (review): colour is applied when painting, not when shaping, so a
+    /// pointer query (which has no colour) and the draw (which has) share one
+    /// layout, and recolouring a node reshapes nothing.
+    #[test]
+    fn querying_and_painting_a_text_node_shapes_it_once_whatever_the_colour() {
+        pollster::block_on(async {
+            let mut frame_renderer = frame_renderer_for_test().await;
+            let mut renderer = TextRenderer::new();
+            let mut scene = Scene::new(100, 100);
+            let mut tree = Tree::new();
+            let a = text_node(&mut tree, "hello world");
+            let NodeKind::Text(state) = &tree.get(a).unwrap().kind else {
+                panic!("expected Text");
+            };
+            renderer.draw(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                state,
+                placement(),
+                a,
+            );
+            assert_eq!(renderer.shapes, 1);
+            let clear = TextPlacement {
+                color: Color::TRANSPARENT,
+                ..placement()
+            };
+            renderer.hit_test_text(a, state, clear, Point::new(5.0, 5.0));
+            let red = TextPlacement {
+                color: Color::from_rgba8(255, 0, 0, 255),
+                ..placement()
+            };
+            renderer.draw(&mut scene, frame_renderer.resources_mut(), state, red, a);
+            assert_eq!(
+                renderer.shapes, 1,
+                "a query and a recolour reuse the layout"
+            );
+        });
+    }
+
+    /// 0.5.4 (review): the accessibility lines of a text node are worked out
+    /// again only when its layout or its placement changed.
+    #[test]
+    fn access_lines_are_made_again_only_when_the_layout_or_placement_changes() {
+        let mut tree = Tree::new();
+        let a = text_node(&mut tree, "hello world");
+        let mut renderer = TextRenderer::new();
+        let base_x = placement().x;
+        let first = {
+            let NodeKind::Text(state) = &tree.get(a).unwrap().kind else {
+                panic!("expected Text");
+            };
+            let first = renderer.access_lines(a, state, placement());
+            assert_eq!(renderer.access_builds, 1);
+            // The same again, and with a different colour: nothing is redone.
+            let red = TextPlacement {
+                color: Color::from_rgba8(255, 0, 0, 255),
+                ..placement()
+            };
+            assert_eq!(renderer.access_lines(a, state, red), first);
+            assert_eq!(renderer.access_lines(a, state, placement()), first);
+            assert_eq!(renderer.access_builds, 1, "cached");
+            // Moved: the lines move with it.
+            let moved = TextPlacement {
+                x: base_x + 7.0,
+                ..placement()
+            };
+            let again = renderer.access_lines(a, state, moved);
+            assert_eq!(renderer.access_builds, 2);
+            assert_eq!(again[0].x0, first[0].x0 + 7.0);
+            first
+        };
+        // Changed text: a new layout, new lines.
+        if let NodeKind::Text(state) = &mut tree.get_mut(a).unwrap().kind {
+            state.content = "hello there world".to_string();
+        }
+        let NodeKind::Text(state) = &tree.get(a).unwrap().kind else {
+            panic!("expected Text");
+        };
+        let changed = renderer.access_lines(a, state, placement());
+        assert_eq!(renderer.access_builds, 3);
+        assert_ne!(changed[0].end, first[0].end);
+        // A removed node's lines are let go.
+        tree.remove(a);
+        renderer.evict_stale_layouts(&tree);
+        assert!(renderer.access_cache.is_empty());
     }
 
     /// M31 Phase 1 (§5, §8): the real finding that closes this phase's
@@ -2107,7 +2662,6 @@ mod tests {
                 TextAlign::Start,
                 None,
                 &[],
-                Color::from_rgba8(0, 0, 0, 255),
                 &TextOptions::default(),
             )
             .lines()
@@ -2124,7 +2678,6 @@ mod tests {
                 TextAlign::Start,
                 None,
                 &[],
-                Color::from_rgba8(0, 0, 0, 255),
                 &TextOptions::default(),
             )
             .lines()
@@ -2167,7 +2720,6 @@ mod tests {
                 TextAlign::Start,
                 None,
                 &[],
-                Color::from_rgba8(0, 0, 0, 255),
                 &TextOptions::default(),
             )
             .lines()
@@ -2184,7 +2736,6 @@ mod tests {
                 TextAlign::Start,
                 Some(2.0),
                 &[],
-                Color::from_rgba8(0, 0, 0, 255),
                 &TextOptions::default(),
             )
             .lines()

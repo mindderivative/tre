@@ -103,7 +103,7 @@ fn build_scene(with_selection: bool) -> (Tree, engine_core::NodeId) {
         state.selection_end = Some((0, 8));
     }
     let terminal = tree.insert(
-        NodeKind::Terminal(state),
+        NodeKind::Terminal(Box::new(state)),
         Style {
             size: Size {
                 width: length(f32::from(WIDTH)),

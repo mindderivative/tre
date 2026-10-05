@@ -54,6 +54,80 @@ shape drawn from a different corner still morphs cleanly. Paths with different
 numbers of subpaths, or an open path against a closed one, switch at the
 halfway point instead. The last frame is exactly the target path.
 
+## SVG documents
+
+An `svg` node (0.5.4) paints a whole SVG document. Give it the file's text or
+bytes (gzip-compressed `.svgz` too) and the node draws it as one scene, scaled
+uniformly and centred into its box (SVG's `xMidYMid meet`), inside its padding
+and clipped to it:
+
+```python
+logo = window.create("svg", svg=open("logo.svg", "rb").read(), width=96, height=96)
+logo.get("svg_size")        # (120.0, 120.0): the document's own width and height
+logo.set(svg=other_text)    # swap the document
+```
+
+The document is parsed once, when `svg` is set, so a malformed one raises
+`ValueError` with the parser's message at that call and creates or changes
+nothing. Give the node a `width` and a `height`, or just one of them: a node
+sized on one side takes the other from the document's shape (its `aspect_ratio`
+follows the document, and follows a new document too, unless you set an
+`aspect_ratio` yourself). `fill`,
+`stroke_color`, `corner_radius`, `opacity`, `blur` and the rest paint for its
+box as on every node (a `fill` is the background behind the document).
+
+Drawn: shapes, fills and strokes (caps, joins, miter limit, dashes, paint
+order), solid colours, linear and radial gradients with their spread method,
+patterns, group opacity, clip paths (nested ones too), masks (luminance and
+alpha, nested, with their rectangle), nested SVG `<image>`s, text, and a filter
+that is a single Gaussian blur or a single drop shadow (`feDropShadow`).
+
+- **Text** is turned into outlines from the fonts the engine has: Roboto (also
+  the default, serif, and sans-serif family), the bundled mono face
+  (monospace), anything `tre.register_font` registered, and, only when you turn
+  it on with `tre.set_system_fonts(True)`, the installed fonts. With system
+  fonts off it looks the same on every machine. The outlines follow the fonts:
+  registering a font or switching system fonts re-draws a document's text at the
+  next frame or snapshot.
+- **Masks** have no mask layer in the renderer, so a masked group is drawn and
+  then kept only where the mask's shapes are (a luminance mask's colours are
+  converted to their luminance first). It costs one extra layer per mask.
+
+Dropped without an error: raster `<image>`s the framework did not supply (below),
+every filter but a lone blur or drop shadow, and blend modes. The rest of the document still draws. A pattern
+that would need more than 2500 tiles is skipped.
+
+**Pictures inside a document.** Tesserae Engine decodes no image format, here as
+everywhere, so **a framework building on it is responsible for decoding the raster
+images (PNG, JPEG, GIF, WebP) an SVG refers to, and handing over pixels.** It reads the
+document for its `<image href="...">`s, decodes each with its own imaging library, and
+passes straight-alpha RGBA8 pixels keyed by the `href` exactly as the document writes it:
+
+```python
+photo = decode_png("assets/photo.png")          # your imaging library: (rgba, width, height)
+node = window.create("svg", svg=text, width=240,
+                     svg_images={"assets/photo.png": photo})
+node.set(svg_images={**node.get("svg_images"), "other.jpg": other})   # or add later
+```
+
+An `<image>` whose `href` is not in `svg_images` is not drawn. The engine never opens a
+file, so a document cannot make it read one, and a `data:` URL holding a raster picture
+is not looked at either: a framework that wants those drawn rewrites the `href` to a key
+of its own and supplies the pixels. A nested SVG is drawn only from a `data:` URL; one referenced by path is not loaded.
+Each entry is checked like an `image` node's `rgba` (length, and a side of at
+most 8192), the images are uploaded once as GPU textures, `svg_images` read back gives
+what was set, and it stays across new `svg` documents until you change it.
+
+`get("svg")` returns the source as it was
+given (a `str` or `bytes`), and `svg_size` the document's size.
+
+**`svg_color`** is what `currentColor` resolves to, so a monochrome icon follows
+your theme: `icon.set(svg_color=(0x1C, 0x1B, 0x1F, 0xFF))`. It is `None` by
+default, which leaves `currentColor` black as the SVG standard says. It
+re-parses the document it has, takes effect together with a new `svg` given in
+the same call, and stays until you change it. A document whose root `<svg>`
+sets its own `color` keeps it.
+
 ## Paint on every node
 
 | Property | Value |
@@ -63,6 +137,9 @@ halfway point instead. The last frame is exactly the target path.
 | `corner_radius` | one radius, or `(top_left, top_right, bottom_right, bottom_left)`: rounds the background and the border, and clips an image to the rounded box (a scroll view and a virtual list clip their content to it). A path has no box, so it ignores it |
 | `opacity` | `0.0`–`1.0` — **group opacity**: the node and its whole subtree fade together, as one layer |
 | `shadows` | a list of `(color, offset_x, offset_y, blur, spread)` — CSS `box-shadow`'s model, the first listed on top |
+| `blur` | (0.5.4) a number ≥ 0: a Gaussian blur of the node and its whole subtree, as a standard deviation in pixels |
+| `backdrop_blur` | (0.5.4) a number ≥ 0: frosted glass — what is behind the node, blurred, inside its box |
+| `blend_mode` | (0.5.4) how the node and its subtree mix with what is behind: `"normal"` (the default) or a CSS `mix-blend-mode` |
 
 Every kind paints these for its own box (0.5.1). Before, a text, text input,
 image, canvas, scroll view, virtual list, or terminal accepted `stroke_color`,
@@ -85,6 +162,76 @@ are a key and an ambient shadow per level:
 card.set(shadows=[((0, 0, 0, 77), 0, 1, 2, 0), ((0, 0, 0, 38), 0, 1, 3, 1)])
 ```
 
+## Gradients
+
+A box's `fill` can be a `tre.Gradient` (0.5.4) instead of a colour: a ramp
+across the box, linear, radial or sweeping around a point. A box
+(`window.create("box")`, a window's root), a path and a text node take one as
+`fill` (a text node's gradient paints its glyphs, across the node's box); on a text
+input, `fill` is a colour. Elsewhere a gradient is accepted in place of a colour
+too, each time spanning the shape's own bounds:
+
+- `stroke_color` on any node: its border, over the node's box (a path's stroke:
+  over the stroke's bounds). A gradient stroke does not animate; set it again.
+- A canvas `Painter`'s `fill_rect`, `fill_circle` and `stroke_path`: over the
+  rect, the circle's bounding square, or the path's bounds.
+
+```python
+from tre import Gradient
+
+card.set(fill=Gradient.linear([(0x67, 0x50, 0xA4, 0xFF), (0x21, 0x00, 0x5D, 0xFF)], angle=135))
+glow.set(fill=Gradient.radial([(255, 255, 255, 200), (255, 255, 255, 0)], radius=0.8))
+dial.set(fill=Gradient.sweep([red, yellow, green, red], start=0))
+```
+
+| Constructor | Runs |
+| --- | --- |
+| `Gradient.linear(stops, angle=180)` | along a line through the box's centre at `angle` degrees: 0 points up, 90 right, 180 down (the default). The line spans the box, so the first and last stops land on its corners |
+| `Gradient.radial(stops, center=(0.5, 0.5), radius=1.0)` | outward from `center`, a fraction of the box; `radius` is a fraction of the half-diagonal, so `1.0` reaches the far corner of a centred gradient |
+| `Gradient.sweep(stops, center=(0.5, 0.5), start=0)` | around `center`, clockwise from `start` degrees past up |
+
+`stops` are colours, spaced evenly from 0 to 1, or `(offset, color)` pairs with
+offsets from 0 to 1 that don't decrease. There must be at least two. A stop's
+alpha is honoured, so a gradient can fade to transparent. A gradient follows its
+box as layout resizes it, and follows its rounded corners.
+
+A `Gradient` is immutable. `node.get("fill")` returns it while one is set, and
+setting `fill` to a colour replaces it. Animating `fill` to a gradient of the
+same kind and number of stops interpolates the colours, offsets, angle, centre
+and radius; animating from a flat colour fades the gradient in from that colour.
+Animating between unlike gradients, or from a gradient to a colour, raises
+`ValueError`: set `fill` instead.
+
+## Blur, frosted glass, and blend modes
+
+Three effects (0.5.4), all acting on a node as a group, like `opacity`:
+
+```python
+card.set(blur=3)                        # the card and everything in it, soft
+panel.set(fill=(255, 255, 255, 60), backdrop_blur=12, corner_radius=16)  # frosted glass
+highlight.set(blend_mode="screen")      # lighten what is behind
+```
+
+- **`blur`** is the standard deviation of a Gaussian blur, in the node's own
+  pixels, so it scales with the display. The blur spreads the node's pixels
+  about three deviations past its box, and that margin is damaged and redrawn
+  with it. It animates (`node.animate("blur", 0, 300)`).
+- **`backdrop_blur`** blurs everything painted *behind* the node and shows it
+  inside the node's box, clipped to its rounded corners. The node's own `fill`
+  draws over it, so a translucent white `fill` makes frosted glass. Cost follows
+  the box, not the window: the content behind is drawn again inside the box and
+  the blur's reach, then blurred. It animates. A node behind another frosted
+  node is drawn blurred in that one's backdrop, to a depth of two.
+- **`blend_mode`** is one of `normal`, `multiply`, `screen`, `overlay`, `darken`,
+  `lighten`, `color_dodge`, `color_burn`, `hard_light`, `soft_light`,
+  `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`. The
+  node and its subtree are drawn as one layer and mixed with what is behind it.
+
+Not available: masks (the renderer does not support them yet; a rounded
+`corner_radius` with `clip_children` covers most shapes) and colour filters as node
+properties. For saturate, brightness, contrast, grayscale, hue rotate, invert and sepia
+use [`Shader.filter`](shader.md#shaderfilterfilters), a ready-made effect shader.
+
 ## Animating
 
 ```python
@@ -96,12 +243,13 @@ button.stop_animation("fill")
 
 **`animate(name, to, duration_ms=0, easing=None, on_complete=None)`** eases a
 property from its current value, so animating again mid-flight never jumps.
-`easing` is `"linear"` (the default) or a cubic bezier `(x1, y1, x2, y2)` exactly
+`easing` is `"linear"` (the default), a spring (`"spring"` or `("spring", bounce)`, 0.5.4; see
+[the animation guide](../guide/animation.md#springs)), or a cubic bezier `(x1, y1, x2, y2)` exactly
 as CSS `cubic-bezier()` takes it — MD3's named curves are bezier values, e.g.
 emphasized decelerate is `(0.05, 0.7, 0.1, 1.0)`. `on_complete` runs once when
 the value arrives; an animation replaced by another, or stopped, never calls it.
 
-Animatable: `fill`, `stroke_color`, `stroke_width`, `opacity`, `corner_radius`
+Animatable: `fill`, `stroke_color`, `stroke_width`, `opacity`, `blur`, `backdrop_blur`, `corner_radius`
 (a number or a 4-tuple), `shadows` (lists of different lengths fade the extra
 shadows in or out), the transform parts `translate_x`, `translate_y`, `scale`,
 and `rotation_deg`, a scroll view's `scroll_offset`, and a path's `data`,

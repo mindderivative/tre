@@ -9,10 +9,14 @@
 mod app;
 mod canvas;
 mod clock;
+mod cursor_image;
 mod dispatch;
 mod dock;
 mod error;
 mod event;
+mod files;
+mod frame_stats;
+mod gradient;
 mod grid;
 mod listeners;
 mod node;
@@ -22,16 +26,21 @@ mod node_handles;
 mod node_kind_props;
 mod node_layout;
 mod node_props;
+mod scale;
 mod shader;
 mod shaper;
 mod terminal;
+mod text_interaction;
 mod thread_bound;
 mod thread_handle;
+mod touch;
+mod trace;
 mod window;
 mod window_docking;
 mod window_events;
 mod window_input;
 mod window_layers;
+mod window_snapshot;
 
 use pyo3::prelude::*;
 
@@ -53,11 +62,16 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWindow>()?;
     m.add_class::<Node>()?;
     m.add_class::<Painter>()?;
+    m.add_class::<gradient::PyGradient>()?;
+    m.add_class::<cursor_image::PyCursorImage>()?;
     m.add_class::<Event>()?;
     m.add_class::<LoopHandle>()?;
+    m.add_class::<frame_stats::StatsHandle>()?;
     m.add_class::<Shader>()?;
     m.add("ShaderError", m.py().get_type::<shader::ShaderError>())?;
     m.add_function(wrap_pyfunction!(register_font, m)?)?;
+    m.add_function(wrap_pyfunction!(set_system_fonts, m)?)?;
+    m.add_function(wrap_pyfunction!(system_fonts, m)?)?;
     Ok(())
 }
 
@@ -72,4 +86,20 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 fn register_font(data: &[u8]) -> PyResult<Vec<String>> {
     engine_render::register_font(data.to_vec())
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))
+}
+
+/// 0.5.4 (#111): lets text use the fonts installed on this machine, for the
+/// glyphs the bundled and registered fonts lack (CJK, Hebrew, Indic, colour
+/// emoji) and for family names that aren't registered. Off by default, so text
+/// is the same on every machine; it applies to every window in this process,
+/// live.
+#[pyfunction]
+fn set_system_fonts(enabled: bool) {
+    engine_render::set_system_fonts(enabled);
+}
+
+/// Whether system fonts are on (`set_system_fonts`).
+#[pyfunction]
+fn system_fonts() -> bool {
+    engine_render::system_fonts()
 }

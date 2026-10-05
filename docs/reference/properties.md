@@ -15,6 +15,7 @@ This page lists them all. Paint, paths, shadows, and easing have their own page,
 | `"text_input"` | — | Editable text: selection, clipboard, IME, syntax spans, folding, obscuring |
 | `"image"` | `rgba`, `pixel_width`, `pixel_height` | Decoded RGBA8 pixels; video is repeated `set(rgba=..., ...)` |
 | `"path"` | `data` | A vector path — see [Paths](paint.md#paths) |
+| `"svg"` | `svg` | A whole SVG document — see [SVG documents](paint.md#svg-documents) |
 | `"canvas"` | `draw` | Immediate-mode drawing through a [painter](painter.md) |
 | `"scroll_view"` | — | Clips and scrolls one child |
 | `"virtual_list"` | `item_count`, `materialize`, and `item_extent` or `size_hint` | Builds only the rows its viewport shows |
@@ -102,6 +103,7 @@ Every node.
 | `visible` | `False` hides the node and its subtree: not painted, not hit, no layout space, not in the accessibility tree or tab order |
 | `z_index` | Paint and hit order among siblings: higher is on top; equal values keep child order |
 | `clip_children` | `True` clips children to the node's rounded box |
+| `sticky` | (0.5.4) a number of pixels, or `None`: holds that far from the start edge of the scroll view it is in ([Sticky headers](../guide/nodes-and-layout.md#sticky-headers)) |
 
 Each transform part animates on its own, so easing one never disturbs another.
 
@@ -122,6 +124,8 @@ On `text` and `text_input` unless noted.
 | `wrap` | `"word"` wraps within the node's width; `"none"` keeps each paragraph on one line (`text` only) |
 | `max_lines` | The most lines shown, or `None` (`text` only) |
 | `overflow` | `"clip"` cuts text past the box or the line limit; `"ellipsis"` ends each cut line with "…" (`text` only) |
+| `spans` | (0.5.4) `[(start, end, style), ...]`: UTF-8 byte ranges styled with a dict of `color`, `weight`, `italic`, `underline`, `strikethrough`, `font_size`, `font_family`, `link` (`text` only; later spans win where they overlap) |
+| `selectable` | (0.5.4) `True` lets a press and drag select the text and Copy take it (`text` only; default `False`) |
 | `fill` | The glyph color (animatable) |
 
 A text node has no size of its own: size it with

@@ -41,6 +41,8 @@ pub(crate) struct Visit<'t> {
     pub parent: Option<NodeId>,
     /// Its index among its parent's children, in paint order.
     pub order: usize,
+    /// The window's own scale, the grid layout offsets snap to (0.5.4, review).
+    pub grid: f64,
 }
 
 /// One walk's own work at each node.
@@ -51,31 +53,58 @@ pub(crate) trait Visitor<'t> {
 
     /// After the children of a node `enter` accepted.
     fn leave(&mut self, _visit: &Visit<'t>) {}
+
+    /// Whether to pass over `child` and its subtree without reaching it at
+    /// all (0.5.4, #149): asked before the walk works out where it is, so a
+    /// walk that only wants the nodes near some damage does not pay for the
+    /// ones far from it. Whatever is skipped is as if `enter` had said no.
+    fn skip(&mut self, _child: NodeId) -> bool {
+        false
+    }
 }
 
 /// Walks `root`'s tree within `visible`, calling `visitor` at each node.
+/// `base` is the transform every node starts under: the window's display
+/// scale (0.5.4, #102), so layout stays in logical pixels while `composed`,
+/// `bounds` and `visible` are in physical ones.
 pub(crate) fn walk<'t>(
     tree: &'t Tree,
     root: NodeId,
+    base: Affine,
     visible: Rect,
     visitor: &mut impl Visitor<'t>,
 ) {
-    visit(tree, root, Affine::IDENTITY, visible, 1.0, None, 0, visitor);
+    visit(
+        tree,
+        root,
+        base,
+        visible,
+        1.0,
+        None,
+        0,
+        base.as_coeffs()[0],
+        visitor,
+    );
 }
 
 /// 0.5.1 (#69): walks the subtree under `id` as if it were the whole tree,
 /// for an effect's offscreen render: `id` is placed at the origin with no
 /// transform of its own and no opacity of its own (the main scene applies
 /// both to the effect's result), and its box is the visible area.
-pub(crate) fn walk_root<'t>(tree: &'t Tree, id: NodeId, visitor: &mut impl Visitor<'t>) {
+pub(crate) fn walk_root<'t>(
+    tree: &'t Tree,
+    id: NodeId,
+    base: Affine,
+    visitor: &mut impl Visitor<'t>,
+) {
     let Some(node) = tree.get(id) else { return };
     let layout = tree.layout(id);
     let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
-    let bounds = Rect::new(0.0, 0.0, w, h);
+    let bounds = transformed_bounds(base, Rect::new(0.0, 0.0, w, h));
     let here = Visit {
         id,
         node,
-        composed: Affine::IDENTITY,
+        composed: base,
         w,
         h,
         bounds,
@@ -83,6 +112,7 @@ pub(crate) fn walk_root<'t>(tree: &'t Tree, id: NodeId, visitor: &mut impl Visit
         opacity: 1.0,
         parent: None,
         order: 0,
+        grid: base.as_coeffs()[0],
     };
     descend(tree, &here, visitor);
 }
@@ -93,12 +123,11 @@ fn descend<'t>(tree: &'t Tree, here: &Visit<'t>, visitor: &mut impl Visitor<'t>)
     if !visitor.enter(here) {
         return;
     }
-    let child_visible = if clips_children(here.node) {
-        here.visible.intersect(here.bounds)
-    } else {
-        here.visible
-    };
+    let child_visible = child_visible(here);
     for (index, &child) in tree.children_in_paint_order(here.id).iter().enumerate() {
+        if visitor.skip(child) {
+            continue;
+        }
         visit(
             tree,
             child,
@@ -107,6 +136,7 @@ fn descend<'t>(tree: &'t Tree, here: &Visit<'t>, visitor: &mut impl Visitor<'t>)
             here.opacity,
             Some(here.id),
             index,
+            here.grid,
             visitor,
         );
     }
@@ -122,25 +152,60 @@ fn visit<'t>(
     parent_opacity: f64,
     parent: Option<NodeId>,
     order: usize,
+    grid: f64,
     visitor: &mut impl Visitor<'t>,
 ) {
-    let Some(node) = tree.get(id) else { return };
-    if !node.visible {
+    let Some(here) = resolve(
+        tree,
+        id,
+        parent_transform,
+        visible,
+        parent_opacity,
+        parent,
+        order,
+        grid,
+    ) else {
         return;
+    };
+    descend(tree, &here, visitor);
+}
+
+/// The rules of the walk applied to one node: where it is under its
+/// parent's transform, and `None` when they skip it (hidden, off the visible
+/// rect, fully transparent). 0.5.4 (#125): split out so the damage tracker
+/// can reach a node without walking down to it from the root.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn resolve<'t>(
+    tree: &'t Tree,
+    id: NodeId,
+    parent_transform: Affine,
+    visible: Rect,
+    parent_opacity: f64,
+    parent: Option<NodeId>,
+    order: usize,
+    grid: f64,
+) -> Option<Visit<'t>> {
+    let node = tree.get(id)?;
+    if !node.visible {
+        return None;
     }
     let layout = tree.layout(id);
     let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
-    let position = (f64::from(layout.location.x), f64::from(layout.location.y));
-    let composed = composed_transform(parent_transform, position, node, w, h);
+    let (sx, sy) = tree.scroll_shift(id);
+    let position = (
+        f64::from(layout.location.x) + sx,
+        f64::from(layout.location.y) + sy,
+    );
+    let composed = composed_transform(parent_transform, position, node, w, h, grid);
     let bounds = transformed_bounds(composed, Rect::new(0.0, 0.0, w, h));
     if !bounds.overlaps(visible) {
-        return;
+        return None;
     }
     let opacity = node.paint.opacity.current;
     if opacity <= 0.0 {
-        return;
+        return None;
     }
-    let here = Visit {
+    Some(Visit {
         id,
         node,
         composed,
@@ -151,6 +216,16 @@ fn visit<'t>(
         opacity: parent_opacity * opacity,
         parent,
         order,
-    };
-    descend(tree, &here, visitor);
+        grid,
+    })
+}
+
+/// What a node leaves visible to its children: its own visible rect, narrowed
+/// to its box when it clips them.
+pub(crate) fn child_visible(here: &Visit<'_>) -> Rect {
+    if clips_children(here.node) {
+        here.visible.intersect(here.bounds)
+    } else {
+        here.visible
+    }
 }

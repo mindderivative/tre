@@ -14,7 +14,10 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap, SlotMap};
+use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap};
+
+use self::nodes::Nodes;
+pub use self::nodes::Touched;
 use taffy::prelude::{
     AvailableSpace, Layout, Position, Rect as TaffyRect, Size, Style, TaffyTree, auto, length,
 };
@@ -37,10 +40,12 @@ use peniko::kurbo::BezPath;
 use peniko::kurbo::{Affine, ParamCurveNearest, Point, Rect};
 
 mod access;
+pub use access::{AccessLine, TextPart};
 mod dispatch;
 mod focus;
 mod layers;
 mod layout;
+mod nodes;
 mod scroll;
 pub use scroll::KEY_SCROLL_LINE;
 #[cfg(test)]
@@ -55,7 +60,10 @@ pub enum FocusDirection {
 }
 
 pub struct Tree {
-    nodes: SlotMap<NodeId, Node>,
+    nodes: Nodes,
+    /// 0.5.4 (#125): counts the times taffy computed a layout, so a consumer
+    /// can tell that no node moved or changed size since it last looked.
+    layout_epoch: u64,
     taffy_nodes: SecondaryMap<NodeId, taffy::NodeId>,
     taffy: TaffyTree<()>,
     /// §14 step 7: which node `TreeUpdate.focus` reports. Moved by
@@ -99,8 +107,29 @@ pub struct Tree {
     /// the very first frame always paints. Read via `take_dirty`, never
     /// this field directly, so "read" and "reset" can never drift apart.
     dirty: bool,
+    /// 0.5.4 (#112): the text node whose static selection is showing, if any.
+    /// One at a time, as on a desktop.
+    static_selection: text_editing::StaticSelection,
+    /// 0.5.4 (#153): the shaped lines of text nodes, for their accessibility runs.
+    text_lines: std::collections::HashMap<NodeId, Vec<access::AccessLine>>,
+    /// 0.5.4 (#103): the nodes the last full scan found animating, and the
+    /// `animations_started` count it was taken at. See `tick_all`.
+    animating: Vec<NodeId>,
+    /// 0.5.4 (#105): the root and available space the last `compute_layout`
+    /// answered, to skip a repeat of the same question.
+    last_layout: Option<(NodeId, Size<AvailableSpace>)>,
+    scanned_at: Option<u64>,
     scroll_view_count: usize,
     virtual_list_count: usize,
+    /// 0.5.4 (#150): how many `Image` and `Svg` nodes the tree holds, so a
+    /// per-frame consumer of them can skip scanning a tree that has none.
+    image_count: usize,
+    svg_count: usize,
+    /// 0.5.4 (review): which nodes those are, kept as nodes are added and
+    /// removed, so the per-frame image and SVG sync visits them and not every
+    /// node of the tree. A node's kind never changes after it is inserted.
+    image_ids: std::collections::BTreeSet<NodeId>,
+    svg_ids: std::collections::BTreeSet<NodeId>,
     /// M94: the node holding pointer capture (`set_pointer_capture`).
     pointer_capture: Option<NodeId>,
     /// M96: detached subtree roots that are freed once nothing outside the
@@ -134,7 +163,13 @@ fn rect_contains(layout: &Layout, local_point: Point) -> bool {
 impl Tree {
     pub fn new() -> Self {
         Self {
-            nodes: SlotMap::with_key(),
+            nodes: Nodes::new(),
+            layout_epoch: 0,
+            animating: Vec::new(),
+            static_selection: Default::default(),
+            text_lines: Default::default(),
+            last_layout: None,
+            scanned_at: None,
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
             focused: None,
@@ -146,6 +181,10 @@ impl Tree {
             dirty: true,
             scroll_view_count: 0,
             virtual_list_count: 0,
+            image_count: 0,
+            svg_count: 0,
+            image_ids: Default::default(),
+            svg_ids: Default::default(),
             pointer_capture: None,
             collectible: HashSet::new(),
         }
@@ -237,6 +276,8 @@ impl Tree {
         match &kind {
             NodeKind::ScrollView(_) => self.scroll_view_count += 1,
             NodeKind::VirtualList(_) => self.virtual_list_count += 1,
+            NodeKind::Image(_) => self.image_count += 1,
+            NodeKind::Svg(_) => self.svg_count += 1,
             _ => {}
         }
         let taffy_node = self
@@ -252,6 +293,7 @@ impl Tree {
             paint,
             access: AccessNodeData::default(),
             hit_testable: true,
+            sticky: None,
             cursor: None,
             window_region: crate::node::WindowRegion::Default,
             shader: None,
@@ -259,6 +301,15 @@ impl Tree {
             z_index: 0,
         });
         self.taffy_nodes.insert(id, taffy_node);
+        match &self.nodes[id].kind {
+            NodeKind::Image(_) => {
+                self.image_ids.insert(id);
+            }
+            NodeKind::Svg(_) => {
+                self.svg_ids.insert(id);
+            }
+            _ => {}
+        }
         id
     }
 
@@ -492,6 +543,44 @@ impl Tree {
         self.nodes.get(id)
     }
 
+    /// 0.5.4 (#146): every SVG node whose document has text is given the
+    /// document `reparse` makes from its source -- the fonts changed, so its
+    /// outlines must. `None` keeps a node's document. Marks the tree dirty
+    /// when any changed.
+    pub fn reparse_svgs(
+        &mut self,
+        mut reparse: impl FnMut(
+            &crate::svg::SvgState,
+        ) -> Option<std::sync::Arc<crate::svg::SvgDocument>>,
+    ) {
+        let mut changed = false;
+        for node in self.nodes.values_mut() {
+            if let NodeKind::Svg(state) = &mut node.kind
+                && state.document.has_text
+                && let Some(document) = reparse(state)
+            {
+                state.document = document;
+                changed = true;
+            }
+        }
+        if changed {
+            self.mark_dirty();
+        }
+    }
+
+    /// 0.5.4 (#125): the nodes handed out mutably since the last call (see
+    /// `Touched`), and a fresh start. For the damage tracker: a node absent
+    /// from this was not written to.
+    pub fn take_touched(&self) -> Touched {
+        self.nodes.take_touched()
+    }
+
+    /// 0.5.4 (#125): how many times a layout has been computed. While it is
+    /// unchanged, no node's position or size has.
+    pub fn layout_epoch(&self) -> u64 {
+        self.layout_epoch
+    }
+
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node> {
         self.dirty = true;
         self.nodes.get_mut(id)
@@ -529,6 +618,14 @@ impl Tree {
         match &node.kind {
             NodeKind::ScrollView(_) => self.scroll_view_count -= 1,
             NodeKind::VirtualList(_) => self.virtual_list_count -= 1,
+            NodeKind::Image(_) => {
+                self.image_count -= 1;
+                self.image_ids.remove(&id);
+            }
+            NodeKind::Svg(_) => {
+                self.svg_count -= 1;
+                self.svg_ids.remove(&id);
+            }
             _ => {}
         }
 
@@ -565,36 +662,108 @@ impl Tree {
         if self.hovered == Some(id) {
             self.hovered = None;
         }
+        // 0.5.4 (#131, #153): a removed text node keeps no selection or lines.
+        self.text_lines.remove(&id);
+        if self.static_selection.involves(id) {
+            self.clear_text_selection();
+        }
 
         true
     }
 
-    pub fn tick_all(&mut self, now: Instant) -> (bool, Vec<CompletionHandle>) {
-        let mut any_active = false;
-        let mut completed = Vec::new();
-        for node in self.nodes.values_mut() {
-            if node.paint.tick(now, &mut completed) {
-                any_active = true;
-            }
-            // M95: a path's data (morphing) and stroke trim.
-            if let NodeKind::Path(state) = &mut node.kind
-                && state.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            // M96: a text input's animatable `fill` (its text color), and
-            // a scroll view's animatable `scroll_offset`.
-            if let NodeKind::TextField(state) = &mut node.kind
-                && state.text_tint.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
-            if let NodeKind::ScrollView(state) = &mut node.kind
-                && state.scroll.tick(now, &mut completed)
-            {
-                any_active = true;
-            }
+    /// One node's animatable values, ticked: whether any is still running.
+    fn tick_node(node: &mut Node, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool {
+        let mut active = node.paint.tick(now, completed);
+        // M95: a path's data (morphing) and stroke trim.
+        if let NodeKind::Path(state) = &mut node.kind
+            && state.tick(now, completed)
+        {
+            active = true;
         }
+        // M96: a text input's animatable `fill` (its text color), and a
+        // scroll view's animatable `scroll_offset`.
+        if let NodeKind::TextField(state) = &mut node.kind
+            && state.text_tint.tick(now, completed)
+        {
+            active = true;
+        }
+        if let NodeKind::ScrollView(state) = &mut node.kind
+            && state.scroll.tick(now, completed)
+        {
+            active = true;
+        }
+        // 0.5.4 (#136): a virtual list's offset animates too (a fling).
+        if let NodeKind::VirtualList(state) = &mut node.kind
+            && state.scroll_offset.tick(now, completed)
+        {
+            active = true;
+        }
+        active
+    }
+
+    /// Advances every running animation to `now`. A full pass over the
+    /// tree happens only when an animation has started somewhere since the
+    /// last one (`animations_started`); otherwise only the nodes that pass
+    /// found animating are ticked, so the cost follows the animations, not
+    /// the tree's size (0.5.4, #103).
+    /// 0.5.4 (#139): makes `id` sticky, `inset` pixels from the start edge of the
+    /// scroller it sits in, or ordinary again with `None`. A no-op for a missing
+    /// node. See `Node::sticky`.
+    pub fn set_sticky(&mut self, id: NodeId, inset: Option<f64>) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.sticky = inset;
+            self.dirty = true;
+        }
+    }
+
+    /// 0.5.4 (#116): how many nodes the tree holds.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn tick_all(&mut self, now: Instant) -> (bool, Vec<CompletionHandle>) {
+        let mut completed = Vec::new();
+        let started = crate::animation::animations_started();
+        let started_new = self.scanned_at != Some(started);
+        // What was reached mutably since the last tick: an animation can only
+        // have been started on one of these. Drained every tick so it cannot
+        // pile up while nothing starts.
+        let (all_reached, reached) = self.nodes.take_animation_candidates();
+        let mut still = Vec::new();
+        if started_new && all_reached {
+            // Every node may be new to us (or too many to say which): look at
+            // all of them.
+            for (id, node) in &mut self.nodes {
+                if Self::tick_node(node, now, &mut completed) {
+                    still.push(id);
+                }
+            }
+            // That pass reached every node; do not let it count as the next
+            // tick's reason to do it again.
+            let _ = self.nodes.take_animation_candidates();
+            self.scanned_at = Some(started);
+        } else {
+            // The nodes known to be animating, and, when an animation has
+            // started, the ones it could have started on.
+            let mut ids = std::mem::take(&mut self.animating);
+            if started_new {
+                ids.extend(reached);
+                self.scanned_at = Some(started);
+            }
+            ids.sort_unstable();
+            ids.dedup();
+            for id in ids {
+                if let Some(node) = self.nodes.get_mut(id)
+                    && Self::tick_node(node, now, &mut completed)
+                {
+                    still.push(id);
+                }
+            }
+            // Ticking noted those nodes; they are known already.
+            let _ = self.nodes.take_animation_candidates();
+        }
+        self.animating = still;
+        let any_active = !self.animating.is_empty();
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the
         // exact signal this needs, just never fed into a redraw
@@ -647,11 +816,50 @@ impl Tree {
     /// real `render()` call, without `engine-render` ever reaching
     /// into this `Tree`'s own private `nodes` map directly (§4's
     /// crate-boundary rule).
+    /// 0.5.4 (#150): whether the tree holds any `Image` node.
+    pub fn has_images(&self) -> bool {
+        debug_assert_eq!(
+            self.image_count > 0,
+            self.nodes
+                .values()
+                .any(|n| matches!(n.kind, NodeKind::Image(_))),
+            "a node's kind was changed after it was made: the tree counts nodes by kind"
+        );
+        self.image_count > 0
+    }
+
+    /// 0.5.4 (#150): whether the tree holds any `Svg` node.
+    pub fn has_svgs(&self) -> bool {
+        debug_assert_eq!(
+            self.svg_count > 0,
+            self.nodes
+                .values()
+                .any(|n| matches!(n.kind, NodeKind::Svg(_))),
+            "a node's kind was changed after it was made: the tree counts nodes by kind"
+        );
+        self.svg_count > 0
+    }
+
     pub fn image_nodes(&self) -> impl Iterator<Item = (NodeId, &ImageState)> {
-        self.nodes.iter().filter_map(|(id, node)| match &node.kind {
-            NodeKind::Image(state) => Some((id, state)),
-            _ => None,
-        })
+        self.image_ids
+            .iter()
+            .filter_map(|&id| match &self.nodes.get(id)?.kind {
+                NodeKind::Image(state) => Some((id, state)),
+                _ => None,
+            })
+    }
+
+    /// 0.5.4 (#147): every raster image the tree's SVG nodes were given, for
+    /// the renderer to upload as textures.
+    pub fn svg_bitmaps(&self) -> Vec<std::sync::Arc<crate::svg::SvgBitmap>> {
+        self.svg_ids
+            .iter()
+            .filter_map(|&id| match &self.nodes.get(id)?.kind {
+                NodeKind::Svg(state) => Some(state.images.0.iter().map(|(_, b)| b.clone())),
+                _ => None,
+            })
+            .flatten()
+            .collect()
     }
 
     /// 0.5.1 (#68): whether giving `id` `shader` would make a shader depend

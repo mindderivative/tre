@@ -390,11 +390,47 @@ pub(crate) fn process_input(
     event: &InputEvent,
     py: Python<'_>,
 ) -> DispatchOutcome {
+    // 0.5.4 (#113): fingers and trackpad pinches have a pipeline of their own,
+    // which feeds the pointer events back through this one.
+    if matches!(
+        event,
+        InputEvent::Touch { .. } | InputEvent::TrackpadPinch { .. }
+    ) {
+        crate::touch::process(ctx, io, root, event, py);
+        return DispatchOutcome::None;
+    }
+    // 0.5.4 (#114): files are queued, and delivered together by `files::flush`.
+    if matches!(
+        event,
+        InputEvent::FileHovered { .. }
+            | InputEvent::FileHoverCancelled
+            | InputEvent::FileDropped { .. }
+    ) {
+        crate::files::queue(io, event);
+        return DispatchOutcome::None;
+    }
     if send_to_focused_terminal(ctx, io, event) {
         return DispatchOutcome::None;
     }
     if resize_from_border(ctx, io, event) {
         return DispatchOutcome::None;
+    }
+    // 0.5.4 (#154): Ctrl+Shift+Left/Right move the selection in static text by
+    // word. The tree's own Shift+arrow handling moves by character, so this
+    // comes first and, when it moves the selection, the key goes no further.
+    if let InputEvent::KeyPressed {
+        key: key @ (engine_core::Key::ArrowLeft | engine_core::Key::ArrowRight),
+        shift: true,
+    } = event
+        && listeners::modifiers().ctrl
+    {
+        let mut tree = ctx.tree.borrow_mut();
+        let in_input = tree
+            .focused()
+            .is_some_and(|f| matches!(tree.get(f).map(|n| &n.kind), Some(NodeKind::TextField(_))));
+        if !in_input && tree.extend_static_selection_by(*key, true) {
+            return DispatchOutcome::None;
+        }
     }
     listeners::note_input_modality(event);
     let shifted = shift_wheel(event);
@@ -458,12 +494,9 @@ pub(crate) fn border_direction(
     {
         return None;
     }
-    edge_at(
-        border,
-        f64::from(window.width.get()),
-        f64::from(window.height.get()),
-        position,
-    )
+    // 0.5.4 (#102): `position` and the border are logical pixels.
+    let (width, height) = window.logical_size();
+    edge_at(border, width, height, position)
 }
 
 /// 0.5.0 M3: the edge or corner of a `w` x `h` window that `position` is
@@ -703,7 +736,7 @@ fn shift_wheel(event: &InputEvent) -> Option<InputEvent> {
 /// nothing. Shift still scrolls, as it does in a browser. Core's
 /// `KeyPressed` carries only Shift; the rest are tracked here.
 fn keyboard_scroll(ctx: &NodeContext<'_>, event: &InputEvent) {
-    let InputEvent::KeyPressed { key, .. } = *event else {
+    let InputEvent::KeyPressed { key, shift } = *event else {
         return;
     };
     let held = listeners::modifiers();
@@ -711,6 +744,14 @@ fn keyboard_scroll(ctx: &NodeContext<'_>, event: &InputEvent) {
         return;
     }
     let mut tree = ctx.tree.borrow_mut();
+    // 0.5.4 (review): with a selection in static text, Shift+Up/Down move the
+    // selection (see `text_key_input`); they do not also scroll the view.
+    if shift
+        && matches!(key, Key::ArrowUp | Key::ArrowDown)
+        && tree.static_selection_ends().is_some()
+    {
+        return;
+    }
     let Some(focused) = tree.focused() else {
         return;
     };
@@ -785,8 +826,12 @@ fn shortcuts(
         }
         InputEvent::ControlChar('a') => {
             let focused = ctx.tree.borrow().focused();
-            if let Some(field) = focused {
-                ctx.tree.borrow_mut().select_all_text_field(field);
+            let in_input =
+                focused.is_some_and(|field| ctx.tree.borrow_mut().select_all_text_field(field));
+            if !in_input {
+                // 0.5.4 (#131): with no input to select in (nothing focused, or a
+                // button or row), the selected static text.
+                ctx.tree.borrow_mut().select_all_static_text();
             }
         }
         InputEvent::TerminalCopyRequested => {
@@ -974,10 +1019,13 @@ pub(crate) fn write_clipboard(text: &str) -> bool {
 /// no-GPU/no-display (M16 Phase 2). Returns `true` only on a genuine,
 /// complete real write.
 pub(crate) fn copy_focused_selection_to_clipboard(tree: &Rc<RefCell<Tree>>) -> bool {
+    // A focused text input's selection first, else (0.5.4, #112) the selected
+    // static text.
     let selected = tree
         .borrow()
         .focused()
-        .and_then(|field| tree.borrow().text_field_selected_text(field));
+        .and_then(|field| tree.borrow().text_field_selected_text(field))
+        .or_else(|| tree.borrow().static_selected_text());
     selected.is_some_and(|text| write_clipboard(&text))
 }
 

@@ -18,17 +18,42 @@
 //! the count it has already registered.
 
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use parley::fontique::{Collection, CollectionOptions};
 use peniko::Blob;
 
 static REGISTERED: Mutex<Vec<Blob<u8>>> = Mutex::new(Vec::new());
+/// 0.5.4 (#111): the family names of everything registered, in order. They
+/// follow a node's own `font_family` in its family stack, so a glyph that
+/// family lacks comes from a registered font that has it.
+static FAMILIES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// Bumped (under `REGISTERED`'s lock) every time a genuinely new blob is
 /// appended -- a cheap, lock-free "has anything changed" check for the
 /// per-frame `sync_registered_fonts` call.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// 0.5.4 (#111): whether text may use the machine's installed fonts, for
+/// families it names that aren't registered and for the glyphs the registered
+/// ones lack (CJK, Hebrew, Indic, colour emoji). Off by default: text is then
+/// the same on every machine, which is what tests and screenshots rely on.
+static SYSTEM_FONTS: AtomicBool = AtomicBool::new(false);
+
+/// Lets (or stops) every `TextRenderer` in this process use the system's
+/// installed fonts. A live renderer picks the change up on its next
+/// `sync_registered_fonts`, which then reports a change, so the next frame
+/// repaints.
+pub fn set_system_fonts(enabled: bool) {
+    if SYSTEM_FONTS.swap(enabled, Ordering::AcqRel) != enabled {
+        GENERATION.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// Whether system fonts are on (`set_system_fonts`).
+pub fn system_fonts() -> bool {
+    SYSTEM_FONTS.load(Ordering::Acquire)
+}
 
 /// `register_font` was handed bytes containing no font face `fontique`
 /// could parse.
@@ -77,14 +102,28 @@ pub fn register_font(data: Vec<u8>) -> Result<Vec<String>, NoFontFacesFound> {
     let mut registered = REGISTERED.lock().unwrap_or_else(PoisonError::into_inner);
     if !registered.iter().any(|b| b.data() == blob.data()) {
         registered.push(blob);
+        let mut families = FAMILIES.lock().unwrap_or_else(PoisonError::into_inner);
+        for name in &names {
+            if !families.contains(name) {
+                families.push(name.clone());
+            }
+        }
         GENERATION.fetch_add(1, Ordering::Release);
     }
     Ok(names)
 }
 
+/// The family names registered so far (`FAMILIES`), in order.
+pub(crate) fn fallback_families() -> Vec<String> {
+    FAMILIES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+}
+
 /// Current registry generation -- changes whenever `register_font`
 /// appends a new blob.
-pub(crate) fn generation() -> u64 {
+pub fn generation() -> u64 {
     GENERATION.load(Ordering::Acquire)
 }
 
@@ -99,6 +138,20 @@ pub(crate) fn registered_since(from: usize) -> (u64, usize, Vec<Blob<u8>>) {
         .map(<[_]>::to_vec)
         .unwrap_or_default();
     (generation, registered.len(), new)
+}
+
+/// 0.5.4 (#143): every face text can use -- the bundled ones, then the
+/// registered ones -- as raw font files, for something outside the renderer
+/// that shapes text itself (an SVG document's), with the generation they
+/// correspond to: it changes when the set does.
+pub fn all_fonts() -> (u64, Vec<Arc<Vec<u8>>>) {
+    let (generation, _, registered) = registered_since(0);
+    let fonts = crate::text::bundled_fonts()
+        .iter()
+        .map(|bytes| Arc::new(bytes.to_vec()))
+        .chain(registered.iter().map(|blob| Arc::new(blob.data().to_vec())))
+        .collect();
+    (generation, fonts)
 }
 
 #[cfg(test)]

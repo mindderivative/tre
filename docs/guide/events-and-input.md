@@ -61,6 +61,77 @@ handle.on("pointer_move", lambda e: resize_to(e.window_x))
 
 Capture ends when the button is released, or on `release_pointer()`.
 
+## Touch and gestures
+
+A touch screen (0.5.4) delivers each finger as `touch_start`, `touch_move`,
+`touch_end` and `touch_cancel`, with `event.pointer_id` telling fingers apart.
+A finger's events all go to the node it landed on, wherever it moves, so a drag
+that leaves a node keeps reporting to it. The engine also recognizes four
+gestures from the fingers and delivers them as events:
+
+| Event | When | Fields |
+| --- | --- | --- |
+| `tap` | a quick touch and release in place | `count` (2 for a double tap) |
+| `long_press` | a touch held in place half a second | position |
+| `pan` | one finger dragging past a 10 pixel slop | `phase`, `delta_x`/`delta_y` (since the last event), `total_x`/`total_y`, and on `"ended"` `velocity_x`/`velocity_y` in pixels a second |
+| `pinch` | two fingers moving together or apart; also a trackpad pinch | `phase`, `scale` (against the start), `scale_delta` (against the last event), `delta_x`/`delta_y` and `total_x`/`total_y` of the midpoint |
+
+```python
+canvas.on("pinch", lambda e: view.zoom_by(e.scale_delta, around=(e.window_x, e.window_y)))
+canvas.on("pan", lambda e: view.pan_by(e.delta_x, e.delta_y))
+photo.on("long_press", lambda: show_menu(photo))
+```
+
+The first finger on the screen is also the pointer, so an app written for a mouse
+works under a finger: a tap is a `click`, and a touch hovers what it is over while
+it is down. When that finger starts to pan, the press is cancelled instead
+(`pointer_cancel`, no `click`), and the pan scrolls the scroll view or virtual
+list under it, content following the finger. If a `pan` listener sits on the node
+under the finger or an ancestor, the app has taken the pan and nothing scrolls.
+A second finger is a pinch's, not a second pointer. Each touch event comes first,
+then the pointer events it stands for, then the gesture it completes.
+
+When the finger lifts mid-flick, the scroller it was dragging coasts on (0.5.4):
+its offset eases to rest on an exponential decay from the release velocity,
+stopping at the end of the content, and a finger landing on it, a wheel notch or
+a thumb drag catches it where it is. A flick slower than about 150 pixels a second
+does not coast, and an app that takes the pan with its own `pan` listener gets no
+coast either (its own code decides what a lift means; the `ended` event carries
+`velocity_x` and `velocity_y`). A trackpad or wheel with inertia of its own
+already sends its own steady stream of scroll events, so those are left alone.
+There is no overscroll bounce.
+
+Limits: there is no rotation gesture; and the engine's touch handling was written
+and tested with simulated touches (`window.simulate`), not on a touch screen, so
+the coast's friction is a considered default (a 0.35 second decay constant) that
+real fingers may want tuned.
+
+## Files dragged from the OS
+
+Dragging files from a file manager over the window and dropping them (0.5.4)
+fires `file_hover` (with `paths`), then `file_drop` (with `paths`) or
+`file_hover_cancel` if the drag leaves. Each goes to the node under the pointer,
+bubbling, and to the window's own listener:
+
+```python
+drop_zone.on("file_hover", lambda e: drop_zone.set(stroke_color=ACCENT, stroke_width=2))
+drop_zone.on("file_hover_cancel", lambda: drop_zone.set(stroke_width=0))
+drop_zone.on("file_drop", lambda e: open_files(e.paths))
+
+window.on("file_drop", lambda e: print("dropped anywhere:", e.paths))
+```
+
+`e.paths` is a list of path strings and `e.path` its first. A drop of several files
+is one event, not one per file. The engine only reports the paths: reading the files
+is yours.
+
+Limits: the OS gives a file drag no position of its own while it is over the window,
+so the node is the one under the pointer's last known position, which on some
+platforms is where it was when the drag entered; for a full-window drop target,
+listen on the window. File drag and drop works on Windows, macOS and X11. It does not
+on Wayland (`winit` 0.30 doesn't implement it there), so a Wayland session never
+fires these events; `simulate` does.
+
 ## Focus and the keyboard
 
 A node takes keyboard focus once it's `focusable=True`; text inputs and

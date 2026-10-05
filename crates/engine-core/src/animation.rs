@@ -4,18 +4,42 @@
 //! this step exists to validate the animation core in isolation, per
 //! Design Principle 5, before anything is built on top of it.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+
+/// 0.5.4 (#103): how many animations have ever been started, in the whole
+/// process. `Tree::tick_all` compares it with the count it last saw: equal
+/// means nothing new has started, so only the nodes it already knows are
+/// animating need ticking; different means one might have, anywhere, so it
+/// looks at every node once. Counting starts rather than registering nodes
+/// is why no code that starts an animation can forget to say so.
+static STARTED: AtomicU64 = AtomicU64::new(0);
+
+/// The number of animations started so far (see `STARTED`).
+pub(crate) fn animations_started() -> u64 {
+    STARTED.load(Ordering::Relaxed)
+}
 
 /// Implemented by every type an `Animated<T>` can wrap -- `f64`,
 /// `peniko::Color`, and `kurbo::Affine` here, plus `CornerRadii`,
 /// `Shadow`/`Shadows` (`node.rs`), and `PathData` (`path.rs`).
 pub trait Interpolate {
     fn interpolate(&self, other: &Self, t: f64) -> Self;
+
+    /// 0.5.4 (#138): the value as one number, for the types that are one
+    /// (`f64`): what lets a spring carry its velocity into a retarget.
+    fn scalar(&self) -> Option<f64> {
+        None
+    }
 }
 
 impl Interpolate for f64 {
     fn interpolate(&self, other: &Self, t: f64) -> Self {
         self + (other - self) * t
+    }
+
+    fn scalar(&self) -> Option<f64> {
+        Some(*self)
     }
 }
 
@@ -123,6 +147,89 @@ pub enum MotionCurve {
     /// M95: any CSS-style cubic bezier `(x1, y1, x2, y2)` -- the curve a
     /// framework passes as `easing`.
     Bezier(f64, f64, f64, f64),
+    /// 0.5.4 (#136): exponential decay, the shape of a flick coming to rest:
+    /// fast at the start, easing out with no overshoot. `k` is how many
+    /// time constants the animation spans: `(1 - e^(-k t)) / (1 - e^(-k))`
+    /// on `t` in `0..=1`, so a larger `k` is a harder stop. Only the engine
+    /// builds it (momentum scrolling); `k` must be above 0.
+    Decay(f64),
+    /// 0.5.4 (#138): a damped spring from 0 to 1, in real time. `omega` is its
+    /// natural frequency in radians a second, `zeta` its damping ratio (below 1
+    /// overshoots and rings, 1 is the quickest with no overshoot, above 1 is
+    /// sluggish), `v0` its starting speed in "distances a second" (0 from rest;
+    /// a retarget carries the speed it interrupted), and `settle` the seconds
+    /// until it is within a tenth of a percent of rest, which is how long the
+    /// animation lasts whatever duration it was given. Build one with
+    /// `MotionCurve::spring`.
+    Spring {
+        omega: f64,
+        zeta: f64,
+        v0: f64,
+        settle: f64,
+    },
+}
+
+/// A spring's distance from rest at `s` seconds, as a fraction of the way
+/// still to go: 1 at the start, 0 at rest. Closed form for each damping.
+fn spring_remaining(omega: f64, zeta: f64, v0: f64, s: f64) -> f64 {
+    if (zeta - 1.0).abs() < 1e-9 {
+        // Critically damped.
+        (-omega * s).exp() * (1.0 + (omega - v0) * s)
+    } else if zeta < 1.0 {
+        let wd = omega * (1.0 - zeta * zeta).sqrt();
+        let b = (zeta * omega - v0) / wd;
+        (-zeta * omega * s).exp() * ((wd * s).cos() + b * (wd * s).sin())
+    } else {
+        let root = (zeta * zeta - 1.0).sqrt();
+        let (r1, r2) = (-omega * (zeta - root), -omega * (zeta + root));
+        let c1 = (-v0 - r2) / (r1 - r2);
+        c1 * (r1 * s).exp() + (1.0 - c1) * (r2 * s).exp()
+    }
+}
+
+impl MotionCurve {
+    /// A spring with natural frequency `omega` and damping ratio `zeta`
+    /// starting at `v0` (see `Spring`); computes how long it takes to settle.
+    pub fn spring(omega: f64, zeta: f64, v0: f64) -> Self {
+        let (omega, zeta) = (omega.max(1e-3), zeta.max(0.01));
+        // The last moment it is farther than 0.1% from rest, found by
+        // stepping (there is no closed form for an under-damped ring).
+        let step = 0.002;
+        let mut last = 0.0;
+        let mut s = 0.0;
+        while s < 20.0 {
+            if spring_remaining(omega, zeta, v0, s).abs() > 0.001 {
+                last = s;
+            }
+            s += step;
+        }
+        MotionCurve::Spring {
+            omega,
+            zeta,
+            v0,
+            settle: (last + step).max(0.05),
+        }
+    }
+
+    /// A spring described the way people think of one: it takes about
+    /// `duration` for one cycle of its main motion, and `bounce` says how much
+    /// it overshoots: `0.0` the quickest settle with none, towards `1.0` more
+    /// and longer ringing, below `0.0` slower and softer (range -1 to 1,
+    /// exclusive).
+    pub fn spring_for(duration: Duration, bounce: f64) -> Self {
+        let omega = std::f64::consts::TAU / duration.as_secs_f64().max(1e-3);
+        Self::spring(omega, 1.0 - bounce.clamp(-0.99, 0.99), 0.0)
+    }
+
+    /// How fast the curve is moving at `t` (0 to 1), per unit of `t`.
+    fn slope(self, t: f64) -> f64 {
+        let eps = 1e-4;
+        let (a, b) = ((t - eps).max(0.0), (t + eps).min(1.0));
+        if b <= a {
+            return 0.0;
+        }
+        (self.ease(b) - self.ease(a)) / (b - a)
+    }
 }
 
 impl MotionCurve {
@@ -132,6 +239,13 @@ impl MotionCurve {
             MotionCurve::Bezier(x1, y1, x2, y2) => {
                 CubicSegment::standard(x1, y1, x2, y2).solve_y_for_x(t)
             }
+            MotionCurve::Decay(k) => (1.0 - (-k * t).exp()) / (1.0 - (-k).exp()),
+            MotionCurve::Spring {
+                omega,
+                zeta,
+                v0,
+                settle,
+            } => 1.0 - spring_remaining(omega, zeta, v0, t * settle),
         }
     }
 }
@@ -158,7 +272,9 @@ pub struct ActiveAnimation<T> {
 /// the same mechanism regardless of what `T` is.
 pub struct Animated<T: Interpolate + Clone> {
     pub current: T,
-    pub active: Option<ActiveAnimation<T>>,
+    /// Boxed (0.5.4, #106): most values most of the time are not animating,
+    /// and an inline animation more than tripled every one of them.
+    pub active: Option<Box<ActiveAnimation<T>>>,
 }
 
 impl<T: Interpolate + Clone> Animated<T> {
@@ -191,14 +307,7 @@ impl<T: Interpolate + Clone> Animated<T> {
     }
 
     pub fn animate_to(&mut self, to: T, duration: Duration, curve: MotionCurve, now: Instant) {
-        self.active = Some(ActiveAnimation {
-            from: self.current.clone(),
-            to,
-            start: now,
-            duration,
-            curve,
-            on_complete: None,
-        });
+        self.start(to, duration, curve, now, None);
     }
 
     /// M9 Phase 1 (§5): `animate_to`'s own real completion-callback
@@ -214,14 +323,71 @@ impl<T: Interpolate + Clone> Animated<T> {
         now: Instant,
         on_complete: CompletionHandle,
     ) {
-        self.active = Some(ActiveAnimation {
+        self.start(to, duration, curve, now, Some(on_complete));
+    }
+
+    fn start(
+        &mut self,
+        to: T,
+        duration: Duration,
+        curve: MotionCurve,
+        now: Instant,
+        on_complete: Option<CompletionHandle>,
+    ) {
+        STARTED.fetch_add(1, Ordering::Relaxed);
+        // 0.5.4 (#138): a spring lasts until it settles, and a spring that
+        // interrupts a moving number carries that number's speed on.
+        let (curve, duration) = match curve {
+            MotionCurve::Spring {
+                omega,
+                zeta,
+                settle,
+                ..
+            } => {
+                let v0 = self.speed_toward(&to, now).unwrap_or(0.0);
+                let curve = if v0 == 0.0 {
+                    // From rest (or not a number): the curve as given.
+                    MotionCurve::spring(omega, zeta, 0.0)
+                } else {
+                    MotionCurve::spring(omega, zeta, v0)
+                };
+                let settle = match curve {
+                    MotionCurve::Spring { settle, .. } => settle,
+                    _ => settle,
+                };
+                (curve, Duration::from_secs_f64(settle))
+            }
+            other => (other, duration),
+        };
+        self.active = Some(Box::new(ActiveAnimation {
             from: self.current.clone(),
             to,
             start: now,
             duration,
             curve,
-            on_complete: Some(on_complete),
-        });
+            on_complete,
+        }));
+    }
+
+    /// 0.5.4 (#138): how fast this value is moving toward `to` right now, as a
+    /// fraction of the distance still to go, per second: `None` for a value
+    /// that is not a number, one that is at rest, or one with nowhere to go.
+    fn speed_toward(&self, to: &T, now: Instant) -> Option<f64> {
+        let anim = self.active.as_ref()?;
+        let (from, old_to, current, target) = (
+            anim.from.scalar()?,
+            anim.to.scalar()?,
+            self.current.scalar()?,
+            to.scalar()?,
+        );
+        let elapsed = now.saturating_duration_since(anim.start).as_secs_f64();
+        let d = anim.duration.as_secs_f64();
+        if d <= 0.0 || elapsed >= d {
+            return None;
+        }
+        let per_second = (old_to - from) * anim.curve.slope(elapsed / d) / d;
+        let distance = target - current;
+        (distance.abs() > 1e-9).then(|| per_second / distance)
     }
 
     /// Advances this value to `now`, returning `true` if it's still
@@ -470,5 +636,131 @@ mod tests {
         let mut completed = Vec::new();
         value.tick(start + Duration::from_secs(2), &mut completed);
         assert!(completed.is_empty());
+    }
+
+    // --- 0.5.4 (#138): springs.
+
+    fn at(curve: MotionCurve, t: f64) -> f64 {
+        curve.ease(t)
+    }
+
+    #[test]
+    fn a_spring_starts_at_zero_and_arrives_at_one() {
+        for bounce in [-0.5, 0.0, 0.3, 0.7] {
+            let c = MotionCurve::spring_for(Duration::from_millis(400), bounce);
+            assert!(at(c, 0.0).abs() < 1e-9);
+            assert!(
+                (at(c, 1.0) - 1.0).abs() < 0.0011,
+                "bounce {bounce}: {}",
+                at(c, 1.0)
+            );
+        }
+    }
+
+    #[test]
+    fn a_bouncy_spring_overshoots_and_a_critically_damped_one_does_not() {
+        let peak = |c: MotionCurve| {
+            (0..=1000)
+                .map(|i| at(c, f64::from(i) / 1000.0))
+                .fold(f64::MIN, f64::max)
+        };
+        let bouncy = MotionCurve::spring_for(Duration::from_millis(400), 0.5);
+        assert!(
+            peak(bouncy) > 1.05,
+            "rings past the target: {}",
+            peak(bouncy)
+        );
+        for bounce in [0.0, -0.5] {
+            let c = MotionCurve::spring_for(Duration::from_millis(400), bounce);
+            assert!(
+                peak(c) <= 1.0005,
+                "bounce {bounce} never passes it: {}",
+                peak(c)
+            );
+            // And it only ever moves forward.
+            let mut last = 0.0;
+            for i in 0..=1000 {
+                let v = at(c, f64::from(i) / 1000.0);
+                assert!(v >= last - 1e-9);
+                last = v;
+            }
+        }
+    }
+
+    #[test]
+    fn a_bouncier_spring_takes_longer_to_settle() {
+        let settle = |bounce| match MotionCurve::spring_for(Duration::from_millis(400), bounce) {
+            MotionCurve::Spring { settle, .. } => settle,
+            _ => unreachable!(),
+        };
+        assert!(settle(0.7) > settle(0.3) && settle(0.3) > settle(0.0));
+        assert!(settle(0.0) > 0.1 && settle(0.7) < 20.0);
+    }
+
+    #[test]
+    fn a_spring_lasts_until_it_settles_whatever_duration_is_asked_for() {
+        let mut value = Animated::new(0.0_f64);
+        let t0 = Instant::now();
+        value.animate_to(
+            10.0,
+            Duration::from_millis(1),
+            MotionCurve::spring_for(Duration::from_millis(400), 0.3),
+            t0,
+        );
+        assert!(
+            value.tick(t0 + Duration::from_millis(50), &mut Vec::new()),
+            "still going"
+        );
+        assert!(value.tick(t0 + Duration::from_millis(300), &mut Vec::new()));
+        assert!(!value.tick(t0 + Duration::from_secs(30), &mut Vec::new()));
+        assert_eq!(value.current, 10.0, "and lands exactly");
+    }
+
+    #[test]
+    fn a_retarget_carries_the_speed_of_the_animation_it_interrupts() {
+        let spring = MotionCurve::spring_for(Duration::from_millis(300), 0.2);
+        let mut value = Animated::new(0.0_f64);
+        let t0 = Instant::now();
+        // 100 units over a second, linear: 100 a second.
+        value.animate_to(100.0, Duration::from_secs(1), MotionCurve::Linear, t0);
+        let t1 = t0 + Duration::from_millis(500);
+        value.tick(t1, &mut Vec::new());
+        let at_interrupt = value.current;
+        assert!((at_interrupt - 50.0).abs() < 1e-6);
+        // Retarget with a spring: it keeps moving at about 100 a second at first.
+        value.animate_to(200.0, Duration::from_millis(1), spring, t1);
+        // The spring accelerates hard, so look just after the hand-over.
+        let dt = Duration::from_micros(200);
+        value.tick(t1 + dt, &mut Vec::new());
+        let speed = (value.current - at_interrupt) / dt.as_secs_f64();
+        assert!(
+            (speed - 100.0).abs() < 8.0,
+            "continues at the old speed: {speed}"
+        );
+
+        // Without the carry (an animation that was at rest) it starts from zero speed.
+        let mut rest = Animated::new(50.0_f64);
+        rest.animate_to(200.0, Duration::from_millis(1), spring, t1);
+        rest.tick(t1 + dt, &mut Vec::new());
+        let from_rest = (rest.current - 50.0) / dt.as_secs_f64();
+        assert!(
+            from_rest < speed,
+            "a spring from rest starts slower: {from_rest}"
+        );
+    }
+
+    #[test]
+    fn a_spring_works_on_values_that_are_not_numbers() {
+        let mut color = Animated::new(peniko::Color::from_rgba8(0, 0, 0, 255));
+        let t0 = Instant::now();
+        color.animate_to(
+            peniko::Color::from_rgba8(255, 0, 0, 255),
+            Duration::from_millis(1),
+            MotionCurve::spring_for(Duration::from_millis(300), 0.0),
+            t0,
+        );
+        color.tick(t0 + Duration::from_millis(100), &mut Vec::new());
+        assert!(color.current.to_rgba8().r > 0);
+        assert!(!color.tick(t0 + Duration::from_secs(10), &mut Vec::new()));
     }
 }

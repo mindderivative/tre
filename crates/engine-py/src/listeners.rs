@@ -109,10 +109,27 @@ pub(crate) enum EventType {
     /// 0.5.0 M3 (issue #28): the press was taken to move or resize the
     /// window -- no `pointer_up` or `click` will follow it.
     PointerCancel,
+    /// 0.5.4 (#113): a finger touched, moved on, left or was taken from the
+    /// screen; each carries `pointer_id`.
+    TouchStart,
+    TouchMove,
+    TouchEnd,
+    TouchCancel,
+    /// 0.5.4: recognized gestures.
+    Tap,
+    LongPress,
+    Pan,
+    Pinch,
+    /// 0.5.4 (#114): files dragged over, away from, or dropped on the node.
+    FileHover,
+    FileHoverCancel,
+    FileDrop,
+    /// 0.5.4 (#131): a click on a text span with a `link`; carries `href`.
+    Link,
 }
 
 impl EventType {
-    const ALL: [EventType; 18] = [
+    const ALL: [EventType; 30] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -131,6 +148,18 @@ impl EventType {
         Self::Dismiss,
         Self::Scroll,
         Self::PointerCancel,
+        Self::TouchStart,
+        Self::TouchMove,
+        Self::TouchEnd,
+        Self::TouchCancel,
+        Self::Tap,
+        Self::LongPress,
+        Self::Pan,
+        Self::Pinch,
+        Self::FileHover,
+        Self::FileHoverCancel,
+        Self::FileDrop,
+        Self::Link,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -153,6 +182,18 @@ impl EventType {
             Self::Dismiss => "dismiss",
             Self::Scroll => "scroll",
             Self::PointerCancel => "pointer_cancel",
+            Self::TouchStart => "touch_start",
+            Self::TouchMove => "touch_move",
+            Self::TouchEnd => "touch_end",
+            Self::TouchCancel => "touch_cancel",
+            Self::Tap => "tap",
+            Self::LongPress => "long_press",
+            Self::Pan => "pan",
+            Self::Pinch => "pinch",
+            Self::FileHover => "file_hover",
+            Self::FileHoverCancel => "file_hover_cancel",
+            Self::FileDrop => "file_drop",
+            Self::Link => "link",
         }
     }
 
@@ -207,10 +248,19 @@ pub(crate) enum WindowEventType {
     DockTarget,
     /// M99: a panel drag ended.
     DockDrop,
+    /// 0.5.4 (#114): files dragged over the window, off it, or dropped on it.
+    FileHover,
+    FileHoverCancel,
+    FileDrop,
+    /// 0.5.4 (#115): the OS's reduced-motion or increased-contrast preference changed.
+    ReducedMotion,
+    HighContrast,
+    /// 0.5.4 (#116): a frame was drawn and presented; `stats` has its costs.
+    Frame,
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 13] = [
+    const ALL: [WindowEventType; 19] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -224,6 +274,12 @@ impl WindowEventType {
         Self::GpuStalled,
         Self::DockTarget,
         Self::DockDrop,
+        Self::FileHover,
+        Self::FileHoverCancel,
+        Self::FileDrop,
+        Self::ReducedMotion,
+        Self::HighContrast,
+        Self::Frame,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -241,6 +297,12 @@ impl WindowEventType {
             Self::GpuStalled => "gpu_stalled",
             Self::DockTarget => "dock_target",
             Self::DockDrop => "dock_drop",
+            Self::FileHover => "file_hover",
+            Self::FileHoverCancel => "file_hover_cancel",
+            Self::FileDrop => "file_drop",
+            Self::ReducedMotion => "reduced_motion",
+            Self::HighContrast => "high_contrast",
+            Self::Frame => "frame",
         }
     }
 

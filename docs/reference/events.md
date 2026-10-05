@@ -24,6 +24,13 @@ listing the valid ones.
 | `click` | Primary press and release on the same node, or keyboard activation | yes |
 | `secondary_click` | Secondary press and release on the same node | yes |
 | `wheel` | A wheel or trackpad scroll | yes |
+| `file_hover`, `file_hover_cancel`, `file_drop` | Files dragged from the OS over, away from, or dropped on the node under the pointer; `paths` (0.5.4) | yes |
+| `link` | A click (press and release) on a text span that has a `link`; `href` is the span's link string. Not fired when the press became a selection (0.5.4) | yes |
+| `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | A finger touches the screen, moves, lifts, or is taken away by the system; each carries `pointer_id`, and a finger's events all go to the node it landed on (0.5.4) | yes |
+| `tap` | A quick touch and release in place; `count` is 2 for a second tap close to the first (0.5.4) | yes |
+| `long_press` | A touch held in place for half a second (0.5.4) | yes |
+| `pan` | One finger dragging past a small slop; `phase` is `"began"`, `"changed"`, `"ended"` or `"cancelled"` (0.5.4) | yes |
+| `pinch` | Two fingers moving together or apart, or a trackpad pinch; carries `scale` and `scale_delta` (0.5.4) | yes |
 | `key_down`, `key_up` | A key is pressed or released while the node, or a descendant, has focus (the root gets keys when nothing is focused) | yes |
 | `input` | Committed text arrives for the focused text field | yes |
 | `focus`, `unfocus` | A node gains or loses keyboard focus | yes |
@@ -102,10 +109,16 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | --- | --- | --- |
 | `resize` | The window's client area changed size | `width`, `height` |
 | `color_scheme` | The OS switched between light and dark | `dark` |
+| `frame` | A frame was drawn and presented (0.5.4); fires every frame, so keep the handler cheap | `stats` |
+| `reduced_motion` | The OS's reduce-motion preference changed (0.5.4) | `reduced_motion` |
+| `high_contrast` | The OS's increased-contrast preference changed (0.5.4) | `high_contrast` |
 | `scale_factor` | The window moved to a display with a different scale factor | `scale_factor` |
 | `close_requested` | The user asked to close the window; `event.cancel()` keeps it open | — |
 | `closed` | The window closed — by the user or by reaching `max_frames` | — |
 | `dock_target` | During a docking drag, the pointer moved into another dock zone, or out of every zone | `side` |
+| `file_hover` | Files are being dragged from the OS over the window (0.5.4); `paths` | — |
+| `file_hover_cancel` | The file drag left the window or was abandoned (0.5.4) | — |
+| `file_drop` | Files were dropped on the window (0.5.4); `paths` | — |
 | `dock_drop` | A docking drag ended with the primary button's release; the panel has moved to the zone there, if any | `panel`, `side` |
 | `maximized` | The window was maximized or restored (0.5.0) | `maximized` |
 | `active` | The window gained or lost the OS's focus (0.5.0) | `active` |
@@ -122,12 +135,14 @@ A window event has no node: `event.target` is `None`.
 window.set(title="Editor — draft.md")
 window.get("scale_factor")  # 1.0 until App.run() opens the window
 window.get("dark")          # True, False, or None where the OS can't say
+window.get("reduced_motion")  # (0.5.4) True if the user asked for less motion
+window.get("high_contrast")   # (0.5.4) True if the user asked for more contrast
 ```
 
 `window.set(title=...)` changes the title, live if the window is open.
 `window.set(partial_redraw=False)` redraws the whole window every frame
 instead of only what changed ([Window](window.md)). `window.get(name)` reads
-`width`, `height`, `title`, `scale_factor`, `dark`, `partial_redraw`,
+`width`, `height`, `title`, `scale_factor`, `dark`, `reduced_motion`, `high_contrast`, `partial_redraw`,
 `partial_redraw_active`, or `show_damage`, and (0.5.0) `decorations`,
 `fullscreen`, `min_width`, `min_height`, `maximized`, `minimized`, `active`,
 `platform`, `resize_border`, `system_menu`, `titlebar_inset`,
@@ -143,6 +158,29 @@ desktop's settings portal, before `App.run()` too, and the portal's changes
 arrive as `color_scheme`; macOS and Windows answer once the window is open,
 and `None` before. `None` also means no portal answered (a headless session).
 
+**Reduced motion and increased contrast** (0.5.4) are the OS's accessibility
+preferences, read the same way. `window.get("reduced_motion")` is `True` when the
+user asked the system to cut animation, `False` when they did not, and `None` where
+the platform can't say; `get("high_contrast")` is the same for "more contrast". An
+app that honours them reads them at start and listens for `reduced_motion` and
+`high_contrast`:
+
+```python
+if window.get("reduced_motion"):
+    ANIMATE_MS = 0                      # snap instead of easing
+window.on("reduced_motion", lambda e: set_animations(not e.reduced_motion))
+window.on("high_contrast", lambda e: use_high_contrast_palette(e.high_contrast))
+```
+
+The engine reports them and changes nothing itself: durations are the app's to
+shorten, and colours its to swap. Linux reads the settings portal's
+`reduced-motion` and `contrast` (with GNOME's `enable-animations` and
+`high-contrast` for an older portal) and its changes arrive live; Windows reads the
+client-area animation setting and the High Contrast theme, macOS the "Reduce motion"
+and "Increase contrast" options. Windows and macOS announce no change, so the event
+fires when the window regains focus after one. Only the Linux read is checked on real
+hardware; the Windows and macOS code is compiled for those targets and untested.
+
 ## Event
 
 | Field | Present for |
@@ -154,6 +192,13 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `window_x`, `window_y` | pointer and wheel events — in the window |
 | `button` | pointer events and pointer clicks — `"primary"`, `"secondary"`, `"middle"`, or the mouse's side buttons `"back"` and `"forward"` (0.4.1; they make no `click`) |
 | `delta_x`, `delta_y` | `wheel` — pixels, positive scrolling right and down; with Shift held, a wheel with no horizontal part arrives as `delta_x` (0.4.3) |
+| `pointer_id` | `touch_*` — which finger |
+| `phase` | `pan`, `pinch` — `"began"`, `"changed"`, `"ended"`, `"cancelled"` |
+| `count` | `tap` — 1, or 2 for a double tap |
+| `scale`, `scale_delta` | `pinch` — the distance between fingers over what it was at the start, and over what it was at the last event |
+| `delta_x`, `delta_y` | (also) `pan`, `pinch` — how far the point (a pan's finger, a pinch's midpoint) moved since the last event |
+| `total_x`, `total_y` | `pan`, `pinch` — how far it has moved in all |
+| `velocity_x`, `velocity_y` | `pan` when it ends — the speed the finger lifted at, in pixels a second |
 | `key`, `repeat` | `key_down`, `key_up` |
 | `shift`, `ctrl`, `alt`, `meta` | pointer, wheel, key, and click events |
 | `text` | `input` |
@@ -162,7 +207,11 @@ and `None` before. `None` also means no portal answered (a headless session).
 | `related_target` | `focus`, `unfocus` — the node on the other side of the move |
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
+| `reduced_motion` / `high_contrast` | `reduced_motion` / `high_contrast` — the new preference |
+| `stats` | `frame` — the frame's costs, the same dict as `window.frame_stats()["last"]` |
 | `maximized` / `active` | `maximized` / `active` — the window's new state |
+| `path`, `paths` | `file_hover`, `file_drop` — the dragged files' paths as `str`s; `path` is the first |
+| `href` | `link` — the clicked span's `link` string |
 | `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |
 | `panel` | `dock_drop` — the dragged panel |
 
@@ -194,12 +243,18 @@ window.simulate("resize", width=800, height=600)
 | `pointer_move`, `pointer_enter`, `click`, `secondary_click` | `node` and/or `x`, `y` |
 | `wheel` | `node` and/or `x`, `y`; `delta_x`, `delta_y` |
 | `pointer_leave` | — (the pointer leaves the window) |
+| `file_hover`, `file_drop` | `paths` (a list of str) or `path`; `node` and/or `x`, `y` for where they are over |
+| `link` | `node` and `href` (a `str`); delivers the event as a click on a link would |
+| `file_hover_cancel` | — |
+| `touch_start`, `touch_move`, `touch_end`, `touch_cancel` | `node` and/or `x`, `y`; `id` (default 0) tells fingers apart |
+| `trackpad_pinch` | `node` and/or `x`, `y`; `delta` (a magnification step, `1 + delta` the scale to apply), `phase` (`"started"`, `"moved"` — the default — `"ended"`, `"cancelled"`) |
 | `key_down`, `key_up` | `key`; `repeat` |
 | `input` | `text` |
 | `focus`, `unfocus` | `node` |
 | `a11y_action` | `node`, `action`; `value` for `set_value` |
 | `resize` | `width`, `height` |
 | `color_scheme` | `dark` |
+| `reduced_motion`, `high_contrast` | `value` (a bool) |
 | `scale_factor` | `scale_factor` |
 | `close_requested`, `closed` | — |
 | `maximized` / `active` | `maximized` / `active` — sets the window's state; the event fires only if it changed, as the live window's does. Before `App.run()`, `maximize()`/`restore()`/`minimize()` change the state with no event, so simulating the state you're already in fires nothing |
@@ -208,4 +263,9 @@ Pointer events aim at `node`'s center, at `x`/`y` local to `node`, or at
 window-space `x`/`y` without a node. Pointer, wheel, click, and key events also
 take `shift`, `ctrl`, `alt`, and `meta`. A simulated key press edits text and moves focus exactly
 as a real one does — Ctrl+C/X/V/A included — and a focused terminal takes
-every key, as it does live. An unknown event or field raises `ValueError`.
+every key, as it does live. Simulated pointer, touch and key events also reach the
+parts of text handling that need the text layout (0.5.4): a press, drag and release
+select text, a press and release on a link span fire `link`, two quick presses select a
+word, and Shift+Up and Shift+Down move a selection a line, all as they do live (the text
+layout comes from a headless renderer, and the clock is the window's, so `advance` moves
+the double-click window). An unknown event or field raises `ValueError`.
