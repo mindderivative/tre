@@ -362,7 +362,7 @@ fn shader_tick(_: &mut Scene, frame: usize, renderer: &mut WindowRenderer) {
 fn video_frame_data(seed: u8) -> peniko::ImageData {
     let (w, h) = (1280u32, 720u32);
     let mut bytes = vec![seed; (w * h * 4) as usize];
-    for px in bytes.chunks_exact_mut(4) {
+    for px in bytes.as_chunks_mut::<4>().0.iter_mut() {
         px[3] = 0xFF;
     }
     peniko::ImageData {
