@@ -85,6 +85,7 @@ nav:
   - Design:
       - Custom windowing: design/custom-windowing.md
       - WGSL shaders: design/wgsl.md
+      - Performance baseline: design/performance-baseline.md
   - Contributing: contributing.md
 
 validation:
