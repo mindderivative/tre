@@ -1,6 +1,6 @@
 //! 0.5.4 (#108): `Window.snapshot` -- what a window draws, as pixels.
 
-use std::cell::RefCell;
+use std::sync::OnceLock;
 
 use engine_core::InputEvent;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -10,11 +10,25 @@ use taffy::prelude::{AvailableSpace, Size};
 
 use crate::window::PyWindow;
 
-thread_local! {
-    /// The device snapshots render on, made on first use and kept: creating
-    /// one takes far longer than a small frame. It is no window's device, so
-    /// a snapshot works before `App.run()` and with no display at all.
-    static DEVICE: RefCell<Option<(wgpu::Device, wgpu::Queue)>> = const { RefCell::new(None) };
+/// The device snapshots render on, made on first use and kept for the life of
+/// the process: creating one takes far longer than a small frame. It is no
+/// window's device, so a snapshot works before `App.run()` and with no display
+/// at all.
+///
+/// A process-wide static, not a thread-local: a thread-local device is dropped
+/// when its thread exits, and a debug build of wgpu checks its locks through a
+/// thread-local of its own that may already be gone by then, which aborted the
+/// interpreter at exit (0.5.4 CI). A static is never dropped.
+static DEVICE: OnceLock<(wgpu::Device, wgpu::Queue)> = OnceLock::new();
+
+/// The snapshot device, made if there is none yet. Two threads racing to make
+/// it keep one; the other is dropped normally, on a live thread.
+fn snapshot_device() -> Result<&'static (wgpu::Device, wgpu::Queue), String> {
+    if let Some(device) = DEVICE.get() {
+        return Ok(device);
+    }
+    let made = headless_device()?;
+    Ok(DEVICE.get_or_init(|| made))
 }
 
 /// A device on the default adapter, or on a software one where there is no
@@ -111,12 +125,7 @@ impl PyWindow {
             crate::scale::to_physical(h, scale),
         );
         let glyph_cache = self.handles.glyph_cache.get();
-        let result = DEVICE.with(|cell| {
-            let mut slot = cell.borrow_mut();
-            if slot.is_none() {
-                *slot = Some(headless_device()?);
-            }
-            let (device, queue) = slot.as_ref().expect("just made");
+        let result = snapshot_device().and_then(|(device, queue)| {
             engine_render::snapshot_with(
                 device,
                 queue,
