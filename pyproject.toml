@@ -8,7 +8,7 @@ build-backend = "maturin"
 # `pillow`/`PIL`.
 [project]
 name = "tesserae-engine"
-version = "0.5.4"
+version = "0.5.5"
 description = "tre: a GPU-rendered retained-mode UI engine for Python, written in Rust -- nodes, flexbox and grid layout, paint, animation, input, text, and accessibility, rendered with vello."
 authors = [{ name = "Phil Hodgins", email = "philip.a.hodgins@gmail.com" }]
 requires-python = ">=3.12"

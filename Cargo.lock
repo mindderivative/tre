@@ -897,7 +897,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "engine-core"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
@@ -913,7 +913,7 @@ dependencies = [
 
 [[package]]
 name = "engine-platform"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -930,7 +930,7 @@ dependencies = [
 
 [[package]]
 name = "engine-py"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "arboard",
  "engine-core",
@@ -951,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "engine-render"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "accesskit",
  "accesskit_consumer",
