@@ -109,6 +109,9 @@ struct GpuState {
     /// surface supports (the choice picks one of them).
     present: PresentChoice,
     present_modes: Vec<wgpu::PresentMode>,
+    /// 0.5.5 (#155): whether the window is being resized, which presents
+    /// without vsync (see `engine_render::ResizePacing`).
+    pacing: engine_render::ResizePacing,
     /// 0.5.4 (#137): whether the surface blends with what is behind the window.
     transparent_active: bool,
     /// 0.5.4 (#135): times each frame's GPU work, where the device can.
@@ -214,6 +217,7 @@ impl GpuState {
             watch,
             present,
             present_modes: capabilities.present_modes,
+            pacing: engine_render::ResizePacing::default(),
             transparent_active,
             timer,
         })
@@ -226,11 +230,33 @@ impl GpuState {
             return;
         }
         self.present = choice;
-        let mode = choice.mode(&self.present_modes);
+        self.apply_present_mode();
+    }
+
+    /// The mode the swapchain should use now: the app's choice, or while the
+    /// window is being resized the one without a vsync barrier (0.5.5, #155).
+    fn present_mode_now(&self) -> wgpu::PresentMode {
+        self.pacing.choice(self.present).mode(&self.present_modes)
+    }
+
+    /// Reconfigures the swapchain if the mode it should use is not the one it has.
+    fn apply_present_mode(&mut self) {
+        let mode = self.present_mode_now();
         if mode != self.surface_config.present_mode {
             self.surface_config.present_mode = mode;
             self.surface.configure(&self.device, &self.surface_config);
-            tracing::debug!(?mode, choice = choice.name(), "present mode changed");
+            tracing::debug!(?mode, choice = self.present.name(), "present mode changed");
+        }
+    }
+
+    /// 0.5.5 (#155): ends resize pacing once the window has stopped being
+    /// resized for `RESIZE_HOLD`, going back to the app's present mode with one
+    /// reconfigure. Nothing is presented here: the next frame, whatever causes
+    /// it, is the first on the restored mode, and a resize that starts again
+    /// first never committed with a vsync barrier.
+    fn settle_pacing(&mut self, now: Instant) {
+        if self.pacing.settle(now) {
+            self.apply_present_mode();
         }
     }
 
@@ -256,11 +282,15 @@ impl GpuState {
     /// -- the per-frame `RedrawRequested` path, guarded by `needs_
     /// resize` below, not from every raw `InputEvent::Resized`. See
     /// `needs_resize`'s own doc comment for the real, measured reason.
-    fn resize(&mut self, width: u32, height: u32) {
+    fn resize(&mut self, width: u32, height: u32, now: Instant) {
         let (width, height) = self.fit(width, height);
         if width == 0 || height == 0 {
             return;
         }
+        // 0.5.5 (#155): a window being resized presents without a vsync
+        // barrier; this reconfigure carries the mode change, so it costs no extra.
+        self.pacing.resized(now);
+        self.surface_config.present_mode = self.present_mode_now();
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
@@ -787,6 +817,11 @@ impl App {
                     );
                 }
                 let any_active = any_active || runtime.handles.touch.borrow().needs_frames();
+                // 0.5.5 (#155): a resized window presents without vsync until it
+                // has been still for a moment; the loop keeps running until then
+                // so it can go back (a few polls that find nothing to draw).
+                runtime.gpu.settle_pacing(Instant::now());
+                let any_active = any_active || runtime.gpu.pacing.active();
                 // 0.5.1 (#70): a shader's time is the window's clock; and a
                 // window drawing an `animated` shader keeps running -- a frame
                 // per display refresh, repainting just that node -- exactly
@@ -924,9 +959,11 @@ impl App {
                 // reasoning). A true no-op when nothing changed size
                 // (`resize` itself still no-ops on a 0-sized dimension).
                 if resized {
-                    runtime
-                        .gpu
-                        .resize(runtime.handles.width.get(), runtime.handles.height.get());
+                    runtime.gpu.resize(
+                        runtime.handles.width.get(),
+                        runtime.handles.height.get(),
+                        Instant::now(),
+                    );
                 }
 
                 let after_layout = Instant::now();
