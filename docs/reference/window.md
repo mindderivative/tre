@@ -355,7 +355,9 @@ stats["recent"]      # the last 240 frames
 ```
 
 A frame (`last`, and each `frame` event's `stats`) has, in milliseconds, `tick_ms`
-(animations and timers), `layout_ms`, `prepare_ms` (working out what changed),
+(animations and timers), `layout_ms`, `configure_ms` (0.5.5: rebuilding the swapchain
+for a new window size, zero on a frame that did not resize; it used to be counted in
+`layout_ms`), `prepare_ms` (working out what changed),
 `acquire_ms` (waiting for the swapchain to hand over an image), `draw_ms` (building
 the scene, rendering and submitting), `present_ms` and `total_ms`, plus `cpu_ms`
 (`total_ms` without `acquire_ms` and `present_ms`: the app's own cost), `redraw`

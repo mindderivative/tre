@@ -103,6 +103,7 @@ impl Trace {
         for (name, took) in [
             ("tick", r.tick),
             ("layout", r.layout),
+            ("configure", r.configure),
             ("prepare", r.prepare),
             ("acquire", r.acquire),
             ("draw", r.draw),
@@ -125,7 +126,8 @@ impl Trace {
         if r.at < self.began {
             return Ok(());
         }
-        let draw_start = self.since_start(r.at) + r.tick + r.layout + r.prepare + r.acquire;
+        let draw_start =
+            self.since_start(r.at) + r.tick + r.layout + r.configure + r.prepare + r.acquire;
         self.slice(&format!("gpu frame {}", r.index), 2, draw_start, took, "")
     }
 
@@ -163,6 +165,7 @@ mod tests {
             at,
             tick: ms(1),
             layout: ms(2),
+            configure: ms(0),
             prepare: ms(0),
             acquire: ms(3),
             draw: ms(4),

@@ -958,14 +958,16 @@ impl App {
                 // (`needs_resize`'s own doc comment has the full real
                 // reasoning). A true no-op when nothing changed size
                 // (`resize` itself still no-ops on a 0-sized dimension).
+                let configure_began = Instant::now();
                 if resized {
                     runtime.gpu.resize(
                         runtime.handles.width.get(),
                         runtime.handles.height.get(),
-                        Instant::now(),
+                        configure_began,
                     );
                 }
-
+                // 0.5.5: the swapchain rebuild is its own stage; it used to
+                // be counted as layout.
                 let after_layout = Instant::now();
 
                 // 0.4.0 M5: what changed since the last frame
@@ -1113,7 +1115,8 @@ impl App {
                     index: 0,
                     at: frame_began,
                     tick: after_tick.saturating_duration_since(frame_began),
-                    layout: after_layout.saturating_duration_since(after_tick),
+                    layout: configure_began.saturating_duration_since(after_tick),
+                    configure: after_layout.saturating_duration_since(configure_began),
                     prepare: after_prepare.saturating_duration_since(after_layout),
                     acquire: draw_began.saturating_duration_since(acquire_began),
                     draw: present_began.saturating_duration_since(draw_began),
