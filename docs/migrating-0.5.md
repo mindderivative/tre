@@ -120,6 +120,16 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.5
+
+- **Resizing a window no longer stalls on KDE Wayland.** 0.5.4's vsync default made a
+  window resized by its edge (an undecorated window with `resize_border`, most
+  noticeably) stall in bursts of 0.1 to 1.1 s and trail the pointer. While a window is
+  being resized it now presents without vsync, and returns to `present_mode` about
+  0.4 s after the last resize; see [Window](reference/window.md). Nothing to change in
+  an app. If you worked around it with `present_mode="low_latency"`, you can remove
+  that and get the vsync saving back while something animates.
+
 ## 0.5.4
 
 - **An animating window is paced to the display.** The swapchain used the first

@@ -55,7 +55,9 @@ pub use gpu_timer::{GpuTimer, required_features as gpu_timer_features};
 pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
-pub use present::{PresentChoice, linear_surface_format, transparent_alpha_mode};
+pub use present::{
+    PresentChoice, RESIZE_HOLD, ResizePacing, linear_surface_format, transparent_alpha_mode,
+};
 pub use profile::{FrameProfile, KindCost, NodeCost, SLOWEST as PROFILE_SLOWEST};
 pub use shader_pass::{ShaderPasses, ShaderTextures};
 pub use snapshot::{Snapshot, snapshot, snapshot_with};

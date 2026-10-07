@@ -46,6 +46,9 @@ pub(crate) struct FrameRecord {
     pub(crate) tick: Duration,
     /// Layout (and virtual lists' materializing).
     pub(crate) layout: Duration,
+    /// 0.5.5: rebuilding the swapchain for a new window size (zero on a frame
+    /// that did not resize); before, it was counted in `layout`.
+    pub(crate) configure: Duration,
     /// Working out what changed (the damage walk).
     pub(crate) prepare: Duration,
     /// Waiting for the swapchain to hand over an image: where a paced loop
@@ -96,6 +99,7 @@ pub(crate) struct Summary {
     pub(crate) cpu_ms: Spread,
     pub(crate) tick_ms: f64,
     pub(crate) layout_ms: f64,
+    pub(crate) configure_ms: f64,
     pub(crate) prepare_ms: f64,
     pub(crate) acquire_ms: f64,
     pub(crate) draw_ms: f64,
@@ -279,6 +283,7 @@ impl FrameStats {
             cpu_ms: spread(self.kept.iter().map(|r| ms(r.cpu())).collect()),
             tick_ms: mean(|r| r.tick),
             layout_ms: mean(|r| r.layout),
+            configure_ms: mean(|r| r.configure),
             prepare_ms: mean(|r| r.prepare),
             acquire_ms: mean(|r| r.acquire),
             draw_ms: mean(|r| r.draw),
@@ -328,6 +333,7 @@ pub(crate) fn record_dict<'py>(py: Python<'py>, r: &FrameRecord) -> PyResult<Bou
     d.set_item("frame", r.index)?;
     d.set_item("tick_ms", ms(r.tick))?;
     d.set_item("layout_ms", ms(r.layout))?;
+    d.set_item("configure_ms", ms(r.configure))?;
     d.set_item("prepare_ms", ms(r.prepare))?;
     d.set_item("acquire_ms", ms(r.acquire))?;
     d.set_item("draw_ms", ms(r.draw))?;
@@ -380,6 +386,7 @@ pub(crate) fn stats_dict<'py>(py: Python<'py>, stats: &FrameStats) -> PyResult<B
     let stages = PyDict::new(py);
     stages.set_item("tick", s.tick_ms)?;
     stages.set_item("layout", s.layout_ms)?;
+    stages.set_item("configure", s.configure_ms)?;
     stages.set_item("prepare", s.prepare_ms)?;
     stages.set_item("acquire", s.acquire_ms)?;
     stages.set_item("draw", s.draw_ms)?;
@@ -478,6 +485,7 @@ mod tests {
             at,
             tick: d(1),
             layout: d(2),
+            configure: d(0),
             prepare: d(3),
             acquire: d(wait_ms),
             draw: d(4),

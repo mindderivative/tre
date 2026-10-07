@@ -590,8 +590,8 @@ class Window:
         since the window opened), `skipped` (passes that found nothing to draw),
         `last` (the last frame's stages, redraw kind and node count, or `None`)
         and `recent` (the last 240 frames: `fps`, `total_ms` and `cpu_ms` as
-        `mean`/`p95`/`max`, `stage_ms` per stage -- `tick`, `layout`, `prepare`,
-        `acquire`, `draw`, `present` -- and how many `redraws` were `nothing`,
+        `mean`/`p95`/`max`, `stage_ms` per stage -- `tick`, `layout`, `configure`,
+        `prepare`, `acquire`, `draw`, `present` -- and how many `redraws` were `nothing`,
         `full` or `partial`). `acquire` and `present` are where the loop waits
         for the display; `cpu_ms` is a frame without them. `reset=True` clears
         the history after reading it. Nothing is recorded before `App.run()`

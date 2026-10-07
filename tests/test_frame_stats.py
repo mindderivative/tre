@@ -14,7 +14,7 @@ import pytest
 
 from tre import Window
 
-STAGES = {"tick", "layout", "prepare", "acquire", "draw", "present"}
+STAGES = {"tick", "layout", "configure", "prepare", "acquire", "draw", "present"}
 
 
 def test_a_window_that_never_drew_has_empty_statistics():
@@ -71,12 +71,12 @@ def test_a_live_window_reports_its_frames():
     assert last["frame"] == stats["frames"]
     assert last["nodes"] >= 2 and last["width"] > 0 and last["height"] > 0
     assert last["redraw"] in ("nothing", "full", "partial")
-    for key in ("tick_ms", "layout_ms", "prepare_ms", "acquire_ms", "draw_ms", "present_ms",
-                "total_ms", "cpu_ms"):
+    for key in ("tick_ms", "layout_ms", "configure_ms", "prepare_ms", "acquire_ms", "draw_ms",
+                "present_ms", "total_ms", "cpu_ms"):
         assert last[key] >= 0.0, (key, last)
     # The stages fit inside the whole, and the app's own cost leaves out the waits.
-    parts = sum(last[k] for k in ("tick_ms", "layout_ms", "prepare_ms", "acquire_ms",
-                                   "draw_ms", "present_ms"))
+    parts = sum(last[k] for k in ("tick_ms", "layout_ms", "configure_ms", "prepare_ms",
+                                   "acquire_ms", "draw_ms", "present_ms"))
     assert parts <= last["total_ms"] + 1.0
     assert last["cpu_ms"] <= last["total_ms"] + 1e-6
     recent = stats["recent"]

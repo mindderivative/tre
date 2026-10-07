@@ -88,6 +88,65 @@ impl PresentChoice {
     }
 }
 
+/// How long after the last resize a window keeps its resize pacing: long
+/// enough that a sweep with brief pauses is one resize, short enough that an
+/// animation after it is paced to the display again at once.
+pub const RESIZE_HOLD: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// 0.5.5 (#155): whether a window is being resized, and so presents without
+/// vsync for the moment.
+///
+/// A vsync present on Wayland commits with a `wp_fifo_v1` barrier, and a
+/// resize builds a new swapchain, so a new fifo object, every frame. KDE's
+/// compositor then waited 84 to 565 ms, in the middle of a resize, to send the
+/// next configure after a barriered commit (traced: 2,048 commits, five waits
+/// over 50 ms; none of ~6,300 commits without the barrier waited over 152 ms).
+/// The window trailed the pointer and went on moving after the button was
+/// released. While resizing, the window uses the mode `low_latency` selects,
+/// which carries no barrier; a short while after the last resize it goes back
+/// to the app's choice. Pure state, so it is tested without a window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ResizePacing {
+    /// When the window last needed a new size, while that is recent.
+    last: Option<std::time::Instant>,
+}
+
+impl ResizePacing {
+    /// The window is being given a new size at `now`.
+    pub fn resized(&mut self, now: std::time::Instant) {
+        self.last = Some(now);
+    }
+
+    /// Whether resize pacing is in effect (a resize is in progress, or ended
+    /// less than [`RESIZE_HOLD`] ago). The loop keeps running while it is, so
+    /// it notices when the hold is over.
+    pub fn active(&self) -> bool {
+        self.last.is_some()
+    }
+
+    /// Ends resize pacing once `now` is [`RESIZE_HOLD`] past the last resize.
+    /// `true` exactly once, when it ends: the caller then restores the mode.
+    pub fn settle(&mut self, now: std::time::Instant) -> bool {
+        match self.last {
+            Some(last) if now.saturating_duration_since(last) >= RESIZE_HOLD => {
+                self.last = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// What to present with, given the app's `steady` choice: low latency
+    /// while resizing, the app's choice otherwise.
+    pub fn choice(&self, steady: PresentChoice) -> PresentChoice {
+        if self.active() {
+            PresentChoice::LowLatency
+        } else {
+            steady
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,5 +233,48 @@ mod tests {
         }
         assert_eq!(PresentChoice::from_name("mailbox"), None);
         assert_eq!(PresentChoice::from_name(""), None);
+    }
+
+    #[test]
+    fn a_window_is_paced_without_vsync_only_while_it_is_being_resized() {
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut pacing = ResizePacing::default();
+        assert!(!pacing.active(), "a window at rest keeps the app's choice");
+        assert_eq!(pacing.choice(PresentChoice::Vsync), PresentChoice::Vsync);
+        pacing.resized(t0);
+        assert!(pacing.active());
+        assert_eq!(
+            pacing.choice(PresentChoice::Vsync),
+            PresentChoice::LowLatency
+        );
+        // Not yet over, however often it is asked.
+        assert!(!pacing.settle(t0 + ms(399)));
+        assert!(pacing.active());
+        // A later resize starts the hold again.
+        pacing.resized(t0 + ms(300));
+        assert!(!pacing.settle(t0 + ms(699)));
+        // Over, once, and then at rest again.
+        assert!(pacing.settle(t0 + ms(700)));
+        assert!(!pacing.active());
+        assert!(!pacing.settle(t0 + ms(5_000)), "it ends only once");
+        assert_eq!(pacing.choice(PresentChoice::Vsync), PresentChoice::Vsync);
+    }
+
+    #[test]
+    fn resizing_never_makes_a_low_latency_window_wait_for_the_display() {
+        use std::time::Instant;
+        let mut pacing = ResizePacing::default();
+        pacing.resized(Instant::now());
+        // Where the surface has Mailbox the resize uses it, with no vsync barrier;
+        // where it has none the fallback is vsync, never a tearing mode.
+        assert_eq!(pacing.choice(PresentChoice::Vsync).mode(MESA), Mailbox);
+        assert_eq!(pacing.choice(PresentChoice::Vsync).mode(&[Fifo]), AutoVsync);
+        assert_eq!(pacing.choice(PresentChoice::LowLatency).mode(MESA), Mailbox);
+        // An app that already asked for low latency sees no change at all.
+        let steady = PresentChoice::LowLatency;
+        assert_eq!(PresentChoice::default().mode(MESA), AutoVsync);
+        assert_eq!(ResizePacing::default().choice(steady), steady);
     }
 }

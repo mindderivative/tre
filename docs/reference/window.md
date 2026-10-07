@@ -307,6 +307,14 @@ few percent of a core. `"low_latency"` shows the newest frame at once
 old, but while something animates the loop renders as fast as it can and uses a
 whole core. It takes effect at once, even in an open window. A window with
 nothing changing costs nothing in either mode.
+
+While a window is being **resized** (0.5.5), it is shown with the low-latency mode
+whatever `present_mode` says, and goes back to the app's choice about 0.4 s after the
+last resize, with one swapchain rebuild. A resize rebuilds the swapchain every frame,
+and on Wayland a vsync present commits with a `wp_fifo_v1` barrier; KDE's compositor
+then waited up to half a second before sending the next resize step, so an undecorated
+window dragged by its edge trailed the pointer and kept moving after the button was
+released. Nothing to set, and `present_mode` still means the steady-state choice.
 **`set(dpi_scaling=True)`** (0.5.4) makes the window HiDPI-aware. The app
 lays out in *logical* pixels and the engine draws at the display's
 `scale_factor`: on a 2x screen a 100x60 box is 200x120 device pixels, and
@@ -347,7 +355,9 @@ stats["recent"]      # the last 240 frames
 ```
 
 A frame (`last`, and each `frame` event's `stats`) has, in milliseconds, `tick_ms`
-(animations and timers), `layout_ms`, `prepare_ms` (working out what changed),
+(animations and timers), `layout_ms`, `configure_ms` (0.5.5: rebuilding the swapchain
+for a new window size, zero on a frame that did not resize; it used to be counted in
+`layout_ms`), `prepare_ms` (working out what changed),
 `acquire_ms` (waiting for the swapchain to hand over an image), `draw_ms` (building
 the scene, rendering and submitting), `present_ms` and `total_ms`, plus `cpu_ms`
 (`total_ms` without `acquire_ms` and `present_ms`: the app's own cost), `redraw`
