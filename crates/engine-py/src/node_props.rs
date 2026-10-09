@@ -1097,6 +1097,18 @@ impl Node {
         let redraw = changes
             .iter()
             .any(|change| matches!(change, Change::Callback(HandlerKey::Draw, _)));
+        // 0.5.6 (#161): setting a layout property outright ends its animation.
+        if let Some(props) = props {
+            let stopped: Vec<engine_core::LayoutProp> = props
+                .keys()
+                .iter()
+                .filter_map(|name| name.extract::<String>().ok())
+                .flat_map(|name| engine_core::LayoutProp::from_name(&name))
+                .collect();
+            if !stopped.is_empty() {
+                self.tree.borrow_mut().stop_layout_anims(self.id, &stopped);
+            }
+        }
         self.apply(changes);
         if redraw {
             crate::node_callbacks::redraw(&self.tree, &self.handlers, self.id, py)?;
@@ -1385,6 +1397,15 @@ impl Node {
     /// `get(name)` when nothing is animating it. Animatable properties
     /// only.
     fn get_target(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        // 0.5.6 (#161): a layout property's animation target, or its value.
+        let layout = engine_core::LayoutProp::from_name(name);
+        if layout.len() == 1 {
+            let target = self.tree.borrow().layout_target(self.id, layout[0]);
+            return match target {
+                Some(pixels) => Ok(pixels.into_pyobject(py)?.into_any().unbind()),
+                None => self.get(name, py),
+            };
+        }
         let tree = self.tree.borrow();
         let node = tree
             .get(self.id)
@@ -1397,6 +1418,11 @@ impl Node {
     /// M95: stops `name`'s running animation where it is; its
     /// `on_complete` never fires. A no-op when nothing is animating it.
     fn stop_animation(&self, name: &str) -> PyResult<()> {
+        let layout = engine_core::LayoutProp::from_name(name);
+        if !layout.is_empty() {
+            self.tree.borrow_mut().stop_layout_anims(self.id, &layout);
+            return Ok(());
+        }
         let mut tree = self.tree.borrow_mut();
         let node = tree
             .get_mut(self.id)

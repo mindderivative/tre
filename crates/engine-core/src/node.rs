@@ -1455,6 +1455,9 @@ pub struct Node {
     /// `Tree::scroll_shift`). `None`, the default, is a node that scrolls with
     /// its content.
     pub sticky: Option<f64>,
+    /// 0.5.6 (#161): running animations of this node's layout properties,
+    /// written into `layout_style` each tick. Boxed: most nodes have none.
+    pub layout_anims: Option<Box<Vec<crate::layout_anim::LayoutAnim>>>,
     /// M94: the pointer shape shown over this node; `None` inherits the
     /// nearest ancestor's, and the default arrow when none sets one.
     pub cursor: Option<Cursor>,

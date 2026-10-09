@@ -157,6 +157,20 @@ impl Node {
         } else {
             None
         };
+        // 0.5.6 (#161): a layout property -- or the sides of a shorthand --
+        // animates in pixels, with layout run again each frame.
+        let layout_props = engine_core::LayoutProp::from_name(property);
+        if !layout_props.is_empty() {
+            return self.animate_layout(
+                &layout_props,
+                property,
+                &to,
+                duration,
+                curve,
+                on_complete,
+                py,
+            );
+        }
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
@@ -651,6 +665,74 @@ fn type_name_of(value: &Bound<'_, PyAny>) -> String {
         .name()
         .map(|name| name.to_string())
         .unwrap_or_else(|_| "<unknown type>".to_string())
+}
+
+impl Node {
+    /// 0.5.6 (#161): `animate` on a layout property. `to` is a number of
+    /// pixels; the sides of a shorthand animate together, each with its own
+    /// `animation_end`, and `on_complete` is attached to the first.
+    #[allow(clippy::too_many_arguments)]
+    fn animate_layout(
+        &self,
+        props: &[engine_core::LayoutProp],
+        property: &str,
+        to: &Bound<'_, PyAny>,
+        duration: Duration,
+        curve: MotionCurve,
+        mut on_complete: Option<Py<PyAny>>,
+        py: Python<'_>,
+    ) -> PyResult<()> {
+        let value = to
+            .extract::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && !to.is_instance_of::<pyo3::types::PyBool>())
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "node property {property:?} animates to a number of pixels -- `auto` and \
+                     percentages can't be animated to"
+                ))
+            })?;
+        if value < 0.0 && props.iter().any(|p| p.non_negative()) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "node property {property:?} can't animate to a negative size"
+            )));
+        }
+        // Layout gives width and height a number to start from.
+        self.layout_box(py);
+        let now = crate::clock::now(&self.tree);
+        for (index, prop) in props.iter().enumerate() {
+            let callback = if index == 0 { on_complete.take() } else { None };
+            let handle = self
+                .completions
+                .borrow_mut()
+                .register(callback, self.id, prop.name());
+            let started = self.tree.borrow_mut().animate_layout(
+                self.id,
+                *prop,
+                value,
+                duration,
+                curve,
+                now,
+                Some(handle),
+            );
+            if let Err(err) = started {
+                self.completions.borrow_mut().entries.remove(&handle);
+                return Err(match err {
+                    engine_core::LayoutAnimError::Missing => {
+                        crate::error::EngineError::Destroyed.into()
+                    }
+                    engine_core::LayoutAnimError::NoStart => {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "node property {:?} is `auto` or a percentage, so there is no number \
+                             to animate from -- set it to a number of pixels first",
+                            prop.name()
+                        ))
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 fn extract_f64(to: &Bound<'_, PyAny>, property: &str) -> Result<f64, EngineError> {

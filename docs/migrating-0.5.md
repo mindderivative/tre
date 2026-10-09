@@ -132,6 +132,10 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - Accessibility states on any node: `pressed`, `invalid`, `busy`, `current`, `description`,
   `describedby`, `controls`, `value_now`, `value_text`, and a `separator` role. See
   [Node](reference/node.md#set-get-and-focus).
+- `animate` takes layout properties (`width`, `height`, `x`, `y`, `padding`, `margin`, `gap`, ...)
+  in pixels, and every animation ends with an `animation_end` node event. A replaced or stopped
+  animation now releases its `on_complete` callback (it used to be kept for the life of the
+  window). See [Animation](guide/animation.md).
 - A `mask` node property clips a node and its subtree to a circle, a rounded box with a
   radius per corner, or a path. See [Masks](reference/paint.md#masks-056).
 - `Window.after(ms, fn)`, `Window.every(ms, fn)` and `TimerHandle`. See

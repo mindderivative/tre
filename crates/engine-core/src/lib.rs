@@ -24,6 +24,7 @@ mod dock;
 mod gesture;
 mod gradient;
 mod input;
+mod layout_anim;
 mod node;
 mod overlay;
 mod path;
@@ -48,6 +49,7 @@ pub use input::{
     ChangedValue, DispatchOutcome, InputEvent, Key, Modifiers, PointerButton, ScrollDelta,
     ctrl_shortcut,
 };
+pub use layout_anim::{LayoutAnim, LayoutProp};
 pub use node::{
     Blend, CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Mask, Node, NodeId,
     NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
@@ -65,6 +67,6 @@ pub use svg::{
     SvgNode, SvgPaint, SvgPath, SvgPattern, SvgShadow, SvgState, SvgStroke,
 };
 pub use tree::{
-    AccessLine, FocusDirection, KEY_SCROLL_LINE, TextPart, Touched, Tree, from_access_id,
-    node_id_as_u64, to_access_id,
+    AccessLine, FocusDirection, KEY_SCROLL_LINE, LayoutAnimError, TextPart, Touched, Tree,
+    from_access_id, node_id_as_u64, to_access_id,
 };

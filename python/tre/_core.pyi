@@ -215,8 +215,13 @@ class Node:
         `fill`, `stroke_color`, `stroke_width`, `opacity`, `blur`, `backdrop_blur`,
         `corner_radius` (a number or a 4-tuple), `shadows`, the transform
         parts `translate_x`/`translate_y`/`scale`/`rotation_deg`, a
-        scroll view's `scroll_offset`, and a path's `data`/`trim_start`/
-        `trim_end`; any other name raises `ValueError`.
+        scroll view's `scroll_offset`, a path's `data`/`trim_start`/
+        `trim_end`, and (0.5.6) the layout properties that hold a length:
+        `width`, `height`, `min_*`, `max_*`, `x`, `y`, `padding*`, `margin*`,
+        `gap`/`row_gap`/`column_gap` and `flex_basis`, to a number of pixels
+        (`"auto"` and percentages can't be animated to); any other name
+        raises `ValueError`. Every animation ends with an `animation_end`
+        event on the node.
         `on_complete`, when given, is called with no arguments exactly
         once, the real frame this specific animation finishes; an
         animation replaced or stopped before then never calls it.

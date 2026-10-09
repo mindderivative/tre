@@ -1694,6 +1694,9 @@ fn node_fingerprint_with(
         // 0.5.4 (#139): where a sticky node is reaches paint through its composed
         // transform, which is hashed above.
         sticky: _,
+        // 0.5.6 (#161): a layout animation reaches paint through the style it
+        // writes, so it changes the box size and position above.
+        layout_anims: _,
         cursor: _,
         // 0.5.0 M3: which presses move the window; paints nothing.
         window_region: _,
