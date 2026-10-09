@@ -101,7 +101,8 @@ icon. See `examples/path_morph.py`.
 
 Without a live window no frames run, so tests drive time themselves with
 `window.advance(ms)`. It moves the window's clock forward by exactly `ms`,
-then runs animations, their completions, and layout at the new time:
+then runs animations, their completions, and layout at the new time (and, since 0.5.6,
+any `window.after`/`window.every` timer due in the span, each at its own moment):
 
 ```python
 window.advance(0)              # pin the clock at "now"

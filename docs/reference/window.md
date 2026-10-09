@@ -312,6 +312,39 @@ surface. An app that wants shadows draws them itself (the OS draws none around a
 transparent undecorated window on every platform). A transparent window with partial
 redraw still redraws exactly: cleared areas become transparent again.
 
+## Timers (0.5.6)
+
+**`window.after(ms, fn) -> TimerHandle`** calls `fn()` once, `ms` milliseconds from now.
+**`window.every(ms, fn) -> TimerHandle`** calls it every `ms` milliseconds (at least 1)
+until it is cancelled. `handle.cancel()` stops a timer and returns whether it was still
+pending; `handle.active` says whether it is.
+
+```python
+toast = window.after(4000, dismiss_snackbar)
+spinner = window.every(120, next_frame_of_spinner)
+...
+toast.cancel()
+```
+
+- **They run on the loop's thread**, with the window's other callbacks, in the frame, right
+  after animations tick. A timer fires on the first frame at or after its time.
+- **An idle window sleeps until the next timer.** A window with nothing animating and a
+  snackbar's four-second timer redraws about once, when the timer fires, instead of sixty
+  times a second to count down.
+- **They run on the window's clock**, so `window.advance(ms)` moves them in tests: timers
+  due inside the span run in order of time, each at its own moment, so `advance(1000)` with
+  an `every(100)` runs ten times.
+- **`every` keeps its own beat.** It does not drift by a frame per round. When the loop was
+  too busy to run a tick on time, the tick is skipped, not replayed in a burst.
+- **A timer set before `App.run()`** counts from when the window opens, with the time it had
+  left kept. When the window closes its timers are dropped.
+- **An exception in `fn`** is logged like any other callback's, and the timer goes on (an
+  `every` keeps repeating; cancel it yourself to stop).
+- A callback may cancel other timers, including ones due at the same moment, and may start
+  new ones; a timer it starts runs from the next pass.
+
+For a call from another thread, use `LoopHandle.call_soon`, which has no delay.
+
 **`set(show_damage=True)`** makes each presented frame show what it
 redrew: its damage rects tinted magenta, or, for a full redraw, the window's
 edge outlined in orange. It's for seeing partial redraw work and for finding

@@ -40,6 +40,9 @@ shares one queue.
 
 ## Keep the work off the loop
 
+To run something *later* on the loop thread, use `window.after(ms, fn)` or
+`window.every(ms, fn)` ([Timers](../reference/window.md#timers-056)); `call_soon` has no delay.
+
 A `call_soon` callback runs between frames, so it should only apply a
 result: read files, parse, decode images, and query databases on the worker,
 then hand over the finished data. Decoding an image on a worker and showing

@@ -33,6 +33,7 @@ CLASS_DESCRIPTIONS = {
     "App": "Opens and drives one or more windows together in one blocking `run()`.",
     "LoopHandle": "The one thread-safe object: queues a callable onto a running `App`'s loop.",
     "StatsHandle": "Reads a window's frame statistics from any thread, without waiting for the loop.",
+    "TimerHandle": "Cancels a timer set with `Window.after` or `Window.every`.",
     "Window": "Owns a node tree and its size and title; creates nodes, shows layers, docks panels.",
     "Node": "A handle to one node in a window's tree: properties, animation, events, structure.",
     "Event": "What a listener receives when it takes one argument; never constructed directly.",
@@ -53,6 +54,7 @@ GUIDE = {
     "Shader": "reference/shader.md",
     "LoopHandle": "guide/threading.md",
     "StatsHandle": "reference/window.md#frame_stats",
+    "TimerHandle": "reference/window.md#timers-056",
 }
 BASES = {
     "ShaderError": [
@@ -398,7 +400,7 @@ def main() -> int:
     tree = ast.parse(STUB.read_text())
     classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
-    order = ["App", "LoopHandle", "StatsHandle", "Window", "Node", "Event", "Painter", "Gradient", "CursorImage", "Shader", "ShaderError"]
+    order = ["App", "LoopHandle", "StatsHandle", "TimerHandle", "Window", "Node", "Event", "Painter", "Gradient", "CursorImage", "Shader", "ShaderError"]
     missing = set(classes) - set(order)
     if missing:
         print(f"classes not in the page order: {sorted(missing)}", file=sys.stderr)

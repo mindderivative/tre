@@ -41,6 +41,7 @@ __all__ = [
     "Gradient",
     "LoopHandle",
     "StatsHandle",
+    "TimerHandle",
     "Shader",
     "ShaderError",
     "register_font",
@@ -380,6 +381,19 @@ class Window:
         ...
     def off(self, event: str) -> None:
         """M94: removes the window's listener for `event`, if any."""
+        ...
+    def after(self, ms: float, fn: Callable[[], object]) -> TimerHandle:
+        """(0.5.6) Calls `fn` once, `ms` milliseconds from now, on the loop's
+        thread. The window's clock runs it, so `advance(ms)` moves it, and it
+        fires on the first frame at or after its time. An idle window sleeps
+        until then instead of redrawing. A timer set before `App.run()` counts
+        from when the window opens; one set on a window that closes is dropped."""
+        ...
+    def every(self, ms: float, fn: Callable[[], object]) -> TimerHandle:
+        """(0.5.6) Calls `fn` every `ms` milliseconds (at least 1) until the
+        handle is cancelled. It keeps its own beat, so it does not drift; a
+        tick missed because the loop was busy is skipped, not replayed. An
+        exception in `fn` is logged and the timer goes on."""
         ...
     def minimize(self) -> None:
         """(0.5.0) Minimizes the window -- or, before `App.run()`, opens it
@@ -760,6 +774,20 @@ class App:
         be set up (no adapter, no device, or an unsupported surface), or
         if no window was added.
         """
+        ...
+
+@final
+class TimerHandle:
+    """(0.5.6) What `Window.after` and `Window.every` return."""
+
+    def cancel(self) -> bool:
+        """Stops the timer. Returns whether it was still pending: `False` for
+        an `after` that already ran, or a timer already cancelled."""
+        ...
+    @property
+    def active(self) -> bool:
+        """Whether the timer is still pending: an `every` until cancelled, an
+        `after` until it has run."""
         ...
 
 @final

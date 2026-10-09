@@ -86,6 +86,7 @@ pub struct AppState {
 struct LiveRun {
     setups: Rc<RefCell<Vec<WindowSetup>>>,
     waker: EventLoopWaker,
+    alarm: Arc<crate::timers::Alarm>,
     max_frames: Option<u32>,
 }
 
@@ -94,6 +95,17 @@ struct WindowSetup {
     /// once (`WindowHandles`).
     handles: WindowHandles,
     title: String,
+}
+
+/// A window opens: its clock goes back to the real one (`Window.advance`
+/// pinned it for tests), and the timers set until now keep what they had left.
+fn return_to_real_time(handles: &WindowHandles) {
+    let before = crate::clock::now(&handles.tree);
+    crate::clock::unpin(&handles.tree);
+    handles
+        .timers
+        .borrow_mut()
+        .rebase(before, std::time::Instant::now());
 }
 
 /// The request that opens `setup`'s window; `index` is its token.
@@ -127,7 +139,9 @@ fn window_request(setup: &WindowSetup, index: usize, max_frames: Option<u32>) ->
 /// its terminals (M31 Phase 6: a PTY reader thread wakes an idle loop with
 /// it) and `window.close()` (0.5.0 M2). A `window.create("terminal", ...)`
 /// call always happens before the window opens, so every session exists.
-fn attach_waker(setup: &WindowSetup, waker: &EventLoopWaker) {
+fn attach_waker(setup: &WindowSetup, waker: &EventLoopWaker, alarm: &Arc<crate::timers::Alarm>) {
+    *setup.handles.alarm.borrow_mut() = Some(alarm.clone());
+    crate::timers::arm_for(&setup.handles.timers, &setup.handles.alarm);
     for session in setup.handles.terminals.borrow().values() {
         session.set_waker(waker.clone());
     }
@@ -634,7 +648,7 @@ impl App {
                     "this window is already open",
                 ));
             }
-            crate::clock::unpin(&borrowed.handles.tree);
+            return_to_real_time(&borrowed.handles);
             WindowSetup {
                 handles: borrowed.handles.clone(),
                 title: borrowed.title.borrow().clone(),
@@ -652,7 +666,7 @@ impl App {
             setups.len() - 1
         };
         let setups = live.setups.borrow();
-        attach_waker(&setups[index], &live.waker);
+        attach_waker(&setups[index], &live.waker, &live.alarm);
         live.waker
             .open_window(window_request(&setups[index], index, live.max_frames));
         Ok(())
@@ -684,7 +698,7 @@ impl App {
         let windows = self.windows.borrow();
         for window in windows.iter() {
             let window = window.borrow(py);
-            crate::clock::unpin(&window.handles.tree);
+            return_to_real_time(&window.handles);
         }
 
         // Extracted once, up front, while `py` is already held --
@@ -744,6 +758,8 @@ impl App {
         let setups_for_cleanup = setups.clone();
         let setups_for_setup = setups;
         let live_for_setup = self.live.clone();
+        let timer_wake: Rc<RefCell<Option<crate::timers::TimerWake>>> = Rc::new(RefCell::new(None));
+        let timer_wake_for_setup = timer_wake.clone();
         let calls_for_frame = self.calls.clone();
         let calls_for_setup = self.calls.clone();
 
@@ -890,6 +906,10 @@ impl App {
                 let frame_began = Instant::now();
                 let now = crate::clock::now(&runtime.handles.tree);
                 let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                // 0.5.6 (#163): the timers that came due, then the loop's alarm
+                // for the next one.
+                crate::timers::run_due(&runtime.handles.timers, now, py);
+                crate::timers::arm_for(&runtime.handles.timers, &runtime.handles.alarm);
                 // 0.5.4 (#113): a finger held down becomes a long press as time
                 // passes, and the loop keeps running until it does.
                 crate::touch::poll(
@@ -1725,6 +1745,7 @@ impl App {
                             |_| {},
                         );
                         *runtime.handles.os_window.borrow_mut() = None;
+                        runtime.handles.timers.borrow_mut().clear();
                         true
                     }
                 }
@@ -1734,14 +1755,18 @@ impl App {
                 // run's loop -- including one idle in `ControlFlow::Wait`.
                 calls_for_setup.set_waker(Some(waker.clone()));
                 *gpu_wake_for_setup.borrow_mut() = Some(GpuWake::start(waker.clone()));
+                let timer_wake = crate::timers::TimerWake::start(waker.clone());
+                let alarm = timer_wake.alarm.clone();
+                *timer_wake_for_setup.borrow_mut() = Some(timer_wake);
                 for (index, setup) in setups_for_setup.borrow().iter().enumerate() {
                     opener.open_window(window_request(setup, index, max_frames));
-                    attach_waker(setup, waker);
+                    attach_waker(setup, waker, &alarm);
                 }
                 // 0.5.6 (#159): from here `add_window` opens windows live.
                 *live_for_setup.borrow_mut() = Some(LiveRun {
                     setups: setups_for_setup.clone(),
                     waker: waker.clone(),
+                    alarm,
                     max_frames,
                 });
             },
@@ -1754,10 +1779,12 @@ impl App {
         self.calls.set_waker(None);
         *self.live.borrow_mut() = None;
         gpu_wake.borrow_mut().take(); // stops and joins the wake thread
+        timer_wake.borrow_mut().take(); // and the timer one
         // M94: no window is open any more.
         for setup in setups_for_cleanup.borrow().iter() {
             *setup.handles.os_window.borrow_mut() = None;
             *setup.handles.waker.borrow_mut() = None;
+            *setup.handles.alarm.borrow_mut() = None;
             setup.handles.surface_partial.set(None);
         }
 

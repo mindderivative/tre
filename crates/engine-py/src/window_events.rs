@@ -599,6 +599,48 @@ impl PyWindow {
         Ok(())
     }
 
+    /// 0.5.6 (#163): calls `fn` once, `ms` milliseconds from now, on the loop's
+    /// thread. Returns a `TimerHandle` that cancels it. The window's clock
+    /// runs it, so `advance(ms)` moves it; it fires on the first frame at or
+    /// after its time, and an idle window sleeps until then.
+    #[pyo3(signature = (ms, r#fn))]
+    fn after(
+        &self,
+        py: Python<'_>,
+        ms: f64,
+        r#fn: Py<PyAny>,
+    ) -> PyResult<crate::timers::TimerHandle> {
+        crate::timers::schedule(
+            &self.handles.timers,
+            &self.handles.alarm,
+            clock::now(&self.handles.tree),
+            (ms, false),
+            r#fn,
+            py,
+        )
+    }
+
+    /// 0.5.6 (#163): calls `fn` every `ms` milliseconds (at least 1) until the
+    /// returned `TimerHandle` is cancelled. It keeps its own beat, so it does
+    /// not drift; a tick missed because the loop was busy is skipped, not
+    /// replayed. An exception in `fn` is logged and the timer goes on.
+    #[pyo3(signature = (ms, r#fn))]
+    fn every(
+        &self,
+        py: Python<'_>,
+        ms: f64,
+        r#fn: Py<PyAny>,
+    ) -> PyResult<crate::timers::TimerHandle> {
+        crate::timers::schedule(
+            &self.handles.timers,
+            &self.handles.alarm,
+            clock::now(&self.handles.tree),
+            (ms, true),
+            r#fn,
+            py,
+        )
+    }
+
     /// 0.5.0 M2 (issue #28): minimizes the window -- once `App.run()` opens
     /// it, if it isn't open yet.
     fn minimize(&self) {
@@ -1343,7 +1385,25 @@ impl PyWindow {
             self.handles.root,
             self.handles.handlers.clone(),
         );
-        let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
+        // 0.5.6 (#163): timers fire at their own times within the span, in
+        // order, so `advance(1000)` with an `every(100)` runs it ten times.
+        let target = clock::now(&tree) + Duration::from_secs_f64(ms / 1000.0);
+        let mut fired = 0u32;
+        loop {
+            let next = self.handles.timers.borrow().next_due();
+            let Some(due) = next.filter(|due| *due <= target) else {
+                break;
+            };
+            let here = clock::now(&tree);
+            clock::advance(&tree, due.saturating_duration_since(here));
+            crate::timers::run_due(&self.handles.timers, clock::now(&tree), py);
+            fired += 1;
+            if fired >= 1_000_000 {
+                tracing::warn!("advance: stopped after a million timer runs");
+                break;
+            }
+        }
+        let now = clock::advance(&tree, target.saturating_duration_since(clock::now(&tree)));
         let (_, completed) = tree.borrow_mut().tick_all(now);
         run_completions(&self.handles.completions, completed, py);
         // 0.5.4 (#113): time passing can make a held touch a long press.

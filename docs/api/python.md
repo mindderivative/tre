@@ -11,6 +11,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | [`App`](#app) | Opens and drives one or more windows together in one blocking `run()`. |
 | [`LoopHandle`](#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s loop. |
 | [`StatsHandle`](#statshandle) | Reads a window's frame statistics from any thread, without waiting for the loop. |
+| [`TimerHandle`](#timerhandle) | Cancels a timer set with `Window.after` or `Window.every`. |
 | [`Window`](#window) | Owns a node tree and its size and title; creates nodes, shows layers, docks panels. |
 | [`Node`](#node) | A handle to one node in a window's tree: properties, animation, events, structure. |
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
@@ -66,6 +67,26 @@ Reads a window's frame statistics from any thread, without waiting for the loop.
 
 **Events:** none.
 
+## TimerHandle { #timerhandle }
+
+Cancels a timer set with `Window.after` or `Window.every`.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [TimerHandle reference](../reference/window.md#timers-056)
+
+**Properties:**
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `active` | `bool` | Whether the timer is still pending: an `every` until cancelled, an `after` until it has run. |
+
+**Methods:**
+
+| Method | Description |
+| --- | --- |
+| `cancel() -> bool` | Stops the timer. |
+
+**Events:** none.
+
 ## Window { #window }
 
 Owns a node tree and its size and title; creates nodes, shows layers, docks panels.
@@ -113,10 +134,12 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | --- | --- |
 | `add_dock_zone(side: str, container: Node, size: float) -> None` | Registers `container` as the dock zone for `side`. |
 | `advance(ms: float) -> None` | Moves the window's clock forward by `ms`, running animations, callbacks and layout. |
+| `after(ms: float, fn: Callable[[], object]) -> TimerHandle` | Calls `fn` once, `ms` milliseconds from now, on the loop's thread. |
 | `center() -> bool` | Centres the open window on its monitor. |
 | `close() -> None` | Closes the window as if the user had: `close_requested` fires first, and a listener that cancels it keeps the window open. |
 | `create(kind: str, **props: Any) -> Node` | Makes a detached node of a kind; attach it with `add_child`. |
 | `dock_panel(side: str, panel: Node) -> None` | Docks `panel` into `side`'s zone and shows it. |
+| `every(ms: float, fn: Callable[[], object]) -> TimerHandle` | Calls `fn` every `ms` milliseconds (at least 1) until the handle is cancelled. |
 | `frame_stats(reset: bool=False) -> dict[str, Any]` | What this window's frames cost, as a dict: `frames` (drawn since the window opened), `skipped` (passes that found nothing to… |
 | `hide_layer(node: Node) -> None` | Hides a layer, detaching it, and returns focus to where it was. |
 | `maximize() -> None` | Maximizes the window — or opens it maximized. |

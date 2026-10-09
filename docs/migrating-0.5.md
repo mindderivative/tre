@@ -126,6 +126,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 
 - `App.add_window` works while `run()` is going (it used to raise
   `RuntimeError: Already borrowed`). See [App](reference/app.md#add_window).
+- `Window.set(x=, y=, always_on_top=, resizable=, skip_taskbar=)` and `Window.center()`;
+  `set` and `resize` now work inside a callback that `advance` or `simulate` runs. See
+  [Window](reference/window.md).
+- `Window.after(ms, fn)`, `Window.every(ms, fn)` and `TimerHandle`. See
+  [Timers](reference/window.md#timers-056).
 
 ## 0.5.5
 
