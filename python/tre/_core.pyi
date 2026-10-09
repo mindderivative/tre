@@ -153,6 +153,11 @@ class Event:
     """`file_hover`/`file_drop`: every dragged file's path."""
     href: str | None
     """`link`: the `link` string of the clicked text span."""
+    property: str | None
+    """`animation_end`: the animated property."""
+    finished: bool | None
+    """`animation_end`: `True` if the animation ran to its end, `False` if it
+    was replaced by another or stopped."""
     pointer_id: int | None
     """`touch_start`/`touch_move`/`touch_end`/`touch_cancel`: which finger."""
     phase: str | None
@@ -271,8 +276,10 @@ class Node:
         `touch_end`, `touch_cancel`, `tap`, `long_press`, `pan`, `pinch`,
         `file_hover`, `file_hover_cancel`, `file_drop` and `link` (a click on
         a text span's link); see the events reference for each one's fields.
+        (0.5.6) Also `animation_end` (an animation on the node ended, with
+        `event.property` and `event.finished`).
         All but `pointer_enter`/`pointer_leave`/
-        `change`/`dismiss`/`scroll` bubble to ancestors
+        `change`/`dismiss`/`scroll`/`animation_end` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
         `ValueError` for an unknown event.

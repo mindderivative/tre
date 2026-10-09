@@ -983,7 +983,15 @@ impl App {
                 // callback exactly once, the same "look up and call a
                 // registered callback" shape `run_dispatch_outcome`
                 // already uses for click/hover handlers.
-                run_completions(&runtime.handles.completions, completed, py);
+                run_completions(
+                    &crate::event::NodeContext {
+                        tree: &runtime.handles.tree,
+                        handlers: &runtime.handles.handlers,
+                        completions: &runtime.handles.completions,
+                    },
+                    completed,
+                    py,
+                );
 
                 // M30 Phase 9 Step 4 (§5, §8, §10): drains every real,
                 // live `Terminal` session's own pending PTY output into

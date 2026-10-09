@@ -9,10 +9,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CanvasState, ImageState, InputEvent, ItemExtent, Key,
-    Modifiers, NodeId, NodeKind, PaintProperties, PathData, PathState, PointerButton, Role,
-    ScrollDelta, ScrollViewState, TerminalState, TextAlign, TextFieldState, TextOptions, TextState,
-    Tree, VirtualListState,
+    AccessNodeData, Action, CanvasState, ImageState, InputEvent, ItemExtent, Key, Modifiers,
+    NodeId, NodeKind, PaintProperties, PathData, PathState, PointerButton, Role, ScrollDelta,
+    ScrollViewState, TerminalState, TextAlign, TextFieldState, TextOptions, TextState, Tree,
+    VirtualListState,
 };
 use engine_render::{FontSpec, MONOSPACE_FONT_FAMILY};
 use peniko::Color;
@@ -465,7 +465,7 @@ impl PyWindow {
             }
             "text_input" => {
                 let mut state = TextFieldState::new("", "Roboto", 400.0, 16.0);
-                state.text_tint = Animated::new(Color::from_rgba8(0, 0, 0, 255));
+                state.text_tint.set_now(Color::from_rgba8(0, 0, 0, 255));
                 NodeKind::TextField(Box::new(state))
             }
             "image" => {
@@ -1405,13 +1405,13 @@ impl PyWindow {
         }
         let now = clock::advance(&tree, target.saturating_duration_since(clock::now(&tree)));
         let (_, completed) = tree.borrow_mut().tick_all(now);
-        run_completions(&self.handles.completions, completed, py);
-        // 0.5.4 (#113): time passing can make a held touch a long press.
         let ctx = NodeContext {
             tree: &tree,
             handlers: &handlers,
             completions: &self.handles.completions,
         };
+        run_completions(&ctx, completed, py);
+        // 0.5.4 (#113): time passing can make a held touch a long press.
         crate::touch::poll(
             &ctx,
             &WindowIo {

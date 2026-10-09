@@ -88,6 +88,20 @@ def settle():
 chip.animate("scale", 1.2, 120, on_complete=settle)
 ```
 
+Or listen once for every animation on a node with the `animation_end` event
+(0.5.6), which a framework can use to chain steps without a callback per call:
+
+```python
+def ended(event):
+    if event.finished:                    # False: it was replaced or stopped
+        print(event.property, "done")
+
+card.on("animation_end", ended)
+```
+
+It fires for every animation on the node, `on_complete` or not, one event per
+animation, after that animation's `on_complete`. It doesn't bubble.
+
 ## Morphing paths
 
 Animating a path's `data` to another path morphs between them. Two closed

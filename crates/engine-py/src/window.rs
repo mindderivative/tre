@@ -363,7 +363,7 @@ impl PyWindow {
         }
         // M9 Phase 2: `completions` holds real `Py<PyAny>` callbacks --
         // the same cyclic-GC obligation as `handlers`.
-        for callback in self.handles.completions.borrow().callbacks.values() {
+        for callback in self.handles.completions.borrow().callbacks() {
             visit.call(callback)?;
         }
         // M94: window listeners are stored callbacks too.
@@ -382,7 +382,7 @@ impl PyWindow {
             return;
         }
         self.handles.handlers.borrow_mut().clear();
-        self.handles.completions.borrow_mut().callbacks.clear();
+        self.handles.completions.borrow_mut().entries.clear();
         self.handles.timers.borrow_mut().clear();
         self.handles.window_listeners.borrow_mut().clear();
     }

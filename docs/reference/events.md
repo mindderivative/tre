@@ -36,6 +36,7 @@ listing the valid ones.
 | `focus`, `unfocus` | A node gains or loses keyboard focus | yes |
 | `change` | A text field's text was changed by the user | no |
 | `scroll` | A scroll view's offset changed, by any cause: wheel, keys, `scroll_into_view`, focus, `set`, or an animation, once a frame (0.4.2) | no |
+| `animation_end` | An animation on the node ended: it ran to its end (`finished` is `True`), or it was replaced by another animation of the same property, or the property was set or `stop_animation`ped (`finished` is `False`); `property` names it. Delivered in the frame after, and after any `on_complete` callback (0.5.6) | no |
 | `dismiss` | An outside press or Escape asked a [layer](layers.md) to close | no |
 | `a11y_action` | An assistive technology requested `increment`, `decrement`, `expand`, `collapse`, `scroll_into_view`, or `set_value` (its activate and focus requests arrive as `click` and `focus`) | yes |
 
@@ -212,6 +213,7 @@ hardware; the Windows and macOS code is compiled for those targets and untested.
 | `maximized` / `active` | `maximized` / `active` — the window's new state |
 | `path`, `paths` | `file_hover`, `file_drop` — the dragged files' paths as `str`s; `path` is the first |
 | `href` | `link` — the clicked span's `link` string |
+| `property`, `finished` | `animation_end` — the animated property, and whether it ran to the end (`False`: it was replaced or stopped) |
 | `side` | `dock_target`, `dock_drop` — the dock zone under the pointer, or `None` |
 | `panel` | `dock_drop` — the dragged panel |
 

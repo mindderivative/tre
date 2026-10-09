@@ -258,6 +258,38 @@ impl MotionCurve {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CompletionHandle(pub u64);
 
+thread_local! {
+    /// 0.5.6 (#161): handles of animations that were replaced or stopped before
+    /// they finished, until the registry that owns each takes it.
+    static CANCELLED: std::cell::RefCell<Vec<CompletionHandle>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// 0.5.6 (#161): takes the cancelled-animation handles `owned` claims; the
+/// rest stay for their own window. A handle is cancelled when its animation is
+/// replaced by another on the same value, or stopped.
+pub fn take_cancelled(owned: impl Fn(CompletionHandle) -> bool) -> Vec<CompletionHandle> {
+    CANCELLED.with(|cell| {
+        let mut cancelled = cell.borrow_mut();
+        let mut taken = Vec::new();
+        cancelled.retain(|handle| {
+            if owned(*handle) {
+                taken.push(*handle);
+                false
+            } else {
+                true
+            }
+        });
+        taken
+    })
+}
+
+fn note_cancelled(handle: Option<CompletionHandle>) {
+    if let Some(handle) = handle {
+        CANCELLED.with(|cell| cell.borrow_mut().push(handle));
+    }
+}
+
 pub struct ActiveAnimation<T> {
     pub from: T,
     pub to: T,
@@ -296,7 +328,17 @@ impl<T: Interpolate + Clone> Animated<T> {
     /// M95: stops a running animation where it is -- `current` keeps the
     /// value it had reached, and its completion never fires.
     pub fn stop(&mut self) {
-        self.active = None;
+        if let Some(anim) = self.active.take() {
+            note_cancelled(anim.on_complete);
+        }
+    }
+
+    /// 0.5.6 (#161): sets the value outright, ending a running animation as
+    /// cancelled -- what `Animated::new` in its place would do, without
+    /// dropping the animation unseen.
+    pub fn set_now(&mut self, value: T) {
+        self.stop();
+        self.current = value;
     }
 
     /// M95: where a running animation is heading, or `current` when none
@@ -359,6 +401,9 @@ impl<T: Interpolate + Clone> Animated<T> {
             }
             other => (other, duration),
         };
+        if let Some(replaced) = &self.active {
+            note_cancelled(replaced.on_complete);
+        }
         self.active = Some(Box::new(ActiveAnimation {
             from: self.current.clone(),
             to,

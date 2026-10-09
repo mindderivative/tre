@@ -164,7 +164,11 @@ impl Node {
         match property {
             "opacity" => {
                 let value = extract_f64(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(&mut node.paint.opacity, value, duration, curve, now, handle);
             }
             // M95: a number animates the uniform radius, or all four
@@ -173,7 +177,11 @@ impl Node {
             // weren't separate yet.
             "corner_radius" => {
                 let radius = crate::node_props::parse_radius(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 match (radius, &mut node.paint.corner_radii_override) {
                     (crate::node_props::Radius::Uniform(value), None) => {
                         animate_field(
@@ -225,7 +233,11 @@ impl Node {
                         "node property `fill` takes a Gradient only on a box, path or text node",
                     ));
                 }
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 match &mut node.paint.gradient {
                     Some(current) => {
                         if !current.current.animates_to(&target) {
@@ -253,7 +265,11 @@ impl Node {
             }
             "fill" => {
                 let value = crate::node_props::parse_color(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 match &mut node.kind {
                     NodeKind::TextField(state) => {
                         animate_field(&mut state.text_tint, value, duration, curve, now, handle);
@@ -280,7 +296,11 @@ impl Node {
             }
             "stroke_color" => {
                 let value = crate::node_props::parse_color(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(
                     &mut node.paint.border_color,
                     value,
@@ -299,7 +319,11 @@ impl Node {
                         "node property `scroll_offset` applies only to a scroll_view node",
                     ));
                 };
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(&mut state.scroll, value, duration, curve, now, handle);
             }
             // M96: the target API's transform parts, each with its own
@@ -310,7 +334,11 @@ impl Node {
                 } else {
                     extract_f64(&to, property)?
                 };
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 let parts = &mut node.paint.node_transform;
                 let field = match property {
                     "translate_x" => &mut parts.translate_x,
@@ -322,7 +350,11 @@ impl Node {
             }
             "blur" | "backdrop_blur" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 let field = if property == "blur" {
                     &mut node.paint.blur
                 } else {
@@ -332,7 +364,11 @@ impl Node {
             }
             "stroke_width" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(
                     &mut node.paint.border_width,
                     value,
@@ -344,7 +380,11 @@ impl Node {
             }
             "shadows" => {
                 let value = engine_core::Shadows(crate::node_props::parse_shadows(&to, property)?);
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
             }
             // M95: a path's data morphs; its stroke trim animates.
@@ -355,7 +395,11 @@ impl Node {
                     )));
                 };
                 let handle = |completions: &SharedCompletions| {
-                    on_complete.map(|cb| completions.borrow_mut().register(cb))
+                    Some(
+                        completions
+                            .borrow_mut()
+                            .register(on_complete, self.id, property),
+                    )
                 };
                 if property == "data" {
                     let data: String = to.extract().map_err(|_| {

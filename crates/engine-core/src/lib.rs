@@ -35,7 +35,9 @@ pub use access::{
     AccessExtra, AccessNodeData, AccessStates, AccessValue, Action, ActionData, AriaCurrent, Live,
     Role, Toggled,
 };
-pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
+pub use animation::{
+    ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve, take_cancelled,
+};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
 pub use gesture::{

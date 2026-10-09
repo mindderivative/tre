@@ -211,6 +211,12 @@ pub struct Event {
     /// 0.5.4 (#131): `link`: the clicked span's `link` string.
     #[pyo3(get)]
     pub(crate) href: Option<String>,
+    /// 0.5.6 (#161): `animation_end`: the animated property, and whether the
+    /// animation ran to its end (`True`) or was replaced or stopped (`False`).
+    #[pyo3(get)]
+    pub(crate) property: Option<String>,
+    #[pyo3(get)]
+    pub(crate) finished: Option<bool>,
     pub(crate) stopped: bool,
     pub(crate) cancelled: bool,
     pub(crate) cancellable: bool,
@@ -315,6 +321,8 @@ impl Event {
             path: None,
             paths: None,
             href: None,
+            property: None,
+            finished: None,
             stopped: false,
             cancelled: false,
             cancellable: false,

@@ -397,6 +397,8 @@ What a listener receives when it takes one argument; never constructed directly.
 | `path` | `str \| None` |  |
 | `paths` | `list[str] \| None` |  |
 | `href` | `str \| None` |  |
+| `property` | `str \| None` |  |
+| `finished` | `bool \| None` |  |
 | `pointer_id` | `int \| None` |  |
 | `phase` | `str \| None` |  |
 | `count` | `int \| None` |  |

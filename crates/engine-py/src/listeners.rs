@@ -126,10 +126,13 @@ pub(crate) enum EventType {
     FileDrop,
     /// 0.5.4 (#131): a click on a text span with a `link`; carries `href`.
     Link,
+    /// 0.5.6 (#161): an animation on the node ended; carries `property` and
+    /// `finished`.
+    AnimationEnd,
 }
 
 impl EventType {
-    const ALL: [EventType; 30] = [
+    const ALL: [EventType; 31] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -160,6 +163,7 @@ impl EventType {
         Self::FileHoverCancel,
         Self::FileDrop,
         Self::Link,
+        Self::AnimationEnd,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -194,6 +198,7 @@ impl EventType {
             Self::FileHoverCancel => "file_hover_cancel",
             Self::FileDrop => "file_drop",
             Self::Link => "link",
+            Self::AnimationEnd => "animation_end",
         }
     }
 
@@ -203,7 +208,12 @@ impl EventType {
     fn bubbles(self) -> bool {
         !matches!(
             self,
-            Self::PointerEnter | Self::PointerLeave | Self::Change | Self::Dismiss | Self::Scroll
+            Self::PointerEnter
+                | Self::PointerLeave
+                | Self::Change
+                | Self::Dismiss
+                | Self::Scroll
+                | Self::AnimationEnd
         )
     }
 

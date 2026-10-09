@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use engine_core::{Animated, ContentFit, NodeKind, TextAlign};
+use engine_core::{ContentFit, NodeKind, TextAlign};
 use peniko::Color;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -756,7 +756,7 @@ fn parse_known(
                 .ok_or_else(|| invalid(name, "a non-negative number"))?;
             change(move |node| {
                 if let NodeKind::ScrollView(state) = &mut node.kind {
-                    state.scroll = Animated::new(offset);
+                    state.scroll.set_now(offset);
                 }
             })
         }
@@ -769,7 +769,7 @@ fn parse_known(
                 if let NodeKind::VirtualList(state) = &mut node.kind {
                     state.item_count = count;
                     state.resolved_offsets.clear();
-                    state.scroll_offset = Animated::new(0.0);
+                    state.scroll_offset.set_now(0.0);
                 }
             })?;
             rows.resets_rows = true;

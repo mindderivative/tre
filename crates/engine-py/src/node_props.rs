@@ -1571,15 +1571,15 @@ impl Node {
                 Change::ClipChildren(clip) => node.paint.clip_children = clip,
                 Change::Mask(mask) => node.paint.mask = mask,
                 Change::Sticky(inset) => node.sticky = inset,
-                Change::TranslateX(v) => node.paint.node_transform.translate_x = Animated::new(v),
-                Change::TranslateY(v) => node.paint.node_transform.translate_y = Animated::new(v),
-                Change::Scale(v) => node.paint.node_transform.scale = Animated::new(v),
+                Change::TranslateX(v) => node.paint.node_transform.translate_x.set_now(v),
+                Change::TranslateY(v) => node.paint.node_transform.translate_y.set_now(v),
+                Change::Scale(v) => node.paint.node_transform.scale.set_now(v),
                 Change::RotationDeg(v) => {
-                    node.paint.node_transform.rotation_deg = Animated::new(v);
+                    node.paint.node_transform.rotation_deg.set_now(v);
                 }
                 Change::Data(data) => {
                     if let NodeKind::Path(state) = &mut node.kind {
-                        state.data = Animated::new(data);
+                        state.data.set_now(data);
                     }
                 }
                 Change::ViewBox(view_box) => {
@@ -1589,18 +1589,18 @@ impl Node {
                 }
                 Change::TrimStart(start) => {
                     if let NodeKind::Path(state) = &mut node.kind {
-                        state.trim_start = Animated::new(start);
+                        state.trim_start.set_now(start);
                     }
                 }
                 Change::TrimEnd(end) => {
                     if let NodeKind::Path(state) = &mut node.kind {
-                        state.trim_end = Animated::new(end);
+                        state.trim_end.set_now(end);
                     }
                 }
                 Change::Fill(color) => {
                     match &mut node.kind {
-                        NodeKind::TextField(state) => state.text_tint = Animated::new(color),
-                        _ => node.paint.background = Animated::new(color),
+                        NodeKind::TextField(state) => state.text_tint.set_now(color),
+                        _ => node.paint.background.set_now(color),
                     }
                     // A colour replaces any gradient.
                     node.paint.gradient = None;
@@ -1609,26 +1609,26 @@ impl Node {
                     node.paint.gradient = Some(Box::new(Animated::new(gradient)));
                 }
                 Change::StrokeColor(color) => {
-                    node.paint.border_color = Animated::new(color);
+                    node.paint.border_color.set_now(color);
                     node.paint.border_gradient = None;
                 }
                 Change::StrokeGradient(gradient) => {
                     node.paint.border_gradient = Some(Box::new(gradient));
                 }
-                Change::StrokeWidth(width) => node.paint.border_width = Animated::new(width),
-                Change::Opacity(opacity) => node.paint.opacity = Animated::new(opacity),
-                Change::Blur(blur) => node.paint.blur = Animated::new(blur),
-                Change::BackdropBlur(blur) => node.paint.backdrop_blur = Animated::new(blur),
+                Change::StrokeWidth(width) => node.paint.border_width.set_now(width),
+                Change::Opacity(opacity) => node.paint.opacity.set_now(opacity),
+                Change::Blur(blur) => node.paint.blur.set_now(blur),
+                Change::BackdropBlur(blur) => node.paint.backdrop_blur.set_now(blur),
                 Change::BlendMode(mode) => node.paint.blend = mode,
                 Change::CornerRadius(Radius::Uniform(radius)) => {
-                    node.paint.corner_radius = Animated::new(radius);
+                    node.paint.corner_radius.set_now(radius);
                     node.paint.corner_radii_override = None;
                 }
                 Change::CornerRadius(Radius::Corners(corners)) => {
                     node.paint.corner_radii_override = Some(Animated::new(CornerRadii(corners)));
                 }
                 Change::Shadows(shadows) => {
-                    node.paint.shadows = Animated::new(Shadows(shadows));
+                    node.paint.shadows.set_now(Shadows(shadows));
                 }
                 Change::Placeholder(text) => {
                     if let NodeKind::TextField(state) = &mut node.kind {
