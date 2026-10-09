@@ -717,7 +717,13 @@ class App:
     """
 
     def __init__(self) -> None: ...
-    def add_window(self, window: Window) -> None: ...
+    def add_window(self, window: Window) -> None:
+        """Registers `window` to open on `run()`. Since 0.5.6 it also works
+        while the app runs (from a listener, a `frame` handler or
+        `LoopHandle.call_soon`): the window opens on the loop's next turn.
+        Raises `ValueError` for a window that is already open.
+        """
+        ...
     def thread_handle(self) -> LoopHandle:
         """M87: a thread-safe handle to this `App`'s event loop. `App`
         and `Window` may only be used from the thread that created

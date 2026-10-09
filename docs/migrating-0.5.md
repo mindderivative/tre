@@ -120,6 +120,13 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.6
+
+### Added
+
+- `App.add_window` works while `run()` is going (it used to raise
+  `RuntimeError: Already borrowed`). See [App](reference/app.md#add_window).
+
 ## 0.5.5
 
 - **Resizing a window no longer stalls on KDE Wayland.** 0.5.4's vsync default made a

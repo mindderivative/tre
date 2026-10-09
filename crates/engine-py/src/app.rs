@@ -60,7 +60,13 @@ thread_bound_shell!(App => AppState);
 
 /// `App`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
 pub struct AppState {
-    windows: Vec<Py<PyWindow>>,
+    /// 0.5.6 (#159): behind a `RefCell` so `add_window` takes `&self` -- a
+    /// `&mut self` pyo3 method needs an exclusive borrow of the `App`, which
+    /// `run()` holds (shared) for as long as the loop lives.
+    windows: RefCell<Vec<Py<PyWindow>>>,
+    /// 0.5.6 (#159): what `add_window` needs to open a window while the loop
+    /// runs; `Some` only inside `run()`.
+    live: Rc<RefCell<Option<LiveRun>>>,
     /// M87: callables queued from other threads via `LoopHandle`,
     /// drained at the top of every frame -- see `thread_handle.rs`.
     calls: CallQueue,
@@ -76,11 +82,52 @@ pub struct AppState {
 /// `on_input` closure below on real input, so this is the one
 /// Python-object-bearing field extracted here rather than converted to
 /// plain data.
+/// 0.5.6 (#159): a running loop, as seen by `App.add_window`.
+struct LiveRun {
+    setups: Rc<RefCell<Vec<WindowSetup>>>,
+    waker: EventLoopWaker,
+    max_frames: Option<u32>,
+}
+
 struct WindowSetup {
     /// 0.4.0 M6: everything the window shares with this run, cloned
     /// once (`WindowHandles`).
     handles: WindowHandles,
     title: String,
+}
+
+/// The request that opens `setup`'s window; `index` is its token.
+fn window_request(setup: &WindowSetup, index: usize, max_frames: Option<u32>) -> WindowRequest {
+    WindowRequest {
+        config: WindowConfig {
+            title: setup.title.clone(),
+            width: setup.handles.width.get(),
+            height: setup.handles.height.get(),
+            max_frames,
+            options: WindowOptions {
+                decorations: setup.handles.decorations.get(),
+                maximized: setup.handles.maximized.get(),
+                fullscreen: setup.handles.fullscreen.get(),
+                min_size: Some(setup.handles.min_size.get()).filter(|size| *size != (0.0, 0.0)),
+                icon: setup.handles.icon.borrow().clone(),
+                transparent: setup.handles.transparent.get(),
+                blur: setup.handles.blur_behind.get(),
+                click_through: setup.handles.click_through.get(),
+            },
+        },
+        token: index as u64,
+    }
+}
+
+/// Hands this run's waker to everything of `setup`'s window that needs it:
+/// its terminals (M31 Phase 6: a PTY reader thread wakes an idle loop with
+/// it) and `window.close()` (0.5.0 M2). A `window.create("terminal", ...)`
+/// call always happens before the window opens, so every session exists.
+fn attach_waker(setup: &WindowSetup, waker: &EventLoopWaker) {
+    for session in setup.handles.terminals.borrow().values() {
+        session.set_waker(waker.clone());
+    }
+    *setup.handles.waker.borrow_mut() = Some(waker.clone());
 }
 
 struct GpuState {
@@ -544,7 +591,8 @@ impl App {
     #[new]
     fn new() -> Self {
         Self(ThreadBound::new(AppState {
-            windows: Vec::new(),
+            windows: RefCell::new(Vec::new()),
+            live: Rc::new(RefCell::new(None)),
             calls: CallQueue::default(),
         }))
     }
@@ -561,8 +609,49 @@ impl App {
     /// Registers `window` to be opened the next time `run()` is called
     /// -- §14 step 14's own "a second `PyWindow`" is exactly a second
     /// call to this before `run()`.
-    fn add_window(&mut self, window: Py<PyWindow>) {
-        self.windows.push(window);
+    ///
+    /// 0.5.6 (#159): also works while `run()` is going -- from a listener, a
+    /// `frame` handler or `LoopHandle.call_soon` -- and opens the window on
+    /// the loop's next turn. Closing it leaves the other windows running;
+    /// closing the last one ends the run. A window that is already open
+    /// raises `ValueError`; one that was closed may be opened again. If the
+    /// new window's GPU can't be set up it closes by itself and the error is
+    /// logged, since the call has returned by then.
+    fn add_window(&self, py: Python<'_>, window: Py<PyWindow>) -> PyResult<()> {
+        let live = self.live.borrow();
+        let Some(live) = live.as_ref() else {
+            self.windows.borrow_mut().push(window);
+            return Ok(());
+        };
+        let setup = {
+            let borrowed = window.borrow(py);
+            if borrowed.handles.os_window.borrow().is_some() {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "this window is already open",
+                ));
+            }
+            crate::clock::unpin(&borrowed.handles.tree);
+            WindowSetup {
+                handles: borrowed.handles.clone(),
+                title: borrowed.title.clone(),
+            }
+        };
+        {
+            let mut windows = self.windows.borrow_mut();
+            if !windows.iter().any(|known| known.is(&window)) {
+                windows.push(window);
+            }
+        }
+        let index = {
+            let mut setups = live.setups.borrow_mut();
+            setups.push(setup);
+            setups.len() - 1
+        };
+        let setups = live.setups.borrow();
+        attach_waker(&setups[index], &live.waker);
+        live.waker
+            .open_window(window_request(&setups[index], index, live.max_frames));
+        Ok(())
     }
 
     /// The one blocking call (Design Principle 1) -- opens every
@@ -588,7 +677,8 @@ impl App {
 
         // M96: a live window runs on real time, whatever `Window.advance`
         // pinned before.
-        for window in &self.windows {
+        let windows = self.windows.borrow();
+        for window in windows.iter() {
             let window = window.borrow(py);
             crate::clock::unpin(&window.handles.tree);
         }
@@ -596,8 +686,7 @@ impl App {
         // Extracted once, up front, while `py` is already held --
         // see `WindowSetup`'s own doc comment for why nothing below
         // this point ever touches a Python object again.
-        let setups: Vec<WindowSetup> = self
-            .windows
+        let setups: Vec<WindowSetup> = windows
             .iter()
             .map(|window| {
                 let window = window.borrow(py);
@@ -635,7 +724,9 @@ impl App {
         // LOG=info` something real and first-party to prove.
         tracing::info!("starting a real app run session");
 
-        let setups = Rc::new(setups);
+        drop(windows);
+        let initial_windows = setups.len();
+        let setups = Rc::new(RefCell::new(setups));
         let runtimes: Rc<RefCell<HashMap<WindowId, WindowRuntime>>> =
             Rc::new(RefCell::new(HashMap::new()));
 
@@ -648,6 +739,7 @@ impl App {
         let runtimes_for_access_action = runtimes;
         let setups_for_cleanup = setups.clone();
         let setups_for_setup = setups;
+        let live_for_setup = self.live.clone();
         let calls_for_frame = self.calls.clone();
         let calls_for_setup = self.calls.clone();
 
@@ -685,7 +777,15 @@ impl App {
         };
         let result = run_windowed_multi_with(
             move |window_id, token, window| {
-                let setup = &setups_for_created[token as usize];
+                let setup_owned = {
+                    let setups = setups_for_created.borrow();
+                    let setup = &setups[token as usize];
+                    WindowSetup {
+                        handles: setup.handles.clone(),
+                        title: String::new(),
+                    }
+                };
+                let setup = &setup_owned;
                 *setup.handles.os_window.borrow_mut() = Some(window.clone());
                 // 0.5.0 M2: `winit` can open a window maximized, but not
                 // minimized -- a `minimize()` before `App.run()` lands here.
@@ -710,7 +810,14 @@ impl App {
                 ) {
                     Ok(gpu) => gpu,
                     Err(err) => {
-                        *startup_error_for_created.borrow_mut() = Some(err);
+                        if token as usize >= initial_windows {
+                            // 0.5.6 (#159): a window added while the app runs
+                            // closes alone; the call that added it has returned.
+                            tracing::error!(%err, "a window added while the app runs could not be set up");
+                            *setup.handles.os_window.borrow_mut() = None;
+                        } else {
+                            *startup_error_for_created.borrow_mut() = Some(err);
+                        }
                         return false;
                     }
                 };
@@ -1623,41 +1730,16 @@ impl App {
                 // run's loop -- including one idle in `ControlFlow::Wait`.
                 calls_for_setup.set_waker(Some(waker.clone()));
                 *gpu_wake_for_setup.borrow_mut() = Some(GpuWake::start(waker.clone()));
-                for (index, setup) in setups_for_setup.iter().enumerate() {
-                    opener.open_window(WindowRequest {
-                        config: WindowConfig {
-                            title: setup.title.clone(),
-                            width: setup.handles.width.get(),
-                            height: setup.handles.height.get(),
-                            max_frames,
-                            options: WindowOptions {
-                                decorations: setup.handles.decorations.get(),
-                                maximized: setup.handles.maximized.get(),
-                                fullscreen: setup.handles.fullscreen.get(),
-                                min_size: Some(setup.handles.min_size.get())
-                                    .filter(|size| *size != (0.0, 0.0)),
-                                icon: setup.handles.icon.borrow().clone(),
-                                transparent: setup.handles.transparent.get(),
-                                blur: setup.handles.blur_behind.get(),
-                                click_through: setup.handles.click_through.get(),
-                            },
-                        },
-                        token: index as u64,
-                    });
-                    // M31 Phase 6 (§5, §6): every real `Terminal` this
-                    // window already has (a real
-                    // `window.create("terminal", ...)` call always happens
-                    // before `App.run()`, so every real session already
-                    // exists by the time `setup` runs here) gets a real clone of this run's own fresh
-                    // waker -- the one real place able to reach it at
-                    // all, closing the real, stated v1 cost M30 Phase 9
-                    // Step 4 left open.
-                    for session in setup.handles.terminals.borrow().values() {
-                        session.set_waker(waker.clone());
-                    }
-                    // 0.5.0 M2: for `window.close()`.
-                    *setup.handles.waker.borrow_mut() = Some(waker.clone());
+                for (index, setup) in setups_for_setup.borrow().iter().enumerate() {
+                    opener.open_window(window_request(setup, index, max_frames));
+                    attach_waker(setup, waker);
                 }
+                // 0.5.6 (#159): from here `add_window` opens windows live.
+                *live_for_setup.borrow_mut() = Some(LiveRun {
+                    setups: setups_for_setup.clone(),
+                    waker: waker.clone(),
+                    max_frames,
+                });
             },
             Some(idle),
         );
@@ -1666,9 +1748,10 @@ impl App {
         // queues, waiting for a later `run()`'s first frame, rather than
         // waking a proxy with no loop behind it.
         self.calls.set_waker(None);
+        *self.live.borrow_mut() = None;
         gpu_wake.borrow_mut().take(); // stops and joins the wake thread
         // M94: no window is open any more.
-        for setup in setups_for_cleanup.iter() {
+        for setup in setups_for_cleanup.borrow().iter() {
             *setup.handles.os_window.borrow_mut() = None;
             *setup.handles.waker.borrow_mut() = None;
             setup.handles.surface_partial.set(None);

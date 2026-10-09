@@ -21,6 +21,16 @@ Registers a `Window` to be opened the next time `run()` is called.
 Calling this multiple times before `run()` opens multiple windows
 together.
 
+**Since 0.5.6**, it also works while `run()` is going: from a listener, a
+`frame` handler or `LoopHandle.call_soon`. The window opens on the loop's next
+turn. Closing it leaves the other windows running, and closing the last one
+ends the run (`App.run` returns). Adding a window that is already open raises
+`ValueError`; a window that was closed may be added again. If the new window's
+GPU can't be set up it closes by itself and the error is logged (the call that
+added it has already returned). A window still waiting to open when the last
+open one closes is lost with the run. `max_frames` applies to the new window
+on its own.
+
 ```python
 app.add_window(window)
 ```
