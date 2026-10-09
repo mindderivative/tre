@@ -113,6 +113,10 @@ fn window_request(setup: &WindowSetup, index: usize, max_frames: Option<u32>) ->
                 transparent: setup.handles.transparent.get(),
                 blur: setup.handles.blur_behind.get(),
                 click_through: setup.handles.click_through.get(),
+                position: setup.handles.position.get(),
+                always_on_top: setup.handles.always_on_top.get(),
+                resizable: setup.handles.resizable.get(),
+                skip_taskbar: setup.handles.skip_taskbar.get(),
             },
         },
         token: index as u64,
@@ -633,7 +637,7 @@ impl App {
             crate::clock::unpin(&borrowed.handles.tree);
             WindowSetup {
                 handles: borrowed.handles.clone(),
-                title: borrowed.title.clone(),
+                title: borrowed.title.borrow().clone(),
             }
         };
         {
@@ -692,7 +696,7 @@ impl App {
                 let window = window.borrow(py);
                 WindowSetup {
                     handles: window.handles.clone(),
-                    title: window.title.clone(),
+                    title: window.title.borrow().clone(),
                 }
             })
             .collect();

@@ -288,6 +288,25 @@ have its transparent parts pass them through. A platform that cannot do it raise
 keyboard shortcut or another window to turn it off again, since the window itself
 can no longer be clicked.
 
+**Placement (0.5.6).** `set(x=, y=)` puts the window's top-left corner at that place on the
+desktop, in logical pixels; with only one of them, the other stays where the window is.
+`get("x")`/`get("y")` read the window's place (before it opens, what was set), or `None`
+where the system doesn't say. `center()` centres the open window on its monitor and
+returns `False` if it can't. `set(always_on_top=True)` keeps the window above others,
+`set(resizable=False)` stops the user resizing it, and `set(skip_taskbar=True)` keeps it
+off the taskbar (Windows only; elsewhere it raises `ValueError`). All of them take effect
+live, or at open if set before `App.run()`.
+
+| | Windows | macOS | X11 | Wayland |
+|---|---|---|---|---|
+| `x`, `y`, `center()` | yes | yes | yes | no: the compositor places windows, and `get` returns `None` |
+| `always_on_top` | yes | yes | a hint some window managers ignore | no |
+| `resizable` | yes | yes | yes | yes |
+| `skip_taskbar` | yes | no | no | no |
+
+Window `parent`/`transient_for`, `modal` and centring on a parent are not provided: winit has
+no modal windows on any platform, and a transient parent only on Windows.
+
 Notes: draw straight-alpha colours as always; the renderer premultiplies for the
 surface. An app that wants shadows draws them itself (the OS draws none around a
 transparent undecorated window on every platform). A transparent window with partial

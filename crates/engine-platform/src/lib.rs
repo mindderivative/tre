@@ -306,6 +306,17 @@ pub struct WindowOptions {
     /// 0.5.4 (#142): the window ignores the pointer: clicks, scrolls and hover
     /// pass to whatever is behind it.
     pub click_through: bool,
+    /// 0.5.6 (#159): where the window's top-left corner opens, in logical
+    /// pixels on the desktop; `None` lets the system place it. Wayland has no
+    /// client-side placement, so it is ignored there.
+    pub position: Option<(f64, f64)>,
+    /// 0.5.6 (#159): keep the window above others (a hint on X11; ignored on
+    /// Wayland).
+    pub always_on_top: bool,
+    /// 0.5.6 (#159): whether the user can resize the window.
+    pub resizable: bool,
+    /// 0.5.6 (#159): keep the window off the taskbar (Windows only).
+    pub skip_taskbar: bool,
 }
 
 impl Default for WindowOptions {
@@ -319,6 +330,10 @@ impl Default for WindowOptions {
             transparent: false,
             blur: false,
             click_through: false,
+            position: None,
+            always_on_top: false,
+            resizable: true,
+            skip_taskbar: false,
         }
     }
 }
@@ -878,7 +893,16 @@ where
                         }))
                         .with_transparent(options.transparent)
                         .with_blur(options.blur)
+                        .with_resizable(options.resizable)
+                        .with_window_level(if options.always_on_top {
+                            winit::window::WindowLevel::AlwaysOnTop
+                        } else {
+                            winit::window::WindowLevel::Normal
+                        })
                         .with_visible(false);
+                if let Some((x, y)) = options.position {
+                    attrs = attrs.with_position(winit::dpi::LogicalPosition::new(x, y));
+                }
                 if let Some((w, h)) = options.min_size {
                     attrs = attrs.with_min_inner_size(winit::dpi::LogicalSize::new(w, h));
                 }
@@ -887,7 +911,9 @@ where
                 #[cfg(target_os = "windows")]
                 let attrs = {
                     use winit::platform::windows::WindowAttributesExtWindows;
-                    attrs.with_undecorated_shadow(true)
+                    attrs
+                        .with_undecorated_shadow(true)
+                        .with_skip_taskbar(options.skip_taskbar)
                 };
                 // 0.5.0 M4: macOS can't resize an undecorated window, so it
                 // stays decorated, with its title bar a transparent overlay

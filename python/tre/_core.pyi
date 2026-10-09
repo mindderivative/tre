@@ -385,6 +385,11 @@ class Window:
         """(0.5.0) Minimizes the window -- or, before `App.run()`, opens it
         minimized."""
         ...
+    def center(self) -> bool:
+        """(0.5.6) Centres the open window on its monitor. Returns `False`
+        when it can't: not open yet, or the system doesn't let apps place
+        windows (Wayland)."""
+        ...
     def maximize(self) -> None:
         """(0.5.0) Maximizes the window -- or opens it maximized."""
         ...
@@ -419,6 +424,11 @@ class Window:
         transparent: bool = ...,
         blur_behind: bool = ...,
         click_through: bool = ...,
+        x: float = ...,
+        y: float = ...,
+        always_on_top: bool = ...,
+        resizable: bool = ...,
+        skip_taskbar: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -472,7 +482,9 @@ class Window:
         can (Wayland with KDE's blur protocol, macOS; ignored elsewhere); live.
         `click_through`: (0.5.4) `True` makes the whole window ignore the pointer,
         so clicks, scrolls and hover reach what is behind it; live, and a
-        `ValueError` where the platform can't."""
+        `ValueError` where the platform can't. `x`, `y`: (0.5.6) the window's
+        place on the desktop in logical pixels (not on Wayland), `always_on_top`,
+        `resizable`, and `skip_taskbar` (Windows only); live, or at open."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -507,7 +519,14 @@ class Window:
     @overload
     def get(self, name: Literal["present_mode"]) -> str: ...
     @overload
-    def get(self, name: Literal["dpi_scaling", "transparent", "blur_behind", "click_through"]) -> bool: ...
+    def get(
+        self,
+        name: Literal[
+            "dpi_scaling", "transparent", "blur_behind", "click_through", "always_on_top", "resizable", "skip_taskbar"
+        ],
+    ) -> bool: ...
+    @overload
+    def get(self, name: Literal["x", "y"]) -> float | None: ...
     @overload
     def get(self, name: Literal["transparent_active"]) -> bool | None: ...
     @overload
