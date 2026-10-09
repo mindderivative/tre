@@ -1198,8 +1198,28 @@ impl Interpolate for Shadows {
     }
 }
 
+/// 0.5.6 (#164): a shape a node and its subtree are clipped to, in the node's
+/// own coordinates (so it follows the node's transform).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mask {
+    /// The circle inscribed in the node's box, centred; an ellipse if the box
+    /// is not square would be a different shape, so this one stays round.
+    Circle,
+    /// The box with these corner radii (top-left, top-right, bottom-right,
+    /// bottom-left), independent of the node's own `corner_radius`.
+    Rounded(CornerRadii),
+    /// Any path, fitted into the box by `view_box` like a path node's own.
+    Path {
+        data: crate::path::PathData,
+        view_box: peniko::kurbo::Rect,
+    },
+}
+
 /// Universal paint state every node has, regardless of `NodeKind`.
 pub struct PaintProperties {
+    /// 0.5.6 (#164): the shape the node and its subtree are clipped to.
+    /// Boxed, so a node without one pays a pointer.
+    pub mask: Option<Box<Mask>>,
     pub background: Animated<Color>,
     pub corner_radius: Animated<f64>,
     pub opacity: Animated<f64>,
@@ -1347,6 +1367,7 @@ impl PaintProperties {
             blur: Animated::new(0.0),
             blend: Blend::Normal,
             backdrop_blur: Animated::new(0.0),
+            mask: None,
         }
     }
 

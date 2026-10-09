@@ -227,10 +227,38 @@ highlight.set(blend_mode="screen")      # lighten what is behind
   `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`. The
   node and its subtree are drawn as one layer and mixed with what is behind it.
 
-Not available: masks (the renderer does not support them yet; a rounded
-`corner_radius` with `clip_children` covers most shapes) and colour filters as node
-properties. For saturate, brightness, contrast, grayscale, hue rotate, invert and sepia
+Not available: colour filters as node properties, and alpha masks (a mask is a shape, below).
+For saturate, brightness, contrast, grayscale, hue rotate, invert and sepia
 use [`Shader.filter`](shader.md#shaderfilterfilters), a ready-made effect shader.
+
+## Masks (0.5.6)
+
+**`mask`** clips a node and everything in it to a shape that is not a rounded box:
+
+```python
+avatar.set(mask="circle")                                  # the circle inside the box
+card.set(mask={"rounded": (24, 4, 24, 4)})                 # a radius per corner
+blob.set(mask={"path": "M5 0 L10 10 L0 10 Z",             # any SVG path data,
+               "view_box": (0, 0, 10, 10)})                #   fitted into the box
+avatar.set(mask=None)                                      # clear
+```
+
+- `"circle"` is the circle whose diameter is the shorter side of the box, centred. A
+  non-square box gets a circle, not an ellipse.
+- `{"rounded": r}` takes a number or a `(top_left, top_right, bottom_right, bottom_left)`
+  tuple. It is independent of the node's own `corner_radius`.
+- `{"path": data, "view_box": (x, y, w, h)}` fits the path into the box the way a path node's
+  `view_box` does (scaled evenly and centred). `get("mask")` returns path data in tre's own
+  syntax (`M0,0 L10,0`), not the spelling you gave.
+- The mask is in the node's own coordinates, so it follows the node's `translate_*`, `scale`
+  and `rotation_deg`. It is antialiased at the edge.
+- It clips the node's own paint, its `backdrop_blur`, and all of its children, inside the node's
+  `opacity`. (`clip_children` clips only the children.)
+- **Hit testing ignores a mask**, as it ignores `clip_children` and rounded corners: a press on
+  a clipped-away corner still reaches the node. Use `hit_testable` or an event check if that
+  matters.
+- It is a shape, not an alpha image: no soft edges, and animating between two masks is not
+  supported yet.
 
 ## Animating
 

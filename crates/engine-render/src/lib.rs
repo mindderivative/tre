@@ -560,7 +560,8 @@ struct Painter<'a> {
     geometry: &'a mut GeometryCache,
     /// Per node entered and not yet left: whether it opened an opacity
     /// layer, whether it opened a clip layer, and whether it drew itself.
-    open: Vec<(bool, bool, bool)>,
+    /// Per node entered: layered, masked, clipped, drew its own paint.
+    open: Vec<(bool, bool, bool, bool)>,
     /// 0.5.4 (#110): what the walk started from, to walk again for a
     /// backdrop blur (`paint_backdrop`).
     walk_root: NodeId,
@@ -702,6 +703,11 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
             node.paint.blend
         };
         let layered = opacity < 1.0 || blur > 0.0 || blend != engine_core::Blend::Normal;
+        let mask = if is_root {
+            None
+        } else {
+            node.paint.mask.as_deref()
+        };
         if layered {
             // A blur's width is in the node's own pixels: the layer takes the
             // scene's current transform, so set the node's.
@@ -720,6 +726,13 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
                 None,
                 filter,
             );
+        }
+        // 0.5.6 (#164): a mask clips the node, its backdrop blur and its
+        // subtree, inside the node's opacity.
+        if let Some(mask) = mask {
+            self.scene.set_transform(v.composed);
+            self.scene
+                .push_layer(Some(&mask_path(mask, v.w, v.h)), None, None, None, None);
         }
         // 0.5.1 (#69): an effect node whose shader ran is its result: the
         // texture in place of the node and its subtree.
@@ -748,6 +761,9 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
                     self.scene,
                     self.geometry,
                 );
+            }
+            if mask.is_some() {
+                self.scene.pop_layer();
             }
             if layered {
                 self.scene.pop_layer();
@@ -814,12 +830,14 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
             let clip = self.geometry.rounded_rect_fill(v.id, v.w, v.h, clip_radius);
             self.scene.push_layer(Some(clip), None, None, None, None);
         }
-        self.open.push((layered, clipped, draw_self));
+        self.open
+            .push((layered, mask.is_some(), clipped, draw_self));
         true
     }
 
     fn leave(&mut self, v: &walk::Visit<'t>) {
-        let (layered, clipped, drew) = self.open.pop().expect("every node left was entered");
+        let (layered, masked, clipped, drew) =
+            self.open.pop().expect("every node left was entered");
         if clipped {
             self.scene.pop_layer();
             // M38 Phase 6 (§5, §7, §11.7): a real `ScrollView`'s own real
@@ -847,8 +865,37 @@ impl<'t> walk::Visitor<'t> for Painter<'_> {
                 paint_virtual_list_thumb(state, v.w, v.h, v.composed, self.scene);
             }
         }
+        if masked {
+            self.scene.pop_layer();
+        }
         if layered {
             self.scene.pop_layer();
+        }
+    }
+}
+
+/// 0.5.6 (#164): the outline of a node's mask, in the node's own coordinates,
+/// for a box of `w` by `h`.
+fn mask_path(mask: &engine_core::Mask, w: f64, h: f64) -> BezPath {
+    use engine_core::Mask;
+    use peniko::kurbo::RoundedRectRadii;
+    match mask {
+        Mask::Circle => Circle::new((w / 2.0, h / 2.0), w.min(h) / 2.0).to_path(0.1),
+        Mask::Rounded(radii) => {
+            let [top_left, top_right, bottom_right, bottom_left] = radii.0;
+            RoundedRect::new(
+                0.0,
+                0.0,
+                w,
+                h,
+                RoundedRectRadii::new(top_left, top_right, bottom_right, bottom_left),
+            )
+            .to_path(0.1)
+        }
+        Mask::Path { data, view_box } => {
+            let mut path = data.0.clone();
+            path.apply_affine(engine_core::fit_transform(Some(*view_box), w, h));
+            path
         }
     }
 }

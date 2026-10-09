@@ -26,10 +26,11 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 57] = [
+const SETTABLE: [&str; 58] = [
     "visible",
     "z_index",
     "clip_children",
+    "mask",
     "sticky",
     "translate_x",
     "translate_y",
@@ -171,6 +172,8 @@ pub(crate) enum Change {
     Visible(bool),
     ZIndex(i32),
     ClipChildren(bool),
+    /// 0.5.6 (#164): `mask`; `None` clears it.
+    Mask(Option<Box<engine_core::Mask>>),
     /// 0.5.4 (#139): `sticky`, an inset from the scroller's start edge, or `None`.
     Sticky(Option<f64>),
     TranslateX(f64),
@@ -315,6 +318,105 @@ pub(crate) fn parse_non_negative(value: &Bound<'_, PyAny>, name: &str) -> PyResu
         return Err(invalid(name, "a non-negative number"));
     }
     Ok(number)
+}
+
+/// 0.5.6 (#164): `mask`: `None`, `"circle"`, `{"rounded": radius}` (a number or a
+/// four-corner tuple) or `{"path": svg_path_data, "view_box": (x, y, w, h)}`.
+fn parse_mask(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<Box<engine_core::Mask>>> {
+    use engine_core::{CornerRadii, Mask};
+    const EXPECTED: &str = "None, \"circle\", {\"rounded\": radius}, or {\"path\": svg_path_data, \"view_box\": (x, y, w, h)}";
+    if value.is_none() {
+        return Ok(None);
+    }
+    if let Ok(text) = value.extract::<String>() {
+        return if text == "circle" {
+            Ok(Some(Box::new(Mask::Circle)))
+        } else {
+            Err(invalid(name, EXPECTED))
+        };
+    }
+    let dict = value
+        .cast::<PyDict>()
+        .map_err(|_| invalid(name, EXPECTED))?;
+    let keys: Vec<String> = dict
+        .keys()
+        .iter()
+        .map(|k| k.extract::<String>())
+        .collect::<PyResult<_>>()
+        .map_err(|_| invalid(name, EXPECTED))?;
+    if keys == ["rounded"] {
+        let radius = dict.get_item("rounded")?.expect("the key is there");
+        let radii = match parse_radius(&radius, name)? {
+            Radius::Uniform(r) => [r; 4],
+            Radius::Corners(corners) => corners,
+        };
+        return Ok(Some(Box::new(Mask::Rounded(CornerRadii(radii)))));
+    }
+    if keys.len() == 2 && keys.iter().all(|k| k == "path" || k == "view_box") {
+        let data: String = dict
+            .get_item("path")?
+            .expect("the key is there")
+            .extract()
+            .map_err(|_| invalid(name, "a mask whose path is a str of SVG path data"))?;
+        let data = PathData::from_svg(&data).map_err(|err| {
+            PyValueError::new_err(format!(
+                "node property `{name}`: the path isn't valid SVG path data: {err}"
+            ))
+        })?;
+        let view_box = dict.get_item("view_box")?.expect("the key is there");
+        let (x, y, w, h): (f64, f64, f64, f64) = view_box.extract().map_err(|_| {
+            invalid(
+                name,
+                "a mask whose view_box is an (x, y, width, height) tuple",
+            )
+        })?;
+        if !(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite())
+            || w <= 0.0
+            || h <= 0.0
+        {
+            return Err(invalid(name, "a mask whose view_box has a positive size"));
+        }
+        return Ok(Some(Box::new(Mask::Path {
+            data,
+            view_box: Rect::new(x, y, x + w, y + h),
+        })));
+    }
+    Err(invalid(name, EXPECTED))
+}
+
+/// A mask as `parse_mask` takes it.
+fn mask_to_py(mask: Option<&engine_core::Mask>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    use engine_core::Mask;
+    let Some(mask) = mask else {
+        return Ok(py.None());
+    };
+    Ok(match mask {
+        Mask::Circle => "circle".into_pyobject(py)?.into_any().unbind(),
+        Mask::Rounded(radii) => {
+            let dict = PyDict::new(py);
+            let [a, b, c, d] = radii.0;
+            if a == b && b == c && c == d {
+                dict.set_item("rounded", a)?;
+            } else {
+                dict.set_item("rounded", (a, b, c, d))?;
+            }
+            dict.into_any().unbind()
+        }
+        Mask::Path { data, view_box } => {
+            let dict = PyDict::new(py);
+            dict.set_item("path", data.to_svg())?;
+            dict.set_item(
+                "view_box",
+                (
+                    view_box.x0,
+                    view_box.y0,
+                    view_box.width(),
+                    view_box.height(),
+                ),
+            )?;
+            dict.into_any().unbind()
+        }
+    })
 }
 
 pub(crate) fn parse_radius(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Radius> {
@@ -635,6 +737,7 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             Change::ZIndex(required(value, name, "an int")?)
         }
         "clip_children" => Change::ClipChildren(boolean(value, name)?),
+        "mask" => Change::Mask(parse_mask(value, name)?),
         "sticky" => Change::Sticky(if value.is_none() {
             None
         } else if value.is_instance_of::<pyo3::types::PyBool>() {
@@ -1169,6 +1272,7 @@ impl Node {
                 "blend_mode" => any(node.paint.blend.name().into_pyobject(py)?.into_any()),
                 "visible" => any(node.visible.into_pyobject(py)?.to_owned().into_any()),
                 "z_index" => any(node.z_index.into_pyobject(py)?.into_any()),
+                "mask" => mask_to_py(node.paint.mask.as_deref(), py)?,
                 "clip_children" => any(node
                     .paint
                     .clip_children
@@ -1465,6 +1569,7 @@ impl Node {
                 }
                 Change::ZIndex(z) => node.z_index = z,
                 Change::ClipChildren(clip) => node.paint.clip_children = clip,
+                Change::Mask(mask) => node.paint.mask = mask,
                 Change::Sticky(inset) => node.sticky = inset,
                 Change::TranslateX(v) => node.paint.node_transform.translate_x = Animated::new(v),
                 Change::TranslateY(v) => node.paint.node_transform.translate_y = Animated::new(v),

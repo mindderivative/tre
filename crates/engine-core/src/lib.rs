@@ -47,7 +47,7 @@ pub use input::{
     ctrl_shortcut,
 };
 pub use node::{
-    Blend, CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Node, NodeId,
+    Blend, CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Mask, Node, NodeId,
     NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
     SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, TerminalCell,
     TerminalPalette, TerminalState, TextAlign, TextFieldState, TextOptions, TextSpan, TextState,
