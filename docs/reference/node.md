@@ -18,12 +18,18 @@ thumb.set(role="slider", label="Volume", value=0.4, value_min=0.0,
 
 | Property | Value |
 | --- | --- |
-| `role` | `"button"`, `"checkbox"`, `"radio"`, `"switch"`, `"slider"`, `"progressbar"`, `"link"`, `"textbox"`, `"tab"`, `"tablist"`, `"tabpanel"`, `"menu"`, `"menuitem"`, `"dialog"`, `"alert"`, `"list"`, `"listitem"`, `"tree"`, `"treeitem"`, `"heading"`, `"img"`, `"group"`, `"none"` |
+| `role` | `"button"`, `"checkbox"`, `"radio"`, `"switch"`, `"slider"`, `"progressbar"`, `"link"`, `"textbox"`, `"tab"`, `"tablist"`, `"tabpanel"`, `"menu"`, `"menuitem"`, `"dialog"`, `"alert"`, `"list"`, `"listitem"`, `"tree"`, `"treeitem"`, `"heading"`, `"img"`, `"group"`, `"none"`, `"separator"` (0.5.6; AccessKit has no separator role, so it is a splitter, which AT-SPI and UIA expose as a separator) |
 | `label` | `str` or `None` — the name assistive technology reads |
 | `value` | `str`, number, or `None` |
 | `value_min`, `value_max`, `value_step` | number or `None` |
 | `checked`, `selected`, `expanded` | `bool` or `None` |
 | `disabled` | `bool` |
+| `pressed` | `True`, `False`, `"mixed"`, or `None` (0.5.6) — a toggle button's state; where both are set, it wins over `checked` |
+| `invalid`, `busy` | `bool` (0.5.6) — the value is not acceptable; the node is updating |
+| `description` | `str` or `None` (0.5.6) — a longer description than `label` |
+| `describedby`, `controls` | a `Node`, a list of `Node`s, or `None` (0.5.6) — nodes that describe this one, and nodes it controls. They must belong to the same window. `get` returns the list of nodes still alive; one that is hidden or removed is left out of what assistive technology sees |
+| `current` | `"page"`, `"step"`, `"location"`, `"date"`, `"time"`, `True`, `False`, or `None` (0.5.6) — the current item in a set |
+| `value_now`, `value_text` | number or `None`; `str` or `None` (0.5.6) — `value_now` is the number of `value` (setting one sets the other), `value_text` is how the value is said ("40 percent") |
 | `level` | positive `int` or `None` — a heading's level |
 | `live` | `"off"`, `"polite"`, `"assertive"`, or `None` — how changes are announced |
 | `a11y_hidden` | `bool` — hidden from assistive technology |

@@ -31,7 +31,10 @@ mod shader;
 mod svg;
 mod tree;
 
-pub use access::{AccessNodeData, AccessStates, AccessValue, Action, ActionData, Live, Role};
+pub use access::{
+    AccessExtra, AccessNodeData, AccessStates, AccessValue, Action, ActionData, AriaCurrent, Live,
+    Role, Toggled,
+};
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};

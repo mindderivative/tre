@@ -129,6 +129,9 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - `Window.set(x=, y=, always_on_top=, resizable=, skip_taskbar=)` and `Window.center()`;
   `set` and `resize` now work inside a callback that `advance` or `simulate` runs. See
   [Window](reference/window.md).
+- Accessibility states on any node: `pressed`, `invalid`, `busy`, `current`, `description`,
+  `describedby`, `controls`, `value_now`, `value_text`, and a `separator` role. See
+  [Node](reference/node.md#set-get-and-focus).
 - `Window.after(ms, fn)`, `Window.every(ms, fn)` and `TimerHandle`. See
   [Timers](reference/window.md#timers-056).
 

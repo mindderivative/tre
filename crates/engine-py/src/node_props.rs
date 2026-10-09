@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use engine_core::{
-    AccessValue, Animated, CornerRadii, Cursor, Interpolate, Live, NodeKind, PathData, Role,
-    Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
+    AccessValue, Animated, CornerRadii, Cursor, Interpolate, Live, NodeId, NodeKind, PathData,
+    Role, Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
 };
 use peniko::Color;
 use peniko::kurbo::Rect;
@@ -26,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 48] = [
+const SETTABLE: [&str; 57] = [
     "visible",
     "z_index",
     "clip_children",
@@ -69,6 +69,15 @@ const SETTABLE: [&str; 48] = [
     "level",
     "live",
     "a11y_hidden",
+    "pressed",
+    "invalid",
+    "busy",
+    "current",
+    "description",
+    "describedby",
+    "controls",
+    "value_now",
+    "value_text",
     "focusable",
     "tab_index",
     "cursor",
@@ -78,7 +87,7 @@ const SETTABLE: [&str; 48] = [
 ];
 
 /// The M93 role vocabulary.
-const ROLES: [(&str, Role); 23] = [
+const ROLES: [(&str, Role); 24] = [
     ("button", Role::Button),
     ("checkbox", Role::CheckBox),
     ("radio", Role::RadioButton),
@@ -102,6 +111,17 @@ const ROLES: [(&str, Role); 23] = [
     ("img", Role::Image),
     ("group", Role::Group),
     ("none", Role::GenericContainer),
+    // 0.5.6 (#160): AccessKit has no separator role; a splitter is the one the
+    // platforms expose as a separator (AT-SPI) or separator control (UIA).
+    ("separator", Role::Splitter),
+];
+
+const CURRENT: [(&str, engine_core::AriaCurrent); 5] = [
+    ("page", engine_core::AriaCurrent::Page),
+    ("step", engine_core::AriaCurrent::Step),
+    ("location", engine_core::AriaCurrent::Location),
+    ("date", engine_core::AriaCurrent::Date),
+    ("time", engine_core::AriaCurrent::Time),
 ];
 
 const LIVE: [(&str, Live); 3] = [
@@ -125,6 +145,16 @@ pub(crate) enum Change {
     Level(Option<usize>),
     Live(Option<Live>),
     A11yHidden(bool),
+    /// 0.5.6 (#160): the accessibility states a screen reader hears about.
+    Pressed(Option<engine_core::Toggled>),
+    Invalid(bool),
+    Busy(bool),
+    Current(Option<engine_core::AriaCurrent>),
+    Description(Option<String>),
+    ValueNow(Option<f64>),
+    ValueText(Option<String>),
+    DescribedBy(Vec<NodeId>),
+    Controls(Vec<NodeId>),
     Focusable(bool),
     TabIndex(i32),
     Cursor(Option<Cursor>),
@@ -667,6 +697,47 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             })
         }
         "a11y_hidden" => Change::A11yHidden(boolean(value, name)?),
+        "pressed" => Change::Pressed(if value.is_none() {
+            None
+        } else if value.is_instance_of::<pyo3::types::PyBool>() {
+            Some(if value.extract::<bool>()? {
+                engine_core::Toggled::True
+            } else {
+                engine_core::Toggled::False
+            })
+        } else if value.extract::<String>().is_ok_and(|s| s == "mixed") {
+            Some(engine_core::Toggled::Mixed)
+        } else {
+            return Err(invalid(name, "True, False, \"mixed\", or None"));
+        }),
+        "invalid" => Change::Invalid(boolean(value, name)?),
+        "busy" => Change::Busy(boolean(value, name)?),
+        "current" => Change::Current(if value.is_none() {
+            None
+        } else if value.is_instance_of::<pyo3::types::PyBool>() {
+            Some(if value.extract::<bool>()? {
+                engine_core::AriaCurrent::True
+            } else {
+                engine_core::AriaCurrent::False
+            })
+        } else {
+            let text: String = required(value, name, "a str, a bool, or None")?;
+            Some(
+                CURRENT
+                    .iter()
+                    .find(|(n, _)| *n == text)
+                    .map(|(_, c)| *c)
+                    .ok_or_else(|| {
+                        invalid(
+                            name,
+                            &format!("True, False, None, or one of: {}", names(&CURRENT)),
+                        )
+                    })?,
+            )
+        }),
+        "description" => Change::Description(optional(value, name, "a str or None")?),
+        "value_now" => Change::ValueNow(optional(value, name, "a number or None")?),
+        "value_text" => Change::ValueText(optional(value, name, "a str or None")?),
         "focusable" => Change::Focusable(boolean(value, name)?),
         "tab_index" => Change::TabIndex(required(value, name, "an int")?),
         // 0.5.4 (#140): a `CursorImage` is a cursor too.
@@ -813,6 +884,41 @@ fn parse_shader(value: &Bound<'_, PyAny>, tree: &Rc<RefCell<Tree>>) -> PyResult<
     Ok(Change::Shader(Some(shader.core.clone())))
 }
 
+/// 0.5.6 (#160): `describedby` / `controls`: a node, a list of nodes, or `None`
+/// -- all of this window's.
+fn parse_related(
+    name: &str,
+    value: &Bound<'_, PyAny>,
+    tree: &Rc<RefCell<Tree>>,
+) -> PyResult<Vec<NodeId>> {
+    const EXPECTED: &str = "a Node, a list of Nodes, or None";
+    if value.is_none() {
+        return Ok(Vec::new());
+    }
+    let items: Vec<Bound<'_, PyAny>> = if let Ok(node) = value.cast::<Node>() {
+        vec![node.clone().into_any()]
+    } else if value.is_instance_of::<pyo3::types::PyList>()
+        || value.is_instance_of::<pyo3::types::PyTuple>()
+    {
+        value.try_iter()?.collect::<PyResult<Vec<_>>>()?
+    } else {
+        return Err(invalid(name, EXPECTED));
+    };
+    let mut ids = Vec::new();
+    for item in items {
+        let node: PyRef<'_, Node> = item.extract().map_err(|_| invalid(name, EXPECTED))?;
+        if !Rc::ptr_eq(&node.tree, tree) {
+            return Err(PyValueError::new_err(format!(
+                "node property `{name}`: the node belongs to a different Window"
+            )));
+        }
+        if !ids.contains(&node.id) {
+            ids.push(node.id);
+        }
+    }
+    Ok(ids)
+}
+
 /// Every property `set` accepts, parsed and checked against `kind` --
 /// nothing is applied until all of them pass.
 pub(crate) fn parse_all(
@@ -834,6 +940,15 @@ pub(crate) fn parse_all(
             }
             if name == "shader" {
                 changes.push(parse_shader(&value, tree)?);
+                continue;
+            }
+            if name == "describedby" || name == "controls" {
+                let ids = parse_related(&name, &value, tree)?;
+                changes.push(if name == "controls" {
+                    Change::Controls(ids)
+                } else {
+                    Change::DescribedBy(ids)
+                });
                 continue;
             }
             let change = parse(&name, &value)?;
@@ -959,6 +1074,69 @@ impl Node {
                     .into_any()
                     .unbind(),
                 "a11y_hidden" => any(access.hidden.into_pyobject(py)?.to_owned().into_any()),
+                "pressed" => match access.pressed {
+                    None => py.None(),
+                    Some(engine_core::Toggled::True) => {
+                        any(true.into_pyobject(py)?.to_owned().into_any())
+                    }
+                    Some(engine_core::Toggled::False) => {
+                        any(false.into_pyobject(py)?.to_owned().into_any())
+                    }
+                    Some(engine_core::Toggled::Mixed) => any("mixed".into_pyobject(py)?.into_any()),
+                },
+                "invalid" => any(access.invalid.into_pyobject(py)?.to_owned().into_any()),
+                "busy" => any(access.busy.into_pyobject(py)?.to_owned().into_any()),
+                "current" => match access.current {
+                    None => py.None(),
+                    Some(engine_core::AriaCurrent::True) => {
+                        any(true.into_pyobject(py)?.to_owned().into_any())
+                    }
+                    Some(engine_core::AriaCurrent::False) => {
+                        any(false.into_pyobject(py)?.to_owned().into_any())
+                    }
+                    Some(current) => CURRENT
+                        .iter()
+                        .find(|(_, c)| *c == current)
+                        .map(|(n, _)| *n)
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind(),
+                },
+                "description" => access
+                    .description
+                    .clone()
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind(),
+                "value_now" => match &access.value {
+                    Some(AccessValue::Number(n)) => any(n.into_pyobject(py)?.into_any()),
+                    _ => py.None(),
+                },
+                "value_text" => access
+                    .extra
+                    .as_ref()
+                    .and_then(|x| x.value_text.clone())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind(),
+                "describedby" | "controls" => {
+                    let empty = Vec::new();
+                    let ids = access.extra.as_ref().map_or(&empty, |x| {
+                        if name == "controls" {
+                            &x.controls
+                        } else {
+                            &x.described_by
+                        }
+                    });
+                    let tree = self.tree.borrow();
+                    let nodes: Vec<Node> = ids
+                        .iter()
+                        .filter(|id| tree.get(**id).is_some())
+                        .map(|id| self.handle_to(*id))
+                        .collect();
+                    drop(tree);
+                    any(nodes.into_pyobject(py)?.into_any())
+                }
                 "focusable" => {
                     let focusable = access.focusable.unwrap_or(!access.actions.is_empty());
                     any(focusable.into_pyobject(py)?.to_owned().into_any())
@@ -1222,6 +1400,20 @@ impl Node {
                 Change::Level(level) => access.level = level,
                 Change::Live(live) => access.live = live,
                 Change::A11yHidden(hidden) => access.hidden = hidden,
+                Change::Pressed(pressed) => access.pressed = pressed,
+                Change::Invalid(invalid) => access.invalid = invalid,
+                Change::Busy(busy) => access.busy = busy,
+                Change::Current(current) => access.current = current,
+                Change::Description(description) => access.description = description,
+                Change::ValueNow(Some(now)) => access.value = Some(AccessValue::Number(now)),
+                Change::ValueNow(None) => {
+                    if matches!(access.value, Some(AccessValue::Number(_))) {
+                        access.value = None;
+                    }
+                }
+                Change::ValueText(text) => access.edit_extra(|x| x.value_text = text),
+                Change::DescribedBy(ids) => access.edit_extra(|x| x.described_by = ids),
+                Change::Controls(ids) => access.edit_extra(|x| x.controls = ids),
                 Change::Focusable(focusable) => access.focusable = Some(focusable),
                 Change::TabIndex(index) => access.tab_index = index,
                 Change::Cursor(cursor) => node.cursor = cursor,

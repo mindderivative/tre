@@ -44,6 +44,22 @@ impl Tree {
         update
     }
 
+    /// 0.5.6 (#160): whether `id` is a node of this tree that an access update
+    /// reaches: it and every ancestor are alive and visible.
+    fn in_access_tree(&self, id: NodeId) -> bool {
+        let mut at = Some(id);
+        while let Some(current) = at {
+            let Some(node) = self.nodes.get(current) else {
+                return false;
+            };
+            if !node.visible {
+                return false;
+            }
+            at = node.parent;
+        }
+        true
+    }
+
     pub(super) fn collect_access_nodes(
         &self,
         id: NodeId,
@@ -100,6 +116,39 @@ impl Tree {
         }
         if let Some(checked) = access.checked {
             access_node.set_toggled(checked.into());
+        }
+        // 0.5.6 (#160): `pressed` wins over `checked` for the same slot.
+        if let Some(pressed) = access.pressed {
+            access_node.set_toggled(pressed);
+        }
+        if access.invalid {
+            access_node.set_invalid(accesskit::Invalid::True);
+        }
+        if access.busy {
+            access_node.set_busy();
+        }
+        if let Some(current) = access.current {
+            access_node.set_aria_current(current);
+        }
+        if let Some(text) = access.extra.as_ref().and_then(|x| x.value_text.as_ref()) {
+            access_node.set_value(text.clone());
+        }
+        // A relation points only at a node that is in the update: this tree's,
+        // alive, and not left out as invisible.
+        let related = |ids: &[crate::NodeId]| -> Vec<accesskit::NodeId> {
+            ids.iter()
+                .copied()
+                .filter(|&target| target != id && self.in_access_tree(target))
+                .map(to_access_id)
+                .collect()
+        };
+        let described_by = related(access.extra.as_ref().map_or(&[], |x| &x.described_by));
+        if !described_by.is_empty() {
+            access_node.set_described_by(described_by);
+        }
+        let controls = related(access.extra.as_ref().map_or(&[], |x| &x.controls));
+        if !controls.is_empty() {
+            access_node.set_controls(controls);
         }
         if let Some(selected) = access.selected {
             access_node.set_selected(selected);

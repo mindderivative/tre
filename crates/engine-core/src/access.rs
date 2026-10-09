@@ -5,7 +5,7 @@
 //! kinds of its own to derive such states from, so the framework that
 //! draws a checkbox is the one that says it is checked.
 
-pub use accesskit::{Action, ActionData, Live, Role};
+pub use accesskit::{Action, ActionData, AriaCurrent, Live, Role, Toggled};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AccessStates {
@@ -18,6 +18,21 @@ pub struct AccessStates {
 pub enum AccessValue {
     Text(String),
     Number(f64),
+}
+
+/// 0.5.6 (#160): how a range value is said, and the nodes a node is described
+/// by and controls.
+#[derive(Clone, Debug, Default)]
+pub struct AccessExtra {
+    pub value_text: Option<String>,
+    pub described_by: Vec<crate::NodeId>,
+    pub controls: Vec<crate::NodeId>,
+}
+
+impl AccessExtra {
+    fn is_empty(&self) -> bool {
+        self.value_text.is_none() && self.described_by.is_empty() && self.controls.is_empty()
+    }
 }
 
 /// Mirrors ARCHITECTURE.md §10's own sketch exactly, plus M94's
@@ -38,6 +53,17 @@ pub struct AccessNodeData {
     pub checked: Option<bool>,
     pub selected: Option<bool>,
     pub expanded: Option<bool>,
+    /// 0.5.6 (#160): a toggle button's state; wins over `checked` when set.
+    pub pressed: Option<Toggled>,
+    /// 0.5.6 (#160): the value is not acceptable.
+    pub invalid: bool,
+    /// 0.5.6 (#160): the node is updating.
+    pub busy: bool,
+    /// 0.5.6 (#160): the current item of a set (a page, a step...).
+    pub current: Option<AriaCurrent>,
+    /// 0.5.6 (#160): the rarely set, larger accessibility data, boxed so a
+    /// node that has none pays one pointer.
+    pub extra: Option<Box<AccessExtra>>,
     /// A heading's level, 1 for the most important.
     pub level: Option<usize>,
     pub live: Option<Live>,
@@ -55,6 +81,16 @@ pub struct AccessNodeData {
 }
 
 impl AccessNodeData {
+    /// 0.5.6 (#160): changes the boxed extras; the box is dropped again when
+    /// nothing is left in it.
+    pub fn edit_extra(&mut self, change: impl FnOnce(&mut AccessExtra)) {
+        let mut extra = self.extra.take().unwrap_or_default();
+        change(&mut extra);
+        if !extra.is_empty() {
+            self.extra = Some(extra);
+        }
+    }
+
     pub fn new(role: Role) -> Self {
         Self {
             role,
@@ -69,6 +105,11 @@ impl AccessNodeData {
             checked: None,
             selected: None,
             expanded: None,
+            pressed: None,
+            invalid: false,
+            busy: false,
+            current: None,
+            extra: None,
             level: None,
             live: None,
             hidden: false,
