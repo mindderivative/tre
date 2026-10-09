@@ -141,6 +141,9 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   styling (`caret_visible`, `caret_width`, `caret_shape`, `caret_blink`, an animatable `caret_color`),
   `caret_rect()`, `text_rects()` and a `caret_move` event. **Behavior change:** Enter in a
   single-line text input used to do nothing; it now fires `submit`. See [Text](guide/text.md).
+- Scroll views: `scroll_snap` and a per-item `snap_align`; a virtual list has a `scroll_offset`;
+  `scroll_offset` on another node raises `ValueError`. See
+  [Scrolling](guide/nodes-and-layout.md#scrolling).
 - A `mask` node property clips a node and its subtree to a circle, a rounded box with a
   radius per corner, or a path. See [Masks](reference/paint.md#masks-056).
 - `Window.after(ms, fn)`, `Window.every(ms, fn)` and `TimerHandle`. See

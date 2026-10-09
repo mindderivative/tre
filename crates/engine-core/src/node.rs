@@ -394,8 +394,28 @@ impl TerminalState {
 /// No `#[derive(Clone, Debug, PartialEq)]` -- `Animated<T>`
 /// implements none of those, the same real reason `NodeKind`'s own
 /// doc comment states.
+/// 0.5.6 (#166): where a scroll view lines an item up when it settles: with
+/// the start of the view, its middle, or its end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapAlign {
+    Start,
+    Center,
+    End,
+}
+
+impl SnapAlign {
+    pub const ALL: [(&'static str, SnapAlign); 3] = [
+        ("start", SnapAlign::Start),
+        ("center", SnapAlign::Center),
+        ("end", SnapAlign::End),
+    ];
+}
+
 pub struct ScrollViewState {
     pub scroll: Animated<f64>,
+    /// 0.5.6 (#166): when set, the view settles on the item nearest the
+    /// alignment once the user stops scrolling it. `None` is free scrolling.
+    pub snap: Option<SnapAlign>,
     /// `false` (the default) scrolls vertically; `true` scrolls
     /// horizontally. Never both at once -- the identical real
     /// single-axis scope pyCopper's own `ScrollViewElement.axis`
@@ -429,6 +449,7 @@ impl ScrollViewState {
     pub fn new(horizontal: bool) -> Self {
         Self {
             scroll: Animated::new(0.0),
+            snap: None,
             horizontal,
             thumb_drag_anchor: None,
             scrollbar_fill: None,
@@ -1558,6 +1579,9 @@ pub struct Node {
     /// `Tree::scroll_shift`). `None`, the default, is a node that scrolls with
     /// its content.
     pub sticky: Option<f64>,
+    /// 0.5.6 (#166): how this item lines up when its scroll view snaps; `None`
+    /// takes the view's own `scroll_snap`.
+    pub snap_align: Option<SnapAlign>,
     /// 0.5.6 (#161): running animations of this node's layout properties,
     /// written into `layout_style` each tick. Boxed: most nodes have none.
     pub layout_anims: Option<Box<Vec<crate::layout_anim::LayoutAnim>>>,

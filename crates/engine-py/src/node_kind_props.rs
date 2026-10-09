@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 34] = [
+pub(crate) const KIND_PROPS: [&str; 35] = [
     "text",
     "font_family",
     "font_weight",
@@ -42,6 +42,7 @@ pub(crate) const KIND_PROPS: [&str; 34] = [
     "pixel_height",
     "fit",
     "orientation",
+    "scroll_snap",
     "scroll_offset",
     "cols",
     "rows",
@@ -344,6 +345,9 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
     fn terminal(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Terminal(_))
     }
+    fn scroller(kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::ScrollView(_) | NodeKind::VirtualList(_))
+    }
     fn virtual_list(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::VirtualList(_))
     }
@@ -357,7 +361,8 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
         "svg" | "svg_size" | "svg_color" | "svg_images" => ("an svg", svg),
-        "orientation" | "scroll_offset" => ("a scroll_view", scroll_view),
+        "orientation" | "scroll_snap" => ("a scroll_view", scroll_view),
+        "scroll_offset" => ("a scroll_view or virtual_list", scroller),
         "item_count" | "item_extent" => ("a virtual_list", virtual_list),
         _ => ("a terminal", terminal),
     }
@@ -810,9 +815,38 @@ fn parse_known(
                 .ok()
                 .filter(|v: &f64| *v >= 0.0 && v.is_finite())
                 .ok_or_else(|| invalid(name, "a non-negative number"))?;
+            change(move |node| match &mut node.kind {
+                NodeKind::ScrollView(state) => state.scroll.set_now(offset),
+                // 0.5.6 (#166): a virtual list's offset is settable too.
+                NodeKind::VirtualList(state) => state.scroll_offset.set_now(offset),
+                _ => {}
+            })
+        }
+        // 0.5.6 (#166): where a scroll view settles an item when the user stops.
+        "scroll_snap" => {
+            let snap = if value.is_none() {
+                None
+            } else {
+                let text: String = value
+                    .extract()
+                    .map_err(|_| invalid(name, "\"none\", \"start\", \"center\", or \"end\""))?;
+                if text == "none" {
+                    None
+                } else {
+                    Some(
+                        engine_core::SnapAlign::ALL
+                            .iter()
+                            .find(|(n, _)| *n == text)
+                            .map(|(_, a)| *a)
+                            .ok_or_else(|| {
+                                invalid(name, "\"none\", \"start\", \"center\", or \"end\"")
+                            })?,
+                    )
+                }
+            };
             change(move |node| {
                 if let NodeKind::ScrollView(state) = &mut node.kind {
-                    state.scroll.set_now(offset);
+                    state.snap = snap;
                 }
             })
         }
@@ -1035,6 +1069,15 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
         ("pixel_width", NodeKind::Image(s)) => to_py(s.image.width, py),
         ("pixel_height", NodeKind::Image(s)) => to_py(s.image.height, py),
         ("fit", NodeKind::Image(s)) => to_py(name_of(&FIT, &s.content_fit), py),
+        ("scroll_snap", NodeKind::ScrollView(s)) => to_py(
+            s.snap.map_or("none", |a| {
+                engine_core::SnapAlign::ALL
+                    .iter()
+                    .find(|(_, x)| *x == a)
+                    .map_or("none", |(n, _)| *n)
+            }),
+            py,
+        ),
         ("orientation", NodeKind::ScrollView(s)) => to_py(name_of(&ORIENTATION, &s.horizontal), py),
         ("item_count", NodeKind::VirtualList(s)) => to_py(s.item_count, py),
         ("item_extent", NodeKind::VirtualList(s)) => match s.item_extent {

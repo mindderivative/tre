@@ -1694,6 +1694,8 @@ fn node_fingerprint_with(
         // 0.5.4 (#139): where a sticky node is reaches paint through its composed
         // transform, which is hashed above.
         sticky: _,
+        // 0.5.6 (#166): where a snapped item settles paints nothing itself.
+        snap_align: _,
         // 0.5.6 (#161): a layout animation reaches paint through the style it
         // writes, so it changes the box size and position above.
         layout_anims: _,
@@ -2118,6 +2120,8 @@ fn canvas_fingerprint(h: &mut impl Hasher, state: &CanvasState) {
 
 fn scroll_fingerprint(h: &mut impl Hasher, state: &ScrollViewState, with_offset: bool) {
     let ScrollViewState {
+        // Where it settles when the user stops; paints nothing itself.
+        snap: _,
         scroll,
         horizontal,
         thumb_drag_anchor,

@@ -131,6 +131,9 @@ pub struct Tree {
     /// 0.5.6 (#165): text fields whose caret moved or text changed, until
     /// `take_caret_changes` reports them.
     caret_changes: Vec<(NodeId, Option<std::ops::Range<usize>>)>,
+    /// 0.5.6 (#166): scroll views the user has scrolled, waiting to settle on a
+    /// snap point once the input stops (`None`: not yet seen by a tick).
+    snap_pending: Vec<(NodeId, Option<Instant>)>,
     scroll_view_count: usize,
     virtual_list_count: usize,
     /// 0.5.4 (#150): how many `Image` and `Svg` nodes the tree holds, so a
@@ -183,6 +186,7 @@ impl Tree {
             last_layout: None,
             scanned_at: None,
             caret_changes: Vec::new(),
+            snap_pending: Vec::new(),
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
             focused: None,
@@ -307,6 +311,7 @@ impl Tree {
             access: AccessNodeData::default(),
             hit_testable: true,
             sticky: None,
+            snap_align: None,
             layout_anims: None,
             cursor: None,
             window_region: crate::node::WindowRegion::Default,
@@ -889,13 +894,14 @@ impl Tree {
             let _ = self.nodes.take_animation_candidates();
         }
         self.animating = still;
+        let settling = self.settle_snaps(now);
         for id in layout_changed {
             if let Some(node) = self.nodes.get(id) {
                 let style = node.layout_style.clone();
                 self.set_layout_style(id, style);
             }
         }
-        let any_active = !self.animating.is_empty();
+        let any_active = !self.animating.is_empty() || settling || !self.snap_pending.is_empty();
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the
         // exact signal this needs, just never fed into a redraw

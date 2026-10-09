@@ -26,10 +26,11 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 65] = [
+const SETTABLE: [&str; 66] = [
     "visible",
     "z_index",
     "clip_children",
+    "snap_align",
     "mask",
     "sticky",
     "translate_x",
@@ -179,6 +180,8 @@ pub(crate) enum Change {
     Visible(bool),
     ZIndex(i32),
     ClipChildren(bool),
+    /// 0.5.6 (#166): `snap_align`; `None` takes the scroll view's own.
+    SnapAlign(Option<engine_core::SnapAlign>),
     /// 0.5.6 (#164): `mask`; `None` clears it.
     Mask(Option<Box<engine_core::Mask>>),
     /// 0.5.4 (#139): `sticky`, an inset from the scroller's start edge, or `None`.
@@ -507,14 +510,16 @@ pub(crate) fn animatable_to_py(
                 py,
             )?,
         },
-        "scroll_offset" => {
-            let NodeKind::ScrollView(state) = &node.kind else {
+        "scroll_offset" => match &node.kind {
+            NodeKind::ScrollView(state) => number(*pick(&state.scroll, target))?,
+            // 0.5.6 (#166): a virtual list has one too.
+            NodeKind::VirtualList(state) => number(*pick(&state.scroll_offset, target))?,
+            _ => {
                 return Err(PyValueError::new_err(
-                    "node property `scroll_offset` applies only to a scroll_view node",
+                    "node property `scroll_offset` applies only to a scroll_view or virtual_list node",
                 ));
-            };
-            number(*pick(&state.scroll, target))?
-        }
+            }
+        },
         "stroke_color" => match &node.paint.border_gradient {
             Some(gradient) => Py::new(
                 py,
@@ -598,14 +603,15 @@ pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyRes
                 _ => node.paint.background.stop(),
             }
         }
-        "scroll_offset" => {
-            let NodeKind::ScrollView(state) = &mut node.kind else {
+        "scroll_offset" => match &mut node.kind {
+            NodeKind::ScrollView(state) => state.scroll.stop(),
+            NodeKind::VirtualList(state) => state.scroll_offset.stop(),
+            _ => {
                 return Err(PyValueError::new_err(
-                    "node property `scroll_offset` applies only to a scroll_view node",
+                    "node property `scroll_offset` applies only to a scroll_view or virtual_list node",
                 ));
-            };
-            state.scroll.stop();
-        }
+            }
+        },
         "stroke_color" => node.paint.border_color.stop(),
         "caret_color" => {
             if let NodeKind::TextField(state) = &mut node.kind
@@ -777,6 +783,20 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             Change::ZIndex(required(value, name, "an int")?)
         }
         "clip_children" => Change::ClipChildren(boolean(value, name)?),
+        "snap_align" => Change::SnapAlign(if value.is_none() {
+            None
+        } else {
+            let text: String = value
+                .extract()
+                .map_err(|_| invalid(name, "\"start\", \"center\", \"end\", or None"))?;
+            Some(
+                engine_core::SnapAlign::ALL
+                    .iter()
+                    .find(|(n, _)| *n == text)
+                    .map(|(_, a)| *a)
+                    .ok_or_else(|| invalid(name, "\"start\", \"center\", \"end\", or None"))?,
+            )
+        }),
         "mask" => Change::Mask(parse_mask(value, name)?),
         "sticky" => Change::Sticky(if value.is_none() {
             None
@@ -1386,6 +1406,17 @@ impl Node {
                 "blend_mode" => any(node.paint.blend.name().into_pyobject(py)?.into_any()),
                 "visible" => any(node.visible.into_pyobject(py)?.to_owned().into_any()),
                 "z_index" => any(node.z_index.into_pyobject(py)?.into_any()),
+                "snap_align" => node
+                    .snap_align
+                    .map(|a| {
+                        engine_core::SnapAlign::ALL
+                            .iter()
+                            .find(|(_, x)| *x == a)
+                            .map_or("start", |(n, _)| *n)
+                    })
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind(),
                 "mask" => mask_to_py(node.paint.mask.as_deref(), py)?,
                 "clip_children" => any(node
                     .paint
@@ -1769,6 +1800,7 @@ impl Node {
                 }
                 Change::ZIndex(z) => node.z_index = z,
                 Change::ClipChildren(clip) => node.paint.clip_children = clip,
+                Change::SnapAlign(align) => node.snap_align = align,
                 Change::Mask(mask) => node.paint.mask = mask,
                 Change::Sticky(inset) => node.sticky = inset,
                 Change::TranslateX(v) => node.paint.node_transform.translate_x.set_now(v),

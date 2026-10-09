@@ -348,17 +348,32 @@ impl Node {
             "scroll_offset" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;
                 let value = scroll_max.map_or(value, |max| value.min(max));
-                let NodeKind::ScrollView(state) = &mut node.kind else {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "node property `scroll_offset` applies only to a scroll_view node",
-                    ));
-                };
-                let handle = Some(self.completions.borrow_mut().register(
-                    on_complete,
-                    self.id,
-                    property,
-                ));
-                animate_field(&mut state.scroll, value, duration, curve, now, handle);
+                let registered =
+                    self.completions
+                        .borrow_mut()
+                        .register(on_complete, self.id, property);
+                let handle = Some(registered);
+                match &mut node.kind {
+                    NodeKind::ScrollView(state) => {
+                        animate_field(&mut state.scroll, value, duration, curve, now, handle);
+                    }
+                    NodeKind::VirtualList(state) => {
+                        animate_field(
+                            &mut state.scroll_offset,
+                            value,
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
+                    }
+                    _ => {
+                        self.completions.borrow_mut().entries.remove(&registered);
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "node property `scroll_offset` applies only to a scroll_view or virtual_list node",
+                        ));
+                    }
+                }
             }
             // M96: the target API's transform parts, each with its own
             // animation (`NodeTransform`).
