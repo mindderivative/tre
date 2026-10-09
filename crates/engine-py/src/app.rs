@@ -602,6 +602,10 @@ struct WindowRuntime {
     /// M94: the pointer shape last applied to this window, so it's set on
     /// the OS window only when it changes.
     cursor: Cursor,
+    /// 0.5.6 (#162): what the OS was last told about the focused text input
+    /// (where its caret is, whether it is a password), so it is told on a change.
+    ime: Option<crate::caret::ImeState>,
+    ime_cache: Option<(crate::caret::ImeKey, Option<crate::caret::ImeState>)>,
 }
 
 #[pymethods]
@@ -856,6 +860,8 @@ impl App {
                         gpu,
                         opened: crate::clock::now(&setup.handles.tree),
                         cursor: Cursor::Default,
+                        ime: None,
+                        ime_cache: None,
                     },
                 );
                 true
@@ -910,6 +916,8 @@ impl App {
                 // for the next one.
                 crate::timers::run_due(&runtime.handles.timers, now, py);
                 crate::timers::arm_for(&runtime.handles.timers, &runtime.handles.alarm);
+                // 0.5.6 (#165): the focused field's caret blink.
+                crate::caret::update_blink(&runtime.handles.tree, now, &runtime.handles.alarm);
                 // 0.5.4 (#113): a finger held down becomes a long press as time
                 // passes, and the loop keeps running until it does.
                 crate::touch::poll(
@@ -1108,6 +1116,27 @@ impl App {
                 // 0.5.5: the swapchain rebuild is its own stage; it used to
                 // be counted as layout.
                 let after_layout = Instant::now();
+                // 0.5.6 (#162): the IME's candidate window goes at the caret, and a
+                // password field tells it not to learn from the text.
+                let ime = crate::caret::ime_state(&runtime.handles.tree, &mut runtime.ime_cache);
+                if ime != runtime.ime {
+                    if let Some(os) = runtime.handles.os_window.borrow().as_ref() {
+                        let scale = runtime.handles.scale.get();
+                        if let Some(state) = ime {
+                            let (x, y, w, h) = state.area;
+                            os.set_ime_cursor_area(
+                                winit::dpi::PhysicalPosition::new(x * scale, y * scale),
+                                winit::dpi::PhysicalSize::new(w * scale, h * scale),
+                            );
+                        }
+                        os.set_ime_purpose(if ime.is_some_and(|s| s.password) {
+                            winit::window::ImePurpose::Password
+                        } else {
+                            winit::window::ImePurpose::Normal
+                        });
+                    }
+                    runtime.ime = ime;
+                }
 
                 // 0.4.0 M5: what changed since the last frame
                 // (`WindowRenderer::prepare`). A newly registered font can

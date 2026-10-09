@@ -1973,9 +1973,26 @@ fn field_fingerprint(h: &mut impl Hasher, state: &TextFieldState) {
         placeholder,
         placeholder_fill,
         caret_color,
+        max_length: _,
+        read_only: _,
+        input_mode: _,
+        caret_visible,
+        caret_width,
+        caret_shape,
+        caret_blink_ms: _,
+        caret_on,
+        // Where the blink started, and where a composition's cursor is, paint
+        // nothing of their own.
+        caret_epoch: _,
+        preedit_cursor: _,
+        last_inserted: _,
         selection_fill,
         obscured,
     } = state;
+    caret_visible.hash(h);
+    caret_width.to_bits().hash(h);
+    (*caret_shape as u8).hash(h);
+    caret_on.hash(h);
     content.hash(h);
     font_family.hash(h);
     font_weight.to_bits().hash(h);
@@ -1994,11 +2011,15 @@ fn field_fingerprint(h: &mut impl Hasher, state: &TextFieldState) {
     num(h, scroll_offset.current);
     num(h, horizontal_scroll_offset.current);
     placeholder.hash(h);
-    for fill in [placeholder_fill, caret_color, selection_fill] {
+    for fill in [placeholder_fill, selection_fill] {
         fill.is_some().hash(h);
         if let Some(c) = fill {
             color(h, *c);
         }
+    }
+    caret_color.is_some().hash(h);
+    if let Some(c) = caret_color {
+        color(h, c.current);
     }
     obscured.hash(h);
 }

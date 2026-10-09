@@ -217,6 +217,16 @@ pub struct Event {
     pub(crate) property: Option<String>,
     #[pyo3(get)]
     pub(crate) finished: Option<bool>,
+    /// 0.5.6 (#162): `compose_*`: the IME's cursor range inside the preedit
+    /// text, in bytes, if it gave one.
+    #[pyo3(get)]
+    pub(crate) preedit_cursor: Option<(usize, usize)>,
+    /// 0.5.6 (#165): `caret_move`: the caret's rectangle `(x, y, w, h)` in the
+    /// node's coordinates, and the bytes the edit inserted, if it inserted any.
+    #[pyo3(get)]
+    pub(crate) caret: Option<(f64, f64, f64, f64)>,
+    #[pyo3(get)]
+    pub(crate) inserted: Option<(usize, usize)>,
     pub(crate) stopped: bool,
     pub(crate) cancelled: bool,
     pub(crate) cancellable: bool,
@@ -323,6 +333,9 @@ impl Event {
             href: None,
             property: None,
             finished: None,
+            preedit_cursor: None,
+            caret: None,
+            inserted: None,
             stopped: false,
             cancelled: false,
             cancellable: false,

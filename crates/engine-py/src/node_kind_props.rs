@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 32] = [
+pub(crate) const KIND_PROPS: [&str; 34] = [
     "text",
     "font_family",
     "font_weight",
@@ -32,6 +32,8 @@ pub(crate) const KIND_PROPS: [&str; 32] = [
     "selectable",
     "multiline",
     "selection",
+    "selection_start",
+    "selection_end",
     "show_whitespace",
     "syntax_spans",
     "folded_ranges",
@@ -350,9 +352,8 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         "font_size" => ("a text, text_input, or terminal", sized_text),
         "line_height" | "text_align" | "font_style" | "letter_spacing" | "wrap" | "max_lines"
         | "overflow" | "spans" | "selectable" => ("a text", text),
-        "multiline" | "show_whitespace" | "syntax_spans" | "folded_ranges" => {
-            ("a text_input", text_input)
-        }
+        "multiline" | "show_whitespace" | "syntax_spans" | "folded_ranges" | "selection_start"
+        | "selection_end" => ("a text_input", text_input),
         "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
         "svg" | "svg_size" | "svg_color" | "svg_images" => ("an svg", svg),
@@ -572,6 +573,61 @@ fn parse_known(
                     }
                 })?
             };
+            selection.late = true;
+            Ok(selection)
+        }
+        // 0.5.6 (#162): the ends of a text input's selection on their own, in
+        // order, as byte offsets -- `selection_start <= selection_end`. Setting one
+        // keeps the other where it is (moved along, if it would cross).
+        "selection_start" | "selection_end" => {
+            let start_side = name == "selection_start";
+            let other = if start_side {
+                "selection_end"
+            } else {
+                "selection_start"
+            };
+            // Given together they are one selection, set by the start.
+            if !start_side && props.get_item(other)?.is_some() {
+                return change(|_| {});
+            }
+            let text = match props.get_item("text")? {
+                Some(text) => string(&text, "text")?,
+                None => match kind {
+                    NodeKind::TextField(state) => state.content.clone(),
+                    _ => String::new(),
+                },
+            };
+            let number = |v: &Bound<'_, PyAny>, n: &str| -> PyResult<usize> {
+                if v.is_instance_of::<pyo3::types::PyBool>() {
+                    return Err(invalid(n, "a byte offset (a non-negative int)"));
+                }
+                v.extract()
+                    .map_err(|_| invalid(n, "a byte offset (a non-negative int)"))
+            };
+            let given = number(value, name)?;
+            let (current_start, current_end) = match kind {
+                NodeKind::TextField(s) => {
+                    let a = s.selection_anchor.unwrap_or(s.cursor);
+                    (a.min(s.cursor), a.max(s.cursor))
+                }
+                _ => (0, 0),
+            };
+            let (start, end) = if start_side {
+                let end = match props.get_item(other)? {
+                    Some(v) => number(&v, other)?,
+                    None => current_end.max(given),
+                };
+                (given, end)
+            } else {
+                (current_start.min(given), given)
+            };
+            let range = byte_range(&text, start, end, name)?;
+            let mut selection = change(move |node| {
+                if let NodeKind::TextField(state) = &mut node.kind {
+                    state.cursor = range.end;
+                    state.selection_anchor = (range.start != range.end).then_some(range.start);
+                }
+            })?;
             selection.late = true;
             Ok(selection)
         }
@@ -926,6 +982,12 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
         ("show_whitespace", NodeKind::TextField(s)) => to_py(s.show_whitespace, py),
         ("selection", NodeKind::TextField(s)) => {
             to_py((s.selection_anchor.unwrap_or(s.cursor), s.cursor), py)
+        }
+        ("selection_start", NodeKind::TextField(s)) => {
+            to_py(s.selection_anchor.unwrap_or(s.cursor).min(s.cursor), py)
+        }
+        ("selection_end", NodeKind::TextField(s)) => {
+            to_py(s.selection_anchor.unwrap_or(s.cursor).max(s.cursor), py)
         }
         ("selection", NodeKind::Terminal(s)) => match (s.selection_start, s.selection_end) {
             (Some((sr, sc)), Some((er, ec))) => to_py((sr, sc, er, ec), py),

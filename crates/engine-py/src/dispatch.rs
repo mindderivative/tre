@@ -325,6 +325,29 @@ pub(crate) fn run_dispatch_outcome(
         DispatchOutcome::SecondaryActivated(node) => {
             deliver_click(&ctx, EventType::SecondaryClick, *node, event, py);
         }
+        // 0.5.6 (#162): Enter in a single-line text input.
+        DispatchOutcome::Submitted(node) => {
+            listeners::deliver(&ctx, py, EventType::Submit, *node, None, |_| {});
+        }
+        // 0.5.6 (#162): an IME composition began, changed or ended.
+        DispatchOutcome::Composed {
+            node,
+            phase,
+            text,
+            cursor,
+        } => {
+            let event_type = match phase {
+                engine_core::ComposePhase::Start => EventType::ComposeStart,
+                engine_core::ComposePhase::Update => EventType::ComposeUpdate,
+                engine_core::ComposePhase::End => EventType::ComposeEnd,
+            };
+            listeners::deliver(&ctx, py, event_type, *node, None, |e| {
+                if !text.is_empty() {
+                    e.text = Some(text.clone());
+                }
+                e.preedit_cursor = *cursor;
+            });
+        }
         DispatchOutcome::None => {}
     }
 }
@@ -491,6 +514,7 @@ pub(crate) fn process_input(
     keyboard_scroll(ctx, event);
     system_menu_key(io, event);
     listeners::fire_scroll_changes(ctx, py);
+    listeners::fire_caret_changes(ctx, py);
     outcome
 }
 

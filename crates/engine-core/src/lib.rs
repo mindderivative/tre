@@ -46,16 +46,16 @@ pub use gesture::{
 };
 pub use gradient::{Gradient, GradientShape, GradientStop};
 pub use input::{
-    ChangedValue, DispatchOutcome, InputEvent, Key, Modifiers, PointerButton, ScrollDelta,
-    ctrl_shortcut,
+    ChangedValue, ComposePhase, DispatchOutcome, InputEvent, Key, Modifiers, PointerButton,
+    ScrollDelta, ctrl_shortcut,
 };
 pub use layout_anim::{LayoutAnim, LayoutProp};
 pub use node::{
-    Blend, CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Mask, Node, NodeId,
-    NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
-    SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, TerminalCell,
-    TerminalPalette, TerminalState, TextAlign, TextFieldState, TextOptions, TextSpan, TextState,
-    VirtualListState, WindowRegion,
+    Blend, CaretShape, CellColor, ContentFit, CornerRadii, Cursor, ImageState, InputMode,
+    ItemExtent, Mask, Node, NodeId, NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP,
+    SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows,
+    TerminalCell, TerminalPalette, TerminalState, TextAlign, TextFieldState, TextOptions, TextSpan,
+    TextState, VirtualListState, WindowRegion,
 };
 pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};

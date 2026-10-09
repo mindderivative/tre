@@ -128,6 +128,9 @@ pub struct Tree {
     /// answered, to skip a repeat of the same question.
     last_layout: Option<(NodeId, Size<AvailableSpace>)>,
     scanned_at: Option<u64>,
+    /// 0.5.6 (#165): text fields whose caret moved or text changed, until
+    /// `take_caret_changes` reports them.
+    caret_changes: Vec<(NodeId, Option<std::ops::Range<usize>>)>,
     scroll_view_count: usize,
     virtual_list_count: usize,
     /// 0.5.4 (#150): how many `Image` and `Svg` nodes the tree holds, so a
@@ -179,6 +182,7 @@ impl Tree {
             text_lines: Default::default(),
             last_layout: None,
             scanned_at: None,
+            caret_changes: Vec::new(),
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
             focused: None,
@@ -717,6 +721,12 @@ impl Tree {
         // scroll view's animatable `scroll_offset`.
         if let NodeKind::TextField(state) = &mut node.kind
             && state.text_tint.tick(now, completed)
+        {
+            active = true;
+        }
+        if let NodeKind::TextField(state) = &mut node.kind
+            && let Some(caret) = &mut state.caret_color
+            && caret.tick(now, completed)
         {
             active = true;
         }

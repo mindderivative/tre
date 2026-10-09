@@ -129,10 +129,19 @@ pub(crate) enum EventType {
     /// 0.5.6 (#161): an animation on the node ended; carries `property` and
     /// `finished`.
     AnimationEnd,
+    /// 0.5.6 (#162): Enter in a single-line text input.
+    Submit,
+    /// 0.5.6 (#162): an IME composition began, changed (with the preedit text
+    /// and cursor) or ended.
+    ComposeStart,
+    ComposeUpdate,
+    ComposeEnd,
+    /// 0.5.6 (#165): a text input's caret moved or its text changed.
+    CaretMove,
 }
 
 impl EventType {
-    const ALL: [EventType; 31] = [
+    const ALL: [EventType; 36] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -164,6 +173,11 @@ impl EventType {
         Self::FileDrop,
         Self::Link,
         Self::AnimationEnd,
+        Self::Submit,
+        Self::ComposeStart,
+        Self::ComposeUpdate,
+        Self::ComposeEnd,
+        Self::CaretMove,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -199,6 +213,11 @@ impl EventType {
             Self::FileDrop => "file_drop",
             Self::Link => "link",
             Self::AnimationEnd => "animation_end",
+            Self::Submit => "submit",
+            Self::ComposeStart => "compose_start",
+            Self::ComposeUpdate => "compose_update",
+            Self::ComposeEnd => "compose_end",
+            Self::CaretMove => "caret_move",
         }
     }
 
@@ -214,6 +233,11 @@ impl EventType {
                 | Self::Dismiss
                 | Self::Scroll
                 | Self::AnimationEnd
+                | Self::Submit
+                | Self::ComposeStart
+                | Self::ComposeUpdate
+                | Self::ComposeEnd
+                | Self::CaretMove
         )
     }
 
@@ -577,6 +601,20 @@ pub(crate) fn fire_scroll_changes(ctx: &NodeContext<'_>, py: Python<'_>) {
         deliver(ctx, py, EventType::Scroll, view, None, |e| {
             e.old_value = pyo3::IntoPyObjectExt::into_py_any(old, py).ok();
             e.new_value = pyo3::IntoPyObjectExt::into_py_any(new, py).ok();
+        });
+    }
+}
+
+/// 0.5.6 (#165): `caret_move` for every text input whose caret moved or text
+/// changed since the last call (`Tree::take_caret_changes`), with the caret's
+/// rectangle and the bytes an edit inserted. Called after each input event.
+pub(crate) fn fire_caret_changes(ctx: &NodeContext<'_>, py: Python<'_>) {
+    let changes = ctx.tree.borrow_mut().take_caret_changes();
+    for (field, inserted) in changes {
+        deliver(ctx, py, EventType::CaretMove, field, None, |e| {
+            e.caret = crate::text_interaction::field_caret_rect(ctx.tree, field)
+                .map(|r| (r.x0, r.y0, r.width(), r.height()));
+            e.inserted = inserted.map(|r| (r.start, r.end));
         });
     }
 }

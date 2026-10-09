@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 37] = [
+const SIMULATED_EVENTS: [&str; 38] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -61,6 +61,7 @@ const SIMULATED_EVENTS: [&str; 37] = [
     "key_down",
     "key_up",
     "input",
+    "ime_preedit",
     "focus",
     "unfocus",
     "a11y_action",
@@ -1405,6 +1406,7 @@ impl PyWindow {
         }
         let now = clock::advance(&tree, target.saturating_duration_since(clock::now(&tree)));
         let (_, completed) = tree.borrow_mut().tick_all(now);
+        crate::caret::update_blink(&tree, now, &self.handles.alarm);
         let ctx = NodeContext {
             tree: &tree,
             handlers: &handlers,
@@ -1726,6 +1728,22 @@ impl PyWindow {
                 let text = f.required("text", text)?;
                 f.done()?;
                 process_input(&ctx, &io, root, &InputEvent::TextInput(text), py);
+            }
+            // 0.5.6 (#162): an IME composition preview, as the OS sends it: the
+            // preedit text (empty ends the composition) and the IME's cursor
+            // range inside it. The commit that follows is an `input`.
+            "ime_preedit" => {
+                let text = f.string("text")?.unwrap_or_default();
+                let cursor = f.take("cursor");
+                f.done()?;
+                let cursor = match cursor {
+                    None => None,
+                    Some(value) if value.is_none() => None,
+                    Some(value) => Some(value.extract::<(usize, usize)>().map_err(|_| {
+                        PyValueError::new_err("simulate(\"ime_preedit\"): cursor must be a (start, end) tuple of byte offsets, or None")
+                    })?),
+                };
+                process_input(&ctx, &io, root, &InputEvent::ImePreedit(text, cursor), py);
             }
             "focus" | "unfocus" => {
                 let id = need_node(&f)?;

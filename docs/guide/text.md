@@ -213,10 +213,53 @@ field.on("change", lambda e: validate(e.new_value))
 | `multiline` | Enter inserts a newline |
 | `selection` | `(start, end)` as UTF-8 byte offsets; equal ends are a caret |
 | `obscured` | a password field: bullets, and no copy or cut |
-| `caret_color`, `selection_fill` | the caret and selection colors |
+| `selection_start`, `selection_end` | the ends of the selection in order (0.5.6); set one and the other moves along if it would cross |
+| `max_length` | (0.5.6) the most **characters** it holds, or `None`. Typing, paste and an IME commit are cut short at it, and a rejected edit fires no `change`. Text already longer is kept and can be deleted |
+| `read_only` | (0.5.6) it can be focused, selected and copied but not edited; Enter still `submit`s |
+| `input_mode` | (0.5.6) `"text"`, `"numeric"`, `"decimal"`, `"email"`, `"phone"`, `"url"` or `"search"`: kept for a keyboard that can adapt. A desktop window has no use for it yet; `obscured` is passed to the IME as a password |
+| `caret_color`, `selection_fill` | the caret and selection colors; `caret_color` animates (0.5.6) |
+| `caret_visible`, `caret_width`, `caret_shape` | (0.5.6) draw the caret or leave it to you, its width in pixels (an underline's thickness), and `"bar"`, `"block"` or `"underline"` |
+| `caret_blink` | (0.5.6) milliseconds between the caret going off and on, or `None` for steady. A keystroke or click restarts it, so it is solid while you type, and an idle field wakes only at each edge |
 | `syntax_spans` | `[(start, end, color), ...]` byte ranges to color |
 | `folded_ranges` | `[(start, end), ...]` byte ranges drawn as "…" |
 | `show_whitespace` | draw spaces and tabs as marks |
+
+### Submit, composition and the caret (0.5.6)
+
+- **`submit`** fires on Enter in a single-line input (a multiline one inserts a newline).
+  It doesn't bubble.
+- **IME composition** fires `compose_start`, `compose_update` and `compose_end` on the
+  input. `event.text` is the preedit text (not on `compose_end`) and `event.preedit_cursor`
+  the IME's cursor range inside it, in bytes. Nothing is in `text` until the IME commits:
+  the commit arrives as ordinary `input` and `change`, after `compose_end`. Typing over a
+  selection replaces it at the commit. The OS's candidate window is placed at the caret,
+  and a password input tells the IME not to learn from it. A read-only input takes no
+  composition.
+- **`caret_move`** fires after a key, click or drag moves the caret or changes the text of
+  an input, once per input event. `event.caret` is the caret's rectangle `(x, y, width,
+  height)` in the node's coordinates and `event.inserted` the `(start, end)` bytes an edit
+  inserted (`None` for a plain move). It doesn't fire for `set(text=...)` or `set(selection=...)`,
+  as `change` doesn't.
+- **`node.caret_rect()`** gives the caret's rectangle at any time, shaped fresh so it is
+  right straight after an edit, and **`node.text_rects(start, end)`** the rectangles
+  covering a byte range, one per line. Both are in the node's coordinates, with padding and
+  scrolling in them: put an overlay of your own at the character just typed, or glide a
+  caret of your own (with `caret_visible=False`) to the next position.
+- A shader on the input still sees only its pixels, not where a character is; the rectangles
+  above can drive its uniforms.
+
+```python
+field.set(caret_visible=False)                       # we draw our own caret
+def moved(event):
+    x, y, w, h = event.caret
+    my_caret.animate("translate_x", x, 90)
+    if event.inserted:
+        flash.set(...)                               # at field.text_rects(*event.inserted)
+field.on("caret_move", moved)
+```
+
+In tests, `window.simulate("ime_preedit", text="ni", cursor=(0, 2))` sends a composition
+preview (empty `text` ends it), then `simulate("input", text="你")` commits.
 
 A code editor is a multiline input in the monospace face, with syntax spans
 from your highlighter:

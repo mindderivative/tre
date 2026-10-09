@@ -121,6 +121,50 @@ fn text_placement(tree: &Tree, id: NodeId) -> TextPlacement {
     }
 }
 
+/// 0.5.6 (#165): where a text input's text sits in its node: inside the
+/// padding, shifted by its scroll offsets -- the placement `draw_field` gets.
+fn field_placement(tree: &Tree, id: NodeId) -> Option<TextPlacement> {
+    let NodeKind::TextField(state) = &tree.get(id)?.kind else {
+        return None;
+    };
+    let mut at = text_placement(tree, id);
+    at.x -= state.horizontal_scroll_offset.current;
+    at.y -= state.scroll_offset.current;
+    Some(at)
+}
+
+/// 0.5.6 (#165): the caret of text input `id`, in the node's coordinates.
+pub(crate) fn field_caret_rect(
+    tree: &Rc<RefCell<Tree>>,
+    id: NodeId,
+) -> Option<peniko::kurbo::Rect> {
+    let tree = tree.borrow();
+    let at = field_placement(&tree, id)?;
+    let NodeKind::TextField(state) = &tree.get(id)?.kind else {
+        return None;
+    };
+    Some(crate::shaper::with(|shaper| {
+        shaper.field_caret_rect(state, at)
+    }))
+}
+
+/// 0.5.6 (#165): the rectangles of `start..end` of text input `id`'s text.
+pub(crate) fn field_range_rects(
+    tree: &Rc<RefCell<Tree>>,
+    id: NodeId,
+    start: usize,
+    end: usize,
+) -> Option<Vec<peniko::kurbo::Rect>> {
+    let tree = tree.borrow();
+    let at = field_placement(&tree, id)?;
+    let NodeKind::TextField(state) = &tree.get(id)?.kind else {
+        return None;
+    };
+    Some(crate::shaper::with(|shaper| {
+        shaper.field_range_rects(state, at, start, end)
+    }))
+}
+
 /// 0.5.4 (review): a press that was taken from the pointer (a cancelled touch,
 /// or one that became a pan) starts no drag and clicks no link, whatever its
 /// release does afterwards.
@@ -334,6 +378,15 @@ pub(crate) fn process(
             |e| e.href = Some(click.href),
         );
     }
+    // 0.5.6 (#165): a click or drag in a text input moved its caret.
+    crate::listeners::fire_caret_changes(
+        &crate::event::NodeContext {
+            tree: &handles.tree,
+            handlers: &handles.handlers,
+            completions: &handles.completions,
+        },
+        py,
+    );
 }
 
 /// `process` for `Window.simulate`: the same, with the window's headless text

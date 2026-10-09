@@ -265,7 +265,7 @@ pub enum InputEvent {
     /// sibling variant here at all: it reaches the exact same
     /// `TextInput` above, the identical mechanism a plain keypress
     /// already uses (M15 Phase 2).
-    ImePreedit(String),
+    ImePreedit(String, Option<(usize, usize)>),
     /// M4 Phase 8: `position` is the cursor's last known position (the
     /// same `last_cursor_position` tracking `MouseInput` already
     /// reuses in `engine-platform`, since `winit`'s own `MouseWheel`
@@ -434,4 +434,23 @@ pub enum DispatchOutcome {
         old: Option<crate::NodeId>,
         new: Option<crate::NodeId>,
     },
+    /// 0.5.6 (#162): Enter in a single-line text field.
+    Submitted(crate::NodeId),
+    /// 0.5.6 (#162): an IME composition began, changed or ended in a text
+    /// field. `text` is the preedit text (empty when it ended) and `cursor`
+    /// the IME's cursor range inside it, in bytes.
+    Composed {
+        node: crate::NodeId,
+        phase: ComposePhase,
+        text: String,
+        cursor: Option<(usize, usize)>,
+    },
+}
+
+/// 0.5.6 (#162): where an IME composition is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComposePhase {
+    Start,
+    Update,
+    End,
 }

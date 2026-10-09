@@ -309,6 +309,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | `add_child(child: Node) -> None` | Appends `child` under this node, moving it if it's attached elsewhere. |
 | `animate(property, to, duration_ms, easing, on_complete) -> None` | Eases a property from its current value to a target, retargeting mid-flight. |
 | `capture_pointer() -> None` | Routes every later pointer event to this node until the button is released or `release_pointer()` is called. |
+| `caret_rect() -> tuple[float, float, float, float]` | A text input's caret as `(x, y, width, height)` in the node's coordinates, padding and scrolling included; at the end of the… |
 | `children() -> list[Node]` | This node's children, in order. |
 | `destroy() -> None` | Frees this node and its whole subtree now, with their listeners; focus inside it gets `unfocus` first. |
 | `focus() -> None` | Moves keyboard focus to this node, firing `unfocus`/`focus`. |
@@ -324,6 +325,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | `scroll_into_view() -> None` | Scrolls every scroll view around this node just enough to show it, innermost first, at once. |
 | `set(**props: Any) -> None` | Sets properties atomically: every value is checked first, and a bad one raises `ValueError` without changing anything. |
 | `stop_animation(name: str) -> None` | Stops `name`'s running animation where it is. |
+| `text_rects(start: int, end: int) -> list[tuple[float, float, float, float]]` | The rectangles covering bytes `start..end` of a text input's text, one per line, as `(x, y, width, height)` in the node's… |
 
 **Events** (`node.on(event, handler)`; a bubbling event runs the target's listener, then each ancestor's):
 
@@ -397,6 +399,9 @@ What a listener receives when it takes one argument; never constructed directly.
 | `path` | `str \| None` |  |
 | `paths` | `list[str] \| None` |  |
 | `href` | `str \| None` |  |
+| `preedit_cursor` | `tuple[int, int] \| None` |  |
+| `caret` | `tuple[float, float, float, float] \| None` |  |
+| `inserted` | `tuple[int, int] \| None` |  |
 | `property` | `str \| None` |  |
 | `finished` | `bool \| None` |  |
 | `pointer_id` | `int \| None` |  |

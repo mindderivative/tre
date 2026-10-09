@@ -3868,8 +3868,8 @@ fn enter_on_a_focused_text_field_is_consumed_without_inserting_or_activating() {
     let outcome = dispatch_key(&mut tree, root, Key::Enter);
     assert_eq!(
         outcome,
-        DispatchOutcome::None,
-        "a single-line TextField must not activate on Enter, matching Space's own reasoning"
+        DispatchOutcome::Submitted(field),
+        "a single-line TextField submits on Enter (0.5.6), and never activates or inserts"
     );
     assert_eq!(
         field_state(&tree, field).content,
@@ -4268,7 +4268,7 @@ fn arrow_up_down_home_end_and_enter_are_true_no_ops_for_a_non_multiline_field() 
         "ArrowUp/ArrowDown must be true no-ops on a single-line field"
     );
     let outcome = dispatch_key(&mut tree, root, Key::Enter);
-    assert_eq!(outcome, DispatchOutcome::None);
+    assert_eq!(outcome, DispatchOutcome::Submitted(field));
     assert_eq!(
         field_state(&tree, field).content,
         "one\ntwo",
@@ -4497,7 +4497,7 @@ fn cut_text_field_selection_with_no_real_selection_is_a_true_no_op() {
 fn dispatch_ime_preedit(tree: &mut Tree, root: NodeId, text: &str) -> DispatchOutcome {
     tree.dispatch(
         root,
-        InputEvent::ImePreedit(text.to_string()),
+        InputEvent::ImePreedit(text.to_string(), None),
         Instant::now(),
     )
 }
@@ -4508,8 +4508,13 @@ fn ime_preedit_sets_the_real_focused_fields_own_preview_without_touching_content
     let outcome = dispatch_ime_preedit(&mut tree, root, "n");
     assert_eq!(
         outcome,
-        DispatchOutcome::None,
-        "a composition preview is not a real content change"
+        DispatchOutcome::Composed {
+            node: field,
+            phase: crate::input::ComposePhase::Start,
+            text: "n".to_string(),
+            cursor: None,
+        },
+        "a composition preview is a Composed outcome (0.5.6), never a content change"
     );
     let state = field_state(&tree, field);
     assert_eq!(state.preedit, Some("n".to_string()));

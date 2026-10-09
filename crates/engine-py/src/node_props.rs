@@ -26,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 58] = [
+const SETTABLE: [&str; 65] = [
     "visible",
     "z_index",
     "clip_children",
@@ -52,6 +52,13 @@ const SETTABLE: [&str; 58] = [
     "placeholder",
     "placeholder_fill",
     "caret_color",
+    "max_length",
+    "read_only",
+    "input_mode",
+    "caret_visible",
+    "caret_width",
+    "caret_shape",
+    "caret_blink",
     "selection_fill",
     "obscured",
     "scrollbar_fill",
@@ -200,6 +207,14 @@ pub(crate) enum Change {
     Placeholder(String),
     PlaceholderFill(Option<Color>),
     CaretColor(Option<Color>),
+    /// 0.5.6 (#162, #165): more text input properties.
+    MaxLength(Option<usize>),
+    ReadOnly(bool),
+    InputMode(engine_core::InputMode),
+    CaretVisible(bool),
+    CaretWidth(f32),
+    CaretShape(engine_core::CaretShape),
+    CaretBlink(u32),
     SelectionFill(Option<Color>),
     Obscured(bool),
     ScrollbarFill(Option<Color>),
@@ -510,6 +525,17 @@ pub(crate) fn animatable_to_py(
             .into_any(),
             None => color_to_py(*pick(&node.paint.border_color, target), py)?,
         },
+        "caret_color" => {
+            let NodeKind::TextField(state) = &node.kind else {
+                return Err(PyValueError::new_err(
+                    "node property `caret_color` applies only to a text_input node",
+                ));
+            };
+            match &state.caret_color {
+                Some(caret) => color_to_py(*pick(caret, target), py)?,
+                None => py.None(),
+            }
+        }
         "stroke_width" => number(*pick(&node.paint.border_width, target))?,
         "translate_x" => number(*pick(&node.paint.node_transform.translate_x, target))?,
         "translate_y" => number(*pick(&node.paint.node_transform.translate_y, target))?,
@@ -581,6 +607,13 @@ pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyRes
             state.scroll.stop();
         }
         "stroke_color" => node.paint.border_color.stop(),
+        "caret_color" => {
+            if let NodeKind::TextField(state) = &mut node.kind
+                && let Some(caret) = &mut state.caret_color
+            {
+                caret.stop();
+            }
+        }
         "stroke_width" => node.paint.border_width.stop(),
         "translate_x" => node.paint.node_transform.translate_x.stop(),
         "translate_y" => node.paint.node_transform.translate_y.stop(),
@@ -647,6 +680,13 @@ impl Change {
             Change::Placeholder(_) => ("placeholder", "text_input", text_input),
             Change::PlaceholderFill(_) => ("placeholder_fill", "text_input", text_input),
             Change::CaretColor(_) => ("caret_color", "text_input", text_input),
+            Change::MaxLength(_) => ("max_length", "text_input", text_input),
+            Change::ReadOnly(_) => ("read_only", "text_input", text_input),
+            Change::InputMode(_) => ("input_mode", "text_input", text_input),
+            Change::CaretVisible(_) => ("caret_visible", "text_input", text_input),
+            Change::CaretWidth(_) => ("caret_width", "text_input", text_input),
+            Change::CaretShape(_) => ("caret_shape", "text_input", text_input),
+            Change::CaretBlink(_) => ("caret_blink", "text_input", text_input),
             Change::SelectionFill(_) => ("selection_fill", "text_input", text_input),
             Change::Obscured(_) => ("obscured", "text_input", text_input),
             Change::ScrollbarFill(_) => ("scrollbar_fill", "scroll_view", scroll_view),
@@ -924,6 +964,68 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "placeholder" => Change::Placeholder(required(value, name, "a str")?),
         "placeholder_fill" => Change::PlaceholderFill(optional_color(value, name)?),
         "caret_color" => Change::CaretColor(optional_color(value, name)?),
+        "max_length" => Change::MaxLength(if value.is_none() {
+            None
+        } else if value.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(invalid(name, "a non-negative int or None"));
+        } else {
+            Some(
+                value
+                    .extract::<usize>()
+                    .map_err(|_| invalid(name, "a non-negative int or None"))?,
+            )
+        }),
+        "read_only" => Change::ReadOnly(boolean(value, name)?),
+        "input_mode" => {
+            let mode: String = required(value, name, "a str")?;
+            Change::InputMode(
+                engine_core::InputMode::ALL
+                    .iter()
+                    .find(|(n, _)| *n == mode)
+                    .map(|(_, m)| *m)
+                    .ok_or_else(|| {
+                        invalid(
+                            name,
+                            &format!("one of: {}", names(&engine_core::InputMode::ALL)),
+                        )
+                    })?,
+            )
+        }
+        "caret_visible" => Change::CaretVisible(boolean(value, name)?),
+        "caret_width" => Change::CaretWidth(parse_non_negative(value, name)? as f32),
+        "caret_shape" => {
+            let shape: String = required(value, name, "a str")?;
+            Change::CaretShape(
+                engine_core::CaretShape::ALL
+                    .iter()
+                    .find(|(n, _)| *n == shape)
+                    .map(|(_, s)| *s)
+                    .ok_or_else(|| {
+                        invalid(
+                            name,
+                            &format!("one of: {}", names(&engine_core::CaretShape::ALL)),
+                        )
+                    })?,
+            )
+        }
+        "caret_blink" => Change::CaretBlink(
+            match optional::<f64>(value, name, "a number of milliseconds or None")? {
+                None => 0,
+                Some(ms)
+                    if ms.is_finite()
+                        && (0.0..=3_600_000.0).contains(&ms)
+                        && !value.is_instance_of::<pyo3::types::PyBool>() =>
+                {
+                    ms as u32
+                }
+                Some(_) => {
+                    return Err(invalid(
+                        name,
+                        "a number of milliseconds from 0 to an hour, or None",
+                    ));
+                }
+            },
+        ),
         "selection_fill" => Change::SelectionFill(optional_color(value, name)?),
         "obscured" => Change::Obscured(boolean(value, name)?),
         "scrollbar_fill" => Change::ScrollbarFill(optional_color(value, name)?),
@@ -1304,7 +1406,8 @@ impl Node {
                     return Ok(any(value.into_pyobject(py)?.into_any()));
                 }
                 "placeholder" | "placeholder_fill" | "caret_color" | "selection_fill"
-                | "obscured" => {
+                | "obscured" | "max_length" | "read_only" | "input_mode" | "caret_visible"
+                | "caret_width" | "caret_shape" | "caret_blink" => {
                     let NodeKind::TextField(state) = &node.kind else {
                         return Err(PyValueError::new_err(format!(
                             "node property `{name}` applies only to a text_input node"
@@ -1318,8 +1421,34 @@ impl Node {
                             any(state.placeholder.clone().into_pyobject(py)?.into_any())
                         }
                         "placeholder_fill" => color(state.placeholder_fill)?,
-                        "caret_color" => color(state.caret_color)?,
+                        "caret_color" => color(state.caret_color.as_ref().map(|c| c.current))?,
                         "selection_fill" => color(state.selection_fill)?,
+                        "max_length" => any(state.max_length.into_pyobject(py)?.into_any()),
+                        "read_only" => {
+                            any(state.read_only.into_pyobject(py)?.to_owned().into_any())
+                        }
+                        "input_mode" => any(engine_core::InputMode::ALL
+                            .iter()
+                            .find(|(_, m)| *m == state.input_mode)
+                            .map(|(n, _)| *n)
+                            .into_pyobject(py)?
+                            .into_any()),
+                        "caret_visible" => {
+                            any(state.caret_visible.into_pyobject(py)?.to_owned().into_any())
+                        }
+                        "caret_width" => {
+                            any(f64::from(state.caret_width).into_pyobject(py)?.into_any())
+                        }
+                        "caret_shape" => any(engine_core::CaretShape::ALL
+                            .iter()
+                            .find(|(_, s)| *s == state.caret_shape)
+                            .map(|(n, _)| *n)
+                            .into_pyobject(py)?
+                            .into_any()),
+                        "caret_blink" => any((state.caret_blink_ms > 0)
+                            .then_some(f64::from(state.caret_blink_ms))
+                            .into_pyobject(py)?
+                            .into_any()),
                         _ => any(state.obscured.into_pyobject(py)?.to_owned().into_any()),
                     }
                 }
@@ -1391,6 +1520,51 @@ impl Node {
             }
         };
         Ok(value)
+    }
+
+    /// 0.5.6 (#165): the caret of a text input as `(x, y, width, height)` in
+    /// the node's own coordinates, with scrolling and padding in it. While an
+    /// IME is composing, it is at the end of the composition. Shaped fresh, so
+    /// it is right straight after `set(text=...)` or an edit.
+    fn caret_rect(&self, py: Python<'_>) -> PyResult<(f64, f64, f64, f64)> {
+        self.require_text_input("caret_rect")?;
+        self.layout_box(py);
+        let rect = crate::text_interaction::field_caret_rect(&self.tree, self.id)
+            .ok_or(crate::error::EngineError::Destroyed)?;
+        Ok((rect.x0, rect.y0, rect.width(), rect.height()))
+    }
+
+    /// 0.5.6 (#165): the rectangles covering bytes `start..end` of a text
+    /// input's text, one per line it crosses, as `(x, y, width, height)` in the
+    /// node's coordinates. Offsets are UTF-8 byte offsets on character
+    /// boundaries, as `selection` takes.
+    fn text_rects(
+        &self,
+        start: usize,
+        end: usize,
+        py: Python<'_>,
+    ) -> PyResult<Vec<(f64, f64, f64, f64)>> {
+        self.require_text_input("text_rects")?;
+        {
+            let tree = self.tree.borrow();
+            if let Some(NodeKind::TextField(state)) = tree.get(self.id).map(|n| &n.kind) {
+                let ok = |i: usize| state.content.is_char_boundary(i);
+                if start > end || end > state.content.len() || !ok(start) || !ok(end) {
+                    return Err(PyValueError::new_err(format!(
+                        "text_rects({start}, {end}): the offsets must be UTF-8 byte offsets \
+                         on character boundaries within the text (0 to {}), start first",
+                        state.content.len()
+                    )));
+                }
+            }
+        }
+        self.layout_box(py);
+        let rects = crate::text_interaction::field_range_rects(&self.tree, self.id, start, end)
+            .ok_or(crate::error::EngineError::Destroyed)?;
+        Ok(rects
+            .into_iter()
+            .map(|r| (r.x0, r.y0, r.width(), r.height()))
+            .collect())
     }
 
     /// M95: the value `name`'s running animation is heading to -- equal to
@@ -1668,7 +1842,50 @@ impl Node {
                 }
                 Change::CaretColor(color) => {
                     if let NodeKind::TextField(state) = &mut node.kind {
-                        state.caret_color = color;
+                        match (&mut state.caret_color, color) {
+                            (Some(current), Some(color)) => current.set_now(color),
+                            (slot, color) => *slot = color.map(Animated::new),
+                        }
+                    }
+                }
+                Change::MaxLength(max) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.max_length = max;
+                    }
+                }
+                Change::ReadOnly(read_only) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.read_only = read_only;
+                        if read_only {
+                            state.preedit = None;
+                        }
+                    }
+                }
+                Change::InputMode(mode) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.input_mode = mode;
+                    }
+                }
+                Change::CaretVisible(visible) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_visible = visible;
+                    }
+                }
+                Change::CaretWidth(width) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_width = width;
+                    }
+                }
+                Change::CaretShape(shape) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_shape = shape;
+                    }
+                }
+                Change::CaretBlink(ms) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_blink_ms = ms;
+                        state.caret_on = true;
+                        state.caret_epoch = None;
                     }
                 }
                 Change::SelectionFill(color) => {
@@ -1729,6 +1946,19 @@ impl Node {
         }
         for row in released {
             crate::node_handles::collect(&self.tree, &self.handlers, row);
+        }
+    }
+}
+
+impl Node {
+    fn require_text_input(&self, what: &str) -> PyResult<()> {
+        let tree = self.tree.borrow();
+        match tree.get(self.id).map(|n| &n.kind) {
+            Some(NodeKind::TextField(_)) => Ok(()),
+            Some(_) => Err(PyValueError::new_err(format!(
+                "{what}() applies only to a text_input node"
+            ))),
+            None => Err(crate::error::EngineError::Destroyed.into()),
         }
     }
 }

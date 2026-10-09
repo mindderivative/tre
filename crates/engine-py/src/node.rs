@@ -324,6 +324,26 @@ impl Node {
                     handle,
                 );
             }
+            // 0.5.6 (#165): a text input's caret colour fades; from the text colour
+            // when it had none of its own.
+            "caret_color" => {
+                let NodeKind::TextField(state) = &mut node.kind else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `caret_color` applies only to a text_input node",
+                    ));
+                };
+                let value = crate::node_props::parse_color(&to, property)?;
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
+                let tint = state.text_tint.current;
+                let caret = state
+                    .caret_color
+                    .get_or_insert_with(|| engine_core::Animated::new(tint));
+                animate_field(caret, value, duration, curve, now, handle);
+            }
             // M96: a scroll view's offset, eased -- how a carousel snaps.
             "scroll_offset" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;

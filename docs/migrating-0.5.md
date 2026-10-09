@@ -136,6 +136,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   in pixels, and every animation ends with an `animation_end` node event. A replaced or stopped
   animation now releases its `on_complete` callback (it used to be kept for the life of the
   window). See [Animation](guide/animation.md).
+- Text inputs: `max_length`, `read_only`, `input_mode`, `selection_start`/`selection_end`, a `submit`
+  event, IME composition events (and the OS's candidate window now sits at the caret), caret
+  styling (`caret_visible`, `caret_width`, `caret_shape`, `caret_blink`, an animatable `caret_color`),
+  `caret_rect()`, `text_rects()` and a `caret_move` event. **Behavior change:** Enter in a
+  single-line text input used to do nothing; it now fires `submit`. See [Text](guide/text.md).
 - A `mask` node property clips a node and its subtree to a circle, a rounded box with a
   radius per corner, or a path. See [Masks](reference/paint.md#masks-056).
 - `Window.after(ms, fn)`, `Window.every(ms, fn)` and `TimerHandle`. See

@@ -153,6 +153,14 @@ class Event:
     """`file_hover`/`file_drop`: every dragged file's path."""
     href: str | None
     """`link`: the `link` string of the clicked text span."""
+    preedit_cursor: tuple[int, int] | None
+    """`compose_start`/`compose_update`: the IME's cursor range inside the
+    preedit text (`text`), in bytes, if it gave one."""
+    caret: tuple[float, float, float, float] | None
+    """`caret_move`: the caret's rectangle `(x, y, width, height)` in the
+    node's own coordinates."""
+    inserted: tuple[int, int] | None
+    """`caret_move`: the byte range an edit inserted, or `None` for a move."""
     property: str | None
     """`animation_end`: the animated property."""
     finished: bool | None
@@ -227,6 +235,17 @@ class Node:
         animation replaced or stopped before then never calls it.
         """
         ...
+    def caret_rect(self) -> tuple[float, float, float, float]:
+        """(0.5.6) A text input's caret as `(x, y, width, height)` in the node's
+        coordinates, padding and scrolling included; at the end of the
+        composition while an IME composes. Shaped fresh, so it is right
+        straight after an edit. Raises `ValueError` for any other node."""
+        ...
+    def text_rects(self, start: int, end: int) -> list[tuple[float, float, float, float]]:
+        """(0.5.6) The rectangles covering bytes `start..end` of a text input's
+        text, one per line, as `(x, y, width, height)` in the node's
+        coordinates. Offsets are UTF-8 byte offsets on character boundaries."""
+        ...
     def get_target(self, name: str) -> Any:
         """M95: the value `name`'s running animation is heading to --
         the same as `get(name)` when nothing is animating it."""
@@ -282,7 +301,9 @@ class Node:
         `file_hover`, `file_hover_cancel`, `file_drop` and `link` (a click on
         a text span's link); see the events reference for each one's fields.
         (0.5.6) Also `animation_end` (an animation on the node ended, with
-        `event.property` and `event.finished`).
+        `event.property` and `event.finished`), `submit` (Enter in a single-line
+        text input), `compose_start`/`compose_update`/`compose_end` (an IME
+        composition) and `caret_move` (a text input's caret moved).
         All but `pointer_enter`/`pointer_leave`/
         `change`/`dismiss`/`scroll`/`animation_end` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
@@ -689,6 +710,7 @@ class Window:
         window-space `x`/`y`; `button` and `delta_x`/`delta_y` where they
         apply. `pointer_leave` moves the pointer out of the window.
         `key_down`/`key_up` take `key` and `repeat`; `input` takes `text`;
+        (0.5.6) `ime_preedit` takes `text` (empty ends it) and `cursor`;
         `focus`/`unfocus` take `node`; `a11y_action` takes `node`, `action`
         (`increment`, `decrement`, `expand`, `collapse`,
         `scroll_into_view`, `set_value`), and `value`. `shift`/`ctrl`/`alt`/`meta` hold

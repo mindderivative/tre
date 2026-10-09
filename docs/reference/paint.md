@@ -296,7 +296,8 @@ Tesserae Engine paints no color you can't set:
 | --- | --- | --- |
 | text input | `placeholder` | the hint shown while the text is empty |
 | text input | `placeholder_fill` | its color; `None` is the text color at 60% |
-| text input | `caret_color` | `None` is the text color |
+| text input | `caret_color` | `None` is the text color; animates (0.5.6) |
+| text input | `caret_visible`, `caret_width`, `caret_shape`, `caret_blink` | (0.5.6) draw the caret or not, its width, `"bar"`/`"block"`/`"underline"`, and its blink period in milliseconds; see [Text](../guide/text.md) |
 | text input | `selection_fill` | `None` is the text color at 30% |
 | text input | `obscured` | a password field: every character shows as a bullet, and its text never leaves through copy or cut |
 | scroll view | `scrollbar_fill` | the thumb's color; `None` is the default |

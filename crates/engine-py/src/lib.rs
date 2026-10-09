@@ -8,6 +8,7 @@
 
 mod app;
 mod canvas;
+mod caret;
 mod clock;
 mod cursor_image;
 mod dispatch;

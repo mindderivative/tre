@@ -1421,8 +1421,8 @@ where
             // Phase 2), no new variant needed for it at all.
             WindowEvent::Ime(ime) => {
                 match ime {
-                    Ime::Preedit(text, _cursor_range) => {
-                        on_input(window_id, InputEvent::ImePreedit(text));
+                    Ime::Preedit(text, cursor_range) => {
+                        on_input(window_id, InputEvent::ImePreedit(text, cursor_range));
                     }
                     Ime::Commit(text) => {
                         on_input(window_id, InputEvent::TextInput(text));
