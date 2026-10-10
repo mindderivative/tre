@@ -2,19 +2,86 @@
 
 ## Development setup
 
+From a fresh machine (Linux shown; macOS and Windows need only Rust and Python):
+
 ```bash
+# 1. System packages (Debian/Ubuntu names; the same libraries exist elsewhere).
+#    The list CI uses is in .github/workflows/ci.yml; see Installation for details.
+sudo apt-get install -y build-essential pkg-config git python3 python3-venv \
+    libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
+    libxinerama-dev libudev-dev libfontconfig1-dev mesa-vulkan-drivers libgl1-mesa-dri
+
+# 2. Rust: rustup installs the toolchain pinned in rust-toolchain.toml by itself.
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# 3. The code, a venv with the Python tools, and the extension built into it.
 git clone https://github.com/mindderivative/tre.git
 cd tre
-python -m venv .venv
+git checkout 0.5.6                 # or main; see "Branches and releases" below
+python3 -m venv .venv
 source .venv/bin/activate
-pip install maturin
+pip install -r requirements-dev.txt
 maturin develop --release
+
+# 4. Check that everything works.
+tools/verify.sh
 ```
+
+`tools/verify.sh` is the whole check chain in one script (below), and
+`tools/verify.sh --cross` adds the Windows and macOS clippy runs and the MSRV
+check. The live-window tests run only with a display (a desktop session, X11 or
+Wayland) and skip without one. On a machine with no GPU, Mesa's software Vulkan
+(`mesa-vulkan-drivers`, lavapipe) is enough: set
+`VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json`.
 
 See [Installation](installation.md) for the Rust toolchain requirement
 and portable-wheel build notes.
 
+## Branches and releases
+
+Each minor line has its own branch cut from `main` (`0.5.5`, `0.5.6`, ...); its
+work is committed there, one commit per finished item with the issue number
+(`0.5.6: what it does (#166)`), and the version in `Cargo.toml`, `pyproject.toml`
+and `Cargo.lock` is bumped on the branch. Nothing is released until it is told to:
+
+1. Push the branch and open a pull request into `main`; CI (`ci.yml`) runs on it.
+2. Merge it. The merge also deploys the docs to GitHub Pages (`docs.yml`).
+3. Tag the merge commit `vX.Y.Z` (annotated) and push the tag. That starts
+   `wheels.yml`: it builds the wheels and sdist, creates the GitHub Release, and
+   then waits at the **`pypi` environment** for a reviewer's approval before it
+   uploads to PyPI (trusted publishing, no token). PyPI never accepts the same
+   version twice, so check the version before tagging.
+4. After approval, `pip install tesserae-engine==X.Y.Z` in a clean venv is the
+   check that it is live.
+
+## The GitHub project
+
+Work is tracked on the GitHub project **Tesserae Rendering Engine** (project 3 of
+`mindderivative`). An item moves **Backlog -> Ready -> In progress -> In review ->
+Done**: an issue is drafted into Backlog with a scope comment (what goes in, what
+is left out and why, size, risks); once the scope is approved it goes to Ready;
+In progress while it is built; In review when it is committed, with a comment of
+what was checked and what was not; Done when the work is approved. Findings,
+failures and fixes go in the issue's comments.
+
+[Tesserae](https://github.com/mindderivative/tesserae) (the UI framework built on
+`tre`) files its requests as issues here. For each one, the scope is agreed with
+the Tesserae side before the work starts, and a local wheel is handed over for it
+to test before anything is published.
+
+### What has not been checked on real hardware
+
+Open issues #47, #48, #91, #118 and #132-#134 are checks that need a Mac, a
+Windows PC, touch hardware or real GPUs. CI runs on software GPUs, and nothing
+else is verified on real hardware yet, notably: an IME (East Asian input) on any
+platform, screen-reader output for the accessibility states, the feel of scroll
+snapping with a real wheel or touch fling, window placement outside Wayland, and
+`skip_taskbar` on Windows.
+
 ## Running the checks
+
+`tools/verify.sh` runs all of these in order and stops at the first failure.
+Each on its own:
 
 ```bash
 cargo test --workspace --release
