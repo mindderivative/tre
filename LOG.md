@@ -12,6 +12,23 @@ real GPUs), #118 (baseline on Mac, Windows, low-end hardware), #132-#134
 #158 (a burst of `wp_fifo_v1` barriers after a resize), and the two found
 by the 2026-10-10 verify run, below (#168, #169).
 
+## 0.5.6.1 (in progress)
+
+Milestone 0.5.6.1 (Ready: #91 Linux real-GPU check, #168 emoji colour,
+#169 Wayland minimum size). Versioning slows down: a fourth number for small
+releases.
+
+**#169, step 1 (2026-10-10).** The fullscreen-ordering theory in the scope was
+wrong: on COSMIC Wayland a plain window does not grow to a larger minimum
+either, because winit's Wayland `request_inner_size` only resizes when the
+compositor's last configure is not maximized, fullscreen or tiled, and
+otherwise answers `Some(current size)`. `grow_to_minimum` took that `Some` for
+"applied" and reported a resize, whose `Resized` ran it again: about 60 calls a
+second while the window stayed below its minimum (0.05 s of CPU in 2 s,
+against 0.00 with the fix). It now reports only when the size changed. The
+live test still fails here; why the configure is not stateless on COSMIC, and
+what the contract is when the compositor owns the size, are the next steps.
+
 ## Releases
 
 | Version | Date | What |
