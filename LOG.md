@@ -55,6 +55,8 @@ paths CI skips (it has no emoji font and no display), and neither comes from
 - **#169:** `test_live_fullscreen_and_a_minimum_larger_than_the_window` —
   the minimum comes out 300x200, expected 400x300, on Wayland.
 
-Both are in the Backlog. One set-up gap (#171, also in the Backlog): the
-guide's apt line (`docs/contributing.md`) lacks `python3-dev`, without which
-the `engine-py` tests fail to link (`unable to find library -lpython3.12`).
+Both are in the Backlog. One set-up gap (#171): the guide's apt line
+(`docs/contributing.md`) lacked `python3-dev`, without which the `engine-py`
+tests fail to link (`unable to find library -lpython3.12`). Fixed on branch
+`docs-python3-dev-171`; CI's package list needs no change, since its runners
+ship the Python headers.

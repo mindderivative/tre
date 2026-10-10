@@ -32,7 +32,6 @@ vsync is restored after a resize.
 
 ## Small follow-ups
 
-- **#171** — `docs/contributing.md`: add `python3-dev` to the apt line (the
-  `engine-py` tests need it to link); everything else a fresh Linux box
-  needs is listed.
+- **#171** — done: `python3-dev` is in the apt line in
+  `docs/contributing.md` (the `engine-py` tests need it to link). In review.
 - Next release (0.5.7 or 0.6): to be decided by the user from the Backlog.
