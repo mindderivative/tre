@@ -331,20 +331,80 @@ pub(crate) fn grow_to_minimum(handles: &crate::window::WindowHandles) {
     if window.is_maximized() || window.fullscreen().is_some() {
         return;
     }
-    let now: winit::dpi::LogicalSize<f64> = window.inner_size().to_logical(window.scale_factor());
-    if now.width >= min_w && now.height >= min_h {
+    let before = window.inner_size();
+    let now: winit::dpi::LogicalSize<f64> = before.to_logical(window.scale_factor());
+    let Some((width, height)) = grown_size((now.width, now.height), (min_w, min_h)) else {
         return;
-    }
-    let applied = window.request_inner_size(winit::dpi::LogicalSize::new(
-        now.width.max(min_w),
-        now.height.max(min_h),
-    ));
+    };
+    let applied = window.request_inner_size(winit::dpi::LogicalSize::new(width, height));
     // Applied at once (Wayland), maybe with no resize event: the loop
     // reports it, so layout and `resize` listeners follow.
-    if applied.is_some()
+    if size_changed(before, applied)
         && let Some(waker) = handles.waker.borrow().as_ref()
     {
         waker.report_size(window.id());
+    }
+}
+
+/// The size to ask for so a window of `now` (logical pixels) meets `min`, or
+/// `None` when it already does.
+fn grown_size(now: (f64, f64), min: (f64, f64)) -> Option<(f64, f64)> {
+    (now.0 < min.0 || now.1 < min.1).then(|| (now.0.max(min.0), now.1.max(min.1)))
+}
+
+/// Whether a `request_inner_size` that answered `applied` changed the window
+/// from `before`. `Some` alone does not say so: `winit`'s Wayland backend
+/// answers `Some(current size)` when it declines to resize (the compositor's
+/// last configure was maximized, fullscreen or tiled), and reporting that as
+/// a resize made [`grow_to_minimum`] run again on the `Resized` it caused,
+/// every frame, for as long as the window stayed below its minimum (#169).
+/// `None` means the size arrives later as a resize event.
+fn size_changed(
+    before: winit::dpi::PhysicalSize<u32>,
+    applied: Option<winit::dpi::PhysicalSize<u32>>,
+) -> bool {
+    applied.is_some_and(|size| size != before)
+}
+
+#[cfg(test)]
+mod grow_tests {
+    use super::{grown_size, size_changed};
+    use winit::dpi::PhysicalSize;
+
+    #[test]
+    fn a_window_that_meets_the_minimum_is_left_alone() {
+        assert_eq!(grown_size((400.0, 300.0), (400.0, 300.0)), None);
+        assert_eq!(grown_size((800.0, 600.0), (400.0, 300.0)), None);
+        assert_eq!(grown_size((300.0, 200.0), (0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn only_the_short_edge_grows() {
+        assert_eq!(
+            grown_size((300.0, 200.0), (400.0, 300.0)),
+            Some((400.0, 300.0))
+        );
+        assert_eq!(
+            grown_size((500.0, 200.0), (400.0, 300.0)),
+            Some((500.0, 300.0))
+        );
+        assert_eq!(
+            grown_size((300.0, 500.0), (400.0, 300.0)),
+            Some((400.0, 500.0))
+        );
+    }
+
+    #[test]
+    fn a_new_size_is_a_change_and_the_same_size_is_not() {
+        let before = PhysicalSize::new(300, 200);
+        assert!(size_changed(before, Some(PhysicalSize::new(400, 300))));
+        // winit on Wayland answers the current size when it declines.
+        assert!(!size_changed(before, Some(before)));
+    }
+
+    #[test]
+    fn an_answer_that_comes_later_is_not_reported_now() {
+        assert!(!size_changed(PhysicalSize::new(300, 200), None));
     }
 }
 

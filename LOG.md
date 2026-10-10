@@ -12,6 +12,34 @@ real GPUs), #118 (baseline on Mac, Windows, low-end hardware), #132-#134
 #158 (a burst of `wp_fifo_v1` barriers after a resize), and the two found
 by the 2026-10-10 verify run, below (#168, #169).
 
+## 0.5.6.1 (in progress)
+
+Milestone 0.5.6.1 (Ready: #91 Linux real-GPU check, #168 emoji colour,
+#169 Wayland minimum size). Versioning slows down: a fourth number for small
+releases.
+
+**#169, step 1 (2026-10-10).** The fullscreen-ordering theory in the scope was
+wrong: on COSMIC Wayland a plain window does not grow to a larger minimum
+either, because winit's Wayland `request_inner_size` only resizes when the
+compositor's last configure is not maximized, fullscreen or tiled, and
+otherwise answers `Some(current size)`. `grow_to_minimum` took that `Some` for
+"applied" and reported a resize, whose `Resized` ran it again: about 60 calls a
+second while the window stayed below its minimum (0.05 s of CPU in 2 s,
+against 0.00 with the fix). It now reports only when the size changed.
+
+**#169, steps 2-4 (2026-10-10).** Why winit declined, decoded off the Wayland
+socket: COSMIC's `xdg_toplevel.configure` for the window carries
+`tiled_left, tiled_right, tiled_top, tiled_bottom` (then `activated`) even with
+auto-tiling off, and winit never resizes a tiled window. COSMIC also did not
+answer `set_min_size(400, 300)` with a larger configure, so on COSMIC a minimum
+above the window's size is never reached. X11 (via XWayland) differs: a plain
+window does grow to the minimum, and leaving fullscreen keeps the fullscreen
+size (1920x1080) rather than restoring 300x200. So the live test's exact
+`400x300` was wrong on two counts. It now asserts "at least the minimum", and
+skips (a probe in a fresh interpreter) where the compositor holds the size.
+The contract is written down in `docs/reference/window.md`. Passes on X11;
+skips on COSMIC Wayland; KDE Wayland is untested (not available here).
+
 ## Releases
 
 | Version | Date | What |
