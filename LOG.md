@@ -40,6 +40,27 @@ resize border, a double-click on the title bar, an opt-in window menu. M4
 upgrade page. M6 (#36, #41): the release. The step-by-step trail is in git
 history for this file and in `BUILD_TRACKER_ARCHIVE_0.5.md`.
 
+## #91, the Linux real-GPU check of the WGSL shaders (2026-10-10, 0.5.6.1)
+
+On the AMD Radeon 890M (`RADV STRIX1`, Vulkan, integrated, Mesa 26.1.6),
+compared with llvmpipe (LLVM 20.1.2). `engine-render`'s tests now print their
+adapter once per process (`--nocapture`), and `TRE_TEST_FORCE_FALLBACK=1`
+runs them on the software one. **Pixel tests:** all 40 binaries give 321
+passed, 12 ignored on both adapters (`shader_fill` 28/28); the one failure on
+both is #168, fixed in its own branch. **Examples:** both run live on the GPU
+and exit clean. Offscreen renders, RADV against llvmpipe: `shader_panel` is
+within 1 level of 255 (35% of pixels), `shader_shine` identical. The Julia
+set's flat bands are the shader's own integer escape-count colouring, not the
+GPU. **Idle:** a still shader costs 0.1% of a core (the same as none), an
+animated one is steady at 3.6%. **Found, not driver-specific:** an effect
+shader on a padded node draws nothing, which leaves `shader_shine.py` blank
+(#176); a text node in a vertical flex box with `align_items` other than
+`stretch` wraps one word per line (#177); and a passthrough effect over a box
+with children is not pixel-identical to drawing it directly (in #176). Not
+done: the `gpu_watchdog` and driver-kill checks (they risk the desktop
+session), a window check of image and video inputs, and Windows (DX12) and
+macOS (Metal), which stay open under #91.
+
 ## Verify on a fresh machine (2026-10-10)
 
 `tools/verify.sh` was run on a new Pop!_OS 24.04 box (Wayland, Rust 1.98.0,

@@ -23,16 +23,29 @@ pub const GREEN: Color = Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF);
 pub const CLEAR: Color = Color::from_rgba8(0, 0, 0, 0);
 
 /// A device and queue on the default adapter, with its real limits.
+///
+/// 0.5.6.1 (#91): the adapter's name, backend and type go to stderr, once per
+/// test process (`cargo test -- --nocapture` shows them), so a pixel test's
+/// result can be tied to the GPU it ran on. `TRE_TEST_FORCE_FALLBACK=1` asks
+/// for the software adapter instead (lavapipe on Linux), to compare the two.
 pub async fn device(label: &str) -> (wgpu::Device, wgpu::Queue) {
     let adapter = wgpu::Instance::default()
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
+            force_fallback_adapter: std::env::var_os("TRE_TEST_FORCE_FALLBACK").is_some(),
             apply_limit_buckets: false,
             compatible_surface: None,
         })
         .await
         .expect("no wgpu adapter available in this environment");
+    static REPORTED: std::sync::Once = std::sync::Once::new();
+    REPORTED.call_once(|| {
+        let info = adapter.get_info();
+        eprintln!(
+            "GPU adapter: {} | backend {:?} | {:?} | driver {} {}",
+            info.name, info.backend, info.device_type, info.driver, info.driver_info
+        );
+    });
     adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some(label),
