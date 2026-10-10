@@ -30,8 +30,9 @@ OS file drag and drop, #134 reduced-motion and contrast preferences.
 Also open: **#158** — a burst of 12 `wp_fifo_v1` barriers within 50 ms when
 vsync is restored after a resize.
 
-## Small follow-ups (not yet filed)
+## Small follow-ups
 
-- `docs/contributing.md`: add `python3-dev` to the apt line (the `engine-py`
-  tests need it to link); everything else a fresh Linux box needs is listed.
+- **#171** — `docs/contributing.md`: add `python3-dev` to the apt line (the
+  `engine-py` tests need it to link); everything else a fresh Linux box
+  needs is listed.
 - Next release (0.5.7 or 0.6): to be decided by the user from the Backlog.
