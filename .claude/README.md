@@ -23,15 +23,25 @@ maintainer's own, copied here so they survive a lost machine.
 - **`/create-tracker`**: drafts a hierarchical build tracker (Milestones, Phases, Stages,
   Steps).
 
+## `synced-skills/`: skills Claude syncs from Anthropic
+
+Only the ones licensed for redistribution are copied: `mcp-builder` and `skill-creator`
+(Apache License 2.0, each with its `LICENSE.txt`), plus `manifest.json`, the list of every
+skill the account syncs (name, description, source, date), so the rest can be re-synced by
+Claude itself on a new machine. Copy a skill directory to `~/.claude/skills/` to use it.
+
 ## Deliberately not here
 
-- Personal settings and anything with credentials: `settings.local.json`, `~/.claude.json`,
-  `.credentials.json`, histories, logs, and the session lock file.
-- The skills Claude syncs from Anthropic (`~/.claude/skills/synced/`, such as pptx, docx and
-  pdf): they come with their own licenses and are reinstalled by Claude itself.
-- The maintainer's global `~/.claude/CLAUDE.md`: its policies are already in this repo's
-  `CLAUDE.md`.
-- Old agent worktrees under `.claude/worktrees/`.
+- The maintainer's personal Claude Code settings, global instructions and anything with
+  credentials or identifiers: `settings.local.json`, `~/.claude/settings.json`,
+  `~/.claude/CLAUDE.md`, `~/.claude.json`, `.credentials.json`, histories, logs, and the
+  session lock file. This repository is public. Its policies are already in this repo's
+  `CLAUDE.md`; sign in and set up the rest again on a new machine.
+- The other synced skills (`pptx`, `docx`, `pdf`, `xlsx`, and the ones with no license file):
+  the first four are marked "All rights reserved" and forbid copying or redistribution
+  outside the Claude services. Claude re-syncs them.
+- Old agent worktrees under `.claude/worktrees/`: a stale snapshot, not a git repository,
+  and already covered by this repo's history.
 
-To use these skills in other projects, copy `skills/<name>/` to `~/.claude/skills/` and
-the command files to `~/.claude/commands/`.
+To use the project's own skills in other projects, copy `skills/<name>/` to
+`~/.claude/skills/` and the command files to `~/.claude/commands/`.
