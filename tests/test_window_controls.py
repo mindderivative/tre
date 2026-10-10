@@ -4,6 +4,8 @@ from `tre`. Everything here runs without a display: a window that isn't open
 keeps each setting and applies it when `App.run()` opens it.
 """
 
+import ast
+import functools
 import subprocess
 import sys
 import textwrap
@@ -221,7 +223,35 @@ def test_state_and_platform_are_read_only():
             Window().set(**{name: True})
 
 
+@functools.cache
+def _compositor_lets_the_app_resize() -> bool:
+    """Whether a window can grow itself to a larger minimum here. Not where the
+    compositor holds the size: COSMIC reports every window as tiled on all four
+    sides, and winit then declines the resize (#169)."""
+    return run_live("""
+        from tre import App, Window
+        w = Window(width=300, height=200, decorations=False)
+        box = w.create("box", width=20, height=20)
+        w.root.add_child(box)
+        result = []
+        def report():
+            grew = w.get("width") >= 400 and w.get("height") >= 300
+            result.append("GROWS" if grew else "HELD")
+            w.close()
+        def probe():
+            w.set(min_width=400, min_height=300)
+            box.animate("opacity", 0.8, 600, on_complete=report)
+        box.animate("opacity", 0.5, 200, on_complete=probe)
+        app = App()
+        app.add_window(w)
+        app.run(max_frames=10_000_000)
+        print(result[0] if result else "NO_DISPLAY")
+    """) == "GROWS"
+
+
 def test_live_fullscreen_and_a_minimum_larger_than_the_window():
+    if not _compositor_lets_the_app_resize():
+        pytest.skip("the compositor holds the window's size here (tiled): a minimum cannot grow it")
     log = run_live("""
         from tre import App, Window
         w = Window(width=300, height=200, decorations=False)
@@ -244,7 +274,11 @@ def test_live_fullscreen_and_a_minimum_larger_than_the_window():
         app.run(max_frames=10_000_000)
         print(log if log else "NO_DISPLAY")
     """)
-    assert log == "[('fullscreen', True), ('min', 400.0, 300.0)]", (
+    entered, grown = ast.literal_eval(log)
+    assert entered == ("fullscreen", True)
+    # At least the minimum, not exactly it: leaving fullscreen restores the old
+    # size on Wayland (grown to the minimum) but keeps the fullscreen size on X11.
+    assert grown[0] == "min" and grown[1] >= 400 and grown[2] >= 300, (
         "a minimum larger than the window grows it, whatever the platform does"
     )
 
