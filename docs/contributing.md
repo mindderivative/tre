@@ -7,7 +7,8 @@ From a fresh machine (Linux shown; macOS and Windows need only Rust and Python):
 ```bash
 # 1. System packages (Debian/Ubuntu names; the same libraries exist elsewhere).
 #    The list CI uses is in .github/workflows/ci.yml; see Installation for details.
-sudo apt-get install -y build-essential pkg-config git python3 python3-venv \
+#    python3-dev is needed here, not in CI: `cargo test` links engine-py against libpython.
+sudo apt-get install -y build-essential pkg-config git python3 python3-dev python3-venv \
     libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
     libxinerama-dev libudev-dev libfontconfig1-dev mesa-vulkan-drivers libgl1-mesa-dri
 
