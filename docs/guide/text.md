@@ -80,14 +80,23 @@ tre.set_system_fonts(True)     # for every window in this process, live
 
 A node whose text mixes scripts then needs no special handling: with
 `font_family="Roboto"`, Latin comes from Roboto and the rest from a system font
-chosen for its script, so `"Hello 漢字 😀 שלום"` shows all of it. Colour emoji
-(including the COLR and bitmap formats) draw in colour, and a right-to-left
+chosen for its script, so `"Hello 漢字 😀 שלום"` shows all of it. A right-to-left
 paragraph (Arabic, Hebrew) lays out right to left and aligns its start on the
 right. The switch is off by default because it makes text depend on the machine:
 the same app shows different pixels where different fonts are installed, and
 where no installed font has a script it still shows boxes. Text the bundled
 fonts cover is unaffected either way, and turning the switch off again returns
 to the exact same frames.
+
+**Colour emoji need a COLR font (0.5.6.1).** Colour emoji draw in colour from a
+font in the COLR format, such as Windows' Segoe UI Emoji or a Noto Color Emoji
+COLR build. A bitmap-only emoji font draws **nothing yet**: that is the CBDT
+format of the Noto Color Emoji package most Linux distributions install, and
+macOS's Apple Color Emoji (`sbix`) is a bitmap font too, so expect the same
+there (not yet checked on a Mac). The renderer cannot draw a glyph that is a
+picture. So with `set_system_fonts(True)` an emoji can show as a blank where
+only such a font is installed. To get colour emoji on every machine, register a
+COLR emoji font you ship (subset it to the emoji you use, as above).
 
 **Ship the fonts with the app.** For the same pixels everywhere, register
 font files you bundle, such as subsets of [Noto](https://fonts.google.com/noto):
