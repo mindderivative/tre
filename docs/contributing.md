@@ -69,6 +69,11 @@ failures and fixes go in the issue's comments.
 the Tesserae side before the work starts, and a local wheel is handed over for it
 to test before anything is published.
 
+Picking those requests up on a timer is written down in
+[`tools/intake-routine.md`](https://github.com/mindderivative/tre/blob/main/tools/intake-routine.md):
+the process and the prompt to run in Claude Code, so it can be restarted on a new
+machine.
+
 ### What has not been checked on real hardware
 
 Open issues #47, #48, #91, #118 and #132-#134 are checks that need a Mac, a
