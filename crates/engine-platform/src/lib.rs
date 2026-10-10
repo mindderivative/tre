@@ -306,6 +306,17 @@ pub struct WindowOptions {
     /// 0.5.4 (#142): the window ignores the pointer: clicks, scrolls and hover
     /// pass to whatever is behind it.
     pub click_through: bool,
+    /// 0.5.6 (#159): where the window's top-left corner opens, in logical
+    /// pixels on the desktop; `None` lets the system place it. Wayland has no
+    /// client-side placement, so it is ignored there.
+    pub position: Option<(f64, f64)>,
+    /// 0.5.6 (#159): keep the window above others (a hint on X11; ignored on
+    /// Wayland).
+    pub always_on_top: bool,
+    /// 0.5.6 (#159): whether the user can resize the window.
+    pub resizable: bool,
+    /// 0.5.6 (#159): keep the window off the taskbar (Windows only).
+    pub skip_taskbar: bool,
 }
 
 impl Default for WindowOptions {
@@ -319,6 +330,10 @@ impl Default for WindowOptions {
             transparent: false,
             blur: false,
             click_through: false,
+            position: None,
+            always_on_top: false,
+            resizable: true,
+            skip_taskbar: false,
         }
     }
 }
@@ -391,7 +406,10 @@ pub struct WindowRequest {
 /// proxy`, not the direct-handler API).
 enum PlatformEvent {
     AccessKit(accesskit_winit::Event),
-    OpenWindow(WindowRequest),
+    /// The `bool` is `optional`: when the app refuses the new window
+    /// (`on_window_created` returns false), drop only that window instead
+    /// of ending the loop -- for a window opened while the app runs.
+    OpenWindow(WindowRequest, bool),
     /// M31 Phase 6 (§5, §6): a real, generic "something changed
     /// outside the event loop's own thread, redraw" signal -- closes
     /// the real, stated v1 cost M30 Phase 9 Step 4 (Terminal) found
@@ -441,7 +459,9 @@ pub struct WindowOpener {
 
 impl WindowOpener {
     pub fn open_window(&self, request: WindowRequest) {
-        let _ = self.proxy.send_event(PlatformEvent::OpenWindow(request));
+        let _ = self
+            .proxy
+            .send_event(PlatformEvent::OpenWindow(request, false));
     }
 }
 
@@ -473,6 +493,17 @@ impl EventLoopWaker {
     /// after the loop itself has started or stopped.
     pub fn wake(&self) {
         let _ = self.proxy.send_event(PlatformEvent::Wake);
+    }
+
+    /// 0.5.6 (#159): asks the loop to open another window while it runs.
+    /// Handled on the loop's next turn. If `on_window_created` refuses the
+    /// new window, only that window is dropped and the loop goes on. A
+    /// no-op once the loop has exited, and a request still queued when the
+    /// last window closes is lost with the loop.
+    pub fn open_window(&self, request: WindowRequest) {
+        let _ = self
+            .proxy
+            .send_event(PlatformEvent::OpenWindow(request, true));
     }
 
     /// 0.5.0 M2 (issue #28): asks the loop to close window `id` as if the
@@ -838,7 +869,7 @@ where
         cursors::flush(event_loop);
         self.attach();
         match event {
-            PlatformEvent::OpenWindow(request) => {
+            PlatformEvent::OpenWindow(request, optional) => {
                 // accesskit_winit's own hard requirement: the adapter
                 // must be created before the window is ever shown,
                 // which means creating the window invisible first.
@@ -862,7 +893,16 @@ where
                         }))
                         .with_transparent(options.transparent)
                         .with_blur(options.blur)
+                        .with_resizable(options.resizable)
+                        .with_window_level(if options.always_on_top {
+                            winit::window::WindowLevel::AlwaysOnTop
+                        } else {
+                            winit::window::WindowLevel::Normal
+                        })
                         .with_visible(false);
+                if let Some((x, y)) = options.position {
+                    attrs = attrs.with_position(winit::dpi::LogicalPosition::new(x, y));
+                }
                 if let Some((w, h)) = options.min_size {
                     attrs = attrs.with_min_inner_size(winit::dpi::LogicalSize::new(w, h));
                 }
@@ -871,7 +911,9 @@ where
                 #[cfg(target_os = "windows")]
                 let attrs = {
                     use winit::platform::windows::WindowAttributesExtWindows;
-                    attrs.with_undecorated_shadow(true)
+                    attrs
+                        .with_undecorated_shadow(true)
+                        .with_skip_taskbar(options.skip_taskbar)
                 };
                 // 0.5.0 M4: macOS can't resize an undecorated window, so it
                 // stays decorated, with its title bar a transparent overlay
@@ -916,7 +958,11 @@ where
                 let window = Arc::new(window);
 
                 if !(self.on_window_created)(id, request.token, window.clone()) {
-                    event_loop.exit();
+                    // A window opened mid-run that could not be set up is
+                    // dropped alone; the windows already open go on.
+                    if !optional {
+                        event_loop.exit();
+                    }
                     return;
                 }
                 self.windows.insert(
@@ -1375,8 +1421,8 @@ where
             // Phase 2), no new variant needed for it at all.
             WindowEvent::Ime(ime) => {
                 match ime {
-                    Ime::Preedit(text, _cursor_range) => {
-                        on_input(window_id, InputEvent::ImePreedit(text));
+                    Ime::Preedit(text, cursor_range) => {
+                        on_input(window_id, InputEvent::ImePreedit(text, cursor_range));
                     }
                     Ime::Commit(text) => {
                         on_input(window_id, InputEvent::TextInput(text));

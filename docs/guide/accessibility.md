@@ -26,6 +26,14 @@ save = window.create("box", width=96, height=40, corner_radius=20,
   does that.
 - Value — `value` (a string or number), with `value_min`, `value_max`, and
   `value_step` for a range such as a slider or progress bar.
+- More state (0.5.6) — `pressed` (a toggle button, with `"mixed"`), `invalid`
+  with a `description` of why, `busy`, and `current` (`"page"`, `"step"`, ...)
+  for the current item of a set. A range can also say its value in words with
+  `value_text`.
+- Relations (0.5.6) — `describedby` and `controls` take the nodes that
+  describe this one and the nodes it controls (a button and the panel it
+  opens). A node that is hidden or removed is left out for assistive
+  technology.
 
 A text input and a terminal are `"textbox"` from the start, and a text
 input's value is its text.

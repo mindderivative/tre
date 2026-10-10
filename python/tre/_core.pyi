@@ -41,6 +41,7 @@ __all__ = [
     "Gradient",
     "LoopHandle",
     "StatsHandle",
+    "TimerHandle",
     "Shader",
     "ShaderError",
     "register_font",
@@ -152,6 +153,19 @@ class Event:
     """`file_hover`/`file_drop`: every dragged file's path."""
     href: str | None
     """`link`: the `link` string of the clicked text span."""
+    preedit_cursor: tuple[int, int] | None
+    """`compose_start`/`compose_update`: the IME's cursor range inside the
+    preedit text (`text`), in bytes, if it gave one."""
+    caret: tuple[float, float, float, float] | None
+    """`caret_move`: the caret's rectangle `(x, y, width, height)` in the
+    node's own coordinates."""
+    inserted: tuple[int, int] | None
+    """`caret_move`: the byte range an edit inserted, or `None` for a move."""
+    property: str | None
+    """`animation_end`: the animated property."""
+    finished: bool | None
+    """`animation_end`: `True` if the animation ran to its end, `False` if it
+    was replaced by another or stopped."""
     pointer_id: int | None
     """`touch_start`/`touch_move`/`touch_end`/`touch_cancel`: which finger."""
     phase: str | None
@@ -209,12 +223,28 @@ class Node:
         `fill`, `stroke_color`, `stroke_width`, `opacity`, `blur`, `backdrop_blur`,
         `corner_radius` (a number or a 4-tuple), `shadows`, the transform
         parts `translate_x`/`translate_y`/`scale`/`rotation_deg`, a
-        scroll view's `scroll_offset`, and a path's `data`/`trim_start`/
-        `trim_end`; any other name raises `ValueError`.
+        scroll view's `scroll_offset`, a path's `data`/`trim_start`/
+        `trim_end`, and (0.5.6) the layout properties that hold a length:
+        `width`, `height`, `min_*`, `max_*`, `x`, `y`, `padding*`, `margin*`,
+        `gap`/`row_gap`/`column_gap` and `flex_basis`, to a number of pixels
+        (`"auto"` and percentages can't be animated to); any other name
+        raises `ValueError`. Every animation ends with an `animation_end`
+        event on the node.
         `on_complete`, when given, is called with no arguments exactly
         once, the real frame this specific animation finishes; an
         animation replaced or stopped before then never calls it.
         """
+        ...
+    def caret_rect(self) -> tuple[float, float, float, float]:
+        """(0.5.6) A text input's caret as `(x, y, width, height)` in the node's
+        coordinates, padding and scrolling included; at the end of the
+        composition while an IME composes. Shaped fresh, so it is right
+        straight after an edit. Raises `ValueError` for any other node."""
+        ...
+    def text_rects(self, start: int, end: int) -> list[tuple[float, float, float, float]]:
+        """(0.5.6) The rectangles covering bytes `start..end` of a text input's
+        text, one per line, as `(x, y, width, height)` in the node's
+        coordinates. Offsets are UTF-8 byte offsets on character boundaries."""
         ...
     def get_target(self, name: str) -> Any:
         """M95: the value `name`'s running animation is heading to --
@@ -270,8 +300,12 @@ class Node:
         `touch_end`, `touch_cancel`, `tap`, `long_press`, `pan`, `pinch`,
         `file_hover`, `file_hover_cancel`, `file_drop` and `link` (a click on
         a text span's link); see the events reference for each one's fields.
+        (0.5.6) Also `animation_end` (an animation on the node ended, with
+        `event.property` and `event.finished`), `submit` (Enter in a single-line
+        text input), `compose_start`/`compose_update`/`compose_end` (an IME
+        composition) and `caret_move` (a text input's caret moved).
         All but `pointer_enter`/`pointer_leave`/
-        `change`/`dismiss`/`scroll` bubble to ancestors
+        `change`/`dismiss`/`scroll`/`animation_end` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
         `ValueError` for an unknown event.
@@ -381,9 +415,27 @@ class Window:
     def off(self, event: str) -> None:
         """M94: removes the window's listener for `event`, if any."""
         ...
+    def after(self, ms: float, fn: Callable[[], object]) -> TimerHandle:
+        """(0.5.6) Calls `fn` once, `ms` milliseconds from now, on the loop's
+        thread. The window's clock runs it, so `advance(ms)` moves it, and it
+        fires on the first frame at or after its time. An idle window sleeps
+        until then instead of redrawing. A timer set before `App.run()` counts
+        from when the window opens; one set on a window that closes is dropped."""
+        ...
+    def every(self, ms: float, fn: Callable[[], object]) -> TimerHandle:
+        """(0.5.6) Calls `fn` every `ms` milliseconds (at least 1) until the
+        handle is cancelled. It keeps its own beat, so it does not drift; a
+        tick missed because the loop was busy is skipped, not replayed. An
+        exception in `fn` is logged and the timer goes on."""
+        ...
     def minimize(self) -> None:
         """(0.5.0) Minimizes the window -- or, before `App.run()`, opens it
         minimized."""
+        ...
+    def center(self) -> bool:
+        """(0.5.6) Centres the open window on its monitor. Returns `False`
+        when it can't: not open yet, or the system doesn't let apps place
+        windows (Wayland)."""
         ...
     def maximize(self) -> None:
         """(0.5.0) Maximizes the window -- or opens it maximized."""
@@ -419,6 +471,11 @@ class Window:
         transparent: bool = ...,
         blur_behind: bool = ...,
         click_through: bool = ...,
+        x: float = ...,
+        y: float = ...,
+        always_on_top: bool = ...,
+        resizable: bool = ...,
+        skip_taskbar: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -472,7 +529,9 @@ class Window:
         can (Wayland with KDE's blur protocol, macOS; ignored elsewhere); live.
         `click_through`: (0.5.4) `True` makes the whole window ignore the pointer,
         so clicks, scrolls and hover reach what is behind it; live, and a
-        `ValueError` where the platform can't."""
+        `ValueError` where the platform can't. `x`, `y`: (0.5.6) the window's
+        place on the desktop in logical pixels (not on Wayland), `always_on_top`,
+        `resizable`, and `skip_taskbar` (Windows only); live, or at open."""
         ...
     @overload
     def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
@@ -507,7 +566,14 @@ class Window:
     @overload
     def get(self, name: Literal["present_mode"]) -> str: ...
     @overload
-    def get(self, name: Literal["dpi_scaling", "transparent", "blur_behind", "click_through"]) -> bool: ...
+    def get(
+        self,
+        name: Literal[
+            "dpi_scaling", "transparent", "blur_behind", "click_through", "always_on_top", "resizable", "skip_taskbar"
+        ],
+    ) -> bool: ...
+    @overload
+    def get(self, name: Literal["x", "y"]) -> float | None: ...
     @overload
     def get(self, name: Literal["transparent_active"]) -> bool | None: ...
     @overload
@@ -644,6 +710,7 @@ class Window:
         window-space `x`/`y`; `button` and `delta_x`/`delta_y` where they
         apply. `pointer_leave` moves the pointer out of the window.
         `key_down`/`key_up` take `key` and `repeat`; `input` takes `text`;
+        (0.5.6) `ime_preedit` takes `text` (empty ends it) and `cursor`;
         `focus`/`unfocus` take `node`; `a11y_action` takes `node`, `action`
         (`increment`, `decrement`, `expand`, `collapse`,
         `scroll_into_view`, `set_value`), and `value`. `shift`/`ctrl`/`alt`/`meta` hold
@@ -717,7 +784,13 @@ class App:
     """
 
     def __init__(self) -> None: ...
-    def add_window(self, window: Window) -> None: ...
+    def add_window(self, window: Window) -> None:
+        """Registers `window` to open on `run()`. Since 0.5.6 it also works
+        while the app runs (from a listener, a `frame` handler or
+        `LoopHandle.call_soon`): the window opens on the loop's next turn.
+        Raises `ValueError` for a window that is already open.
+        """
+        ...
     def thread_handle(self) -> LoopHandle:
         """M87: a thread-safe handle to this `App`'s event loop. `App`
         and `Window` may only be used from the thread that created
@@ -735,6 +808,20 @@ class App:
         be set up (no adapter, no device, or an unsupported surface), or
         if no window was added.
         """
+        ...
+
+@final
+class TimerHandle:
+    """(0.5.6) What `Window.after` and `Window.every` return."""
+
+    def cancel(self) -> bool:
+        """Stops the timer. Returns whether it was still pending: `False` for
+        an `after` that already ran, or a timer already cancelled."""
+        ...
+    @property
+    def active(self) -> bool:
+        """Whether the timer is still pending: an `every` until cancelled, an
+        `after` until it has run."""
         ...
 
 @final

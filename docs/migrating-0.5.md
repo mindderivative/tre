@@ -120,6 +120,35 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.6
+
+### Added
+
+- `App.add_window` works while `run()` is going (it used to raise
+  `RuntimeError: Already borrowed`). See [App](reference/app.md#add_window).
+- `Window.set(x=, y=, always_on_top=, resizable=, skip_taskbar=)` and `Window.center()`;
+  `set` and `resize` now work inside a callback that `advance` or `simulate` runs. See
+  [Window](reference/window.md).
+- Accessibility states on any node: `pressed`, `invalid`, `busy`, `current`, `description`,
+  `describedby`, `controls`, `value_now`, `value_text`, and a `separator` role. See
+  [Node](reference/node.md#set-get-and-focus).
+- `animate` takes layout properties (`width`, `height`, `x`, `y`, `padding`, `margin`, `gap`, ...)
+  in pixels, and every animation ends with an `animation_end` node event. A replaced or stopped
+  animation now releases its `on_complete` callback (it used to be kept for the life of the
+  window). See [Animation](guide/animation.md).
+- Text inputs: `max_length`, `read_only`, `input_mode`, `selection_start`/`selection_end`, a `submit`
+  event, IME composition events (and the OS's candidate window now sits at the caret), caret
+  styling (`caret_visible`, `caret_width`, `caret_shape`, `caret_blink`, an animatable `caret_color`),
+  `caret_rect()`, `text_rects()` and a `caret_move` event. **Behavior change:** Enter in a
+  single-line text input used to do nothing; it now fires `submit`. See [Text](guide/text.md).
+- Scroll views: `scroll_snap` and a per-item `snap_align`; a virtual list has a `scroll_offset`;
+  `scroll_offset` on another node raises `ValueError`. See
+  [Scrolling](guide/nodes-and-layout.md#scrolling).
+- A `mask` node property clips a node and its subtree to a circle, a rounded box with a
+  radius per corner, or a path. See [Masks](reference/paint.md#masks-056).
+- `Window.after(ms, fn)`, `Window.every(ms, fn)` and `TimerHandle`. See
+  [Timers](reference/window.md#timers-056).
+
 ## 0.5.5
 
 - **Resizing a window no longer stalls on KDE Wayland.** 0.5.4's vsync default made a

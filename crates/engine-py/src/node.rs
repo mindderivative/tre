@@ -157,6 +157,20 @@ impl Node {
         } else {
             None
         };
+        // 0.5.6 (#161): a layout property -- or the sides of a shorthand --
+        // animates in pixels, with layout run again each frame.
+        let layout_props = engine_core::LayoutProp::from_name(property);
+        if !layout_props.is_empty() {
+            return self.animate_layout(
+                &layout_props,
+                property,
+                &to,
+                duration,
+                curve,
+                on_complete,
+                py,
+            );
+        }
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
@@ -164,7 +178,11 @@ impl Node {
         match property {
             "opacity" => {
                 let value = extract_f64(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(&mut node.paint.opacity, value, duration, curve, now, handle);
             }
             // M95: a number animates the uniform radius, or all four
@@ -173,7 +191,11 @@ impl Node {
             // weren't separate yet.
             "corner_radius" => {
                 let radius = crate::node_props::parse_radius(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 match (radius, &mut node.paint.corner_radii_override) {
                     (crate::node_props::Radius::Uniform(value), None) => {
                         animate_field(
@@ -225,7 +247,11 @@ impl Node {
                         "node property `fill` takes a Gradient only on a box, path or text node",
                     ));
                 }
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 match &mut node.paint.gradient {
                     Some(current) => {
                         if !current.current.animates_to(&target) {
@@ -253,7 +279,11 @@ impl Node {
             }
             "fill" => {
                 let value = crate::node_props::parse_color(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 match &mut node.kind {
                     NodeKind::TextField(state) => {
                         animate_field(&mut state.text_tint, value, duration, curve, now, handle);
@@ -280,7 +310,11 @@ impl Node {
             }
             "stroke_color" => {
                 let value = crate::node_props::parse_color(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(
                     &mut node.paint.border_color,
                     value,
@@ -290,17 +324,56 @@ impl Node {
                     handle,
                 );
             }
+            // 0.5.6 (#165): a text input's caret colour fades; from the text colour
+            // when it had none of its own.
+            "caret_color" => {
+                let NodeKind::TextField(state) = &mut node.kind else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `caret_color` applies only to a text_input node",
+                    ));
+                };
+                let value = crate::node_props::parse_color(&to, property)?;
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
+                let tint = state.text_tint.current;
+                let caret = state
+                    .caret_color
+                    .get_or_insert_with(|| engine_core::Animated::new(tint));
+                animate_field(caret, value, duration, curve, now, handle);
+            }
             // M96: a scroll view's offset, eased -- how a carousel snaps.
             "scroll_offset" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;
                 let value = scroll_max.map_or(value, |max| value.min(max));
-                let NodeKind::ScrollView(state) = &mut node.kind else {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "node property `scroll_offset` applies only to a scroll_view node",
-                    ));
-                };
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut state.scroll, value, duration, curve, now, handle);
+                let registered =
+                    self.completions
+                        .borrow_mut()
+                        .register(on_complete, self.id, property);
+                let handle = Some(registered);
+                match &mut node.kind {
+                    NodeKind::ScrollView(state) => {
+                        animate_field(&mut state.scroll, value, duration, curve, now, handle);
+                    }
+                    NodeKind::VirtualList(state) => {
+                        animate_field(
+                            &mut state.scroll_offset,
+                            value,
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
+                    }
+                    _ => {
+                        self.completions.borrow_mut().entries.remove(&registered);
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "node property `scroll_offset` applies only to a scroll_view or virtual_list node",
+                        ));
+                    }
+                }
             }
             // M96: the target API's transform parts, each with its own
             // animation (`NodeTransform`).
@@ -310,7 +383,11 @@ impl Node {
                 } else {
                     extract_f64(&to, property)?
                 };
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 let parts = &mut node.paint.node_transform;
                 let field = match property {
                     "translate_x" => &mut parts.translate_x,
@@ -322,7 +399,11 @@ impl Node {
             }
             "blur" | "backdrop_blur" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 let field = if property == "blur" {
                     &mut node.paint.blur
                 } else {
@@ -332,7 +413,11 @@ impl Node {
             }
             "stroke_width" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(
                     &mut node.paint.border_width,
                     value,
@@ -344,7 +429,11 @@ impl Node {
             }
             "shadows" => {
                 let value = engine_core::Shadows(crate::node_props::parse_shadows(&to, property)?);
-                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
                 animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
             }
             // M95: a path's data morphs; its stroke trim animates.
@@ -355,7 +444,11 @@ impl Node {
                     )));
                 };
                 let handle = |completions: &SharedCompletions| {
-                    on_complete.map(|cb| completions.borrow_mut().register(cb))
+                    Some(
+                        completions
+                            .borrow_mut()
+                            .register(on_complete, self.id, property),
+                    )
                 };
                 if property == "data" {
                     let data: String = to.extract().map_err(|_| {
@@ -607,6 +700,74 @@ fn type_name_of(value: &Bound<'_, PyAny>) -> String {
         .name()
         .map(|name| name.to_string())
         .unwrap_or_else(|_| "<unknown type>".to_string())
+}
+
+impl Node {
+    /// 0.5.6 (#161): `animate` on a layout property. `to` is a number of
+    /// pixels; the sides of a shorthand animate together, each with its own
+    /// `animation_end`, and `on_complete` is attached to the first.
+    #[allow(clippy::too_many_arguments)]
+    fn animate_layout(
+        &self,
+        props: &[engine_core::LayoutProp],
+        property: &str,
+        to: &Bound<'_, PyAny>,
+        duration: Duration,
+        curve: MotionCurve,
+        mut on_complete: Option<Py<PyAny>>,
+        py: Python<'_>,
+    ) -> PyResult<()> {
+        let value = to
+            .extract::<f64>()
+            .ok()
+            .filter(|v| v.is_finite() && !to.is_instance_of::<pyo3::types::PyBool>())
+            .ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "node property {property:?} animates to a number of pixels -- `auto` and \
+                     percentages can't be animated to"
+                ))
+            })?;
+        if value < 0.0 && props.iter().any(|p| p.non_negative()) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "node property {property:?} can't animate to a negative size"
+            )));
+        }
+        // Layout gives width and height a number to start from.
+        self.layout_box(py);
+        let now = crate::clock::now(&self.tree);
+        for (index, prop) in props.iter().enumerate() {
+            let callback = if index == 0 { on_complete.take() } else { None };
+            let handle = self
+                .completions
+                .borrow_mut()
+                .register(callback, self.id, prop.name());
+            let started = self.tree.borrow_mut().animate_layout(
+                self.id,
+                *prop,
+                value,
+                duration,
+                curve,
+                now,
+                Some(handle),
+            );
+            if let Err(err) = started {
+                self.completions.borrow_mut().entries.remove(&handle);
+                return Err(match err {
+                    engine_core::LayoutAnimError::Missing => {
+                        crate::error::EngineError::Destroyed.into()
+                    }
+                    engine_core::LayoutAnimError::NoStart => {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "node property {:?} is `auto` or a percentage, so there is no number \
+                             to animate from -- set it to a number of pixels first",
+                            prop.name()
+                        ))
+                    }
+                });
+            }
+        }
+        Ok(())
+    }
 }
 
 fn extract_f64(to: &Bound<'_, PyAny>, property: &str) -> Result<f64, EngineError> {

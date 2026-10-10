@@ -24,6 +24,7 @@ mod dock;
 mod gesture;
 mod gradient;
 mod input;
+mod layout_anim;
 mod node;
 mod overlay;
 mod path;
@@ -31,8 +32,13 @@ mod shader;
 mod svg;
 mod tree;
 
-pub use access::{AccessNodeData, AccessStates, AccessValue, Action, ActionData, Live, Role};
-pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
+pub use access::{
+    AccessExtra, AccessNodeData, AccessStates, AccessValue, Action, ActionData, AriaCurrent, Live,
+    Role, Toggled,
+};
+pub use animation::{
+    ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve, take_cancelled,
+};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
 pub use gesture::{
@@ -40,15 +46,16 @@ pub use gesture::{
 };
 pub use gradient::{Gradient, GradientShape, GradientStop};
 pub use input::{
-    ChangedValue, DispatchOutcome, InputEvent, Key, Modifiers, PointerButton, ScrollDelta,
-    ctrl_shortcut,
+    ChangedValue, ComposePhase, DispatchOutcome, InputEvent, Key, Modifiers, PointerButton,
+    ScrollDelta, ctrl_shortcut,
 };
+pub use layout_anim::{LayoutAnim, LayoutProp};
 pub use node::{
-    Blend, CellColor, ContentFit, CornerRadii, Cursor, ImageState, ItemExtent, Node, NodeId,
-    NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
-    SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, TerminalCell,
-    TerminalPalette, TerminalState, TextAlign, TextFieldState, TextOptions, TextSpan, TextState,
-    VirtualListState, WindowRegion,
+    Blend, CaretShape, CellColor, ContentFit, CornerRadii, Cursor, ImageState, InputMode,
+    ItemExtent, Mask, Node, NodeId, NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP,
+    SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows,
+    SnapAlign, TerminalCell, TerminalPalette, TerminalState, TextAlign, TextFieldState,
+    TextOptions, TextSpan, TextState, VirtualListState, WindowRegion,
 };
 pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
@@ -60,6 +67,6 @@ pub use svg::{
     SvgNode, SvgPaint, SvgPath, SvgPattern, SvgShadow, SvgState, SvgStroke,
 };
 pub use tree::{
-    AccessLine, FocusDirection, KEY_SCROLL_LINE, TextPart, Touched, Tree, from_access_id,
-    node_id_as_u64, to_access_id,
+    AccessLine, FocusDirection, KEY_SCROLL_LINE, LayoutAnimError, TextPart, Touched, Tree,
+    from_access_id, node_id_as_u64, to_access_id,
 };

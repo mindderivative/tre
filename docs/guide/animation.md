@@ -22,8 +22,42 @@ card.animate("translate_y", -24, 300, easing=(0.3, 0.0, 0.8, 0.15),
 | `scroll_offset` | a scroll view's offset, in pixels |
 | `data`, `trim_start`, `trim_end` | a path's shape and stroke trim |
 
-Layout properties don't animate: move and resize with the transform parts,
-or set the layout and let it snap. Any other name raises `ValueError`.
+**Layout properties animate too (0.5.6)**, in pixels:
+
+| Property | Value |
+| --- | --- |
+| `width`, `height`, `min_width`, `min_height`, `max_width`, `max_height`, `flex_basis` | a number of pixels |
+| `x`, `y` | a number — the inset from the left and top |
+| `padding`, `padding_top` ... `padding_left`, `margin`, `margin_top` ... `margin_left` | a number; `padding` and `margin` animate all four sides together |
+| `gap`, `row_gap`, `column_gap` | a number |
+
+```python
+panel.animate("height", 240, 200)          # an accordion opening
+rail.animate("width", 80, 250, easing=(0.2, 0.0, 0, 1.0))
+```
+
+Layout runs again each frame of the animation, from the animating node up to the
+root, so a large tree costs more per frame than a transform does. Prefer
+`translate_*` and `scale` where a layout change isn't needed.
+
+- **`to` is a number of pixels.** `"auto"` and percentages can't be animated *to*: an
+  `auto` end has no size until layout, so measure first (`get("layout_height")`) and
+  animate to that.
+- **It starts from a number.** `width` and `height` start from the size layout gave the
+  node, even when they were `auto` or a percentage. Any other property that is `auto`
+  or a percentage raises `ValueError`: set it to a number first.
+- **`get` reads the current value**, `get_target` the end, and an interrupted animation
+  retargets from where it is, as every other does. `node.set(width=...)` ends the
+  animation (its `animation_end` has `finished=False`); `stop_animation("width")` stops it
+  where it is.
+- **Shorthands** (`padding`, `margin`, `gap`) animate each side as its own animation, with
+  its own `animation_end` (`padding_top`, ...). `on_complete` is called once, from the
+  first side.
+- **Don't animate `x`/`y` of the child of a scroll view or virtual list**: they place that
+  child themselves every frame.
+- `font_size` does not animate: it would reshape the text every frame.
+
+Any other name raises `ValueError`.
 
 ## Easing
 
@@ -88,6 +122,20 @@ def settle():
 chip.animate("scale", 1.2, 120, on_complete=settle)
 ```
 
+Or listen once for every animation on a node with the `animation_end` event
+(0.5.6), which a framework can use to chain steps without a callback per call:
+
+```python
+def ended(event):
+    if event.finished:                    # False: it was replaced or stopped
+        print(event.property, "done")
+
+card.on("animation_end", ended)
+```
+
+It fires for every animation on the node, `on_complete` or not, one event per
+animation, after that animation's `on_complete`. It doesn't bubble.
+
 ## Morphing paths
 
 Animating a path's `data` to another path morphs between them. Two closed
@@ -101,7 +149,8 @@ icon. See `examples/path_morph.py`.
 
 Without a live window no frames run, so tests drive time themselves with
 `window.advance(ms)`. It moves the window's clock forward by exactly `ms`,
-then runs animations, their completions, and layout at the new time:
+then runs animations, their completions, and layout at the new time (and, since 0.5.6,
+any `window.after`/`window.every` timer due in the span, each at its own moment):
 
 ```python
 window.advance(0)              # pin the clock at "now"

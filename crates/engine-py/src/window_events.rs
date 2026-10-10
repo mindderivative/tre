@@ -9,10 +9,10 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CanvasState, ImageState, InputEvent, ItemExtent, Key,
-    Modifiers, NodeId, NodeKind, PaintProperties, PathData, PathState, PointerButton, Role,
-    ScrollDelta, ScrollViewState, TerminalState, TextAlign, TextFieldState, TextOptions, TextState,
-    Tree, VirtualListState,
+    AccessNodeData, Action, CanvasState, ImageState, InputEvent, ItemExtent, Key, Modifiers,
+    NodeId, NodeKind, PaintProperties, PathData, PathState, PointerButton, Role, ScrollDelta,
+    ScrollViewState, TerminalState, TextAlign, TextFieldState, TextOptions, TextState, Tree,
+    VirtualListState,
 };
 use engine_render::{FontSpec, MONOSPACE_FONT_FAMILY};
 use peniko::Color;
@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 37] = [
+const SIMULATED_EVENTS: [&str; 38] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -61,6 +61,7 @@ const SIMULATED_EVENTS: [&str; 37] = [
     "key_down",
     "key_up",
     "input",
+    "ime_preedit",
     "focus",
     "unfocus",
     "a11y_action",
@@ -250,7 +251,23 @@ impl PyWindow {
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
 const SETTABLE: &str = "title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, \
     min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
-    dpi_scaling, transparent, blur_behind, click_through";
+    dpi_scaling, transparent, blur_behind, click_through, x, y, always_on_top, resizable, skip_taskbar";
+
+/// 0.5.6 (#159): a window position coordinate in logical pixels.
+fn extract_coordinate(name: &str, value: &Bound<'_, PyAny>) -> PyResult<f64> {
+    value
+        .extract::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .ok_or_else(|| PyValueError::new_err(format!("window property `{name}` must be a number")))
+}
+
+/// 0.5.6 (#159): a boolean window property.
+fn extract_flag(name: &str, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+    value
+        .extract::<bool>()
+        .map_err(|_| PyValueError::new_err(format!("window property `{name}` must be a bool")))
+}
 
 /// 0.5.0 M2: a window icon from `(rgba, width, height)` -- straight-alpha
 /// RGBA8 bytes, `width * height * 4` of them.
@@ -449,7 +466,7 @@ impl PyWindow {
             }
             "text_input" => {
                 let mut state = TextFieldState::new("", "Roboto", 400.0, 16.0);
-                state.text_tint = Animated::new(Color::from_rgba8(0, 0, 0, 255));
+                state.text_tint.set_now(Color::from_rgba8(0, 0, 0, 255));
                 NodeKind::TextField(Box::new(state))
             }
             "image" => {
@@ -583,6 +600,48 @@ impl PyWindow {
         Ok(())
     }
 
+    /// 0.5.6 (#163): calls `fn` once, `ms` milliseconds from now, on the loop's
+    /// thread. Returns a `TimerHandle` that cancels it. The window's clock
+    /// runs it, so `advance(ms)` moves it; it fires on the first frame at or
+    /// after its time, and an idle window sleeps until then.
+    #[pyo3(signature = (ms, r#fn))]
+    fn after(
+        &self,
+        py: Python<'_>,
+        ms: f64,
+        r#fn: Py<PyAny>,
+    ) -> PyResult<crate::timers::TimerHandle> {
+        crate::timers::schedule(
+            &self.handles.timers,
+            &self.handles.alarm,
+            clock::now(&self.handles.tree),
+            (ms, false),
+            r#fn,
+            py,
+        )
+    }
+
+    /// 0.5.6 (#163): calls `fn` every `ms` milliseconds (at least 1) until the
+    /// returned `TimerHandle` is cancelled. It keeps its own beat, so it does
+    /// not drift; a tick missed because the loop was busy is skipped, not
+    /// replayed. An exception in `fn` is logged and the timer goes on.
+    #[pyo3(signature = (ms, r#fn))]
+    fn every(
+        &self,
+        py: Python<'_>,
+        ms: f64,
+        r#fn: Py<PyAny>,
+    ) -> PyResult<crate::timers::TimerHandle> {
+        crate::timers::schedule(
+            &self.handles.timers,
+            &self.handles.alarm,
+            clock::now(&self.handles.tree),
+            (ms, true),
+            r#fn,
+            py,
+        )
+    }
+
     /// 0.5.0 M2 (issue #28): minimizes the window -- once `App.run()` opens
     /// it, if it isn't open yet.
     fn minimize(&self) {
@@ -590,6 +649,29 @@ impl PyWindow {
             Some(window) => window.set_minimized(true),
             None => self.handles.minimized.set(true),
         }
+    }
+
+    /// 0.5.6 (#159): centres the open window on the monitor it is on. Returns
+    /// `False` when it can't: the window isn't open yet, the system doesn't
+    /// say where windows are or lets the app move them (Wayland).
+    fn center(&self) -> bool {
+        let os_window = self.handles.os_window.borrow();
+        let Some(window) = os_window.as_ref() else {
+            return false;
+        };
+        let (Some(monitor), Ok(origin)) = (window.current_monitor(), window.outer_position())
+        else {
+            return false;
+        };
+        let (screen, size) = (monitor.size(), window.outer_size());
+        let at = monitor.position();
+        let target = winit::dpi::PhysicalPosition::new(
+            at.x + (i64::from(screen.width) - i64::from(size.width)) as i32 / 2,
+            at.y + (i64::from(screen.height) - i64::from(size.height)) as i32 / 2,
+        );
+        window.set_outer_position(target);
+        // Moved only if the system reports the new place.
+        window.outer_position().is_ok_and(|now| now != origin) || target == origin
     }
 
     /// 0.5.0 M2: maximizes the window -- or opens it maximized.
@@ -643,7 +725,7 @@ impl PyWindow {
     /// (0.4.1 M8) `show_damage`, and (0.5.0 M2) `decorations`; `width`,
     /// `height`, and `scale_factor` are read-only.
     #[pyo3(signature = (**props))]
-    fn set(&mut self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+    fn set(&self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let mut title = None;
         let mut partial_redraw = None;
         let mut show_damage = None;
@@ -660,6 +742,8 @@ impl PyWindow {
         let mut transparent = None;
         let mut blur_behind = None;
         let mut click_through = None;
+        let (mut x, mut y) = (None, None);
+        let (mut always_on_top, mut resizable, mut skip_taskbar) = (None, None, None);
         let mut system_menu = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
@@ -720,6 +804,11 @@ impl PyWindow {
                             PyValueError::new_err("window property `click_through` must be a bool")
                         })?);
                     }
+                    "x" => x = Some(extract_coordinate(&name, &value)?),
+                    "y" => y = Some(extract_coordinate(&name, &value)?),
+                    "always_on_top" => always_on_top = Some(extract_flag(&name, &value)?),
+                    "resizable" => resizable = Some(extract_flag(&name, &value)?),
+                    "skip_taskbar" => skip_taskbar = Some(extract_flag(&name, &value)?),
                     "dpi_scaling" => {
                         dpi_scaling = Some(value.extract::<bool>().map_err(|_| {
                             PyValueError::new_err("window property `dpi_scaling` must be a bool")
@@ -755,7 +844,7 @@ impl PyWindow {
             if let Some(window) = self.handles.os_window.borrow().as_ref() {
                 window.set_title(&title);
             }
-            self.title = title;
+            *self.title.borrow_mut() = title;
         }
         if let Some(on) = partial_redraw {
             self.handles.partial_redraw.set(on);
@@ -807,6 +896,54 @@ impl PyWindow {
                 })?;
             }
             self.handles.click_through.set(on);
+        }
+        if x.is_some() || y.is_some() {
+            let current = self.handles.position.get().unwrap_or((0.0, 0.0));
+            let live = self.handles.os_window.borrow().as_ref().map(|window| {
+                let scale = window.scale_factor();
+                window
+                    .outer_position()
+                    .ok()
+                    .map(|p| (f64::from(p.x) / scale, f64::from(p.y) / scale))
+            });
+            // Without both coordinates, the other one stays where the window is.
+            let base = live.flatten().unwrap_or(current);
+            let to = (x.unwrap_or(base.0), y.unwrap_or(base.1));
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                // A no-op where the system places windows (Wayland).
+                window.set_outer_position(winit::dpi::LogicalPosition::new(to.0, to.1));
+            }
+            self.handles.position.set(Some(to));
+        }
+        if let Some(on) = always_on_top {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                window.set_window_level(if on {
+                    winit::window::WindowLevel::AlwaysOnTop
+                } else {
+                    winit::window::WindowLevel::Normal
+                });
+            }
+            self.handles.always_on_top.set(on);
+        }
+        if let Some(on) = resizable {
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                window.set_resizable(on);
+            }
+            self.handles.resizable.set(on);
+        }
+        if let Some(on) = skip_taskbar {
+            #[cfg(target_os = "windows")]
+            if let Some(window) = self.handles.os_window.borrow().as_ref() {
+                use winit::platform::windows::WindowExtWindows;
+                window.set_skip_taskbar(on);
+            }
+            #[cfg(not(target_os = "windows"))]
+            if on {
+                return Err(PyValueError::new_err(
+                    "window property `skip_taskbar` is only supported on Windows",
+                ));
+            }
+            self.handles.skip_taskbar.set(on);
         }
         if let Some(on) = dpi_scaling {
             self.handles.dpi_scaling.set(on);
@@ -872,7 +1009,13 @@ impl PyWindow {
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
-            "title" => self.title.clone().into_pyobject(py)?.into_any().unbind(),
+            "title" => self
+                .title
+                .borrow()
+                .clone()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
             "partial_redraw" => self
                 .handles
                 .partial_redraw
@@ -979,6 +1122,50 @@ impl PyWindow {
                 .transparent_active
                 .get()
                 .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            "x" | "y" => {
+                // The window's own position once it is open (None where the
+                // system doesn't say, as on Wayland); before that, what was set.
+                let scale_position = |window: &winit::window::Window| {
+                    let scale = window.scale_factor();
+                    window
+                        .outer_position()
+                        .ok()
+                        .map(|p| (f64::from(p.x) / scale, f64::from(p.y) / scale))
+                };
+                let position = match self.handles.os_window.borrow().as_ref() {
+                    Some(window) => scale_position(window),
+                    None => self.handles.position.get(),
+                };
+                position
+                    .map(|p| if name == "x" { p.0 } else { p.1 })
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
+            }
+            "always_on_top" => self
+                .handles
+                .always_on_top
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "resizable" => self
+                .handles
+                .resizable
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "skip_taskbar" => self
+                .handles
+                .skip_taskbar
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
                 .into_any()
                 .unbind(),
             "click_through" => self
@@ -1122,7 +1309,8 @@ impl PyWindow {
                      decorations, maximized, minimized, active, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
                      native_controls, gpu_watchdog, present_mode, dpi_scaling, transparent, \
-                     transparent_active, blur_behind, click_through"
+                     transparent_active, blur_behind, click_through, x, y, always_on_top, resizable, \
+                     skip_taskbar"
                 )));
             }
         })
@@ -1198,15 +1386,34 @@ impl PyWindow {
             self.handles.root,
             self.handles.handlers.clone(),
         );
-        let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
+        // 0.5.6 (#163): timers fire at their own times within the span, in
+        // order, so `advance(1000)` with an `every(100)` runs it ten times.
+        let target = clock::now(&tree) + Duration::from_secs_f64(ms / 1000.0);
+        let mut fired = 0u32;
+        loop {
+            let next = self.handles.timers.borrow().next_due();
+            let Some(due) = next.filter(|due| *due <= target) else {
+                break;
+            };
+            let here = clock::now(&tree);
+            clock::advance(&tree, due.saturating_duration_since(here));
+            crate::timers::run_due(&self.handles.timers, clock::now(&tree), py);
+            fired += 1;
+            if fired >= 1_000_000 {
+                tracing::warn!("advance: stopped after a million timer runs");
+                break;
+            }
+        }
+        let now = clock::advance(&tree, target.saturating_duration_since(clock::now(&tree)));
         let (_, completed) = tree.borrow_mut().tick_all(now);
-        run_completions(&self.handles.completions, completed, py);
-        // 0.5.4 (#113): time passing can make a held touch a long press.
+        crate::caret::update_blink(&tree, now, &self.handles.alarm);
         let ctx = NodeContext {
             tree: &tree,
             handlers: &handlers,
             completions: &self.handles.completions,
         };
+        run_completions(&ctx, completed, py);
+        // 0.5.4 (#113): time passing can make a held touch a long press.
         crate::touch::poll(
             &ctx,
             &WindowIo {
@@ -1521,6 +1728,22 @@ impl PyWindow {
                 let text = f.required("text", text)?;
                 f.done()?;
                 process_input(&ctx, &io, root, &InputEvent::TextInput(text), py);
+            }
+            // 0.5.6 (#162): an IME composition preview, as the OS sends it: the
+            // preedit text (empty ends the composition) and the IME's cursor
+            // range inside it. The commit that follows is an `input`.
+            "ime_preedit" => {
+                let text = f.string("text")?.unwrap_or_default();
+                let cursor = f.take("cursor");
+                f.done()?;
+                let cursor = match cursor {
+                    None => None,
+                    Some(value) if value.is_none() => None,
+                    Some(value) => Some(value.extract::<(usize, usize)>().map_err(|_| {
+                        PyValueError::new_err("simulate(\"ime_preedit\"): cursor must be a (start, end) tuple of byte offsets, or None")
+                    })?),
+                };
+                process_input(&ctx, &io, root, &InputEvent::ImePreedit(text, cursor), py);
             }
             "focus" | "unfocus" => {
                 let id = need_node(&f)?;

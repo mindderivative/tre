@@ -1300,6 +1300,7 @@ fn blittable(tree: &Tree, scroller: NodeId) -> bool {
         || paint.blur.current > 0.0
         || paint.backdrop_blur.current > 0.0
         || paint.blend != engine_core::Blend::Normal
+        || paint.mask.is_some()
     {
         return false;
     }
@@ -1309,6 +1310,7 @@ fn blittable(tree: &Tree, scroller: NodeId) -> bool {
                 && n.paint.blur.current <= 0.0
                 && n.paint.backdrop_blur.current <= 0.0
                 && n.paint.blend == engine_core::Blend::Normal
+                && n.paint.mask.is_none()
                 && !(crate::clips_children(n) && rounded(n))
         })
     })
@@ -1692,6 +1694,11 @@ fn node_fingerprint_with(
         // 0.5.4 (#139): where a sticky node is reaches paint through its composed
         // transform, which is hashed above.
         sticky: _,
+        // 0.5.6 (#166): where a snapped item settles paints nothing itself.
+        snap_align: _,
+        // 0.5.6 (#161): a layout animation reaches paint through the style it
+        // writes, so it changes the box size and position above.
+        layout_anims: _,
         cursor: _,
         // 0.5.0 M3: which presses move the window; paints nothing.
         window_region: _,
@@ -1780,6 +1787,7 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         blur,
         blend,
         backdrop_blur,
+        mask,
     } = paint;
     color(h, background.current);
     num(h, corner_radius.current);
@@ -1820,6 +1828,22 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
     }
     // 0.5.4 (#129): and one is part of the border.
     optional_gradient_fingerprint(h, border_gradient.as_deref());
+    // 0.5.6 (#164): and a mask is the shape of everything the node paints.
+    match mask.as_deref() {
+        None => 0u8.hash(h),
+        Some(engine_core::Mask::Circle) => 1u8.hash(h),
+        Some(engine_core::Mask::Rounded(radii)) => {
+            2u8.hash(h);
+            radii.0.iter().for_each(|r| num(h, *r));
+        }
+        Some(engine_core::Mask::Path { data, view_box }) => {
+            3u8.hash(h);
+            data.to_svg().hash(h);
+            for value in [view_box.x0, view_box.y0, view_box.x1, view_box.y1] {
+                num(h, value);
+            }
+        }
+    }
 }
 
 fn optional_gradient_fingerprint(h: &mut impl Hasher, gradient: Option<&engine_core::Gradient>) {
@@ -1951,9 +1975,26 @@ fn field_fingerprint(h: &mut impl Hasher, state: &TextFieldState) {
         placeholder,
         placeholder_fill,
         caret_color,
+        max_length: _,
+        read_only: _,
+        input_mode: _,
+        caret_visible,
+        caret_width,
+        caret_shape,
+        caret_blink_ms: _,
+        caret_on,
+        // Where the blink started, and where a composition's cursor is, paint
+        // nothing of their own.
+        caret_epoch: _,
+        preedit_cursor: _,
+        last_inserted: _,
         selection_fill,
         obscured,
     } = state;
+    caret_visible.hash(h);
+    caret_width.to_bits().hash(h);
+    (*caret_shape as u8).hash(h);
+    caret_on.hash(h);
     content.hash(h);
     font_family.hash(h);
     font_weight.to_bits().hash(h);
@@ -1972,11 +2013,15 @@ fn field_fingerprint(h: &mut impl Hasher, state: &TextFieldState) {
     num(h, scroll_offset.current);
     num(h, horizontal_scroll_offset.current);
     placeholder.hash(h);
-    for fill in [placeholder_fill, caret_color, selection_fill] {
+    for fill in [placeholder_fill, selection_fill] {
         fill.is_some().hash(h);
         if let Some(c) = fill {
             color(h, *c);
         }
+    }
+    caret_color.is_some().hash(h);
+    if let Some(c) = caret_color {
+        color(h, c.current);
     }
     obscured.hash(h);
 }
@@ -2075,6 +2120,8 @@ fn canvas_fingerprint(h: &mut impl Hasher, state: &CanvasState) {
 
 fn scroll_fingerprint(h: &mut impl Hasher, state: &ScrollViewState, with_offset: bool) {
     let ScrollViewState {
+        // Where it settles when the user stops; paints nothing itself.
+        snap: _,
         scroll,
         horizontal,
         thumb_drag_anchor,

@@ -12,7 +12,7 @@
 //! that.
 
 use std::collections::HashSet;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap};
 
@@ -57,6 +57,15 @@ mod text_editing;
 pub enum FocusDirection {
     Next,
     Previous,
+}
+
+/// 0.5.6 (#161): why a layout animation could not start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutAnimError {
+    /// The node is gone.
+    Missing,
+    /// The property is `auto` or a percentage, with no pixel value to start from.
+    NoStart,
 }
 
 pub struct Tree {
@@ -119,6 +128,12 @@ pub struct Tree {
     /// answered, to skip a repeat of the same question.
     last_layout: Option<(NodeId, Size<AvailableSpace>)>,
     scanned_at: Option<u64>,
+    /// 0.5.6 (#165): text fields whose caret moved or text changed, until
+    /// `take_caret_changes` reports them.
+    caret_changes: Vec<(NodeId, Option<std::ops::Range<usize>>)>,
+    /// 0.5.6 (#166): scroll views the user has scrolled, waiting to settle on a
+    /// snap point once the input stops (`None`: not yet seen by a tick).
+    snap_pending: Vec<(NodeId, Option<Instant>)>,
     scroll_view_count: usize,
     virtual_list_count: usize,
     /// 0.5.4 (#150): how many `Image` and `Svg` nodes the tree holds, so a
@@ -170,6 +185,8 @@ impl Tree {
             text_lines: Default::default(),
             last_layout: None,
             scanned_at: None,
+            caret_changes: Vec::new(),
+            snap_pending: Vec::new(),
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
             focused: None,
@@ -294,6 +311,8 @@ impl Tree {
             access: AccessNodeData::default(),
             hit_testable: true,
             sticky: None,
+            snap_align: None,
+            layout_anims: None,
             cursor: None,
             window_region: crate::node::WindowRegion::Default,
             shader: None,
@@ -672,8 +691,31 @@ impl Tree {
     }
 
     /// One node's animatable values, ticked: whether any is still running.
-    fn tick_node(node: &mut Node, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool {
+    fn tick_node(
+        id: NodeId,
+        node: &mut Node,
+        now: Instant,
+        completed: &mut Vec<CompletionHandle>,
+        layout_changed: &mut Vec<NodeId>,
+    ) -> bool {
         let mut active = node.paint.tick(now, completed);
+        // 0.5.6 (#161): layout animations write their value into the style;
+        // the tree hands the style to taffy once every node has ticked.
+        if let Some(anims) = &mut node.layout_anims {
+            let mut style = node.layout_style.clone();
+            for anim in anims.iter_mut() {
+                if anim.value.tick(now, completed) {
+                    active = true;
+                }
+                anim.prop.write(&mut style, anim.value.current);
+            }
+            anims.retain(|anim| anim.value.active.is_some());
+            if anims.is_empty() {
+                node.layout_anims = None;
+            }
+            node.layout_style = style;
+            layout_changed.push(id);
+        }
         // M95: a path's data (morphing) and stroke trim.
         if let NodeKind::Path(state) = &mut node.kind
             && state.tick(now, completed)
@@ -684,6 +726,12 @@ impl Tree {
         // scroll view's animatable `scroll_offset`.
         if let NodeKind::TextField(state) = &mut node.kind
             && state.text_tint.tick(now, completed)
+        {
+            active = true;
+        }
+        if let NodeKind::TextField(state) = &mut node.kind
+            && let Some(caret) = &mut state.caret_color
+            && caret.tick(now, completed)
         {
             active = true;
         }
@@ -716,6 +764,88 @@ impl Tree {
         }
     }
 
+    /// 0.5.6 (#161): starts animating a layout property of `id` to `to`
+    /// pixels. It starts from the property's pixel value, or -- for width and
+    /// height, when it is `auto` or a percentage -- from the size layout gave
+    /// the node (run layout first). Any other property in that state has no
+    /// number to start from. A running animation of the property is replaced
+    /// and ends as cancelled.
+    #[allow(clippy::too_many_arguments)]
+    pub fn animate_layout(
+        &mut self,
+        id: NodeId,
+        prop: crate::layout_anim::LayoutProp,
+        to: f64,
+        duration: Duration,
+        curve: crate::animation::MotionCurve,
+        now: Instant,
+        completion: Option<CompletionHandle>,
+    ) -> Result<(), LayoutAnimError> {
+        use crate::layout_anim::{LayoutAnim, LayoutProp};
+        let laid_out = self.layout(id).size;
+        let node = self.nodes.get_mut(id).ok_or(LayoutAnimError::Missing)?;
+        if let Some(anim) = node
+            .layout_anims
+            .as_mut()
+            .and_then(|anims| anims.iter_mut().find(|a| a.prop == prop))
+        {
+            // Retargets from where the animation is, like every other.
+            match completion {
+                Some(handle) => anim
+                    .value
+                    .animate_to_with_completion(to, duration, curve, now, handle),
+                None => anim.value.animate_to(to, duration, curve, now),
+            }
+            self.dirty = true;
+            return Ok(());
+        }
+        let from = prop
+            .read(&node.layout_style)
+            .or(match prop {
+                LayoutProp::Width => Some(f64::from(laid_out.width)),
+                LayoutProp::Height => Some(f64::from(laid_out.height)),
+                _ => None,
+            })
+            .ok_or(LayoutAnimError::NoStart)?;
+        let mut value = crate::animation::Animated::new(from);
+        match completion {
+            Some(handle) => value.animate_to_with_completion(to, duration, curve, now, handle),
+            None => value.animate_to(to, duration, curve, now),
+        }
+        node.layout_anims
+            .get_or_insert_with(Default::default)
+            .push(LayoutAnim { prop, value });
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// 0.5.6 (#161): where `id`'s running animation of `prop` is heading.
+    pub fn layout_target(&self, id: NodeId, prop: crate::layout_anim::LayoutProp) -> Option<f64> {
+        let anims = self.nodes.get(id)?.layout_anims.as_ref()?;
+        anims
+            .iter()
+            .find(|a| a.prop == prop)
+            .map(|a| *a.value.target())
+    }
+
+    /// 0.5.6 (#161): stops `id`'s animations of `props` where they are (each
+    /// ends as cancelled). A property set outright does this.
+    pub fn stop_layout_anims(&mut self, id: NodeId, props: &[crate::layout_anim::LayoutProp]) {
+        let Some(node) = self.nodes.get_mut(id) else {
+            return;
+        };
+        let Some(anims) = &mut node.layout_anims else {
+            return;
+        };
+        for anim in anims.iter_mut().filter(|a| props.contains(&a.prop)) {
+            anim.value.stop();
+        }
+        anims.retain(|a| !props.contains(&a.prop));
+        if anims.is_empty() {
+            node.layout_anims = None;
+        }
+    }
+
     /// 0.5.4 (#116): how many nodes the tree holds.
     pub fn node_count(&self) -> usize {
         self.nodes.len()
@@ -730,11 +860,12 @@ impl Tree {
         // pile up while nothing starts.
         let (all_reached, reached) = self.nodes.take_animation_candidates();
         let mut still = Vec::new();
+        let mut layout_changed = Vec::new();
         if started_new && all_reached {
             // Every node may be new to us (or too many to say which): look at
             // all of them.
             for (id, node) in &mut self.nodes {
-                if Self::tick_node(node, now, &mut completed) {
+                if Self::tick_node(id, node, now, &mut completed, &mut layout_changed) {
                     still.push(id);
                 }
             }
@@ -754,7 +885,7 @@ impl Tree {
             ids.dedup();
             for id in ids {
                 if let Some(node) = self.nodes.get_mut(id)
-                    && Self::tick_node(node, now, &mut completed)
+                    && Self::tick_node(id, node, now, &mut completed, &mut layout_changed)
                 {
                     still.push(id);
                 }
@@ -763,7 +894,14 @@ impl Tree {
             let _ = self.nodes.take_animation_candidates();
         }
         self.animating = still;
-        let any_active = !self.animating.is_empty();
+        let settling = self.settle_snaps(now);
+        for id in layout_changed {
+            if let Some(node) = self.nodes.get(id) {
+                let style = node.layout_style.clone();
+                self.set_layout_style(id, style);
+            }
+        }
+        let any_active = !self.animating.is_empty() || settling || !self.snap_pending.is_empty();
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the
         // exact signal this needs, just never fed into a redraw

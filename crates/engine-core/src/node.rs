@@ -394,8 +394,28 @@ impl TerminalState {
 /// No `#[derive(Clone, Debug, PartialEq)]` -- `Animated<T>`
 /// implements none of those, the same real reason `NodeKind`'s own
 /// doc comment states.
+/// 0.5.6 (#166): where a scroll view lines an item up when it settles: with
+/// the start of the view, its middle, or its end.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapAlign {
+    Start,
+    Center,
+    End,
+}
+
+impl SnapAlign {
+    pub const ALL: [(&'static str, SnapAlign); 3] = [
+        ("start", SnapAlign::Start),
+        ("center", SnapAlign::Center),
+        ("end", SnapAlign::End),
+    ];
+}
+
 pub struct ScrollViewState {
     pub scroll: Animated<f64>,
+    /// 0.5.6 (#166): when set, the view settles on the item nearest the
+    /// alignment once the user stops scrolling it. `None` is free scrolling.
+    pub snap: Option<SnapAlign>,
     /// `false` (the default) scrolls vertically; `true` scrolls
     /// horizontally. Never both at once -- the identical real
     /// single-axis scope pyCopper's own `ScrollViewElement.axis`
@@ -429,6 +449,7 @@ impl ScrollViewState {
     pub fn new(horizontal: bool) -> Self {
         Self {
             scroll: Animated::new(0.0),
+            snap: None,
             horizontal,
             thumb_drag_anchor: None,
             scrollbar_fill: None,
@@ -662,8 +683,32 @@ pub struct TextFieldState {
     pub placeholder: String,
     /// M95: the placeholder's color; `None` is `text_tint` at 60% alpha.
     pub placeholder_fill: Option<Color>,
-    /// M95: the caret's color; `None` is `text_tint`.
-    pub caret_color: Option<Color>,
+    /// M95: the caret's color; `None` is `text_tint`. 0.5.6 (#165): animatable.
+    pub caret_color: Option<Animated<Color>>,
+    /// 0.5.6 (#162): the most characters the field holds; typing, paste and
+    /// IME commits that would pass it are cut short. `None` is no limit.
+    pub max_length: Option<usize>,
+    /// 0.5.6 (#162): the text can be selected and copied but not edited.
+    pub read_only: bool,
+    /// 0.5.6 (#162): what kind of text the field takes, for a keyboard that
+    /// can adapt to it.
+    pub input_mode: InputMode,
+    /// 0.5.6 (#165): whether tre draws the caret; `false` leaves it to a
+    /// framework that draws its own.
+    pub caret_visible: bool,
+    /// 0.5.6 (#165): the bar's width in pixels (the thickness of an underline).
+    pub caret_width: f32,
+    pub caret_shape: CaretShape,
+    /// 0.5.6 (#165): milliseconds between the caret going off and on; `0`
+    /// keeps it steady. `caret_on` is the phase, kept by the window's loop;
+    /// `caret_epoch` is when the current blink started (reset by every edit).
+    pub caret_blink_ms: u32,
+    pub caret_on: bool,
+    pub caret_epoch: Option<Instant>,
+    /// 0.5.6 (#162): the IME's cursor range inside the preedit text, in bytes.
+    pub preedit_cursor: Option<(usize, usize)>,
+    /// 0.5.6 (#165): the bytes the last edit inserted, for `caret_move`.
+    pub last_inserted: Option<std::ops::Range<usize>>,
     /// M95: the selection highlight's color; `None` is `text_tint` at 30%
     /// alpha.
     pub selection_fill: Option<Color>,
@@ -672,7 +717,75 @@ pub struct TextFieldState {
     pub obscured: bool,
 }
 
+/// 0.5.6 (#162): what kind of text a text input takes (HTML's `inputmode`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InputMode {
+    #[default]
+    Text,
+    Numeric,
+    Decimal,
+    Email,
+    Phone,
+    Url,
+    Search,
+}
+
+impl InputMode {
+    pub const ALL: [(&'static str, InputMode); 7] = [
+        ("text", InputMode::Text),
+        ("numeric", InputMode::Numeric),
+        ("decimal", InputMode::Decimal),
+        ("email", InputMode::Email),
+        ("phone", InputMode::Phone),
+        ("url", InputMode::Url),
+        ("search", InputMode::Search),
+    ];
+}
+
+/// 0.5.6 (#165): how a text input's caret is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CaretShape {
+    /// A thin vertical bar before the character.
+    #[default]
+    Bar,
+    /// A box over the character the caret is before.
+    Block,
+    /// A line under the character the caret is before.
+    Underline,
+}
+
+impl CaretShape {
+    pub const ALL: [(&'static str, CaretShape); 3] = [
+        ("bar", CaretShape::Bar),
+        ("block", CaretShape::Block),
+        ("underline", CaretShape::Underline),
+    ];
+}
+
 impl TextFieldState {
+    /// 0.5.6 (#162): how many more characters an insertion could add now,
+    /// counting the selection as replaced.
+    pub fn room(&self) -> usize {
+        let Some(max) = self.max_length else {
+            return usize::MAX;
+        };
+        let selected = self.selection_anchor.map_or(0, |anchor| {
+            let (a, b) = (anchor.min(self.cursor), anchor.max(self.cursor));
+            self.content.get(a..b).map_or(0, |s| s.chars().count())
+        });
+        let have = self.content.chars().count().saturating_sub(selected);
+        max.saturating_sub(have)
+    }
+
+    /// 0.5.6 (#162): `text` cut to what `room` allows, on a character boundary.
+    pub fn fit<'a>(&self, text: &'a str) -> &'a str {
+        let room = self.room();
+        match text.char_indices().nth(room) {
+            Some((end, _)) => &text[..end],
+            None => text,
+        }
+    }
+
     /// Seeds `cursor` at `content`'s own real end -- a real text
     /// field's own real, expected initial-cursor-at-end convention
     /// (every desktop toolkit's own default), not `0`.
@@ -703,6 +816,17 @@ impl TextFieldState {
             placeholder: String::new(),
             placeholder_fill: None,
             caret_color: None,
+            max_length: None,
+            read_only: false,
+            input_mode: InputMode::Text,
+            caret_visible: true,
+            caret_width: 1.5,
+            caret_shape: CaretShape::Bar,
+            caret_blink_ms: 0,
+            caret_on: true,
+            caret_epoch: None,
+            preedit_cursor: None,
+            last_inserted: None,
             selection_fill: None,
             obscured: false,
         }
@@ -1198,8 +1322,28 @@ impl Interpolate for Shadows {
     }
 }
 
+/// 0.5.6 (#164): a shape a node and its subtree are clipped to, in the node's
+/// own coordinates (so it follows the node's transform).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mask {
+    /// The circle inscribed in the node's box, centred; an ellipse if the box
+    /// is not square would be a different shape, so this one stays round.
+    Circle,
+    /// The box with these corner radii (top-left, top-right, bottom-right,
+    /// bottom-left), independent of the node's own `corner_radius`.
+    Rounded(CornerRadii),
+    /// Any path, fitted into the box by `view_box` like a path node's own.
+    Path {
+        data: crate::path::PathData,
+        view_box: peniko::kurbo::Rect,
+    },
+}
+
 /// Universal paint state every node has, regardless of `NodeKind`.
 pub struct PaintProperties {
+    /// 0.5.6 (#164): the shape the node and its subtree are clipped to.
+    /// Boxed, so a node without one pays a pointer.
+    pub mask: Option<Box<Mask>>,
     pub background: Animated<Color>,
     pub corner_radius: Animated<f64>,
     pub opacity: Animated<f64>,
@@ -1347,6 +1491,7 @@ impl PaintProperties {
             blur: Animated::new(0.0),
             blend: Blend::Normal,
             backdrop_blur: Animated::new(0.0),
+            mask: None,
         }
     }
 
@@ -1434,6 +1579,12 @@ pub struct Node {
     /// `Tree::scroll_shift`). `None`, the default, is a node that scrolls with
     /// its content.
     pub sticky: Option<f64>,
+    /// 0.5.6 (#166): how this item lines up when its scroll view snaps; `None`
+    /// takes the view's own `scroll_snap`.
+    pub snap_align: Option<SnapAlign>,
+    /// 0.5.6 (#161): running animations of this node's layout properties,
+    /// written into `layout_style` each tick. Boxed: most nodes have none.
+    pub layout_anims: Option<Box<Vec<crate::layout_anim::LayoutAnim>>>,
     /// M94: the pointer shape shown over this node; `None` inherits the
     /// nearest ancestor's, and the default arrow when none sets one.
     pub cursor: Option<Cursor>,

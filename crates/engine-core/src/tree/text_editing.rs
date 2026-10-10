@@ -116,6 +116,18 @@ impl Tree {
         if !matches!(key, Key::ArrowUp | Key::ArrowDown) {
             state.goal_column = None;
         }
+        // 0.5.6 (#162): a read-only field takes no edit. Tab in a multiline
+        // one is focus traversal again, as in a single-line field.
+        let edits = matches!(key, Key::Backspace | Key::Delete | Key::Space)
+            || (state.multiline && matches!(key, Key::Enter | Key::Tab));
+        if state.read_only && edits {
+            return if key == Key::Tab {
+                None
+            } else {
+                Some(DispatchOutcome::None)
+            };
+        }
+        state.last_inserted = None;
         match key {
             Key::Backspace => {
                 // M54 Phase 1 (§8, §16.2): the real pre-edit content,
@@ -293,8 +305,12 @@ impl Tree {
             // not fall through to `Key::Enter | Key::Space =>
             // Activated`'s own generic button-activation meaning.
             Key::Space => {
+                if state.fit(" ").is_empty() {
+                    return Some(DispatchOutcome::None);
+                }
                 let old_content = state.content.clone();
                 Self::delete_selection(state);
+                state.last_inserted = Some(state.cursor..state.cursor + 1);
                 state.content.insert(state.cursor, ' ');
                 state.cursor += 1;
                 Some(DispatchOutcome::Changed {
@@ -312,8 +328,12 @@ impl Tree {
             // already establishes.
             Key::Enter => {
                 if state.multiline {
+                    if state.fit("\n").is_empty() {
+                        return Some(DispatchOutcome::None);
+                    }
                     let old_content = state.content.clone();
                     Self::delete_selection(state);
+                    state.last_inserted = Some(state.cursor..state.cursor + 1);
                     state.content.insert(state.cursor, '\n');
                     state.cursor += 1;
                     Some(DispatchOutcome::Changed {
@@ -321,7 +341,8 @@ impl Tree {
                         old_value: ChangedValue::Text(old_content),
                     })
                 } else {
-                    Some(DispatchOutcome::None)
+                    // 0.5.6 (#162): Enter in a single-line field submits it.
+                    Some(DispatchOutcome::Submitted(field))
                 }
             }
             // M31 Phase 2 (§8, §10): a focused *multiline* field claims
@@ -342,8 +363,12 @@ impl Tree {
             // capture never traps the keyboard.
             Key::Tab => {
                 if state.multiline {
+                    if state.fit("\t").is_empty() {
+                        return Some(DispatchOutcome::None);
+                    }
                     let old_content = state.content.clone();
                     Self::delete_selection(state);
+                    state.last_inserted = Some(state.cursor..state.cursor + 1);
                     state.content.insert(state.cursor, '\t');
                     state.cursor += 1;
                     Some(DispatchOutcome::Changed {
@@ -537,7 +562,10 @@ impl Tree {
         let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
             return None;
         };
-        Self::delete_selection(state);
+        // 0.5.6 (#162): a read-only field copies and does not delete.
+        if !state.read_only {
+            Self::delete_selection(state);
+        }
         Some(text)
     }
 
@@ -561,6 +589,7 @@ impl Tree {
     /// `dock::start_drag`'s own "press on the wrong thing, nothing
     /// happens" precedent.
     pub fn set_text_field_cursor(&mut self, field: NodeId, offset: usize) -> bool {
+        let before = self.caret_of(field);
         self.dirty = true;
         let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
         else {
@@ -570,6 +599,7 @@ impl Tree {
         state.selection_anchor = None;
         state.goal_column = None;
         self.scroll_text_field_caret_into_view(field);
+        self.note_caret(field, before);
         true
     }
 
@@ -588,6 +618,28 @@ impl Tree {
             .unwrap_or(0)
     }
 
+    /// 0.5.6 (#165): where a text field's caret and selection are.
+    fn caret_of(&self, field: NodeId) -> Option<(usize, Option<usize>)> {
+        match &self.nodes.get(field)?.kind {
+            NodeKind::TextField(state) => Some((state.cursor, state.selection_anchor)),
+            _ => None,
+        }
+    }
+
+    /// 0.5.6 (#165): notes that `field`'s caret moved, if it did since `before`,
+    /// and restarts its blink so the caret is solid where it landed.
+    fn note_caret(&mut self, field: NodeId, before: Option<(usize, Option<usize>)>) {
+        let after = self.caret_of(field);
+        if after != before && after.is_some() {
+            self.caret_changes.push((field, None));
+            if let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
+            {
+                state.caret_on = true;
+                state.caret_epoch = None;
+            }
+        }
+    }
+
     /// M18 Phase 2 (§8, §10): `set_text_field_cursor`'s own real drag-
     /// extend sibling -- a genuinely different operation, not the same
     /// method with a flag (the same "two distinct real behaviors, two
@@ -600,6 +652,7 @@ impl Tree {
     /// the way `set_text_field_cursor` deliberately does for a plain
     /// click.
     pub fn extend_text_field_selection(&mut self, field: NodeId, offset: usize) -> bool {
+        let before = self.caret_of(field);
         self.dirty = true;
         let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
         else {
@@ -611,6 +664,7 @@ impl Tree {
         state.cursor = Self::char_boundary(&state.content, offset);
         state.goal_column = None;
         self.scroll_text_field_caret_into_view(field);
+        self.note_caret(field, before);
         true
     }
 
@@ -624,6 +678,7 @@ impl Tree {
     /// `NodeId`, the same real contract every sibling method here
     /// already has.
     pub fn select_all_text_field(&mut self, field: NodeId) -> bool {
+        let before = self.caret_of(field);
         self.dirty = true;
         let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
         else {
@@ -633,6 +688,7 @@ impl Tree {
         state.cursor = state.content.len();
         state.goal_column = None;
         self.scroll_text_field_caret_into_view(field);
+        self.note_caret(field, before);
         true
     }
 

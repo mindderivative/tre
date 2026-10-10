@@ -38,6 +38,11 @@ pub(crate) fn fling_plan(speed: f64, at: f64, max: f64) -> Option<(f64, Duration
     Some((distance * speed.signum(), Duration::from_secs_f64(time), k))
 }
 
+/// 0.5.6 (#166): how long after its last input a snapping scroll view waits
+/// before it settles, and how long the settling takes.
+const SNAP_SETTLE: Duration = Duration::from_millis(120);
+const SNAP_DURATION: Duration = Duration::from_millis(200);
+
 /// How quickly a flick slows: the time constant of its decay, in seconds.
 const FLING_TAU: f64 = 0.35;
 /// A flick coasts to a stop at this speed, pixels a second.
@@ -93,6 +98,7 @@ impl Tree {
                     match &mut self.nodes[id].kind {
                         NodeKind::ScrollView(state) => {
                             state.scroll.animate_to(at + distance, duration, curve, now);
+                            self.note_scroll_input(id);
                         }
                         NodeKind::VirtualList(state) => {
                             state
@@ -174,6 +180,113 @@ impl Tree {
         // A hand on the content stops a fling in flight.
         state.scroll.stop();
         state.scroll.current = (state.scroll.current + delta).clamp(0.0, max_scroll);
+        self.note_scroll_input(id);
+    }
+
+    /// 0.5.6 (#166): the user scrolled `id`: if it snaps, it settles on a snap
+    /// point once the input stops (`settle_snaps`, each tick).
+    pub(super) fn note_scroll_input(&mut self, id: NodeId) {
+        let snaps = matches!(
+            self.nodes.get(id).map(|n| &n.kind),
+            Some(NodeKind::ScrollView(state)) if state.snap.is_some()
+        );
+        if !snaps {
+            return;
+        }
+        match self.snap_pending.iter_mut().find(|(view, _)| *view == id) {
+            Some(entry) => entry.1 = None,
+            None => self.snap_pending.push((id, None)),
+        }
+    }
+
+    /// 0.5.6 (#166): where `view` should settle: the offset, in `[0, max]`, that
+    /// lines up the item nearest its current one -- each item (a child of the
+    /// scroll content) by its own `snap_align`, or the view's. `None` if there
+    /// is nothing to snap to or it is already there.
+    fn snap_target(&self, view: NodeId) -> Option<f64> {
+        let node = self.nodes.get(view)?;
+        let NodeKind::ScrollView(state) = &node.kind else {
+            return None;
+        };
+        let align = state.snap?;
+        let content = *node.children.first()?;
+        let viewport_size = self.layout(view).size;
+        let viewport = f64::from(if state.horizontal {
+            viewport_size.width
+        } else {
+            viewport_size.height
+        });
+        let max = self.max_scroll(view)?;
+        let offset = state.scroll.current;
+        let mut best: Option<f64> = None;
+        for &item in &self.nodes.get(content)?.children {
+            let Some(item_node) = self.nodes.get(item) else {
+                continue;
+            };
+            if !item_node.visible {
+                continue;
+            }
+            let layout = self.layout(item);
+            let (start, size) = if state.horizontal {
+                (f64::from(layout.location.x), f64::from(layout.size.width))
+            } else {
+                (f64::from(layout.location.y), f64::from(layout.size.height))
+            };
+            let target = match item_node.snap_align.unwrap_or(align) {
+                crate::SnapAlign::Start => start,
+                crate::SnapAlign::Center => start + size / 2.0 - viewport / 2.0,
+                crate::SnapAlign::End => start + size - viewport,
+            }
+            .clamp(0.0, max);
+            if best.is_none_or(|b| (target - offset).abs() < (b - offset).abs()) {
+                best = Some(target);
+            }
+        }
+        best.filter(|target| (target - offset).abs() > 0.5)
+    }
+
+    /// 0.5.6 (#166): settles the scroll views the user has stopped scrolling.
+    /// A view settles `SNAP_SETTLE` after its last input, once no animation
+    /// (a fling) or thumb drag is moving it. Returns whether an animation
+    /// began, so the loop keeps ticking.
+    pub(super) fn settle_snaps(&mut self, now: Instant) -> bool {
+        let pending = std::mem::take(&mut self.snap_pending);
+        let mut keep = Vec::new();
+        let mut started = false;
+        for (id, since) in pending {
+            let Some(NodeKind::ScrollView(state)) = self.nodes.get(id).map(|n| &n.kind) else {
+                continue;
+            };
+            if state.snap.is_none() {
+                continue;
+            }
+            if self.dragging == Some(id) || state.scroll.active.is_some() {
+                keep.push((id, None));
+                continue;
+            }
+            match since {
+                None => keep.push((id, Some(now))),
+                Some(t) if now.saturating_duration_since(t) < SNAP_SETTLE => {
+                    keep.push((id, since));
+                }
+                Some(_) => {
+                    if let Some(target) = self.snap_target(id)
+                        && let Some(NodeKind::ScrollView(state)) =
+                            self.nodes.get_mut(id).map(|n| &mut n.kind)
+                    {
+                        state.scroll.animate_to(
+                            target,
+                            SNAP_DURATION,
+                            crate::MotionCurve::Bezier(0.2, 0.0, 0.0, 1.0),
+                            now,
+                        );
+                        started = true;
+                    }
+                }
+            }
+        }
+        self.snap_pending = keep;
+        started
     }
 
     /// M38 Phase 6 (§5, §7, §11.7): a real `ScrollView`'s own live
@@ -293,6 +406,7 @@ impl Tree {
         // scroll`'s own doc comment already establishes for every
         // other real scroll mutation (`scroll_scroll_view_by`).
         state.scroll.current = target;
+        self.note_scroll_input(view);
     }
 
     /// M47 (§5, §7, §11.7): a real `VirtualList`'s own live viewport
@@ -758,6 +872,11 @@ impl Tree {
     /// `animate`'s target.
     pub fn max_scroll(&self, view: NodeId) -> Option<f64> {
         let node = self.nodes.get(view)?;
+        // 0.5.6 (#166): a virtual list's furthest offset: its rows' extent less its height.
+        if let NodeKind::VirtualList(state) = &node.kind {
+            let viewport = f64::from(self.layout(view).size.height);
+            return Some((state.total_extent() - viewport).max(0.0));
+        }
         let NodeKind::ScrollView(state) = &node.kind else {
             return None;
         };

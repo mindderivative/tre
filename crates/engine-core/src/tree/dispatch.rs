@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// 0.5.6 (#165): what places a text field's caret: cursor, selection anchor,
+/// and the text's length.
+type CaretSnapshot = (usize, Option<usize>, usize);
+
 impl Tree {
     /// M4 Phase 1 step 1's one real top-level entry point: `engine-
     /// platform` translates a raw `winit` event into `InputEvent` and
@@ -14,6 +18,71 @@ impl Tree {
     /// `Tree` has no idea what activating a node means, only that it
     /// happened.
     pub fn dispatch(&mut self, root: NodeId, event: InputEvent, now: Instant) -> DispatchOutcome {
+        // 0.5.6 (#165): a keystroke or press restarts the caret's blink so it
+        // is solid while you type; and what moved the focused field's caret is
+        // noted for `caret_move`.
+        let restart_blink = matches!(
+            event,
+            InputEvent::KeyPressed { .. }
+                | InputEvent::TextInput(_)
+                | InputEvent::ImePreedit(..)
+                | InputEvent::PointerPressed { .. }
+        );
+        let before = self.focused_caret();
+        if let Some(field) = self.focused
+            && let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
+        {
+            state.last_inserted = None;
+            if restart_blink {
+                state.caret_on = true;
+                state.caret_epoch = None;
+            }
+        }
+        let outcome = self.dispatch_event(root, event, now);
+        let after = self.focused_caret();
+        if let (Some(before), Some(after)) = (&before, &after)
+            && before.0 == after.0
+            && before.1 != after.1
+        {
+            let inserted = match self.nodes.get(after.0).map(|n| &n.kind) {
+                Some(NodeKind::TextField(state)) => state.last_inserted.clone(),
+                _ => None,
+            };
+            self.caret_changes.push((after.0, inserted));
+        } else if let (None, Some(after)) | (Some(_), Some(after)) = (&before, &after)
+            && before.as_ref().is_none_or(|b| b.0 != after.0)
+        {
+            // Focus arrived in a field: the caret appeared, solid.
+            self.caret_changes.push((after.0, None));
+            if let Some(NodeKind::TextField(state)) =
+                self.nodes.get_mut(after.0).map(|n| &mut n.kind)
+            {
+                state.caret_on = true;
+                state.caret_epoch = None;
+            }
+        }
+        outcome
+    }
+
+    /// 0.5.6 (#165): the focused text field's id and what places its caret.
+    fn focused_caret(&self) -> Option<(NodeId, CaretSnapshot)> {
+        let field = self.focused?;
+        match &self.nodes.get(field)?.kind {
+            NodeKind::TextField(state) => Some((
+                field,
+                (state.cursor, state.selection_anchor, state.content.len()),
+            )),
+            _ => None,
+        }
+    }
+
+    /// 0.5.6 (#165): the text fields whose caret moved, or whose text changed,
+    /// since the last call, each with the bytes the edit inserted, if it did.
+    pub fn take_caret_changes(&mut self) -> Vec<(NodeId, Option<std::ops::Range<usize>>)> {
+        std::mem::take(&mut self.caret_changes)
+    }
+
+    fn dispatch_event(&mut self, root: NodeId, event: InputEvent, now: Instant) -> DispatchOutcome {
         self.dirty = true;
         match event {
             InputEvent::PointerMoved { position } => {
@@ -348,12 +417,24 @@ impl Tree {
                 let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
                     return DispatchOutcome::None;
                 };
+                // 0.5.6 (#162): a read-only field takes no text, and a field with a
+                // limit takes what fits (a composition that was in progress ends).
+                if state.read_only {
+                    state.preedit = None;
+                    return DispatchOutcome::None;
+                }
+                let text = state.fit(&text).to_string();
+                if text.is_empty() {
+                    state.preedit = None;
+                    return DispatchOutcome::None;
+                }
                 let old_content = state.content.clone();
                 // M15 Phase 3 (§16.7): typing over a real, active
                 // selection replaces it -- the same real desktop-editor
                 // behavior `Backspace`/`Delete`/`Space` already apply,
                 // via the identical shared helper.
                 Self::delete_selection(state);
+                state.last_inserted = Some(state.cursor..state.cursor + text.len());
                 state.content.insert_str(state.cursor, &text);
                 state.cursor += text.len();
                 state.goal_column = None;
@@ -530,12 +611,33 @@ impl Tree {
             // reaches here), but never a `Change`: a composition
             // preview isn't committed content, nothing has actually
             // been typed yet.
-            InputEvent::ImePreedit(text) => {
+            InputEvent::ImePreedit(text, cursor) => {
                 if let Some(field) = self.focused
                     && let Some(NodeKind::TextField(state)) =
                         self.nodes.get_mut(field).map(|n| &mut n.kind)
                 {
-                    state.preedit = if text.is_empty() { None } else { Some(text) };
+                    // 0.5.6 (#162): a read-only field takes no composition.
+                    if state.read_only {
+                        return DispatchOutcome::None;
+                    }
+                    let was = state.preedit.is_some();
+                    let now_has = !text.is_empty();
+                    state.preedit = if now_has { Some(text.clone()) } else { None };
+                    state.preedit_cursor = now_has.then_some(cursor).flatten();
+                    let phase = match (was, now_has) {
+                        (false, true) => Some(crate::input::ComposePhase::Start),
+                        (true, true) => Some(crate::input::ComposePhase::Update),
+                        (true, false) => Some(crate::input::ComposePhase::End),
+                        (false, false) => None,
+                    };
+                    if let Some(phase) = phase {
+                        return DispatchOutcome::Composed {
+                            node: field,
+                            phase,
+                            text,
+                            cursor,
+                        };
+                    }
                 }
                 DispatchOutcome::None
             }

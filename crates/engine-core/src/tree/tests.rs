@@ -3868,8 +3868,8 @@ fn enter_on_a_focused_text_field_is_consumed_without_inserting_or_activating() {
     let outcome = dispatch_key(&mut tree, root, Key::Enter);
     assert_eq!(
         outcome,
-        DispatchOutcome::None,
-        "a single-line TextField must not activate on Enter, matching Space's own reasoning"
+        DispatchOutcome::Submitted(field),
+        "a single-line TextField submits on Enter (0.5.6), and never activates or inserts"
     );
     assert_eq!(
         field_state(&tree, field).content,
@@ -4268,7 +4268,7 @@ fn arrow_up_down_home_end_and_enter_are_true_no_ops_for_a_non_multiline_field() 
         "ArrowUp/ArrowDown must be true no-ops on a single-line field"
     );
     let outcome = dispatch_key(&mut tree, root, Key::Enter);
-    assert_eq!(outcome, DispatchOutcome::None);
+    assert_eq!(outcome, DispatchOutcome::Submitted(field));
     assert_eq!(
         field_state(&tree, field).content,
         "one\ntwo",
@@ -4497,7 +4497,7 @@ fn cut_text_field_selection_with_no_real_selection_is_a_true_no_op() {
 fn dispatch_ime_preedit(tree: &mut Tree, root: NodeId, text: &str) -> DispatchOutcome {
     tree.dispatch(
         root,
-        InputEvent::ImePreedit(text.to_string()),
+        InputEvent::ImePreedit(text.to_string(), None),
         Instant::now(),
     )
 }
@@ -4508,8 +4508,13 @@ fn ime_preedit_sets_the_real_focused_fields_own_preview_without_touching_content
     let outcome = dispatch_ime_preedit(&mut tree, root, "n");
     assert_eq!(
         outcome,
-        DispatchOutcome::None,
-        "a composition preview is not a real content change"
+        DispatchOutcome::Composed {
+            node: field,
+            phase: crate::input::ComposePhase::Start,
+            text: "n".to_string(),
+            cursor: None,
+        },
+        "a composition preview is a Composed outcome (0.5.6), never a content change"
     );
     let state = field_state(&tree, field);
     assert_eq!(state.preedit, Some("n".to_string()));
@@ -7791,4 +7796,100 @@ fn image_and_svg_counters_follow_insert_and_remove() {
     assert_eq!(tree.image_nodes().count(), 0);
     assert!(tree.svg_bitmaps().is_empty());
     assert!(tree.image_ids.is_empty() && tree.svg_ids.is_empty());
+}
+
+mod access_states_0_5_6 {
+    use super::*;
+    use crate::access::{AccessNodeData, AriaCurrent, Role, Toggled};
+
+    fn scene() -> (Tree, NodeId, NodeId, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(100.0, 100.0);
+        let root = tree.insert(kind, style, paint);
+        let child = |tree: &mut Tree| {
+            let (kind, style, paint) = leaf(20.0, 20.0);
+            let id = tree.insert(kind, style, paint);
+            tree.add_child(root, id);
+            id
+        };
+        let button = child(&mut tree);
+        let hint = child(&mut tree);
+        let panel = child(&mut tree);
+        let gone = child(&mut tree);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        (tree, button, hint, panel, gone)
+    }
+
+    fn node(update: &accesskit::TreeUpdate, id: NodeId) -> &accesskit::Node {
+        let want = to_access_id(id);
+        &update
+            .nodes
+            .iter()
+            .find(|(candidate, _)| *candidate == want)
+            .expect("node in update")
+            .1
+    }
+
+    #[test]
+    fn states_and_relations_reach_the_update() {
+        let (mut tree, button, hint, panel, gone) = scene();
+        let mut access = AccessNodeData::new(Role::Button);
+        access.pressed = Some(Toggled::Mixed);
+        access.invalid = true;
+        access.busy = true;
+        access.current = Some(AriaCurrent::Page);
+        access.edit_extra(|x| {
+            x.value_text = Some("3 of 5".into());
+            x.described_by = vec![hint];
+            x.controls = vec![panel, gone];
+        });
+        tree.set_access(button, access);
+        tree.get_mut(gone).expect("node").visible = false;
+        let update =
+            tree.build_access_update(tree.get(button).and_then(|n| n.parent).expect("root"));
+        let button = node(&update, button);
+        assert_eq!(button.toggled(), Some(Toggled::Mixed));
+        assert_eq!(button.invalid(), Some(accesskit::Invalid::True));
+        assert!(button.is_busy());
+        assert_eq!(button.aria_current(), Some(AriaCurrent::Page));
+        assert_eq!(button.value(), Some("3 of 5"));
+        assert_eq!(button.described_by(), &[to_access_id(hint)]);
+        // An invisible node is not in the update, so it is not pointed at.
+        assert_eq!(button.controls(), &[to_access_id(panel)]);
+    }
+
+    #[test]
+    fn pressed_wins_over_checked_and_unset_states_stay_off() {
+        let (mut tree, button, ..) = scene();
+        let mut access = AccessNodeData::new(Role::Button);
+        access.checked = Some(true);
+        access.pressed = Some(Toggled::False);
+        tree.set_access(button, access);
+        let root = tree.get(button).and_then(|n| n.parent).expect("root");
+        let update = tree.build_access_update(root);
+        let button = node(&update, button);
+        assert_eq!(button.toggled(), Some(Toggled::False));
+        assert_eq!(button.invalid(), None);
+        assert!(!button.is_busy());
+        assert_eq!(button.aria_current(), None);
+        assert!(button.described_by().is_empty());
+    }
+
+    #[test]
+    fn a_node_never_points_at_itself_or_at_a_destroyed_node() {
+        let (mut tree, button, hint, ..) = scene();
+        let mut access = AccessNodeData::new(Role::Button);
+        access.edit_extra(|x| x.described_by = vec![button, hint]);
+        tree.set_access(button, access);
+        tree.remove(hint);
+        let root = tree.get(button).and_then(|n| n.parent).expect("root");
+        let update = tree.build_access_update(root);
+        assert!(node(&update, button).described_by().is_empty());
+    }
 }

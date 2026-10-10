@@ -170,36 +170,55 @@ pub(crate) fn wants_event(py: Python<'_>, handler: &Py<PyAny>) -> PyResult<bool>
     wants_event_payload(py, handler)
 }
 
-/// M9 Phase 2 (§5): the real registry `Node.animate(..., on_complete=
-/// ...)` mints a fresh handle into, and `run_completions` (below)
-/// drains -- the same `Rc<RefCell<...>>`-shared-into-every-`Node`
-/// shape `HandlerMap` already uses. `next_id` is a plain
-/// monotonic counter, not `NodeId`-derived: a `CompletionHandle` names
-/// one specific *animation*, not a node -- the same node can have
-/// several real completions registered (each of its own animatable
-/// properties, independently) outstanding at once.
+/// M9 Phase 2 (§5): the registry `Node.animate(..., on_complete=...)` mints a
+/// handle into, and `run_completions` (below) drains.
+///
+/// 0.5.6 (#161): every animation registers one, with or without a callback:
+/// it also names the node and property, so the node gets an `animation_end`
+/// event. Handles are unique across windows (one counter), so a cancelled
+/// animation's handle finds only its own window's entry.
 pub(crate) struct CompletionRegistry {
-    next_id: u64,
-    /// `pub(crate)`, not private: `PyWindow`'s own `__traverse__`/
-    /// `__clear__` (real `Py<PyAny>` values -- same cyclic-GC
-    /// obligation as `handlers`) need direct access, the same way
-    /// `HandlerMap`'s own inner `HashMap` is accessed directly there.
-    pub(crate) callbacks: HashMap<CompletionHandle, Py<PyAny>>,
+    pub(crate) entries: HashMap<CompletionHandle, Completion>,
 }
+
+/// One animation waiting to end.
+pub(crate) struct Completion {
+    pub(crate) node: NodeId,
+    pub(crate) property: String,
+    pub(crate) callback: Option<Py<PyAny>>,
+}
+
+static NEXT_COMPLETION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl CompletionRegistry {
     pub(crate) fn new() -> Self {
         Self {
-            next_id: 0,
-            callbacks: HashMap::new(),
+            entries: HashMap::new(),
         }
     }
 
-    pub(crate) fn register(&mut self, callback: Py<PyAny>) -> CompletionHandle {
-        let handle = CompletionHandle(self.next_id);
-        self.next_id += 1;
-        self.callbacks.insert(handle, callback);
+    pub(crate) fn register(
+        &mut self,
+        callback: Option<Py<PyAny>>,
+        node: NodeId,
+        property: &str,
+    ) -> CompletionHandle {
+        let handle =
+            CompletionHandle(NEXT_COMPLETION.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+        self.entries.insert(
+            handle,
+            Completion {
+                node,
+                property: property.to_string(),
+                callback,
+            },
+        );
         handle
+    }
+
+    /// The callbacks, for the cyclic collector.
+    pub(crate) fn callbacks(&self) -> impl Iterator<Item = &Py<PyAny>> {
+        self.entries.values().filter_map(|c| c.callback.as_ref())
     }
 }
 
@@ -305,6 +324,29 @@ pub(crate) fn run_dispatch_outcome(
         // context menu, say) is the listener's to decide.
         DispatchOutcome::SecondaryActivated(node) => {
             deliver_click(&ctx, EventType::SecondaryClick, *node, event, py);
+        }
+        // 0.5.6 (#162): Enter in a single-line text input.
+        DispatchOutcome::Submitted(node) => {
+            listeners::deliver(&ctx, py, EventType::Submit, *node, None, |_| {});
+        }
+        // 0.5.6 (#162): an IME composition began, changed or ended.
+        DispatchOutcome::Composed {
+            node,
+            phase,
+            text,
+            cursor,
+        } => {
+            let event_type = match phase {
+                engine_core::ComposePhase::Start => EventType::ComposeStart,
+                engine_core::ComposePhase::Update => EventType::ComposeUpdate,
+                engine_core::ComposePhase::End => EventType::ComposeEnd,
+            };
+            listeners::deliver(&ctx, py, event_type, *node, None, |e| {
+                if !text.is_empty() {
+                    e.text = Some(text.clone());
+                }
+                e.preedit_cursor = *cursor;
+            });
         }
         DispatchOutcome::None => {}
     }
@@ -472,6 +514,7 @@ pub(crate) fn process_input(
     keyboard_scroll(ctx, event);
     system_menu_key(io, event);
     listeners::fire_scroll_changes(ctx, py);
+    listeners::fire_caret_changes(ctx, py);
     outcome
 }
 
@@ -938,19 +981,41 @@ pub(crate) fn fire_focus_transition(
 /// pattern, would otherwise panic on a re-entrant `RefCell` borrow),
 /// but `HashMap::remove` instead of `get`: a real CSS `transitionend`/
 /// JS Promise-style single fire, not a repeating subscription -- once
-/// invoked, this exact handle can never fire again.
 pub(crate) fn run_completions(
-    completions: &SharedCompletions,
+    ctx: &NodeContext<'_>,
     completed: Vec<CompletionHandle>,
     py: Python<'_>,
 ) {
-    for handle in completed {
-        let callback = completions.borrow_mut().callbacks.remove(&handle);
-        if let Some(callback) = callback
+    // 0.5.6 (#161): an animation that was replaced or stopped has ended too.
+    let cancelled = engine_core::take_cancelled(|handle| {
+        ctx.completions.borrow().entries.contains_key(&handle)
+    });
+    for (handle, finished) in completed
+        .into_iter()
+        .map(|h| (h, true))
+        .chain(cancelled.into_iter().map(|h| (h, false)))
+    {
+        let entry = ctx.completions.borrow_mut().entries.remove(&handle);
+        let Some(entry) = entry else {
+            continue;
+        };
+        if finished
+            && let Some(callback) = &entry.callback
             && let Err(err) = callback.call0(py)
         {
             log_uncaught_exception(&err, py);
         }
+        crate::listeners::deliver(
+            ctx,
+            py,
+            crate::listeners::EventType::AnimationEnd,
+            entry.node,
+            None,
+            |e| {
+                e.property = Some(entry.property.clone());
+                e.finished = Some(finished);
+            },
+        );
     }
 }
 

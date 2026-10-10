@@ -202,6 +202,33 @@ for name in names:
 view.add_child(content)
 ```
 
+### Snapping (0.5.6)
+
+For a carousel, a tab strip or a picker, `scroll_snap` settles the view on an item:
+
+```python
+strip = window.create("scroll_view", orientation="horizontal", width=300, height=80,
+                      scroll_snap="start")        # or "center" / "end" / "none"
+row = window.create("box", flex_direction="horizontal")
+strip.add_child(row)
+for card in cards:
+    row.add_child(card)                            # the items: children of the content box
+cards[0].set(snap_align="center")                  # this one lines up differently
+```
+
+- The **snap points** are the content box's children, each lined up with the view's start,
+  middle or end (its own `snap_align` if it has one), clamped to the scrollable range.
+- The view **settles 120 ms after the last input** (wheel, touch pan, key, scrollbar drag) and
+  once a touch fling has stopped, animating about 200 ms to the nearest point. More input
+  during the wait puts it off; a new input during the settle takes it over.
+- Your own `set(scroll_offset=)` and `animate("scroll_offset", ...)` are **not** snapped: they
+  go where you say. `scroll_snap="none"` turns snapping off.
+- It always settles ("mandatory"); a "proximity" mode and snapping a `virtual_list` are not
+  provided. A virtual list does have a `scroll_offset` (settable, readable, animatable) to
+  settle on a row yourself.
+- Over a horizontal view a plain vertical wheel turn still scrolls the page around it (0.4.4);
+  Shift+wheel, or a sideways wheel or trackpad, scrolls the strip.
+
 The mouse wheel scrolls it — the nearest scroll view under the pointer that
 can move the wheel's way. A view the wheel can't move passes it on to the one
 outside it (scroll chaining, 0.4.4): a plain wheel over a horizontal carousel

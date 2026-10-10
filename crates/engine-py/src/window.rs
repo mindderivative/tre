@@ -127,6 +127,15 @@ pub(crate) struct WindowHandles {
     pub(crate) blur_behind: Rc<Cell<bool>>,
     /// 0.5.4 (#142): `click_through`.
     pub(crate) click_through: Rc<Cell<bool>>,
+    /// 0.5.6 (#159): where the window opens (logical pixels), until it is open.
+    pub(crate) position: Rc<Cell<Option<(f64, f64)>>>,
+    pub(crate) always_on_top: Rc<Cell<bool>>,
+    pub(crate) resizable: Rc<Cell<bool>>,
+    pub(crate) skip_taskbar: Rc<Cell<bool>>,
+    /// 0.5.6 (#163): `Window.after` / `every` timers, on this window's clock.
+    pub(crate) timers: crate::timers::SharedTimers,
+    /// 0.5.6 (#163): wakes the loop for the earliest timer; set while it runs.
+    pub(crate) alarm: crate::timers::SharedAlarm,
     /// 0.5.4 (#146): the font generation this window's SVG text was last
     /// outlined for.
     pub(crate) svg_font_generation: Rc<Cell<u64>>,
@@ -199,7 +208,8 @@ pub(crate) struct WindowHandles {
 
 pub struct WindowState {
     pub(crate) handles: WindowHandles,
-    pub(crate) title: String,
+    /// 0.5.6 (#159): in a `RefCell` so `Window.set` takes `&self`.
+    pub(crate) title: RefCell<String>,
 }
 
 /// 0.5.0 M2: a window icon -- straight-alpha RGBA8 bytes, width, height.
@@ -281,7 +291,7 @@ impl PyWindow {
         let tree = Rc::new(RefCell::new(tree));
         let handlers: HandlerMap = Rc::new(RefCell::new(HashMap::new()));
         Ok(Self(ThreadBound::new(WindowState {
-            title: title.to_string(),
+            title: RefCell::new(title.to_string()),
             handles: WindowHandles {
                 tree,
                 root,
@@ -303,6 +313,12 @@ impl PyWindow {
                 transparent_active: Rc::new(Cell::new(None)),
                 blur_behind: Rc::new(Cell::new(false)),
                 click_through: Rc::new(Cell::new(false)),
+                position: Rc::new(Cell::new(None)),
+                always_on_top: Rc::new(Cell::new(false)),
+                resizable: Rc::new(Cell::new(true)),
+                skip_taskbar: Rc::new(Cell::new(false)),
+                timers: Rc::new(RefCell::new(crate::timers::TimerQueue::default())),
+                alarm: Rc::new(RefCell::new(None)),
                 svg_font_generation: Rc::new(Cell::new(0)),
                 maximized: Rc::new(Cell::new(false)),
                 minimized: Rc::new(Cell::new(false)),
@@ -347,12 +363,16 @@ impl PyWindow {
         }
         // M9 Phase 2: `completions` holds real `Py<PyAny>` callbacks --
         // the same cyclic-GC obligation as `handlers`.
-        for callback in self.handles.completions.borrow().callbacks.values() {
+        for callback in self.handles.completions.borrow().callbacks() {
             visit.call(callback)?;
         }
         // M94: window listeners are stored callbacks too.
         for (handler, _wants_event) in self.handles.window_listeners.borrow().values() {
             visit.call(handler)?;
+        }
+        // 0.5.6 (#163): and so are timers.
+        for callback in self.handles.timers.borrow().callbacks() {
+            visit.call(callback)?;
         }
         Ok(())
     }
@@ -362,7 +382,8 @@ impl PyWindow {
             return;
         }
         self.handles.handlers.borrow_mut().clear();
-        self.handles.completions.borrow_mut().callbacks.clear();
+        self.handles.completions.borrow_mut().entries.clear();
+        self.handles.timers.borrow_mut().clear();
         self.handles.window_listeners.borrow_mut().clear();
     }
 }

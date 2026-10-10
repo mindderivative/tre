@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use engine_core::{
-    AccessValue, Animated, CornerRadii, Cursor, Interpolate, Live, NodeKind, PathData, Role,
-    Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
+    AccessValue, Animated, CornerRadii, Cursor, Interpolate, Live, NodeId, NodeKind, PathData,
+    Role, Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
 };
 use peniko::Color;
 use peniko::kurbo::Rect;
@@ -26,10 +26,12 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 48] = [
+const SETTABLE: [&str; 66] = [
     "visible",
     "z_index",
     "clip_children",
+    "snap_align",
+    "mask",
     "sticky",
     "translate_x",
     "translate_y",
@@ -51,6 +53,13 @@ const SETTABLE: [&str; 48] = [
     "placeholder",
     "placeholder_fill",
     "caret_color",
+    "max_length",
+    "read_only",
+    "input_mode",
+    "caret_visible",
+    "caret_width",
+    "caret_shape",
+    "caret_blink",
     "selection_fill",
     "obscured",
     "scrollbar_fill",
@@ -69,6 +78,15 @@ const SETTABLE: [&str; 48] = [
     "level",
     "live",
     "a11y_hidden",
+    "pressed",
+    "invalid",
+    "busy",
+    "current",
+    "description",
+    "describedby",
+    "controls",
+    "value_now",
+    "value_text",
     "focusable",
     "tab_index",
     "cursor",
@@ -78,7 +96,7 @@ const SETTABLE: [&str; 48] = [
 ];
 
 /// The M93 role vocabulary.
-const ROLES: [(&str, Role); 23] = [
+const ROLES: [(&str, Role); 24] = [
     ("button", Role::Button),
     ("checkbox", Role::CheckBox),
     ("radio", Role::RadioButton),
@@ -102,6 +120,17 @@ const ROLES: [(&str, Role); 23] = [
     ("img", Role::Image),
     ("group", Role::Group),
     ("none", Role::GenericContainer),
+    // 0.5.6 (#160): AccessKit has no separator role; a splitter is the one the
+    // platforms expose as a separator (AT-SPI) or separator control (UIA).
+    ("separator", Role::Splitter),
+];
+
+const CURRENT: [(&str, engine_core::AriaCurrent); 5] = [
+    ("page", engine_core::AriaCurrent::Page),
+    ("step", engine_core::AriaCurrent::Step),
+    ("location", engine_core::AriaCurrent::Location),
+    ("date", engine_core::AriaCurrent::Date),
+    ("time", engine_core::AriaCurrent::Time),
 ];
 
 const LIVE: [(&str, Live); 3] = [
@@ -125,6 +154,16 @@ pub(crate) enum Change {
     Level(Option<usize>),
     Live(Option<Live>),
     A11yHidden(bool),
+    /// 0.5.6 (#160): the accessibility states a screen reader hears about.
+    Pressed(Option<engine_core::Toggled>),
+    Invalid(bool),
+    Busy(bool),
+    Current(Option<engine_core::AriaCurrent>),
+    Description(Option<String>),
+    ValueNow(Option<f64>),
+    ValueText(Option<String>),
+    DescribedBy(Vec<NodeId>),
+    Controls(Vec<NodeId>),
     Focusable(bool),
     TabIndex(i32),
     Cursor(Option<Cursor>),
@@ -141,6 +180,10 @@ pub(crate) enum Change {
     Visible(bool),
     ZIndex(i32),
     ClipChildren(bool),
+    /// 0.5.6 (#166): `snap_align`; `None` takes the scroll view's own.
+    SnapAlign(Option<engine_core::SnapAlign>),
+    /// 0.5.6 (#164): `mask`; `None` clears it.
+    Mask(Option<Box<engine_core::Mask>>),
     /// 0.5.4 (#139): `sticky`, an inset from the scroller's start edge, or `None`.
     Sticky(Option<f64>),
     TranslateX(f64),
@@ -167,6 +210,14 @@ pub(crate) enum Change {
     Placeholder(String),
     PlaceholderFill(Option<Color>),
     CaretColor(Option<Color>),
+    /// 0.5.6 (#162, #165): more text input properties.
+    MaxLength(Option<usize>),
+    ReadOnly(bool),
+    InputMode(engine_core::InputMode),
+    CaretVisible(bool),
+    CaretWidth(f32),
+    CaretShape(engine_core::CaretShape),
+    CaretBlink(u32),
     SelectionFill(Option<Color>),
     Obscured(bool),
     ScrollbarFill(Option<Color>),
@@ -287,6 +338,105 @@ pub(crate) fn parse_non_negative(value: &Bound<'_, PyAny>, name: &str) -> PyResu
     Ok(number)
 }
 
+/// 0.5.6 (#164): `mask`: `None`, `"circle"`, `{"rounded": radius}` (a number or a
+/// four-corner tuple) or `{"path": svg_path_data, "view_box": (x, y, w, h)}`.
+fn parse_mask(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<Box<engine_core::Mask>>> {
+    use engine_core::{CornerRadii, Mask};
+    const EXPECTED: &str = "None, \"circle\", {\"rounded\": radius}, or {\"path\": svg_path_data, \"view_box\": (x, y, w, h)}";
+    if value.is_none() {
+        return Ok(None);
+    }
+    if let Ok(text) = value.extract::<String>() {
+        return if text == "circle" {
+            Ok(Some(Box::new(Mask::Circle)))
+        } else {
+            Err(invalid(name, EXPECTED))
+        };
+    }
+    let dict = value
+        .cast::<PyDict>()
+        .map_err(|_| invalid(name, EXPECTED))?;
+    let keys: Vec<String> = dict
+        .keys()
+        .iter()
+        .map(|k| k.extract::<String>())
+        .collect::<PyResult<_>>()
+        .map_err(|_| invalid(name, EXPECTED))?;
+    if keys == ["rounded"] {
+        let radius = dict.get_item("rounded")?.expect("the key is there");
+        let radii = match parse_radius(&radius, name)? {
+            Radius::Uniform(r) => [r; 4],
+            Radius::Corners(corners) => corners,
+        };
+        return Ok(Some(Box::new(Mask::Rounded(CornerRadii(radii)))));
+    }
+    if keys.len() == 2 && keys.iter().all(|k| k == "path" || k == "view_box") {
+        let data: String = dict
+            .get_item("path")?
+            .expect("the key is there")
+            .extract()
+            .map_err(|_| invalid(name, "a mask whose path is a str of SVG path data"))?;
+        let data = PathData::from_svg(&data).map_err(|err| {
+            PyValueError::new_err(format!(
+                "node property `{name}`: the path isn't valid SVG path data: {err}"
+            ))
+        })?;
+        let view_box = dict.get_item("view_box")?.expect("the key is there");
+        let (x, y, w, h): (f64, f64, f64, f64) = view_box.extract().map_err(|_| {
+            invalid(
+                name,
+                "a mask whose view_box is an (x, y, width, height) tuple",
+            )
+        })?;
+        if !(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite())
+            || w <= 0.0
+            || h <= 0.0
+        {
+            return Err(invalid(name, "a mask whose view_box has a positive size"));
+        }
+        return Ok(Some(Box::new(Mask::Path {
+            data,
+            view_box: Rect::new(x, y, x + w, y + h),
+        })));
+    }
+    Err(invalid(name, EXPECTED))
+}
+
+/// A mask as `parse_mask` takes it.
+fn mask_to_py(mask: Option<&engine_core::Mask>, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    use engine_core::Mask;
+    let Some(mask) = mask else {
+        return Ok(py.None());
+    };
+    Ok(match mask {
+        Mask::Circle => "circle".into_pyobject(py)?.into_any().unbind(),
+        Mask::Rounded(radii) => {
+            let dict = PyDict::new(py);
+            let [a, b, c, d] = radii.0;
+            if a == b && b == c && c == d {
+                dict.set_item("rounded", a)?;
+            } else {
+                dict.set_item("rounded", (a, b, c, d))?;
+            }
+            dict.into_any().unbind()
+        }
+        Mask::Path { data, view_box } => {
+            let dict = PyDict::new(py);
+            dict.set_item("path", data.to_svg())?;
+            dict.set_item(
+                "view_box",
+                (
+                    view_box.x0,
+                    view_box.y0,
+                    view_box.width(),
+                    view_box.height(),
+                ),
+            )?;
+            dict.into_any().unbind()
+        }
+    })
+}
+
 pub(crate) fn parse_radius(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Radius> {
     let expected =
         "a non-negative number or a (top_left, top_right, bottom_right, bottom_left) tuple";
@@ -360,14 +510,16 @@ pub(crate) fn animatable_to_py(
                 py,
             )?,
         },
-        "scroll_offset" => {
-            let NodeKind::ScrollView(state) = &node.kind else {
+        "scroll_offset" => match &node.kind {
+            NodeKind::ScrollView(state) => number(*pick(&state.scroll, target))?,
+            // 0.5.6 (#166): a virtual list has one too.
+            NodeKind::VirtualList(state) => number(*pick(&state.scroll_offset, target))?,
+            _ => {
                 return Err(PyValueError::new_err(
-                    "node property `scroll_offset` applies only to a scroll_view node",
+                    "node property `scroll_offset` applies only to a scroll_view or virtual_list node",
                 ));
-            };
-            number(*pick(&state.scroll, target))?
-        }
+            }
+        },
         "stroke_color" => match &node.paint.border_gradient {
             Some(gradient) => Py::new(
                 py,
@@ -378,6 +530,17 @@ pub(crate) fn animatable_to_py(
             .into_any(),
             None => color_to_py(*pick(&node.paint.border_color, target), py)?,
         },
+        "caret_color" => {
+            let NodeKind::TextField(state) = &node.kind else {
+                return Err(PyValueError::new_err(
+                    "node property `caret_color` applies only to a text_input node",
+                ));
+            };
+            match &state.caret_color {
+                Some(caret) => color_to_py(*pick(caret, target), py)?,
+                None => py.None(),
+            }
+        }
         "stroke_width" => number(*pick(&node.paint.border_width, target))?,
         "translate_x" => number(*pick(&node.paint.node_transform.translate_x, target))?,
         "translate_y" => number(*pick(&node.paint.node_transform.translate_y, target))?,
@@ -440,15 +603,23 @@ pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyRes
                 _ => node.paint.background.stop(),
             }
         }
-        "scroll_offset" => {
-            let NodeKind::ScrollView(state) = &mut node.kind else {
+        "scroll_offset" => match &mut node.kind {
+            NodeKind::ScrollView(state) => state.scroll.stop(),
+            NodeKind::VirtualList(state) => state.scroll_offset.stop(),
+            _ => {
                 return Err(PyValueError::new_err(
-                    "node property `scroll_offset` applies only to a scroll_view node",
+                    "node property `scroll_offset` applies only to a scroll_view or virtual_list node",
                 ));
-            };
-            state.scroll.stop();
-        }
+            }
+        },
         "stroke_color" => node.paint.border_color.stop(),
+        "caret_color" => {
+            if let NodeKind::TextField(state) = &mut node.kind
+                && let Some(caret) = &mut state.caret_color
+            {
+                caret.stop();
+            }
+        }
         "stroke_width" => node.paint.border_width.stop(),
         "translate_x" => node.paint.node_transform.translate_x.stop(),
         "translate_y" => node.paint.node_transform.translate_y.stop(),
@@ -515,6 +686,13 @@ impl Change {
             Change::Placeholder(_) => ("placeholder", "text_input", text_input),
             Change::PlaceholderFill(_) => ("placeholder_fill", "text_input", text_input),
             Change::CaretColor(_) => ("caret_color", "text_input", text_input),
+            Change::MaxLength(_) => ("max_length", "text_input", text_input),
+            Change::ReadOnly(_) => ("read_only", "text_input", text_input),
+            Change::InputMode(_) => ("input_mode", "text_input", text_input),
+            Change::CaretVisible(_) => ("caret_visible", "text_input", text_input),
+            Change::CaretWidth(_) => ("caret_width", "text_input", text_input),
+            Change::CaretShape(_) => ("caret_shape", "text_input", text_input),
+            Change::CaretBlink(_) => ("caret_blink", "text_input", text_input),
             Change::SelectionFill(_) => ("selection_fill", "text_input", text_input),
             Change::Obscured(_) => ("obscured", "text_input", text_input),
             Change::ScrollbarFill(_) => ("scrollbar_fill", "scroll_view", scroll_view),
@@ -605,6 +783,21 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             Change::ZIndex(required(value, name, "an int")?)
         }
         "clip_children" => Change::ClipChildren(boolean(value, name)?),
+        "snap_align" => Change::SnapAlign(if value.is_none() {
+            None
+        } else {
+            let text: String = value
+                .extract()
+                .map_err(|_| invalid(name, "\"start\", \"center\", \"end\", or None"))?;
+            Some(
+                engine_core::SnapAlign::ALL
+                    .iter()
+                    .find(|(n, _)| *n == text)
+                    .map(|(_, a)| *a)
+                    .ok_or_else(|| invalid(name, "\"start\", \"center\", \"end\", or None"))?,
+            )
+        }),
+        "mask" => Change::Mask(parse_mask(value, name)?),
         "sticky" => Change::Sticky(if value.is_none() {
             None
         } else if value.is_instance_of::<pyo3::types::PyBool>() {
@@ -667,6 +860,47 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             })
         }
         "a11y_hidden" => Change::A11yHidden(boolean(value, name)?),
+        "pressed" => Change::Pressed(if value.is_none() {
+            None
+        } else if value.is_instance_of::<pyo3::types::PyBool>() {
+            Some(if value.extract::<bool>()? {
+                engine_core::Toggled::True
+            } else {
+                engine_core::Toggled::False
+            })
+        } else if value.extract::<String>().is_ok_and(|s| s == "mixed") {
+            Some(engine_core::Toggled::Mixed)
+        } else {
+            return Err(invalid(name, "True, False, \"mixed\", or None"));
+        }),
+        "invalid" => Change::Invalid(boolean(value, name)?),
+        "busy" => Change::Busy(boolean(value, name)?),
+        "current" => Change::Current(if value.is_none() {
+            None
+        } else if value.is_instance_of::<pyo3::types::PyBool>() {
+            Some(if value.extract::<bool>()? {
+                engine_core::AriaCurrent::True
+            } else {
+                engine_core::AriaCurrent::False
+            })
+        } else {
+            let text: String = required(value, name, "a str, a bool, or None")?;
+            Some(
+                CURRENT
+                    .iter()
+                    .find(|(n, _)| *n == text)
+                    .map(|(_, c)| *c)
+                    .ok_or_else(|| {
+                        invalid(
+                            name,
+                            &format!("True, False, None, or one of: {}", names(&CURRENT)),
+                        )
+                    })?,
+            )
+        }),
+        "description" => Change::Description(optional(value, name, "a str or None")?),
+        "value_now" => Change::ValueNow(optional(value, name, "a number or None")?),
+        "value_text" => Change::ValueText(optional(value, name, "a str or None")?),
         "focusable" => Change::Focusable(boolean(value, name)?),
         "tab_index" => Change::TabIndex(required(value, name, "an int")?),
         // 0.5.4 (#140): a `CursorImage` is a cursor too.
@@ -750,6 +984,68 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "placeholder" => Change::Placeholder(required(value, name, "a str")?),
         "placeholder_fill" => Change::PlaceholderFill(optional_color(value, name)?),
         "caret_color" => Change::CaretColor(optional_color(value, name)?),
+        "max_length" => Change::MaxLength(if value.is_none() {
+            None
+        } else if value.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(invalid(name, "a non-negative int or None"));
+        } else {
+            Some(
+                value
+                    .extract::<usize>()
+                    .map_err(|_| invalid(name, "a non-negative int or None"))?,
+            )
+        }),
+        "read_only" => Change::ReadOnly(boolean(value, name)?),
+        "input_mode" => {
+            let mode: String = required(value, name, "a str")?;
+            Change::InputMode(
+                engine_core::InputMode::ALL
+                    .iter()
+                    .find(|(n, _)| *n == mode)
+                    .map(|(_, m)| *m)
+                    .ok_or_else(|| {
+                        invalid(
+                            name,
+                            &format!("one of: {}", names(&engine_core::InputMode::ALL)),
+                        )
+                    })?,
+            )
+        }
+        "caret_visible" => Change::CaretVisible(boolean(value, name)?),
+        "caret_width" => Change::CaretWidth(parse_non_negative(value, name)? as f32),
+        "caret_shape" => {
+            let shape: String = required(value, name, "a str")?;
+            Change::CaretShape(
+                engine_core::CaretShape::ALL
+                    .iter()
+                    .find(|(n, _)| *n == shape)
+                    .map(|(_, s)| *s)
+                    .ok_or_else(|| {
+                        invalid(
+                            name,
+                            &format!("one of: {}", names(&engine_core::CaretShape::ALL)),
+                        )
+                    })?,
+            )
+        }
+        "caret_blink" => Change::CaretBlink(
+            match optional::<f64>(value, name, "a number of milliseconds or None")? {
+                None => 0,
+                Some(ms)
+                    if ms.is_finite()
+                        && (0.0..=3_600_000.0).contains(&ms)
+                        && !value.is_instance_of::<pyo3::types::PyBool>() =>
+                {
+                    ms as u32
+                }
+                Some(_) => {
+                    return Err(invalid(
+                        name,
+                        "a number of milliseconds from 0 to an hour, or None",
+                    ));
+                }
+            },
+        ),
         "selection_fill" => Change::SelectionFill(optional_color(value, name)?),
         "obscured" => Change::Obscured(boolean(value, name)?),
         "scrollbar_fill" => Change::ScrollbarFill(optional_color(value, name)?),
@@ -813,6 +1109,41 @@ fn parse_shader(value: &Bound<'_, PyAny>, tree: &Rc<RefCell<Tree>>) -> PyResult<
     Ok(Change::Shader(Some(shader.core.clone())))
 }
 
+/// 0.5.6 (#160): `describedby` / `controls`: a node, a list of nodes, or `None`
+/// -- all of this window's.
+fn parse_related(
+    name: &str,
+    value: &Bound<'_, PyAny>,
+    tree: &Rc<RefCell<Tree>>,
+) -> PyResult<Vec<NodeId>> {
+    const EXPECTED: &str = "a Node, a list of Nodes, or None";
+    if value.is_none() {
+        return Ok(Vec::new());
+    }
+    let items: Vec<Bound<'_, PyAny>> = if let Ok(node) = value.cast::<Node>() {
+        vec![node.clone().into_any()]
+    } else if value.is_instance_of::<pyo3::types::PyList>()
+        || value.is_instance_of::<pyo3::types::PyTuple>()
+    {
+        value.try_iter()?.collect::<PyResult<Vec<_>>>()?
+    } else {
+        return Err(invalid(name, EXPECTED));
+    };
+    let mut ids = Vec::new();
+    for item in items {
+        let node: PyRef<'_, Node> = item.extract().map_err(|_| invalid(name, EXPECTED))?;
+        if !Rc::ptr_eq(&node.tree, tree) {
+            return Err(PyValueError::new_err(format!(
+                "node property `{name}`: the node belongs to a different Window"
+            )));
+        }
+        if !ids.contains(&node.id) {
+            ids.push(node.id);
+        }
+    }
+    Ok(ids)
+}
+
 /// Every property `set` accepts, parsed and checked against `kind` --
 /// nothing is applied until all of them pass.
 pub(crate) fn parse_all(
@@ -834,6 +1165,15 @@ pub(crate) fn parse_all(
             }
             if name == "shader" {
                 changes.push(parse_shader(&value, tree)?);
+                continue;
+            }
+            if name == "describedby" || name == "controls" {
+                let ids = parse_related(&name, &value, tree)?;
+                changes.push(if name == "controls" {
+                    Change::Controls(ids)
+                } else {
+                    Change::DescribedBy(ids)
+                });
                 continue;
             }
             let change = parse(&name, &value)?;
@@ -879,6 +1219,18 @@ impl Node {
         let redraw = changes
             .iter()
             .any(|change| matches!(change, Change::Callback(HandlerKey::Draw, _)));
+        // 0.5.6 (#161): setting a layout property outright ends its animation.
+        if let Some(props) = props {
+            let stopped: Vec<engine_core::LayoutProp> = props
+                .keys()
+                .iter()
+                .filter_map(|name| name.extract::<String>().ok())
+                .flat_map(|name| engine_core::LayoutProp::from_name(&name))
+                .collect();
+            if !stopped.is_empty() {
+                self.tree.borrow_mut().stop_layout_anims(self.id, &stopped);
+            }
+        }
         self.apply(changes);
         if redraw {
             crate::node_callbacks::redraw(&self.tree, &self.handlers, self.id, py)?;
@@ -959,6 +1311,69 @@ impl Node {
                     .into_any()
                     .unbind(),
                 "a11y_hidden" => any(access.hidden.into_pyobject(py)?.to_owned().into_any()),
+                "pressed" => match access.pressed {
+                    None => py.None(),
+                    Some(engine_core::Toggled::True) => {
+                        any(true.into_pyobject(py)?.to_owned().into_any())
+                    }
+                    Some(engine_core::Toggled::False) => {
+                        any(false.into_pyobject(py)?.to_owned().into_any())
+                    }
+                    Some(engine_core::Toggled::Mixed) => any("mixed".into_pyobject(py)?.into_any()),
+                },
+                "invalid" => any(access.invalid.into_pyobject(py)?.to_owned().into_any()),
+                "busy" => any(access.busy.into_pyobject(py)?.to_owned().into_any()),
+                "current" => match access.current {
+                    None => py.None(),
+                    Some(engine_core::AriaCurrent::True) => {
+                        any(true.into_pyobject(py)?.to_owned().into_any())
+                    }
+                    Some(engine_core::AriaCurrent::False) => {
+                        any(false.into_pyobject(py)?.to_owned().into_any())
+                    }
+                    Some(current) => CURRENT
+                        .iter()
+                        .find(|(_, c)| *c == current)
+                        .map(|(n, _)| *n)
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind(),
+                },
+                "description" => access
+                    .description
+                    .clone()
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind(),
+                "value_now" => match &access.value {
+                    Some(AccessValue::Number(n)) => any(n.into_pyobject(py)?.into_any()),
+                    _ => py.None(),
+                },
+                "value_text" => access
+                    .extra
+                    .as_ref()
+                    .and_then(|x| x.value_text.clone())
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind(),
+                "describedby" | "controls" => {
+                    let empty = Vec::new();
+                    let ids = access.extra.as_ref().map_or(&empty, |x| {
+                        if name == "controls" {
+                            &x.controls
+                        } else {
+                            &x.described_by
+                        }
+                    });
+                    let tree = self.tree.borrow();
+                    let nodes: Vec<Node> = ids
+                        .iter()
+                        .filter(|id| tree.get(**id).is_some())
+                        .map(|id| self.handle_to(*id))
+                        .collect();
+                    drop(tree);
+                    any(nodes.into_pyobject(py)?.into_any())
+                }
                 "focusable" => {
                     let focusable = access.focusable.unwrap_or(!access.actions.is_empty());
                     any(focusable.into_pyobject(py)?.to_owned().into_any())
@@ -991,6 +1406,18 @@ impl Node {
                 "blend_mode" => any(node.paint.blend.name().into_pyobject(py)?.into_any()),
                 "visible" => any(node.visible.into_pyobject(py)?.to_owned().into_any()),
                 "z_index" => any(node.z_index.into_pyobject(py)?.into_any()),
+                "snap_align" => node
+                    .snap_align
+                    .map(|a| {
+                        engine_core::SnapAlign::ALL
+                            .iter()
+                            .find(|(_, x)| *x == a)
+                            .map_or("start", |(n, _)| *n)
+                    })
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind(),
+                "mask" => mask_to_py(node.paint.mask.as_deref(), py)?,
                 "clip_children" => any(node
                     .paint
                     .clip_children
@@ -1010,7 +1437,8 @@ impl Node {
                     return Ok(any(value.into_pyobject(py)?.into_any()));
                 }
                 "placeholder" | "placeholder_fill" | "caret_color" | "selection_fill"
-                | "obscured" => {
+                | "obscured" | "max_length" | "read_only" | "input_mode" | "caret_visible"
+                | "caret_width" | "caret_shape" | "caret_blink" => {
                     let NodeKind::TextField(state) = &node.kind else {
                         return Err(PyValueError::new_err(format!(
                             "node property `{name}` applies only to a text_input node"
@@ -1024,8 +1452,34 @@ impl Node {
                             any(state.placeholder.clone().into_pyobject(py)?.into_any())
                         }
                         "placeholder_fill" => color(state.placeholder_fill)?,
-                        "caret_color" => color(state.caret_color)?,
+                        "caret_color" => color(state.caret_color.as_ref().map(|c| c.current))?,
                         "selection_fill" => color(state.selection_fill)?,
+                        "max_length" => any(state.max_length.into_pyobject(py)?.into_any()),
+                        "read_only" => {
+                            any(state.read_only.into_pyobject(py)?.to_owned().into_any())
+                        }
+                        "input_mode" => any(engine_core::InputMode::ALL
+                            .iter()
+                            .find(|(_, m)| *m == state.input_mode)
+                            .map(|(n, _)| *n)
+                            .into_pyobject(py)?
+                            .into_any()),
+                        "caret_visible" => {
+                            any(state.caret_visible.into_pyobject(py)?.to_owned().into_any())
+                        }
+                        "caret_width" => {
+                            any(f64::from(state.caret_width).into_pyobject(py)?.into_any())
+                        }
+                        "caret_shape" => any(engine_core::CaretShape::ALL
+                            .iter()
+                            .find(|(_, s)| *s == state.caret_shape)
+                            .map(|(n, _)| *n)
+                            .into_pyobject(py)?
+                            .into_any()),
+                        "caret_blink" => any((state.caret_blink_ms > 0)
+                            .then_some(f64::from(state.caret_blink_ms))
+                            .into_pyobject(py)?
+                            .into_any()),
                         _ => any(state.obscured.into_pyobject(py)?.to_owned().into_any()),
                     }
                 }
@@ -1099,10 +1553,64 @@ impl Node {
         Ok(value)
     }
 
+    /// 0.5.6 (#165): the caret of a text input as `(x, y, width, height)` in
+    /// the node's own coordinates, with scrolling and padding in it. While an
+    /// IME is composing, it is at the end of the composition. Shaped fresh, so
+    /// it is right straight after `set(text=...)` or an edit.
+    fn caret_rect(&self, py: Python<'_>) -> PyResult<(f64, f64, f64, f64)> {
+        self.require_text_input("caret_rect")?;
+        self.layout_box(py);
+        let rect = crate::text_interaction::field_caret_rect(&self.tree, self.id)
+            .ok_or(crate::error::EngineError::Destroyed)?;
+        Ok((rect.x0, rect.y0, rect.width(), rect.height()))
+    }
+
+    /// 0.5.6 (#165): the rectangles covering bytes `start..end` of a text
+    /// input's text, one per line it crosses, as `(x, y, width, height)` in the
+    /// node's coordinates. Offsets are UTF-8 byte offsets on character
+    /// boundaries, as `selection` takes.
+    fn text_rects(
+        &self,
+        start: usize,
+        end: usize,
+        py: Python<'_>,
+    ) -> PyResult<Vec<(f64, f64, f64, f64)>> {
+        self.require_text_input("text_rects")?;
+        {
+            let tree = self.tree.borrow();
+            if let Some(NodeKind::TextField(state)) = tree.get(self.id).map(|n| &n.kind) {
+                let ok = |i: usize| state.content.is_char_boundary(i);
+                if start > end || end > state.content.len() || !ok(start) || !ok(end) {
+                    return Err(PyValueError::new_err(format!(
+                        "text_rects({start}, {end}): the offsets must be UTF-8 byte offsets \
+                         on character boundaries within the text (0 to {}), start first",
+                        state.content.len()
+                    )));
+                }
+            }
+        }
+        self.layout_box(py);
+        let rects = crate::text_interaction::field_range_rects(&self.tree, self.id, start, end)
+            .ok_or(crate::error::EngineError::Destroyed)?;
+        Ok(rects
+            .into_iter()
+            .map(|r| (r.x0, r.y0, r.width(), r.height()))
+            .collect())
+    }
+
     /// M95: the value `name`'s running animation is heading to -- equal to
     /// `get(name)` when nothing is animating it. Animatable properties
     /// only.
     fn get_target(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        // 0.5.6 (#161): a layout property's animation target, or its value.
+        let layout = engine_core::LayoutProp::from_name(name);
+        if layout.len() == 1 {
+            let target = self.tree.borrow().layout_target(self.id, layout[0]);
+            return match target {
+                Some(pixels) => Ok(pixels.into_pyobject(py)?.into_any().unbind()),
+                None => self.get(name, py),
+            };
+        }
         let tree = self.tree.borrow();
         let node = tree
             .get(self.id)
@@ -1115,6 +1623,11 @@ impl Node {
     /// M95: stops `name`'s running animation where it is; its
     /// `on_complete` never fires. A no-op when nothing is animating it.
     fn stop_animation(&self, name: &str) -> PyResult<()> {
+        let layout = engine_core::LayoutProp::from_name(name);
+        if !layout.is_empty() {
+            self.tree.borrow_mut().stop_layout_anims(self.id, &layout);
+            return Ok(());
+        }
         let mut tree = self.tree.borrow_mut();
         let node = tree
             .get_mut(self.id)
@@ -1222,6 +1735,20 @@ impl Node {
                 Change::Level(level) => access.level = level,
                 Change::Live(live) => access.live = live,
                 Change::A11yHidden(hidden) => access.hidden = hidden,
+                Change::Pressed(pressed) => access.pressed = pressed,
+                Change::Invalid(invalid) => access.invalid = invalid,
+                Change::Busy(busy) => access.busy = busy,
+                Change::Current(current) => access.current = current,
+                Change::Description(description) => access.description = description,
+                Change::ValueNow(Some(now)) => access.value = Some(AccessValue::Number(now)),
+                Change::ValueNow(None) => {
+                    if matches!(access.value, Some(AccessValue::Number(_))) {
+                        access.value = None;
+                    }
+                }
+                Change::ValueText(text) => access.edit_extra(|x| x.value_text = text),
+                Change::DescribedBy(ids) => access.edit_extra(|x| x.described_by = ids),
+                Change::Controls(ids) => access.edit_extra(|x| x.controls = ids),
                 Change::Focusable(focusable) => access.focusable = Some(focusable),
                 Change::TabIndex(index) => access.tab_index = index,
                 Change::Cursor(cursor) => node.cursor = cursor,
@@ -1273,16 +1800,18 @@ impl Node {
                 }
                 Change::ZIndex(z) => node.z_index = z,
                 Change::ClipChildren(clip) => node.paint.clip_children = clip,
+                Change::SnapAlign(align) => node.snap_align = align,
+                Change::Mask(mask) => node.paint.mask = mask,
                 Change::Sticky(inset) => node.sticky = inset,
-                Change::TranslateX(v) => node.paint.node_transform.translate_x = Animated::new(v),
-                Change::TranslateY(v) => node.paint.node_transform.translate_y = Animated::new(v),
-                Change::Scale(v) => node.paint.node_transform.scale = Animated::new(v),
+                Change::TranslateX(v) => node.paint.node_transform.translate_x.set_now(v),
+                Change::TranslateY(v) => node.paint.node_transform.translate_y.set_now(v),
+                Change::Scale(v) => node.paint.node_transform.scale.set_now(v),
                 Change::RotationDeg(v) => {
-                    node.paint.node_transform.rotation_deg = Animated::new(v);
+                    node.paint.node_transform.rotation_deg.set_now(v);
                 }
                 Change::Data(data) => {
                     if let NodeKind::Path(state) = &mut node.kind {
-                        state.data = Animated::new(data);
+                        state.data.set_now(data);
                     }
                 }
                 Change::ViewBox(view_box) => {
@@ -1292,18 +1821,18 @@ impl Node {
                 }
                 Change::TrimStart(start) => {
                     if let NodeKind::Path(state) = &mut node.kind {
-                        state.trim_start = Animated::new(start);
+                        state.trim_start.set_now(start);
                     }
                 }
                 Change::TrimEnd(end) => {
                     if let NodeKind::Path(state) = &mut node.kind {
-                        state.trim_end = Animated::new(end);
+                        state.trim_end.set_now(end);
                     }
                 }
                 Change::Fill(color) => {
                     match &mut node.kind {
-                        NodeKind::TextField(state) => state.text_tint = Animated::new(color),
-                        _ => node.paint.background = Animated::new(color),
+                        NodeKind::TextField(state) => state.text_tint.set_now(color),
+                        _ => node.paint.background.set_now(color),
                     }
                     // A colour replaces any gradient.
                     node.paint.gradient = None;
@@ -1312,26 +1841,26 @@ impl Node {
                     node.paint.gradient = Some(Box::new(Animated::new(gradient)));
                 }
                 Change::StrokeColor(color) => {
-                    node.paint.border_color = Animated::new(color);
+                    node.paint.border_color.set_now(color);
                     node.paint.border_gradient = None;
                 }
                 Change::StrokeGradient(gradient) => {
                     node.paint.border_gradient = Some(Box::new(gradient));
                 }
-                Change::StrokeWidth(width) => node.paint.border_width = Animated::new(width),
-                Change::Opacity(opacity) => node.paint.opacity = Animated::new(opacity),
-                Change::Blur(blur) => node.paint.blur = Animated::new(blur),
-                Change::BackdropBlur(blur) => node.paint.backdrop_blur = Animated::new(blur),
+                Change::StrokeWidth(width) => node.paint.border_width.set_now(width),
+                Change::Opacity(opacity) => node.paint.opacity.set_now(opacity),
+                Change::Blur(blur) => node.paint.blur.set_now(blur),
+                Change::BackdropBlur(blur) => node.paint.backdrop_blur.set_now(blur),
                 Change::BlendMode(mode) => node.paint.blend = mode,
                 Change::CornerRadius(Radius::Uniform(radius)) => {
-                    node.paint.corner_radius = Animated::new(radius);
+                    node.paint.corner_radius.set_now(radius);
                     node.paint.corner_radii_override = None;
                 }
                 Change::CornerRadius(Radius::Corners(corners)) => {
                     node.paint.corner_radii_override = Some(Animated::new(CornerRadii(corners)));
                 }
                 Change::Shadows(shadows) => {
-                    node.paint.shadows = Animated::new(Shadows(shadows));
+                    node.paint.shadows.set_now(Shadows(shadows));
                 }
                 Change::Placeholder(text) => {
                     if let NodeKind::TextField(state) = &mut node.kind {
@@ -1345,7 +1874,50 @@ impl Node {
                 }
                 Change::CaretColor(color) => {
                     if let NodeKind::TextField(state) = &mut node.kind {
-                        state.caret_color = color;
+                        match (&mut state.caret_color, color) {
+                            (Some(current), Some(color)) => current.set_now(color),
+                            (slot, color) => *slot = color.map(Animated::new),
+                        }
+                    }
+                }
+                Change::MaxLength(max) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.max_length = max;
+                    }
+                }
+                Change::ReadOnly(read_only) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.read_only = read_only;
+                        if read_only {
+                            state.preedit = None;
+                        }
+                    }
+                }
+                Change::InputMode(mode) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.input_mode = mode;
+                    }
+                }
+                Change::CaretVisible(visible) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_visible = visible;
+                    }
+                }
+                Change::CaretWidth(width) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_width = width;
+                    }
+                }
+                Change::CaretShape(shape) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_shape = shape;
+                    }
+                }
+                Change::CaretBlink(ms) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_blink_ms = ms;
+                        state.caret_on = true;
+                        state.caret_epoch = None;
                     }
                 }
                 Change::SelectionFill(color) => {
@@ -1406,6 +1978,19 @@ impl Node {
         }
         for row in released {
             crate::node_handles::collect(&self.tree, &self.handlers, row);
+        }
+    }
+}
+
+impl Node {
+    fn require_text_input(&self, what: &str) -> PyResult<()> {
+        let tree = self.tree.borrow();
+        match tree.get(self.id).map(|n| &n.kind) {
+            Some(NodeKind::TextField(_)) => Ok(()),
+            Some(_) => Err(PyValueError::new_err(format!(
+                "{what}() applies only to a text_input node"
+            ))),
+            None => Err(crate::error::EngineError::Destroyed.into()),
         }
     }
 }

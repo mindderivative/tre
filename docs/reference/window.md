@@ -288,10 +288,62 @@ have its transparent parts pass them through. A platform that cannot do it raise
 keyboard shortcut or another window to turn it off again, since the window itself
 can no longer be clicked.
 
+**Placement (0.5.6).** `set(x=, y=)` puts the window's top-left corner at that place on the
+desktop, in logical pixels; with only one of them, the other stays where the window is.
+`get("x")`/`get("y")` read the window's place (before it opens, what was set), or `None`
+where the system doesn't say. `center()` centres the open window on its monitor and
+returns `False` if it can't. `set(always_on_top=True)` keeps the window above others,
+`set(resizable=False)` stops the user resizing it, and `set(skip_taskbar=True)` keeps it
+off the taskbar (Windows only; elsewhere it raises `ValueError`). All of them take effect
+live, or at open if set before `App.run()`.
+
+| | Windows | macOS | X11 | Wayland |
+|---|---|---|---|---|
+| `x`, `y`, `center()` | yes | yes | yes | no: the compositor places windows, and `get` returns `None` |
+| `always_on_top` | yes | yes | a hint some window managers ignore | no |
+| `resizable` | yes | yes | yes | yes |
+| `skip_taskbar` | yes | no | no | no |
+
+Window `parent`/`transient_for`, `modal` and centring on a parent are not provided: winit has
+no modal windows on any platform, and a transient parent only on Windows.
+
 Notes: draw straight-alpha colours as always; the renderer premultiplies for the
 surface. An app that wants shadows draws them itself (the OS draws none around a
 transparent undecorated window on every platform). A transparent window with partial
 redraw still redraws exactly: cleared areas become transparent again.
+
+## Timers (0.5.6)
+
+**`window.after(ms, fn) -> TimerHandle`** calls `fn()` once, `ms` milliseconds from now.
+**`window.every(ms, fn) -> TimerHandle`** calls it every `ms` milliseconds (at least 1)
+until it is cancelled. `handle.cancel()` stops a timer and returns whether it was still
+pending; `handle.active` says whether it is.
+
+```python
+toast = window.after(4000, dismiss_snackbar)
+spinner = window.every(120, next_frame_of_spinner)
+...
+toast.cancel()
+```
+
+- **They run on the loop's thread**, with the window's other callbacks, in the frame, right
+  after animations tick. A timer fires on the first frame at or after its time.
+- **An idle window sleeps until the next timer.** A window with nothing animating and a
+  snackbar's four-second timer redraws about once, when the timer fires, instead of sixty
+  times a second to count down.
+- **They run on the window's clock**, so `window.advance(ms)` moves them in tests: timers
+  due inside the span run in order of time, each at its own moment, so `advance(1000)` with
+  an `every(100)` runs ten times.
+- **`every` keeps its own beat.** It does not drift by a frame per round. When the loop was
+  too busy to run a tick on time, the tick is skipped, not replayed in a burst.
+- **A timer set before `App.run()`** counts from when the window opens, with the time it had
+  left kept. When the window closes its timers are dropped.
+- **An exception in `fn`** is logged like any other callback's, and the timer goes on (an
+  `every` keeps repeating; cancel it yourself to stop).
+- A callback may cancel other timers, including ones due at the same moment, and may start
+  new ones; a timer it starts runs from the next pass.
+
+For a call from another thread, use `LoopHandle.call_soon`, which has no delay.
 
 **`set(show_damage=True)`** makes each presented frame show what it
 redrew: its damage rects tinted magenta, or, for a full redraw, the window's

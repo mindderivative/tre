@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use engine_core::{Animated, ContentFit, NodeKind, TextAlign};
+use engine_core::{ContentFit, NodeKind, TextAlign};
 use peniko::Color;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 32] = [
+pub(crate) const KIND_PROPS: [&str; 35] = [
     "text",
     "font_family",
     "font_weight",
@@ -32,6 +32,8 @@ pub(crate) const KIND_PROPS: [&str; 32] = [
     "selectable",
     "multiline",
     "selection",
+    "selection_start",
+    "selection_end",
     "show_whitespace",
     "syntax_spans",
     "folded_ranges",
@@ -40,6 +42,7 @@ pub(crate) const KIND_PROPS: [&str; 32] = [
     "pixel_height",
     "fit",
     "orientation",
+    "scroll_snap",
     "scroll_offset",
     "cols",
     "rows",
@@ -342,6 +345,9 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
     fn terminal(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Terminal(_))
     }
+    fn scroller(kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::ScrollView(_) | NodeKind::VirtualList(_))
+    }
     fn virtual_list(kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::VirtualList(_))
     }
@@ -350,13 +356,13 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         "font_size" => ("a text, text_input, or terminal", sized_text),
         "line_height" | "text_align" | "font_style" | "letter_spacing" | "wrap" | "max_lines"
         | "overflow" | "spans" | "selectable" => ("a text", text),
-        "multiline" | "show_whitespace" | "syntax_spans" | "folded_ranges" => {
-            ("a text_input", text_input)
-        }
+        "multiline" | "show_whitespace" | "syntax_spans" | "folded_ranges" | "selection_start"
+        | "selection_end" => ("a text_input", text_input),
         "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
         "svg" | "svg_size" | "svg_color" | "svg_images" => ("an svg", svg),
-        "orientation" | "scroll_offset" => ("a scroll_view", scroll_view),
+        "orientation" | "scroll_snap" => ("a scroll_view", scroll_view),
+        "scroll_offset" => ("a scroll_view or virtual_list", scroller),
         "item_count" | "item_extent" => ("a virtual_list", virtual_list),
         _ => ("a terminal", terminal),
     }
@@ -575,6 +581,61 @@ fn parse_known(
             selection.late = true;
             Ok(selection)
         }
+        // 0.5.6 (#162): the ends of a text input's selection on their own, in
+        // order, as byte offsets -- `selection_start <= selection_end`. Setting one
+        // keeps the other where it is (moved along, if it would cross).
+        "selection_start" | "selection_end" => {
+            let start_side = name == "selection_start";
+            let other = if start_side {
+                "selection_end"
+            } else {
+                "selection_start"
+            };
+            // Given together they are one selection, set by the start.
+            if !start_side && props.get_item(other)?.is_some() {
+                return change(|_| {});
+            }
+            let text = match props.get_item("text")? {
+                Some(text) => string(&text, "text")?,
+                None => match kind {
+                    NodeKind::TextField(state) => state.content.clone(),
+                    _ => String::new(),
+                },
+            };
+            let number = |v: &Bound<'_, PyAny>, n: &str| -> PyResult<usize> {
+                if v.is_instance_of::<pyo3::types::PyBool>() {
+                    return Err(invalid(n, "a byte offset (a non-negative int)"));
+                }
+                v.extract()
+                    .map_err(|_| invalid(n, "a byte offset (a non-negative int)"))
+            };
+            let given = number(value, name)?;
+            let (current_start, current_end) = match kind {
+                NodeKind::TextField(s) => {
+                    let a = s.selection_anchor.unwrap_or(s.cursor);
+                    (a.min(s.cursor), a.max(s.cursor))
+                }
+                _ => (0, 0),
+            };
+            let (start, end) = if start_side {
+                let end = match props.get_item(other)? {
+                    Some(v) => number(&v, other)?,
+                    None => current_end.max(given),
+                };
+                (given, end)
+            } else {
+                (current_start.min(given), given)
+            };
+            let range = byte_range(&text, start, end, name)?;
+            let mut selection = change(move |node| {
+                if let NodeKind::TextField(state) = &mut node.kind {
+                    state.cursor = range.end;
+                    state.selection_anchor = (range.start != range.end).then_some(range.start);
+                }
+            })?;
+            selection.late = true;
+            Ok(selection)
+        }
         "selectable" => {
             let on = boolean(value, name)?;
             change(move |node| {
@@ -754,9 +815,38 @@ fn parse_known(
                 .ok()
                 .filter(|v: &f64| *v >= 0.0 && v.is_finite())
                 .ok_or_else(|| invalid(name, "a non-negative number"))?;
+            change(move |node| match &mut node.kind {
+                NodeKind::ScrollView(state) => state.scroll.set_now(offset),
+                // 0.5.6 (#166): a virtual list's offset is settable too.
+                NodeKind::VirtualList(state) => state.scroll_offset.set_now(offset),
+                _ => {}
+            })
+        }
+        // 0.5.6 (#166): where a scroll view settles an item when the user stops.
+        "scroll_snap" => {
+            let snap = if value.is_none() {
+                None
+            } else {
+                let text: String = value
+                    .extract()
+                    .map_err(|_| invalid(name, "\"none\", \"start\", \"center\", or \"end\""))?;
+                if text == "none" {
+                    None
+                } else {
+                    Some(
+                        engine_core::SnapAlign::ALL
+                            .iter()
+                            .find(|(n, _)| *n == text)
+                            .map(|(_, a)| *a)
+                            .ok_or_else(|| {
+                                invalid(name, "\"none\", \"start\", \"center\", or \"end\"")
+                            })?,
+                    )
+                }
+            };
             change(move |node| {
                 if let NodeKind::ScrollView(state) = &mut node.kind {
-                    state.scroll = Animated::new(offset);
+                    state.snap = snap;
                 }
             })
         }
@@ -769,7 +859,7 @@ fn parse_known(
                 if let NodeKind::VirtualList(state) = &mut node.kind {
                     state.item_count = count;
                     state.resolved_offsets.clear();
-                    state.scroll_offset = Animated::new(0.0);
+                    state.scroll_offset.set_now(0.0);
                 }
             })?;
             rows.resets_rows = true;
@@ -927,6 +1017,12 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
         ("selection", NodeKind::TextField(s)) => {
             to_py((s.selection_anchor.unwrap_or(s.cursor), s.cursor), py)
         }
+        ("selection_start", NodeKind::TextField(s)) => {
+            to_py(s.selection_anchor.unwrap_or(s.cursor).min(s.cursor), py)
+        }
+        ("selection_end", NodeKind::TextField(s)) => {
+            to_py(s.selection_anchor.unwrap_or(s.cursor).max(s.cursor), py)
+        }
         ("selection", NodeKind::Terminal(s)) => match (s.selection_start, s.selection_end) {
             (Some((sr, sc)), Some((er, ec))) => to_py((sr, sc, er, ec), py),
             _ => Ok(py.None()),
@@ -973,6 +1069,15 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
         ("pixel_width", NodeKind::Image(s)) => to_py(s.image.width, py),
         ("pixel_height", NodeKind::Image(s)) => to_py(s.image.height, py),
         ("fit", NodeKind::Image(s)) => to_py(name_of(&FIT, &s.content_fit), py),
+        ("scroll_snap", NodeKind::ScrollView(s)) => to_py(
+            s.snap.map_or("none", |a| {
+                engine_core::SnapAlign::ALL
+                    .iter()
+                    .find(|(_, x)| *x == a)
+                    .map_or("none", |(n, _)| *n)
+            }),
+            py,
+        ),
         ("orientation", NodeKind::ScrollView(s)) => to_py(name_of(&ORIENTATION, &s.horizontal), py),
         ("item_count", NodeKind::VirtualList(s)) => to_py(s.item_count, py),
         ("item_extent", NodeKind::VirtualList(s)) => match s.item_extent {

@@ -11,6 +11,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | [`App`](#app) | Opens and drives one or more windows together in one blocking `run()`. |
 | [`LoopHandle`](#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s loop. |
 | [`StatsHandle`](#statshandle) | Reads a window's frame statistics from any thread, without waiting for the loop. |
+| [`TimerHandle`](#timerhandle) | Cancels a timer set with `Window.after` or `Window.every`. |
 | [`Window`](#window) | Owns a node tree and its size and title; creates nodes, shows layers, docks panels. |
 | [`Node`](#node) | A handle to one node in a window's tree: properties, animation, events, structure. |
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
@@ -66,6 +67,26 @@ Reads a window's frame statistics from any thread, without waiting for the loop.
 
 **Events:** none.
 
+## TimerHandle { #timerhandle }
+
+Cancels a timer set with `Window.after` or `Window.every`.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [TimerHandle reference](../reference/window.md#timers-056)
+
+**Properties:**
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `active` | `bool` | Whether the timer is still pending: an `every` until cancelled, an `after` until it has run. |
+
+**Methods:**
+
+| Method | Description |
+| --- | --- |
+| `cancel() -> bool` | Stops the timer. |
+
+**Events:** none.
+
 ## Window { #window }
 
 Owns a node tree and its size and title; creates nodes, shows layers, docks panels.
@@ -113,9 +134,12 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | --- | --- |
 | `add_dock_zone(side: str, container: Node, size: float) -> None` | Registers `container` as the dock zone for `side`. |
 | `advance(ms: float) -> None` | Moves the window's clock forward by `ms`, running animations, callbacks and layout. |
+| `after(ms: float, fn: Callable[[], object]) -> TimerHandle` | Calls `fn` once, `ms` milliseconds from now, on the loop's thread. |
+| `center() -> bool` | Centres the open window on its monitor. |
 | `close() -> None` | Closes the window as if the user had: `close_requested` fires first, and a listener that cancels it keeps the window open. |
 | `create(kind: str, **props: Any) -> Node` | Makes a detached node of a kind; attach it with `add_child`. |
 | `dock_panel(side: str, panel: Node) -> None` | Docks `panel` into `side`'s zone and shows it. |
+| `every(ms: float, fn: Callable[[], object]) -> TimerHandle` | Calls `fn` every `ms` milliseconds (at least 1) until the handle is cancelled. |
 | `frame_stats(reset: bool=False) -> dict[str, Any]` | What this window's frames cost, as a dict: `frames` (drawn since the window opened), `skipped` (passes that found nothing to… |
 | `hide_layer(node: Node) -> None` | Hides a layer, detaching it, and returns focus to where it was. |
 | `maximize() -> None` | Maximizes the window — or opens it maximized. |
@@ -126,7 +150,7 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `read_clipboard() -> str \| None` | Returns the OS clipboard's text, or `None` when there is none or it can't be reached. |
 | `resize(width: int, height: int) -> None` | Sets the window's size from code; the root's layout box follows. |
 | `restore() -> None` | Restores a minimized or maximized window to its normal size; before `App.run()`, undoes `minimize()`/`maximize()`. |
-| `set(*, title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, dpi_scaling, transparent, blur_behind, click_through) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
+| `set(*, title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, dpi_scaling, transparent, blur_behind, click_through, x, y, always_on_top, resizable, skip_taskbar) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
 | `set_active_panel(side: str, index: int) -> None` | Shows the `index`th panel docked in `side`'s zone (was `set_active_tab`). |
 | `show_layer(node, anchor, placement, modal, dismissible) -> None` | Shows `node` over the window's content, above every layer already open. |
 | `simulate(event: str, node: Node \| None=None, **fields: Any) -> None` | Delivers a synthetic event as real input would, for tests with no display. |
@@ -285,6 +309,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | `add_child(child: Node) -> None` | Appends `child` under this node, moving it if it's attached elsewhere. |
 | `animate(property, to, duration_ms, easing, on_complete) -> None` | Eases a property from its current value to a target, retargeting mid-flight. |
 | `capture_pointer() -> None` | Routes every later pointer event to this node until the button is released or `release_pointer()` is called. |
+| `caret_rect() -> tuple[float, float, float, float]` | A text input's caret as `(x, y, width, height)` in the node's coordinates, padding and scrolling included; at the end of the… |
 | `children() -> list[Node]` | This node's children, in order. |
 | `destroy() -> None` | Frees this node and its whole subtree now, with their listeners; focus inside it gets `unfocus` first. |
 | `focus() -> None` | Moves keyboard focus to this node, firing `unfocus`/`focus`. |
@@ -300,6 +325,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | `scroll_into_view() -> None` | Scrolls every scroll view around this node just enough to show it, innermost first, at once. |
 | `set(**props: Any) -> None` | Sets properties atomically: every value is checked first, and a bad one raises `ValueError` without changing anything. |
 | `stop_animation(name: str) -> None` | Stops `name`'s running animation where it is. |
+| `text_rects(start: int, end: int) -> list[tuple[float, float, float, float]]` | The rectangles covering bytes `start..end` of a text input's text, one per line, as `(x, y, width, height)` in the node's… |
 
 **Events** (`node.on(event, handler)`; a bubbling event runs the target's listener, then each ancestor's):
 
@@ -373,6 +399,11 @@ What a listener receives when it takes one argument; never constructed directly.
 | `path` | `str \| None` |  |
 | `paths` | `list[str] \| None` |  |
 | `href` | `str \| None` |  |
+| `preedit_cursor` | `tuple[int, int] \| None` |  |
+| `caret` | `tuple[float, float, float, float] \| None` |  |
+| `inserted` | `tuple[int, int] \| None` |  |
+| `property` | `str \| None` |  |
+| `finished` | `bool \| None` |  |
 | `pointer_id` | `int \| None` |  |
 | `phase` | `str \| None` |  |
 | `count` | `int \| None` |  |

@@ -1584,18 +1584,170 @@ impl TextRenderer {
         // (`draw_own`'s own real caller decides `show_caret`).
         // `caret_at` is the real, in-progress composition's own end
         // while a preedit is active, `state.cursor` otherwise.
-        if show_caret {
+        // 0.5.6 (#165): `caret_visible` hides it for a framework that draws its
+        // own, `caret_on` is the blink's phase, and the shape is a bar, a box
+        // over the next character, or a line under it.
+        if show_caret && state.caret_visible && state.caret_on {
             let cursor = Cursor::from_byte_index(layout, caret_at, Affinity::Downstream);
-            let bounds = cursor.geometry(layout, 1.5);
+            let width = state.caret_width.max(0.0);
+            let bar = cursor.geometry(layout, width);
+            let width = f64::from(width);
+            let bar = Rect::new(bar.x0, bar.y0, bar.x1, bar.y1);
+            let next_width = {
+                let text: &str = &display_content;
+                let advance = text
+                    .get(caret_at..)
+                    .and_then(|rest| rest.chars().next())
+                    .and_then(|c| {
+                        let after = Cursor::from_byte_index(
+                            layout,
+                            caret_at + c.len_utf8(),
+                            Affinity::Downstream,
+                        )
+                        .geometry(layout, 0.0);
+                        // Only if the next character is on the same line.
+                        ((after.y0 - bar.y0).abs() < 1.0 && after.x0 > bar.x0)
+                            .then_some(after.x0 - bar.x0)
+                    });
+                advance.unwrap_or(f64::from(state.font_size) * 0.5)
+            };
+            let bounds = match state.caret_shape {
+                engine_core::CaretShape::Bar => bar,
+                engine_core::CaretShape::Block => {
+                    Rect::new(bar.x0, bar.y0, bar.x0 + next_width, bar.y1)
+                }
+                engine_core::CaretShape::Underline => {
+                    Rect::new(bar.x0, bar.y1 - width.max(1.0), bar.x0 + next_width, bar.y1)
+                }
+            };
             let rect = Rect::new(
                 bounds.x0 + at.x,
                 bounds.y0 + at.y,
                 bounds.x1 + at.x,
                 bounds.y1 + at.y,
             );
-            scene.set_paint(state.caret_color.unwrap_or(at.color));
+            scene.set_paint(
+                state
+                    .caret_color
+                    .as_ref()
+                    .map_or(at.color, |caret| caret.current),
+            );
             scene.fill_path(&rect.to_path(0.1));
         }
+    }
+
+    /// 0.5.6 (#165): the layout a field paints, built without drawing, and a
+    /// map from a byte offset in `state.content` to the same place in what is
+    /// shaped (folded ranges collapsed, whitespace shown, a composition spliced
+    /// in at the cursor). Same chain as `draw_field` and `hit_test_position`.
+    fn field_geometry_layout(
+        &mut self,
+        state: &TextFieldState,
+        at: TextPlacement,
+    ) -> FieldGeometry {
+        let preedit = state.preedit.as_deref().filter(|p| !p.is_empty());
+        let folded_content = elide_folded_ranges(&state.content, &state.folded_ranges).into_owned();
+        let glyphs = Glyphs::of(state);
+        let showing_placeholder =
+            state.content.is_empty() && preedit.is_none() && !state.placeholder.is_empty();
+        let (display, map): (String, Box<dyn Fn(usize) -> usize>) = if showing_placeholder {
+            (state.placeholder.clone(), Box::new(|_| 0))
+        } else if let Some(preedit) = preedit {
+            let mut combined = state.content.clone();
+            combined.insert_str(state.cursor, preedit);
+            let (cursor, len) = (state.cursor, preedit.len());
+            (
+                combined,
+                Box::new(move |offset| {
+                    if offset > cursor {
+                        offset + len
+                    } else {
+                        offset
+                    }
+                }),
+            )
+        } else {
+            let content_len = state.content.len();
+            let folded_ranges = state.folded_ranges.clone();
+            let folded_for_map = folded_content.clone();
+            let display = if glyphs.active() {
+                substitute(&folded_content, glyphs)
+            } else {
+                folded_content
+            };
+            (
+                display,
+                Box::new(move |offset| {
+                    let folded = to_display_offset_folded(content_len, &folded_ranges, offset);
+                    if glyphs.active() {
+                        to_display_offset(&folded_for_map, folded, glyphs)
+                    } else {
+                        folded
+                    }
+                }),
+            )
+        };
+        let layout = self.build_field_layout(
+            &display,
+            &state.font_family,
+            state.font_weight,
+            state.font_size,
+            field_max_width(state, at.max_width),
+        );
+        // While composing, the caret sits at the end of the composition.
+        let caret_at = match preedit {
+            Some(preedit) => state.cursor + preedit.len(),
+            None => state.cursor,
+        };
+        (layout, map, caret_at)
+    }
+
+    /// 0.5.6 (#165): the caret's rectangle in the field's own coordinates
+    /// (`at` placing the text in the node, scroll offsets already in it): the
+    /// bar's, with `state.caret_width`. While composing it is at the end of the
+    /// composition. Shaped fresh, so it is right straight after an edit.
+    pub fn field_caret_rect(&mut self, state: &TextFieldState, at: TextPlacement) -> Rect {
+        let (layout, map, caret_at) = self.field_geometry_layout(state, at);
+        let at_offset = if state.preedit.as_deref().is_some_and(|p| !p.is_empty()) {
+            caret_at
+        } else {
+            map(caret_at)
+        };
+        let bounds = Cursor::from_byte_index(&layout, at_offset, Affinity::Downstream)
+            .geometry(&layout, state.caret_width.max(0.0));
+        Rect::new(
+            bounds.x0 + at.x,
+            bounds.y0 + at.y,
+            bounds.x1 + at.x,
+            bounds.y1 + at.y,
+        )
+    }
+
+    /// 0.5.6 (#165): the rectangles covering `start..end` (bytes of
+    /// `state.content`), one per line it crosses, in the field's coordinates.
+    pub fn field_range_rects(
+        &mut self,
+        state: &TextFieldState,
+        at: TextPlacement,
+        start: usize,
+        end: usize,
+    ) -> Vec<Rect> {
+        let (layout, map, _) = self.field_geometry_layout(state, at);
+        let at_offset =
+            |offset: usize| Cursor::from_byte_index(&layout, map(offset), Affinity::Downstream);
+        let selection = Selection::new(at_offset(start), at_offset(end));
+        selection
+            .geometry(&layout)
+            .into_iter()
+            .map(|(bounds, _)| {
+                Rect::new(
+                    bounds.x0 + at.x,
+                    bounds.y0 + at.y,
+                    bounds.x1 + at.x,
+                    bounds.y1 + at.y,
+                )
+            })
+            .collect()
     }
 
     /// M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own cell
@@ -1955,6 +2107,10 @@ const OBSCURED_GLYPH: char = '\u{2022}';
 /// substitution is one character for one character, which is what lets
 /// `to_display_offset`/`from_display_offset` map cursor and click
 /// offsets between the real content and what's shaped.
+/// 0.5.6 (#165): a field's shaped layout, the map from a byte offset in its
+/// content to one in what is shaped, and where the caret is (in content bytes).
+type FieldGeometry = (parley::Layout<[u8; 4]>, Box<dyn Fn(usize) -> usize>, usize);
+
 #[derive(Clone, Copy)]
 struct Glyphs {
     whitespace: bool,
@@ -2159,6 +2315,7 @@ fn from_display_offset_folded(
 /// Where and how wide to draw one text node -- bundled so
 /// `TextRenderer::draw` stays under clippy's argument-count lint without
 /// losing any of these genuinely-distinct-per-call values.
+#[derive(Clone, Copy)]
 pub struct TextPlacement {
     /// Node-local top-left corner, under whatever transform the caller's
     /// `Scene` currently has set (M5 Phase 1, §11.9) -- `draw_own`
