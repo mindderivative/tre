@@ -72,7 +72,12 @@ Each settable one applies live to an open window, or when `App.run()` opens
 it. A window smaller than its minimum is grown to it, when the minimum is
 set and after any resize: on Wayland a minimum otherwise only limits what
 the user can drag it to, and leaving fullscreen can restore a smaller size.
-A maximized or fullscreen window isn't resized to its minimum. Two window
+A maximized or fullscreen window isn't resized to its minimum. Nor is a
+window the compositor holds at its size: on Wayland a compositor can report a
+window as tiled, and a tiled window may not resize itself (COSMIC reports
+every window this way). The minimum is still passed to the compositor as a
+hint, but the window keeps its size, and `get("width")` and `get("height")`
+give the real one, so don't assume a minimum was reached. Two window
 events report state changes: **`maximized`** (`event.maximized`) when the
 window is maximized or restored, and **`active`** (`event.active`) when it
 gains or loses focus — each only when the value changes.
