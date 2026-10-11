@@ -109,10 +109,16 @@ fn system_fonts_are_off_by_default_and_opt_in_adds_the_glyphs_bundled_fonts_lack
         ink(&cjk_on) > ink(&cjk_off),
         "real glyphs have more ink than tofu"
     );
-    if emoji_on != emoji_off {
+    // A colour emoji is only checked where the machine's emoji font can draw
+    // one. A bitmap-only font (CBDT, as most Linux distributions' Noto Color
+    // Emoji; sbix on macOS) draws nothing yet (#168): `colour_emoji_colr.rs`
+    // checks colour from a registered COLR font on every machine.
+    if ink(&emoji_on) > 0 && emoji_on != emoji_off {
         assert!(
             off_colour(&emoji_on) > off_colour(&emoji_off) + 50,
             "a colour emoji has colours the text colour doesn't"
         );
+    } else if emoji_on != emoji_off {
+        eprintln!("the system's emoji font is bitmap-only: it draws nothing (#168)");
     }
 }

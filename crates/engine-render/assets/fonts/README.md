@@ -27,7 +27,17 @@ discipline everywhere else.
   the "tofu" (missing-glyph boxes) real prompt themes and TUI apps rely
   on.
 
-All four are freely redistributable; none requires attribution beyond
+- `NotoColorEmoji-COLR-Subset.ttf`, `NotoColorEmoji-CBDT-Subset.ttf` --
+  small subsets of Google's Noto Color Emoji (U+2705, U+1F440, U+1F389,
+  U+1F920) in the COLR and the CBDT/CBLC bitmap formats, copied from the
+  Vello repository's own test assets (`assets/noto_color_emoji/`, pinned
+  commit `b408cd00`; the CBDT one is that repository's
+  `NotoColorEmoji-CBTF-Subset.ttf`). Used only by
+  `tests/colour_emoji_colr.rs` and `tests/colour_emoji_bitmap.rs` (#168), which
+  register them so colour emoji are tested without depending on the machine's
+  fonts. SIL Open Font License 1.1 (`LICENSE-NotoColorEmoji.txt`).
+
+All six are freely redistributable; none requires attribution beyond
 retaining their own license text, available from
 <https://fonts.google.com/specimen/Roboto>,
 <https://fonts.google.com/noto/specimen/Noto+Sans+Arabic>, and

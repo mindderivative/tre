@@ -60,3 +60,20 @@ Both are in the Backlog. One set-up gap (#171): the guide's apt line
 tests fail to link (`unable to find library -lpython3.12`). Fixed on branch
 `docs-python3-dev-171`; CI's package list needs no change, since its runners
 ship the Python headers.
+
+**#168, found (2026-10-10, 0.5.6.1).** The scope read the test's `off/on`
+output backwards: with system fonts on, the emoji draws *nothing* (0 inked
+pixels; 184 with them off is the missing-glyph box). The machine's Noto Color
+Emoji is a CBDT bitmap font, and at the pinned Vello revision (`b408cd00`) a
+bitmap glyph cannot be drawn on the GPU: glifo decodes bitmap glyphs only with
+its `png` feature, and with it on `vello_gpu` panics ("pixmap image sources
+are not supported by Vello GPU", `wgpu/mod.rs:705`), so the feature stays off
+and the glyph is skipped. COLR emoji do draw in colour (new
+`colour_emoji_colr.rs`, with a registered 5.6 KB subset, passes). A new
+`colour_emoji_bitmap.rs` pins the bitmap limit (no colour, no panic) so it
+cannot change silently. `system_fonts.rs` now checks emoji colour only where
+the machine's font draws, and `docs/guide/text.md` no longer claims bitmap
+emoji draw in colour (it said so; that was wrong) and says to register a COLR
+font. macOS's sbix is a bitmap format too: expected blank, not checked. The
+real fix is upstream (a bitmap-glyph path in `vello_gpu`) or our own drawing of
+the strike as an image: not in 0.5.6.1.
