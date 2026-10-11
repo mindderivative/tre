@@ -13,14 +13,21 @@ entry that the user moves to `Ready`.
 
 ## Backlog (not scoped)
 
-Found by running `tools/verify.sh` on a fresh machine (2026-10-10):
+Found by running `tools/verify.sh` on a fresh machine (2026-10-10), and since:
 
-- **#168** — `system_fonts` test fails where Noto Color Emoji is installed:
-  emoji render with no colour. Decide whether the renderer's colour-bitmap
-  path is missing or the test's precondition is too loose.
-- **#169** — `test_live_fullscreen_and_a_minimum_larger_than_the_window`
-  fails on Wayland (300x200, expected 400x300). Compare against KDE Wayland
-  and X11 before deciding if it is the code or the test.
+- **#175** — draw bitmap colour emoji (CBDT on Linux, `sbix` on macOS): a
+  bitmap glyph draws nothing at the pinned Vello revision. Split out of #168,
+  which pinned the limit with a test and documented it.
+- **#176** — an effect shader on a node with padding draws nothing
+  (`examples/shader_shine.py` renders blank).
+- **#177** — a text node in a vertical flex container with `align_items`
+  `center` or `flex_start` shrinks to its longest word and wraps.
+
+Done on 2026-10-11 (PRs #174 and #173, merged to `main`): **#168** (colour
+emoji: COLR draws, bitmap-only emoji fonts are a documented limit, and the
+`system_fonts` test no longer assumes the machine's font draws) and **#169**
+(the live minimum-size test fits Wayland tiling and X11). `tools/verify.sh
+--cross` passed on KDE Plasma Wayland (CachyOS) for both, alone and merged.
 
 Verification on hardware or other platforms (each needs a machine we do not
 have here): #47 macOS and #48 Windows title bars, #91 WGSL on real GPUs, #118
