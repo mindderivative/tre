@@ -1010,7 +1010,7 @@ impl TextRenderer {
                 let mut builder = scene
                     .glyph_run(resources, font)
                     .font_size(font_size)
-                    .atlas_cache(glyph_cache);
+                    .atlas_cache(atlas_for(font, glyph_cache));
                 // M96: italics with no italic face -- slanted by the angle
                 // font matching suggests (y-down, so the shear is negated;
                 // see `draw_terminal`'s own synthetic italic).
@@ -1534,6 +1534,7 @@ impl TextRenderer {
                             scene
                                 .glyph_run(resources, font)
                                 .font_size(font_size)
+                                .atlas_cache(atlas_for(font, false))
                                 .fill_glyphs(std::mem::take(&mut batch).into_iter()),
                         );
                     }
@@ -1550,6 +1551,7 @@ impl TextRenderer {
                         scene
                             .glyph_run(resources, font)
                             .font_size(font_size)
+                            .atlas_cache(atlas_for(font, false))
                             .fill_glyphs(batch.into_iter()),
                     );
                 }
@@ -1931,7 +1933,7 @@ impl TextRenderer {
                             let mut builder = scene
                                 .glyph_run(resources, font)
                                 .font_size(font_size)
-                                .atlas_cache(glyph_cache);
+                                .atlas_cache(atlas_for(font, glyph_cache));
                             if italic {
                                 // M39 Phase 4 (§5, §7): a real synthetic-
                                 // italic shear -- the bundled monospace
@@ -2328,6 +2330,38 @@ pub struct TextPlacement {
     /// The node's taffy-computed box width -- what `parley` wraps to.
     pub max_width: f32,
     pub color: Color,
+}
+
+/// Whether `font` carries bitmap strikes (CBDT, as the Noto Color Emoji package
+/// on most Linux distributions, or `sbix`, as on macOS). Looked up once per
+/// face: the answer is a table-directory read, but this runs for every glyph run
+/// of every frame.
+fn has_bitmap_strikes(font: &peniko::FontData) -> bool {
+    use skrifa::MetadataProvider;
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<(u64, u32), bool>>> =
+        std::sync::OnceLock::new();
+    let key = (font.data.id(), font.index);
+    let cache = CACHE.get_or_init(Default::default);
+    let known = cache.lock().ok().and_then(|c| c.get(&key).copied());
+    if let Some(known) = known {
+        return known;
+    }
+    let has = skrifa::FontRef::from_index(font.data.data(), font.index)
+        .map(|f| !f.bitmap_strikes().is_empty())
+        .unwrap_or(false);
+    if let Ok(mut c) = cache.lock() {
+        c.insert(key, has);
+    }
+    has
+}
+
+/// Whether a glyph run of `font` draws through glifo's atlas. `glyph_cache` is
+/// the process-wide switch (#127); a bitmap font is atlased whatever it says
+/// (#175): glifo's uncached path gives `vello_gpu` a pixmap, which it panics on,
+/// while the atlas path gives it an image it supports. Outline and COLR fonts
+/// follow `glyph_cache`, so their pixels are unchanged.
+fn atlas_for(font: &peniko::FontData, glyph_cache: bool) -> bool {
+    glyph_cache || has_bitmap_strikes(font)
 }
 
 /// `vello_gpu` draws every glyph it can and reports the ones it couldn't.

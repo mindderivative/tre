@@ -68,6 +68,32 @@ resize border, a double-click on the title bar, an opt-in window menu. M4
 upgrade page. M6 (#36, #41): the release. The step-by-step trail is in git
 history for this file and in `BUILD_TRACKER_ARCHIVE_0.5.md`.
 
+## 0.5.6.2 (in progress)
+
+**#175, bitmap colour emoji (2026-10-11).** #168 left a bitmap emoji (CBDT on
+Linux, `sbix` on macOS) drawing nothing, with three ways forward listed. None
+was needed. glifo has two bitmap paths: the uncached one gives `vello_gpu` an
+`ImageSource::Pixmap`, which it panics on (still so on upstream `main`,
+2026-10-09); the atlas one (`atlas_cache(true)`) gives it an `OpaqueId`, which
+it supports. #168 had tried glifo's `png` feature only without the atlas. With
+`png` on and the glyph cache on, the CBDT emoji drew in colour (511 coloured
+pixels of 683) in the first try; with the cache off it still panicked.
+
+The fix: `png` on, `skrifa` as a direct dependency (the version glifo already
+pulls in), and `atlas_for` in `text.rs`: a glyph run whose font has bitmap
+strikes always draws through the atlas, at all four `fill_glyphs` sites (labels,
+both text-field paths, the terminal); every other font follows `set_glyph_cache`
+as before, so outline and COLR text is pixel-identical. The text-field sites had
+no atlas call at all, so with `png` on an emoji typed into a field would have
+panicked, not drawn nothing: they are covered by the test.
+
+`colour_emoji_bitmap.rs` was the "draws nothing" pin; it now asserts colour with
+the cache off (the case that panicked), the same pixels with it on, colour at
+2x, colour in a plain and a selected text field, and that Latin text is
+unchanged by registering the bitmap font. On this machine's real Noto Color
+Emoji the `system_fonts` ink went from `emoji 184/0` to `184/937`. `sbix` is the
+same code path but is unchecked without a Mac.
+
 ## Verify on a fresh machine (2026-10-10)
 
 `tools/verify.sh` was run on a new Pop!_OS 24.04 box (Wayland, Rust 1.98.0,

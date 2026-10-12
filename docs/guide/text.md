@@ -88,15 +88,16 @@ where no installed font has a script it still shows boxes. Text the bundled
 fonts cover is unaffected either way, and turning the switch off again returns
 to the exact same frames.
 
-**Colour emoji need a COLR font (0.5.6.1).** Colour emoji draw in colour from a
-font in the COLR format, such as Windows' Segoe UI Emoji or a Noto Color Emoji
-COLR build. A bitmap-only emoji font draws **nothing yet**: that is the CBDT
-format of the Noto Color Emoji package most Linux distributions install, and
-macOS's Apple Color Emoji (`sbix`) is a bitmap font too, so expect the same
-there (not yet checked on a Mac). The renderer cannot draw a glyph that is a
-picture. So with `set_system_fonts(True)` an emoji can show as a blank where
-only such a font is installed. To get colour emoji on every machine, register a
-COLR emoji font you ship (subset it to the emoji you use, as above).
+**Colour emoji (0.5.6.2).** Colour emoji draw in colour from a font in the COLR
+format (Windows' Segoe UI Emoji, a Noto Color Emoji COLR build) and from a
+bitmap font: the CBDT format of the Noto Color Emoji package most Linux
+distributions install, and macOS's Apple Color Emoji (`sbix`). Before 0.5.6.2 a
+bitmap emoji drew nothing. A bitmap emoji is a picture, so it is drawn from the
+glyph cache whatever `set_glyph_cache` says, and it scales from the nearest
+size the font ships rather than from an outline: a large emoji is a magnified
+bitmap. The `sbix` path is the same code as CBDT but has not been checked on a
+Mac. For the same emoji on every machine, register a COLR emoji font you ship
+(subset it to the emoji you use, as above).
 
 **Ship the fonts with the app.** For the same pixels everywhere, register
 font files you bundle, such as subsets of [Noto](https://fonts.google.com/noto):

@@ -1,19 +1,20 @@
-//! #168: a bitmap-only emoji font (CBDT/CBLC, as the Noto Color Emoji package
-//! on most Linux distributions, or sbix as on macOS) draws nothing yet: the
-//! pinned `vello_gpu` cannot draw a glyph that is a picture. This pins that
-//! down so it is a known limit, not a silent surprise: no panic, no colour.
-//! When it starts to draw, this test fails: update the colour-emoji section
-//! of `docs/guide/text.md` and turn this into a colour assertion.
+//! #175: a colour emoji from a bitmap font (CBDT/CBLC, as the Noto Color Emoji
+//! package on most Linux distributions, or sbix as on macOS) draws in colour.
+//! It used to draw nothing (#168): at the pinned Vello revision glifo hands
+//! `vello_gpu` a pixmap for a bitmap glyph, which `vello_gpu` panics on. A
+//! bitmap run now always draws through glifo's atlas, which gives it an image
+//! `vello_gpu` supports, whatever the glyph-cache switch says.
 //!
-//! Enabling glifo's `png` feature does not help at this revision: the glyph
-//! is then drawn as a pixmap and `vello_gpu` panics ("pixmap image sources
-//! are not supported by Vello GPU"). Registration is process-global, so this
-//! is its own test binary (the COLR case is `colour_emoji_colr.rs`).
+//! The font is a registered one, so the test never depends on which emoji font
+//! a machine has installed. Registration is process-global and cannot be
+//! undone, so this is its own test binary (the COLR case is
+//! `colour_emoji_colr.rs`), and everything that registers the font is one test,
+//! in order.
 
 mod support;
 
-use engine_core::{NodeKind, PaintProperties, TextAlign, TextState, Tree};
-use engine_render::{register_font, snapshot};
+use engine_core::{NodeKind, PaintProperties, TextAlign, TextFieldState, TextState, Tree};
+use engine_render::{register_font, snapshot_with};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
 
@@ -24,7 +25,9 @@ const NOTO_CBDT: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji-CBDT-Sub
 const W: u32 = 200;
 const H: u32 = 50;
 
-fn render(content: &str) -> engine_render::Snapshot {
+/// `content` in 32 px Roboto at `scale`, with the process-wide glyph cache
+/// `glyph_cache`.
+fn render(content: &str, scale: f64, glyph_cache: bool) -> engine_render::Snapshot {
     let (device, queue) = pollster::block_on(support::device("colour emoji bitmap"));
     let mut tree = Tree::new();
     let root = tree.insert(
@@ -53,9 +56,40 @@ fn render(content: &str) -> engine_render::Snapshot {
             height: AvailableSpace::Definite(H as f32),
         },
     );
-    snapshot(&device, &queue, &tree, root, W, H, 1.0, 0.0).unwrap()
+    let (w, h) = ((W as f64 * scale) as u32, (H as f64 * scale) as u32);
+    snapshot_with(&device, &queue, &tree, root, w, h, scale, 0.0, glyph_cache).unwrap()
 }
 
+/// A 32 px text field holding `content`, with the cursor at its end and a
+/// selection from `anchor` to there when it is `Some`.
+fn render_field(content: &str, anchor: Option<usize>) -> engine_render::Snapshot {
+    let (device, queue) = pollster::block_on(support::device("colour emoji bitmap field"));
+    let mut tree = Tree::new();
+    let mut state = TextFieldState::new(content, "Roboto", 400.0, 32.0);
+    state.cursor = content.len();
+    state.selection_anchor = anchor;
+    let root = tree.insert(
+        NodeKind::TextField(Box::new(state)),
+        Style {
+            size: Size {
+                width: length(W as f32),
+                height: length(H as f32),
+            },
+            ..Default::default()
+        },
+        PaintProperties::new(Color::from_rgba8(0x20, 0x20, 0xE0, 0xFF), 0.0, 1.0),
+    );
+    tree.compute_layout(
+        root,
+        Size {
+            width: AvailableSpace::Definite(W as f32),
+            height: AvailableSpace::Definite(H as f32),
+        },
+    );
+    snapshot_with(&device, &queue, &tree, root, W, H, 1.0, 0.0, false).unwrap()
+}
+
+/// Pixels whose colour is not the text colour's hue: colour glyphs.
 fn off_colour(s: &engine_render::Snapshot) -> usize {
     s.rgba
         .chunks(4)
@@ -64,15 +98,65 @@ fn off_colour(s: &engine_render::Snapshot) -> usize {
 }
 
 #[test]
-fn a_bitmap_only_emoji_font_draws_no_colour_and_does_not_panic() {
+fn a_bitmap_emoji_draws_in_colour_without_panicking() {
+    // U+1F389, a party popper: in the subset, not in Roboto.
     let popper = "\u{1F389}";
+    let latin = "Hello, world";
+
+    let before = render(popper, 1.0, false);
+    assert_eq!(
+        off_colour(&before),
+        0,
+        "no emoji font: the missing-glyph box is in the text colour"
+    );
+    let latin_before = render(latin, 1.0, false);
+
     register_font(NOTO_CBDT.to_vec()).expect("a real font");
 
-    let drawn = render(popper);
+    // The default: glyph cache off. This is the case that panicked before #175.
+    let after = render(popper, 1.0, false);
+    assert!(
+        off_colour(&after) > 50,
+        "a bitmap emoji has colours the text colour doesn't: {} pixels",
+        off_colour(&after)
+    );
+
+    // With the cache on it is the same atlas path: the same pixels.
     assert_eq!(
-        off_colour(&drawn),
-        0,
-        "known limit (#168): a bitmap emoji draws no colour; if this fails, bitmap \
-         glyphs now draw -- update the docs and assert the colour instead"
+        after,
+        render(popper, 1.0, true),
+        "a bitmap run draws the same with the glyph cache on or off"
+    );
+
+    // Scaled: a 2x render is still colour (a larger strike or a scaled one).
+    let twice = render(popper, 2.0, false);
+    assert!(
+        off_colour(&twice) > 4 * 50,
+        "a bitmap emoji is still colour at 2x: {} pixels",
+        off_colour(&twice)
+    );
+
+    // A text field draws its glyphs through its own code (`draw_field`), plain
+    // and with a selection (a run split by colour): both must draw the emoji
+    // and neither may panic.
+    let plain = render_field(popper, None);
+    assert!(
+        off_colour(&plain) > 50,
+        "a bitmap emoji in a text field is colour: {} pixels",
+        off_colour(&plain)
+    );
+    let selected = render_field(popper, Some(0));
+    assert!(
+        off_colour(&selected) > 50,
+        "a bitmap emoji in a selected text field is colour: {} pixels",
+        off_colour(&selected)
+    );
+
+    // Text that is not an emoji does not change: an outline run still follows
+    // the glyph-cache switch (off here), so its pixels are identical.
+    assert_eq!(
+        latin_before,
+        render(latin, 1.0, false),
+        "registering a bitmap font leaves outline text alone"
     );
 }
