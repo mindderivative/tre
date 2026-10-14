@@ -15,6 +15,9 @@ engine-core = { path = "../engine-core" }
 # these), from the workspace's pinned commit; text.rs builds
 # `glifo::Glyph { id, x, y }` from parley's shaped output.
 glifo = { workspace = true }
+# Tells a bitmap font (CBDT, `sbix`) from an outline one, so its runs are drawn
+# through the glyph atlas (#175).
+skrifa = { workspace = true }
 # Must track peniko's own kurbo requirement exactly (currently "0.13.1",
 # checked directly in peniko 0.6.1's Cargo.toml) -- vello_gpu's
 # Scene::fill_path(&BezPath) takes peniko::kurbo's BezPath, not an
