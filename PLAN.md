@@ -15,9 +15,6 @@ entry that the user moves to `Ready`.
 
 Found by running `tools/verify.sh` on a fresh machine (2026-10-10), and since:
 
-- **#175** — draw bitmap colour emoji (CBDT on Linux, `sbix` on macOS): a
-  bitmap glyph draws nothing at the pinned Vello revision. Split out of #168,
-  which pinned the limit with a test and documented it.
 - **#176** — an effect shader on a node with padding draws nothing
   (`examples/shader_shine.py` renders blank).
 - **#177** — a text node in a vertical flex container with `align_items`
@@ -28,6 +25,12 @@ emoji: COLR draws, bitmap-only emoji fonts are a documented limit, and the
 `system_fonts` test no longer assumes the machine's font draws) and **#169**
 (the live minimum-size test fits Wayland tiling and X11). `tools/verify.sh
 --cross` passed on KDE Plasma Wayland (CachyOS) for both, alone and merged.
+
+Done on 2026-10-14 (PR #180, merged to `main`): **#175** (bitmap colour emoji:
+a CBDT or `sbix` emoji draws in colour, through glifo's glyph atlas whatever
+`set_glyph_cache` says; `sbix` is the same code path but unchecked without a
+Mac). The 0.5.6.1 and 0.5.6.2 changes are on `main` and not yet released or
+tagged.
 
 Verification on hardware or other platforms (each needs a machine we do not
 have here): #47 macOS and #48 Windows title bars, #91 WGSL on real GPUs, #118
