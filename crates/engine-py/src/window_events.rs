@@ -589,6 +589,13 @@ impl PyWindow {
             }
         };
         let changes = parse_all(Some(&props), &node_kind, &self.handles.tree)?;
+        // 0.5.6.2 (#179): `placement` and `offset` need an `anchor` in this call.
+        crate::node_props::check_anchor_changes(
+            &self.handles.tree.borrow(),
+            None,
+            false,
+            &changes,
+        )?;
         let draws = matches!(node_kind, NodeKind::Canvas(_));
         let session = match session {
             Some((shell, cols, rows, scrollback)) => Some(

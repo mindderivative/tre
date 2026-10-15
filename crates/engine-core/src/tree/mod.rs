@@ -88,6 +88,12 @@ pub struct Tree {
     calc_nodes: Vec<NodeId>,
     /// 0.5.6.2 (#178): calc sides given up on since `take_calc_conflicts`.
     calc_conflicts: Vec<(NodeId, bool)>,
+    /// 0.5.6.2 (#179): the nodes placed against another node, which
+    /// `compute_layout` places after taffy has laid out their anchors. Ids of
+    /// nodes since removed are dropped when it next runs.
+    anchored_nodes: Vec<NodeId>,
+    /// 0.5.6.2 (#179): anchors given up on since `take_anchor_conflicts`.
+    anchor_conflicts: Vec<NodeId>,
     /// 0.5.6.2 (#178): the nodes that have a `layout` listener, each with the
     /// size last reported for it (`None` until its first layout is reported).
     /// Empty for most trees, which then pay nothing.
@@ -209,6 +215,8 @@ impl Tree {
             text_measure: None,
             calc_nodes: Vec::new(),
             calc_conflicts: Vec::new(),
+            anchored_nodes: Vec::new(),
+            anchor_conflicts: Vec::new(),
             layout_watch: std::collections::HashMap::new(),
             focused: None,
             hovered: None,
@@ -344,6 +352,7 @@ impl Tree {
             z_index: 0,
             fit_content: crate::node::FitContent::default(),
             calc_size: crate::node::CalcSize::default(),
+            anchored: None,
         });
         self.taffy_nodes.insert(id, taffy_node);
         if matches!(self.nodes[id].kind, NodeKind::Text(_)) {

@@ -1600,6 +1600,23 @@ pub struct Node {
     pub fit_content: FitContent,
     /// 0.5.6.2 (#178): which sides are a `calc` size. See `CalcSize`.
     pub calc_size: CalcSize,
+    /// 0.5.6.2 (#179): `Some` places the node against another node in the tree.
+    /// Boxed: most nodes have none.
+    pub anchored: Option<Box<Anchored>>,
+}
+
+/// 0.5.6.2 (#179): a node placed against another node, wherever that is in the
+/// tree: after each layout the tree puts this node's box at `placement` of the
+/// `anchor`'s box (`offset` moves the point, in the anchor's own coordinates),
+/// through the anchor's scroll offsets and transforms, so it follows the anchor
+/// with no lag. The node stays an ordinary child of its own parent -- clipped,
+/// ordered, focused and hit as one -- and is made absolute. Unlike a layer it is
+/// never flipped or shifted to fit. `Tree::set_anchor` sets it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Anchored {
+    pub anchor: NodeId,
+    pub placement: crate::overlay::Placement,
+    pub offset: (f64, f64),
 }
 
 /// 0.5.6.2 (#176, #177): `width="fit-content"` and `height="fit-content"` on a

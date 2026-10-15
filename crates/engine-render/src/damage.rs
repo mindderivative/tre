@@ -1707,6 +1707,8 @@ fn node_fingerprint_with(
         fit_content: _,
         // 0.5.6.2 (#178): a calc size reaches paint as the box size, likewise.
         calc_size: _,
+        // 0.5.6.2 (#179): where an anchored node is reaches paint as its position.
+        anchored: _,
     } = node;
     visible.hash(h);
     z_index.hash(h);

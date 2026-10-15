@@ -8,7 +8,8 @@ and tells you when the user dismisses it. What it looks like — and whether
 there's a scrim — is yours.
 
 ```python
-window.show_layer(node, anchor=None, placement="below", modal=False, dismissible=True)
+window.show_layer(node, anchor=None, placement="below", modal=False, dismissible=True,
+                  offset=(0, 0), flip=True)
 window.hide_layer(node)
 ```
 
@@ -46,6 +47,26 @@ the layer flips; then it shifts to stay inside the window. It re-places
 itself at every layout, so it follows its anchor.
 `menu.get("layer_placement")` says which side it landed on — for a menu
 that grows upward, or an arrow that points the right way.
+
+**Corners, the centre, and an offset (0.5.6.2).** `placement` can also name a
+*point* of the anchor: `"top_start"`, `"top_end"`, `"bottom_start"`,
+`"bottom_end"` or `"center"` put the layer's **centre** on that point, for a badge
+or a marker on a corner. A point is never flipped or shifted to fit: it stays on
+the corner, even half off the window. `offset=(dx, dy)` moves the point the layer
+attaches to, **in the anchor's own coordinates** (so a scaled anchor scales it;
++x is toward the end, +y is down): `placement="top_end", offset=(-4, 4)` sits a
+badge 4 pixels in from the corner. `flip=False` keeps a side placement from
+flipping or shifting too.
+
+```python
+window.show_layer(badge, anchor=button, placement="top_end", offset=(-4, 4))
+```
+
+A layer is drawn above the whole window, escapes its ancestors' `clip_children`
+and is its own Tab scope. For a badge or a marker that should be clipped and
+ordered with its neighbours, and whose events bubble to its parent, place an
+ordinary node against its anchor instead:
+[Anchored layout](nodes-and-layout.md#anchored-layout).
 
 A press inside a layer never dismisses the layers under it, so a submenu is
 just another layer, anchored to its item with `placement="end"`.

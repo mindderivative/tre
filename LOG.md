@@ -164,6 +164,48 @@ Tests: `engine-core/tests/calc_size.rs` (10), `layout_watch.rs` (6),
 `tests/test_layout_insets.py` (29), `test_calc_size.py` (24),
 `test_layout_event.py` (11).
 
+**#179, anchored layout (2026-10-15), from Tesserae 0.5.0.8 (#262).** Option 3
+of the scope: the layer and an ordinary node share one placement model.
+
+*Findings.* Layers already did what an in-tree node needs: `place_layers` runs
+after layout, reads the anchor's window position, writes the layer's `inset` and
+lays out again. An absolute node does not change its anchor's layout, so there is
+no cycle with it and the same pass can place an ordinary node; positions go
+through `composed_transform` (scroll offsets, scale and rotation included), so the
+arithmetic stays right under a scrolling or transformed ancestor, which was
+Tesserae's worry about doing it from Python.
+
+*Model.* `Placement` gains `TopStart`, `TopEnd`, `BottomStart`, `BottomEnd` and
+`Center`, which name a *point* of the anchor and put the node's centre there; the
+four sides are as before. `Placement::origin` is the one piece of placement
+arithmetic, and an `AnchorBox` is the bounds of the anchor's laid-out box through
+its transform. `offset` moves the attachment point **in the anchor's own
+coordinates** (a scaled anchor scales it): the user's reading, which I had first
+described as a shift of the result; for an untransformed anchor they agree. A
+point is never flipped or shifted to fit; `OverlayMeta.pinned` (`flip=False`)
+stops a side doing it too. The default is unchanged, so every existing layer test
+passed untouched.
+
+*Layers.* `show_layer(..., offset=(dx, dy), flip=True)` and the five new names.
+
+*In-tree.* `Node.anchored` (`Anchored { anchor, placement, offset }`),
+`Tree::set_anchor` (makes the node absolute; `None` puts it back in the flow),
+`anchor_cycle` (an anchor that is the node or inside it is refused), and a
+`settle_anchored` pass beside the calc settle in `compute_layout`: it runs every
+call, not only after a taffy pass, because an anchor moves with a scroll or a
+transform without any layout; at most 4 passes (a chain needs one a link); two
+nodes anchored to each other have no fixed point, so they are put back in the flow
+with a warning (`take_anchor_conflicts`). The window-space target is mapped into
+the parent's space with the inverse of its composed transform, less the node's own
+scroll shift. Python: `anchor`, `placement` and `offset` properties (a node, a
+layer-placement name, a pair); `check_anchor_changes` validates a `set` and a
+`create` alike (the first version only checked `set`, which a test caught).
+Deliberate gap from the proposal: an in-tree node has no `flip`, since it has no
+bounding region to flip within; layers cover menus.
+
+Tests: `engine-core/tests/anchored.rs` (9), `tests/test_layer_points.py` (12),
+`tests/test_anchored_layout.py` (25).
+
 ## Verify on a fresh machine (2026-10-10)
 
 `tools/verify.sh` was run on a new Pop!_OS 24.04 box (Wayland, Rust 1.98.0,

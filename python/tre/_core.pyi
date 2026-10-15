@@ -614,7 +614,7 @@ class Window:
         placement: str = "below",
         modal: bool = False,
         dismissible: bool = True,
-        offset: tuple[float, float] = (0.0, 0.0),
+        offset: tuple[float, float] = ...,
         flip: bool = True,
     ) -> None:
         """M96: shows `node` over the window's content, above every layer
