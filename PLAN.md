@@ -15,10 +15,18 @@ entry that the user moves to `Ready`.
 
 Found by running `tools/verify.sh` on a fresh machine (2026-10-10), and since:
 
-- **#176** — an effect shader on a node with padding draws nothing
-  (`examples/shader_shine.py` renders blank).
-- **#177** — a text node in a vertical flex container with `align_items`
-  `center` or `flex_start` shrinks to its longest word and wraps.
+- **#178** — insets, mixed-unit sizes and a node layout event, from Tesserae
+  (#261): done, in review as PR #182 (stacked on #181, now retargeted to `main`).
+- **#179** — place a node against another node in the tree, and at its corners
+  (anchored layout), from Tesserae (#262): not started. It builds on #178's
+  insets and `layout` event.
+
+Done on 2026-10-15 (PR #181, merged to `main`): **#176** and **#177**, one cause:
+a text node has no size of its own, so a centred label was 0 wide (wrapped one
+word to a line) and an effect over padded text cropped it to the padding. The
+fix is opt-in: `width="fit-content"` and `height="fit-content"` on a text node.
+Still open from #176: a passthrough effect over a box with children differs from
+a direct draw by about 0.4% of pixels at 300x140; not explained by this.
 
 Done on 2026-10-11 (PRs #174 and #173, merged to `main`): **#168** (colour
 emoji: COLR draws, bitmap-only emoji fonts are a documented limit, and the
