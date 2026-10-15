@@ -41,6 +41,10 @@ pub(super) fn laid_out_style(kind: &NodeKind, style: &Style) -> Style {
     out
 }
 
+/// 0.5.6.2 (#178): a watched node's size change, `(node, old, new)` with `old`
+/// `None` the first time.
+pub type LayoutChange = (NodeId, Option<(f32, f32)>, (f32, f32));
+
 /// 0.5.6.2 (#178): resolve-and-lay-out-again passes a calc size gets before
 /// `settle_calc_sizes` gives up on it.
 const CALC_PASSES: usize = 4;
@@ -257,6 +261,56 @@ impl Tree {
     /// is returned to `auto` rather than drifting every frame.
     pub fn take_calc_conflicts(&mut self) -> Vec<(NodeId, bool)> {
         std::mem::take(&mut self.calc_conflicts)
+    }
+
+    /// 0.5.6.2 (#178): starts (or, with `false`, stops) reporting `id`'s laid-out
+    /// size through `take_layout_changes`. A watched node's first laid-out size
+    /// is reported too.
+    pub fn watch_layout(&mut self, id: NodeId, on: bool) {
+        if !on {
+            self.layout_watch.remove(&id);
+        } else if self.nodes.get(id).is_some() {
+            self.layout_watch.entry(id).or_insert(None);
+        }
+    }
+
+    /// 0.5.6.2 (#178): every watched node whose laid-out size has changed since
+    /// this was last asked, as `(node, old, new)` with `old` `None` the first
+    /// time -- by comparison, as `take_scroll_changes` does, so no cause is
+    /// missed: a `set`, a parent's resize, a text edit, a calc size resolving.
+    /// Reads the last computed layout; nodes that have none yet wait, and nodes
+    /// since removed are dropped.
+    pub fn take_layout_changes(&mut self) -> Vec<LayoutChange> {
+        let mut changes = Vec::new();
+        if self.layout_watch.is_empty() {
+            return changes;
+        }
+        self.layout_watch
+            .retain(|&id, _| self.nodes.get(id).is_some());
+        let mut watched: Vec<NodeId> = self.layout_watch.keys().copied().collect();
+        // A fixed order, so two nodes that changed together report the same way
+        // every time.
+        watched.sort_by_key(|&id| node_id_as_u64(id));
+        for id in watched {
+            // A node whose layout is stale, or was never computed (taffy hands
+            // out a zero-sized placeholder for it), waits for the next layout.
+            let Some(layout) = self
+                .taffy_nodes
+                .get(id)
+                .filter(|&&t| !self.taffy.dirty(t).unwrap_or(true))
+                .and_then(|&t| self.taffy.layout(t).ok())
+            else {
+                continue;
+            };
+            let size = (layout.size.width, layout.size.height);
+            if let Some(reported) = self.layout_watch.get_mut(&id)
+                && *reported != Some(size)
+            {
+                changes.push((id, *reported, size));
+                *reported = Some(size);
+            }
+        }
+        changes
     }
 
     /// Resolves every calc size against its parent's laid-out box and lays out

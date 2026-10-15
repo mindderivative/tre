@@ -40,6 +40,7 @@ listing the valid ones.
 | `submit` | Enter in a single-line text input (0.5.6) | no |
 | `compose_start`, `compose_update`, `compose_end` | An IME composition began, changed or ended in a text input; `text` is the preedit text and `preedit_cursor` the IME's cursor range. The commit follows as `input` and `change` (0.5.6) | no |
 | `caret_move` | A text input's caret moved or its text changed by a key, click or drag; `caret` is its rectangle and `inserted` the bytes an edit inserted. Not for `set` (0.5.6) | no |
+| `layout` | The node's laid-out size changed, or it was laid out for the first time, by any cause (a `set`, a parent's resize, a calc size, new text); `width`/`height` are the new size and `old_value`/`new_value` the `(width, height)` before (`None` the first time) and after. Only a node with a listener is watched; once a frame (0.5.6.2) | no |
 | `dismiss` | An outside press or Escape asked a [layer](layers.md) to close | no |
 | `a11y_action` | An assistive technology requested `increment`, `decrement`, `expand`, `collapse`, `scroll_into_view`, or `set_value` (its activate and focus requests arrive as `click` and `focus`) | yes |
 
@@ -206,11 +207,11 @@ hardware; the Windows and macOS code is compiled for those targets and untested.
 | `key`, `repeat` | `key_down`, `key_up` |
 | `shift`, `ctrl`, `alt`, `meta` | pointer, wheel, key, and click events |
 | `text` | `input` |
-| `old_value`, `new_value` | `change` — the text; `scroll` — the offset |
+| `old_value`, `new_value` | `change` — the text; `scroll` — the offset; `layout` — the `(width, height)` size before (`None` the first time) and after |
 | `action`, `value` | `a11y_action` |
 | `related_target` | `focus`, `unfocus` — the node on the other side of the move |
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
-| `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
+| `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` (and `layout` on a node: its new size) |
 | `reduced_motion` / `high_contrast` | `reduced_motion` / `high_contrast` — the new preference |
 | `stats` | `frame` — the frame's costs, the same dict as `window.frame_stats()["last"]` |
 | `maximized` / `active` | `maximized` / `active` — the window's new state |

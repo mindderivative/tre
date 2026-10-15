@@ -125,6 +125,45 @@ padding 0, 12 and 30 equal to a direct draw). `shader_shine.py` and
 Not done: #176's second note (a passthrough effect over a box with children
 differs by about 0.4% of pixels at 300x140), which this does not explain.
 
+**#178, insets, mixed-unit sizes and a layout event (2026-10-14), from Tesserae
+0.5.0.8 (#261).** All three of what it asked, none deferred.
+
+*Insets.* `left`, `top`, `right`, `bottom` and `inset` on a node (`x` and `y` are
+`left` and `top`). A taffy-level probe showed the engine already did the work: an
+absolute child with `left 8, right 8` and a `auto` width is 284 in a 300 parent
+(x=8), margins shrink it (276), percentages work (`10%`/`10%` is 240), a width
+that is not `auto` beats the second inset (`100%` stays 300), and the insets are
+from the parent's edge, not its padding. A relative node with `right` is offset
+left, as in CSS. Only the property names were missing.
+
+*Mixed units.* `width`/`height` take `"calc(100% - 16)"`, `"100% - 16"`, `"33% +
+10"`. taffy 0.14 has a `calc` feature but `TaffyTree::resolve_calc_value` is a
+stub that returns 0.0, so a calc size would silently be 0; the tree resolves it
+itself (`Node.calc_size`, `Tree::set_calc_size`): the side starts `auto`, and
+after taffy lays out the parent `settle_calc_sizes` writes
+`percent x base + px` into the style and lays out again, up to 4 times. The base
+is taffy's own for a plain percentage, measured: the parent's content box for a
+node in the flow (280 inside `padding=10`), its padding box for an absolute one
+(300). A side still changing after 4 passes has no fixed point (a row as wide as a
+child that is the row less 16): it goes back to `auto` with a warning and is
+listed by `take_calc_conflicts`, so it cannot drift every frame as Tesserae
+feared. Reads back as `"calc(100% - 16px)"`; a lone percentage or pixel count is
+the plain size. Not for `min_*`/`max_*`; in a grid it is taken of the container.
+engine-core gains a `tracing` edge (already in the lock through engine-render).
+
+*Layout event.* `node.on("layout", ...)`: `Tree::watch_layout` and
+`take_layout_changes` compare a watched node's last computed size with the last
+reported, as `take_scroll_changes` does, so any cause is seen (a `set`, a parent
+resize, a calc size resolving once at its final size, new text). A node waits
+until it has a computed layout (taffy hands out a zero placeholder otherwise,
+which reported a bogus 0x0 in the first test run). `event.width`/`height`,
+`old_value` (`None` first) and `new_value`; fired after layout in `advance` and
+the frame loop, not from the `layout_x` getter; does not bubble.
+
+Tests: `engine-core/tests/calc_size.rs` (10), `layout_watch.rs` (6),
+`tests/test_layout_insets.py` (29), `test_calc_size.py` (24),
+`test_layout_event.py` (11).
+
 ## Verify on a fresh machine (2026-10-10)
 
 `tools/verify.sh` was run on a new Pop!_OS 24.04 box (Wayland, Rust 1.98.0,

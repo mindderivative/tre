@@ -304,8 +304,12 @@ class Node:
         `event.property` and `event.finished`), `submit` (Enter in a single-line
         text input), `compose_start`/`compose_update`/`compose_end` (an IME
         composition) and `caret_move` (a text input's caret moved).
+        (0.5.6.2) Also `layout` (the node's laid-out size changed, or it was
+        first laid out: `event.width`, `event.height`, and `event.old_value` /
+        `event.new_value` as `(width, height)`; only a node with a listener is
+        watched).
         All but `pointer_enter`/`pointer_leave`/
-        `change`/`dismiss`/`scroll`/`animation_end` bubble to ancestors
+        `change`/`dismiss`/`scroll`/`animation_end`/`layout` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
         `ValueError` for an unknown event.

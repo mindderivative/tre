@@ -183,6 +183,19 @@ focus.
 
 ## Reading the layout
 
+**The `layout` event (0.5.6.2).** To be told when a node's size changes, rather
+than polling each frame, listen for `layout`. It fires when the node is first laid
+out and whenever its laid-out size changes, whatever the cause: a `set`, the
+parent being resized, a [calc size](#flex-layout) resolving, new text in a
+`"fit-content"` label. `event.width` and `event.height` are the new size;
+`event.old_value` is `None` the first time and the old `(width, height)` after.
+Only a node with a listener is watched, so it costs nothing elsewhere. It doesn't
+bubble, and arrives once a frame, after that frame's layout.
+
+```python
+panel.on("layout", lambda e: chart.set(width=e.width - 32, height=e.height - 32))
+```
+
 `layout_x`, `layout_y`, `layout_width`, and `layout_height` read a node's
 computed box in window coordinates. Reading one runs any pending layout first,
 so it always matches the tree as it is now:

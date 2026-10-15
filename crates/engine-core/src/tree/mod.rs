@@ -45,7 +45,7 @@ mod dispatch;
 mod focus;
 mod layers;
 mod layout;
-pub use layout::TextMeasure;
+pub use layout::{LayoutChange, TextMeasure};
 mod nodes;
 mod scroll;
 pub use scroll::KEY_SCROLL_LINE;
@@ -88,6 +88,10 @@ pub struct Tree {
     calc_nodes: Vec<NodeId>,
     /// 0.5.6.2 (#178): calc sides given up on since `take_calc_conflicts`.
     calc_conflicts: Vec<(NodeId, bool)>,
+    /// 0.5.6.2 (#178): the nodes that have a `layout` listener, each with the
+    /// size last reported for it (`None` until its first layout is reported).
+    /// Empty for most trees, which then pay nothing.
+    layout_watch: std::collections::HashMap<NodeId, Option<(f32, f32)>>,
     /// §14 step 7: which node `TreeUpdate.focus` reports. Moved by
     /// `move_focus` (M4 Phase 1 step 1, §10) in real Tab/Shift-Tab tree
     /// order, not left as inert plain data anymore.
@@ -205,6 +209,7 @@ impl Tree {
             text_measure: None,
             calc_nodes: Vec::new(),
             calc_conflicts: Vec::new(),
+            layout_watch: std::collections::HashMap::new(),
             focused: None,
             hovered: None,
             pressed: None,

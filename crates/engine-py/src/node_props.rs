@@ -792,7 +792,7 @@ fn parse_calc(text: &str) -> Option<CalcLen> {
         .and_then(|rest| rest.strip_suffix(')'))
         .unwrap_or(text);
     let tokens: Vec<&str> = inner.split_whitespace().collect();
-    if tokens.is_empty() || tokens.len() % 2 == 0 {
+    if tokens.is_empty() || tokens.len().is_multiple_of(2) {
         return None;
     }
     let mut calc = CalcLen::default();

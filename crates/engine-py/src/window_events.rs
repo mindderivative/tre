@@ -1487,6 +1487,7 @@ impl PyWindow {
             py,
         );
         node_callbacks::layout(&tree, root, self.available(), &handlers, py);
+        listeners::fire_layout_changes(&ctx, py);
         listeners::fire_scroll_changes(&ctx, py);
         Ok(())
     }
