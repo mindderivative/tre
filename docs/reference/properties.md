@@ -37,7 +37,8 @@ Every node.
 
 | Property | Value |
 | --- | --- |
-| `width`, `height`, `min_width`, `min_height`, `max_width`, `max_height` | A number of pixels, `"auto"`, or a percentage such as `"50%"` |
+| `width`, `height` | A number of pixels, `"auto"`, or a percentage such as `"50%"`; on a text node also `"fit-content"`, the size of its text (0.5.6.2) |
+| `min_width`, `min_height`, `max_width`, `max_height` | A number of pixels, `"auto"`, or a percentage such as `"50%"` |
 | `aspect_ratio` | Width over height, or `None` |
 | `position` | `"relative"` (in the flow) or `"absolute"` |
 | `x`, `y` | The left and top offset: a number, a percentage, or `"auto"`/`None` |

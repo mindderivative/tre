@@ -23,7 +23,7 @@ raises `ValueError` and nothing is created. Every kind, and every property, is
 listed in [Nodes and Properties](properties.md).
 
 `width` and `height` take a number of pixels, `"auto"`, or a percentage such as
-`"50%"`, and read back as set.
+`"50%"` (a text node also `"fit-content"`), and read back as set.
 
 ## Paths
 

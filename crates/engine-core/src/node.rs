@@ -1595,6 +1595,30 @@ pub struct Node {
     /// effect on its own content (`Effect`). Shared between nodes; drawn by
     /// the renderer in a later milestone.
     pub shader: Option<std::sync::Arc<crate::Shader>>,
+    /// 0.5.6.2 (#176, #177): which sides of a text node are the size of its
+    /// text. See `FitContent`.
+    pub fit_content: FitContent,
+}
+
+/// 0.5.6.2 (#176, #177): `width="fit-content"` and `height="fit-content"` on a
+/// text node. A text node has no size of its own: unsized it is zero wide, which
+/// is why a centred label wrapped one word to a line and an effect over it cropped
+/// the text. A side marked here takes the text's own size instead, measured through
+/// the `Tree`'s text measure (`Tree::set_text_measure`): the width is the text on one
+/// line, narrowed to the space the parent offers when the text wraps, and the height
+/// is the wrapped text's. A side left `false` keeps today's behaviour, and a node
+/// that is not text is unaffected (a box already fits its content).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FitContent {
+    pub width: bool,
+    pub height: bool,
+}
+
+impl FitContent {
+    /// Whether either side fits the text.
+    pub fn any(self) -> bool {
+        self.width || self.height
+    }
 }
 
 /// 0.5.0 M3 (issue #28): a node's part in moving the window, for a

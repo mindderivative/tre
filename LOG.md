@@ -94,6 +94,37 @@ unchanged by registering the bitmap font. On this machine's real Noto Color
 Emoji the `system_fonts` ink went from `emoji 184/0` to `184/937`. `sbix` is the
 same code path but is unchecked without a Mac.
 
+**#176 and #177, text that fits its content (2026-10-14).** The two issues had
+one cause. A text node has no size of its own (`docs/guide/text.md` said so):
+`compute_layout` ran taffy with no measure function, so an unsized text node is a
+leaf of zero content size. #177's centred label was 0 wide and painted one word to
+a line; #176's text with `padding=12` was a 24 px box, and an effect shader's
+texture is the node's box, so it cropped 1003 bright pixels to 126 (with an
+explicit size the effect pass handled padding correctly: 1003 against 1003). With
+no padding the box is 0 wide and the effect is skipped, which hid it.
+
+The decision was opt-in, so no existing layout moves: `width="fit-content"` and
+`height="fit-content"` on a text node. It has to be a new value: an unset size
+already reads back as `"auto"`, so "auto means fit" could not be told from "never
+set". `engine-core`: `Node.fit_content` (`FitContent { width, height }`),
+`Tree::set_text_measure` and `set_fit_content`, and `run_taffy`, which runs taffy
+with a measure function (text leaves carry their own `NodeId` as taffy's node
+context). A fit width is the text on one line, narrowed to the offered space when
+it wraps (min-content is the longest word); a fit height is the wrapped text's,
+at the width the node got; both rounded up as #98 does. `engine-py` installs
+`window.measure_text`'s shaper as the measure, parses the value (any other value
+clears it) and lays the node out again when its text, font or wrapping changes.
+Stretch still fills the box, as in CSS, so #177's `stretch` row is 440 wide, one
+line; centre and flex-start are the text's 299.
+
+Tests: `engine-core/tests/fit_content.rs` (a stand-in measure: the three
+alignments, wrapping, no-wrap, the legacy zero, a text change) and
+`tests/test_text_fit_content.py` (against `measure_text`, a passthrough effect over
+padding 0, 12 and 30 equal to a direct draw). `shader_shine.py` and
+`shader_panel.py` use it and now assert their layout, so CI would catch this.
+Not done: #176's second note (a passthrough effect over a box with children
+differs by about 0.4% of pixels at 300x140), which this does not explain.
+
 ## Verify on a fresh machine (2026-10-10)
 
 `tools/verify.sh` was run on a new Pop!_OS 24.04 box (Wayland, Rust 1.98.0,

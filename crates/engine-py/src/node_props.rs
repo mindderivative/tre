@@ -173,6 +173,14 @@ pub(crate) enum Change {
     /// 0.5.1 (#66): the node's `shader`; `None` clears it.
     Shader(Option<std::sync::Arc<engine_core::Shader>>),
     Style(StyleEdit),
+    /// 0.5.6.2 (#176, #177): a `width` or `height`. `fit` is `"fit-content"`:
+    /// the style side is `auto` and a text node takes its text's size. Any
+    /// other value clears it.
+    Size {
+        height: bool,
+        fit: bool,
+        edit: StyleEdit,
+    },
     Kind(KindChange),
     /// M96: a canvas's `draw`, or a virtual list's `materialize` or
     /// `size_hint` -- stored in the handler map.
@@ -764,6 +772,30 @@ fn optional_bool(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<bool>>
 }
 
 fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
+    if name == "width" || name == "height" {
+        let height = name == "height";
+        if value.extract::<String>().is_ok_and(|t| t == "fit-content") {
+            let edit: StyleEdit = Box::new(move |style| {
+                if height {
+                    style.size.height = Dimension::auto();
+                } else {
+                    style.size.width = Dimension::auto();
+                }
+            });
+            return Ok(Change::Size {
+                height,
+                fit: true,
+                edit,
+            });
+        }
+        if let Some(edit) = parse_layout(name, value) {
+            return edit.map(|edit| Change::Size {
+                height,
+                fit: false,
+                edit,
+            });
+        }
+    }
     if let Some(edit) = parse_layout(name, value) {
         return edit.map(Change::Style);
     }
@@ -1257,6 +1289,12 @@ impl Node {
             if let Some(value) = animatable_to_py(node, name, false, py)? {
                 return Ok(value);
             }
+            let fit = node.fit_content;
+            if (name == "width" && fit.width) || (name == "height" && fit.height) {
+                return Ok(pyo3::types::PyString::new(py, "fit-content")
+                    .into_any()
+                    .unbind());
+            }
             if let Some(value) = read_layout(name, &node.layout_style, py) {
                 return value;
             }
@@ -1716,6 +1754,8 @@ impl Node {
             return;
         };
         let mut style = None;
+        let mut fit = node.fit_content;
+        let mut kind_changed = false;
         let mut resize_terminal = false;
         let mut reset_rows = false;
         let mut callbacks = Vec::new();
@@ -1756,7 +1796,20 @@ impl Node {
                 Change::HitTestable(hit_testable) => node.hit_testable = hit_testable,
                 Change::Shader(shader) => node.shader = shader,
                 Change::Style(edit) => edit(style.get_or_insert_with(|| node.layout_style.clone())),
+                Change::Size {
+                    height,
+                    fit: on,
+                    edit,
+                } => {
+                    edit(style.get_or_insert_with(|| node.layout_style.clone()));
+                    if height {
+                        fit.height = on;
+                    } else {
+                        fit.width = on;
+                    }
+                }
                 Change::Kind(kind_change) => {
+                    kind_changed = true;
                     resize_terminal |= kind_change.resizes_terminal;
                     reset_rows |= kind_change.resets_rows;
                     let old_ratio = match &node.kind {
@@ -1959,6 +2012,12 @@ impl Node {
         }
         if let Some(style) = style {
             tree.set_layout_style(self.id, style);
+        }
+        // 0.5.6.2 (#176, #177): a side that fits the text depends on the text,
+        // its font and its wrapping, so a change to any of them lays it out again.
+        tree.set_fit_content(self.id, fit);
+        if kind_changed && fit.any() {
+            tree.relayout(self.id);
         }
         let released = if reset_rows {
             tree.virtual_list_release_outside(self.id, 0..0)

@@ -22,9 +22,31 @@ caps the lines shown, and `overflow="ellipsis"` ends a cut line with "…".
 
 ## Sizing text to its content
 
-A text node has no size of its own — without a `width` it's zero wide. Size
-it with `window.measure_text`, which lays the text out exactly as a text node
-with the same properties paints it:
+**`"fit-content"` (0.5.6.2).** Set `width="fit-content"` and
+`height="fit-content"` and a text node is the size of its text, wherever it sits:
+
+```python
+label = window.create("text", text="Julia set, drawn by a fill shader",
+                      font_size=22, width="fit-content", height="fit-content")
+```
+
+The width is the text on one line, narrowed to the space the parent offers when
+the text wraps (so a long label wraps instead of overflowing, and `height` is
+then the wrapped height). In a box that centres or start-aligns its children it
+is as wide as the text; a stretched child still fills the box, as in CSS. It is
+measured by the same shaper as `measure_text`, rounded up to a whole pixel, and
+laid out again when the text, font size, family, weight or wrapping changes.
+Either side can be `"fit-content"` on its own; `get("width")` reads it back,
+and any other value (`80`, `"auto"`, `"50%"`) takes the side off it. On a box or
+any other node it means what `"auto"` does, since those already fit their
+content.
+
+Without it, a text node has no size of its own — without a `width` it's zero
+wide, which is what you get by default. That includes the box an effect shader
+paints into, so an effect over an unsized text node with padding crops the text
+to the padding. Size it with `"fit-content"`, or with `window.measure_text`,
+which lays the text out exactly as a text node with the same properties paints
+it:
 
 ```python
 style = dict(font_size=14, max_lines=1, overflow="ellipsis")

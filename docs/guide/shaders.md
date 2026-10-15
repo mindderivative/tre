@@ -100,7 +100,10 @@ tidy, but not for a window left open for weeks.
 ## Effects in detail
 
 An effect's content is the node's **box**: a shadow or children that overflow
-it are not part of the content or the result. The result replaces the node and
+it are not part of the content or the result. A text node has no size of its own,
+so give one that has an effect `width="fit-content"` and `height="fit-content"`;
+unsized, it is only as big as its padding, and the effect crops the text to that.
+The result replaces the node and
 its subtree, with the node's own transform and opacity applied afterwards, so a
 translated, half-opaque effect behaves as the node would. The node stays where
 it was laid out, so clicks, focus and accessibility are unchanged; its
