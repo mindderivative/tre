@@ -908,6 +908,7 @@ dependencies = [
  "slotmap",
  "smallvec",
  "taffy",
+ "tracing",
  "usvg",
 ]
 

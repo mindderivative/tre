@@ -41,6 +41,37 @@ pub(super) fn laid_out_style(kind: &NodeKind, style: &Style) -> Style {
     out
 }
 
+/// 0.5.6.2 (#178): a watched node's size change, `(node, old, new)` with `old`
+/// `None` the first time.
+pub type LayoutChange = (NodeId, Option<(f32, f32)>, (f32, f32));
+
+/// 0.5.6.2 (#178): resolve-and-lay-out-again passes a calc size gets before
+/// `settle_calc_sizes` gives up on it.
+const CALC_PASSES: usize = 4;
+
+/// The size a percentage of `parent` is taken of, as taffy takes it for a plain
+/// `"50%"`: the parent's content box for a node in the flow, its padding box for
+/// an absolute one (measured: a 300x200 parent with `padding=10` gives 280x180
+/// and 300x200).
+fn calc_basis(parent: &Layout, position: taffy::style::Position) -> (f32, f32) {
+    let (border, padding) = (parent.border, parent.padding);
+    let (mut width, mut height) = (
+        parent.size.width - border.left - border.right,
+        parent.size.height - border.top - border.bottom,
+    );
+    if position != taffy::style::Position::Absolute {
+        width -= padding.left + padding.right + parent.scrollbar_size.width;
+        height -= padding.top + padding.bottom + parent.scrollbar_size.height;
+    }
+    (width.max(0.0), height.max(0.0))
+}
+
+/// Whether two sizes are the same length, to a hundredth of a pixel.
+fn same_length(a: taffy::style::Dimension, b: taffy::style::Dimension) -> bool {
+    use taffy::style::ExpandedDimension::Length;
+    matches!((a.expand(), b.expand()), (Length(a), Length(b)) if (a - b).abs() < 0.01)
+}
+
 /// 0.5.6.2 (#176, #177): measures `state`'s text, wrapped within `max_width`
 /// when given, as `(width, height)` -- what a text shaper's `measure` returns.
 /// `Send` so a `Tree` stays one.
@@ -188,11 +219,180 @@ impl Tree {
             self.run_taffy(root_taffy, available_space);
             self.layout_epoch += 1;
         }
+        // 0.5.6.2 (#178): sizes that mix units, resolved against their parents' boxes.
+        if !self.calc_nodes.is_empty() {
+            self.settle_calc_sizes(root_taffy, available_space);
+        }
         // M96: anchored layers go where they fit, once their sizes are known.
         if self.place_layers(root) {
             self.run_taffy(root_taffy, available_space);
             self.layout_epoch += 1;
         }
+    }
+
+    /// 0.5.6.2 (#178): makes one side of `id`'s size a `calc` (or, with `None`,
+    /// an ordinary size again). The style's size on that side is the caller's to
+    /// set, to `auto` for a new calc side: layout runs once with it, then
+    /// `compute_layout` resolves the calc against the parent's box and writes
+    /// the result into the style as pixels.
+    pub fn set_calc_size(&mut self, id: NodeId, height: bool, calc: Option<crate::node::CalcLen>) {
+        let Some(node) = self.nodes.get_mut(id) else {
+            return;
+        };
+        let side = if height {
+            &mut node.calc_size.height
+        } else {
+            &mut node.calc_size.width
+        };
+        if *side == calc {
+            return;
+        }
+        *side = calc;
+        if calc.is_some() && !self.calc_nodes.contains(&id) {
+            self.calc_nodes.push(id);
+        }
+        self.relayout(id);
+    }
+
+    /// 0.5.6.2 (#178): the calc sizes `compute_layout` gave up on since this was
+    /// last called, as `(node, is_height)`. A calc side that is still changing
+    /// after several resolve-and-lay-out-again passes has no fixed point -- its
+    /// parent is sized by it (`child = parent - 16`, `parent = child`) -- so it
+    /// is returned to `auto` rather than drifting every frame.
+    pub fn take_calc_conflicts(&mut self) -> Vec<(NodeId, bool)> {
+        std::mem::take(&mut self.calc_conflicts)
+    }
+
+    /// 0.5.6.2 (#178): starts (or, with `false`, stops) reporting `id`'s laid-out
+    /// size through `take_layout_changes`. A watched node's first laid-out size
+    /// is reported too.
+    pub fn watch_layout(&mut self, id: NodeId, on: bool) {
+        if !on {
+            self.layout_watch.remove(&id);
+        } else if self.nodes.get(id).is_some() {
+            self.layout_watch.entry(id).or_insert(None);
+        }
+    }
+
+    /// 0.5.6.2 (#178): every watched node whose laid-out size has changed since
+    /// this was last asked, as `(node, old, new)` with `old` `None` the first
+    /// time -- by comparison, as `take_scroll_changes` does, so no cause is
+    /// missed: a `set`, a parent's resize, a text edit, a calc size resolving.
+    /// Reads the last computed layout; nodes that have none yet wait, and nodes
+    /// since removed are dropped.
+    pub fn take_layout_changes(&mut self) -> Vec<LayoutChange> {
+        let mut changes = Vec::new();
+        if self.layout_watch.is_empty() {
+            return changes;
+        }
+        self.layout_watch
+            .retain(|&id, _| self.nodes.get(id).is_some());
+        let mut watched: Vec<NodeId> = self.layout_watch.keys().copied().collect();
+        // A fixed order, so two nodes that changed together report the same way
+        // every time.
+        watched.sort_by_key(|&id| node_id_as_u64(id));
+        for id in watched {
+            // A node whose layout is stale, or was never computed (taffy hands
+            // out a zero-sized placeholder for it), waits for the next layout.
+            let Some(layout) = self
+                .taffy_nodes
+                .get(id)
+                .filter(|&&t| !self.taffy.dirty(t).unwrap_or(true))
+                .and_then(|&t| self.taffy.layout(t).ok())
+            else {
+                continue;
+            };
+            let size = (layout.size.width, layout.size.height);
+            if let Some(reported) = self.layout_watch.get_mut(&id)
+                && *reported != Some(size)
+            {
+                changes.push((id, *reported, size));
+                *reported = Some(size);
+            }
+        }
+        changes
+    }
+
+    /// Resolves every calc size against its parent's laid-out box and lays out
+    /// again while any of them changed, up to `CALC_PASSES` times.
+    fn settle_calc_sizes(&mut self, root: taffy::NodeId, available: Size<AvailableSpace>) {
+        for pass in 0..=CALC_PASSES {
+            let changed = self.resolve_calc_sizes();
+            if changed.is_empty() {
+                return;
+            }
+            if pass == CALC_PASSES {
+                for (id, height) in changed {
+                    self.set_calc_size(id, height, None);
+                    if let Some(node) = self.nodes.get(id) {
+                        let mut style = node.layout_style.clone();
+                        if height {
+                            style.size.height = taffy::style::Dimension::auto();
+                        } else {
+                            style.size.width = taffy::style::Dimension::auto();
+                        }
+                        self.set_layout_style(id, style);
+                    }
+                    tracing::warn!(
+                        side = if height { "height" } else { "width" },
+                        "a calc size has no fixed point (its parent is sized by it): left `auto`"
+                    );
+                    self.calc_conflicts.push((id, height));
+                }
+            }
+            self.run_taffy(root, available);
+            self.layout_epoch += 1;
+        }
+    }
+
+    /// Writes each calc side's current size into its style, from its parent's
+    /// last layout; returns the sides that changed.
+    fn resolve_calc_sizes(&mut self) -> Vec<(NodeId, bool)> {
+        self.calc_nodes
+            .retain(|&id| self.nodes.get(id).is_some_and(|n| n.calc_size.any()));
+        let mut changed = Vec::new();
+        for id in self.calc_nodes.clone() {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            let Some(parent) = node.parent else {
+                continue;
+            };
+            let Some(parent_layout) = self
+                .taffy_nodes
+                .get(parent)
+                .and_then(|&t| self.taffy.layout(t).ok())
+            else {
+                continue;
+            };
+            let basis = calc_basis(parent_layout, node.layout_style.position);
+            let mut style = node.layout_style.clone();
+            let mut moved = Vec::new();
+            for (height, calc) in [(false, node.calc_size.width), (true, node.calc_size.height)] {
+                let Some(calc) = calc else {
+                    continue;
+                };
+                let want = taffy::style::Dimension::length(calc.resolve(if height {
+                    basis.1
+                } else {
+                    basis.0
+                }));
+                let side = if height {
+                    &mut style.size.height
+                } else {
+                    &mut style.size.width
+                };
+                if !same_length(*side, want) {
+                    *side = want;
+                    moved.push((id, height));
+                }
+            }
+            if !moved.is_empty() {
+                self.set_layout_style(id, style);
+                changed.extend(moved);
+            }
+        }
+        changed
     }
 
     /// M36 Phase 1 (§5, §7, §11.7): the real, general scrollable-

@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use engine_core::{
-    AccessValue, Animated, CornerRadii, Cursor, Interpolate, Live, NodeId, NodeKind, PathData,
-    Role, Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
+    AccessValue, Animated, CalcLen, CornerRadii, Cursor, Interpolate, Live, NodeId, NodeKind,
+    PathData, Role, Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
 };
 use peniko::Color;
 use peniko::kurbo::Rect;
@@ -139,6 +139,18 @@ const LIVE: [(&str, Live); 3] = [
     ("assertive", Live::Assertive),
 ];
 
+/// 0.5.6.2 (#176, #177, #178): what a `width` or `height` value is.
+#[derive(Clone, Copy)]
+pub(crate) enum SizeMode {
+    /// A number, `"auto"` or a percentage: the style holds it.
+    Plain,
+    /// `"fit-content"`: the style side is `auto` and a text node takes its text's size.
+    Fit,
+    /// A percentage plus pixels, such as `"calc(100% - 16)"`: the style side is
+    /// `auto` until the tree resolves it against the parent.
+    Calc(CalcLen),
+}
+
 /// One parsed, validated property write.
 pub(crate) enum Change {
     Role(Role),
@@ -173,12 +185,11 @@ pub(crate) enum Change {
     /// 0.5.1 (#66): the node's `shader`; `None` clears it.
     Shader(Option<std::sync::Arc<engine_core::Shader>>),
     Style(StyleEdit),
-    /// 0.5.6.2 (#176, #177): a `width` or `height`. `fit` is `"fit-content"`:
-    /// the style side is `auto` and a text node takes its text's size. Any
-    /// other value clears it.
+    /// 0.5.6.2 (#176, #177, #178): a `width` or `height`, and which kind of
+    /// size it is. Any other value clears the last.
     Size {
         height: bool,
-        fit: bool,
+        mode: SizeMode,
         edit: StyleEdit,
     },
     Kind(KindChange),
@@ -771,27 +782,103 @@ fn optional_bool(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<bool>>
     boolean(value, name).map(Some)
 }
 
+/// 0.5.6.2 (#178): `"calc(100% - 16)"`, `"100% - 16px"`, `"33% + 10"`: percentages
+/// and pixel counts joined by ` + ` and ` - ` (spaces required, as in CSS), with
+/// or without the `calc(...)`. `None` if it is not that.
+fn parse_calc(text: &str) -> Option<CalcLen> {
+    let text = text.trim();
+    let inner = text
+        .strip_prefix("calc(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .unwrap_or(text);
+    let tokens: Vec<&str> = inner.split_whitespace().collect();
+    if tokens.is_empty() || tokens.len().is_multiple_of(2) {
+        return None;
+    }
+    let mut calc = CalcLen::default();
+    let mut sign = 1.0_f32;
+    for (i, token) in tokens.iter().enumerate() {
+        if i % 2 == 1 {
+            sign = match *token {
+                "+" => 1.0,
+                "-" => -1.0,
+                _ => return None,
+            };
+            continue;
+        }
+        let (number, is_percent) = match token.strip_suffix('%') {
+            Some(number) => (number, true),
+            None => (token.strip_suffix("px").unwrap_or(token), false),
+        };
+        let value: f32 = number.parse().ok().filter(|v: &f32| v.is_finite())?;
+        if is_percent {
+            calc.percent += sign * value / 100.0;
+        } else {
+            calc.px += sign * value;
+        }
+    }
+    Some(calc)
+}
+
+/// A plain width or height of `dimension`.
+fn plain_size(height: bool, dimension: Dimension) -> Change {
+    Change::Size {
+        height,
+        mode: SizeMode::Plain,
+        edit: Box::new(move |style| {
+            if height {
+                style.size.height = dimension;
+            } else {
+                style.size.width = dimension;
+            }
+        }),
+    }
+}
+
 fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
     if name == "width" || name == "height" {
         let height = name == "height";
-        if value.extract::<String>().is_ok_and(|t| t == "fit-content") {
-            let edit: StyleEdit = Box::new(move |style| {
-                if height {
-                    style.size.height = Dimension::auto();
-                } else {
-                    style.size.width = Dimension::auto();
-                }
-            });
-            return Ok(Change::Size {
-                height,
-                fit: true,
-                edit,
-            });
+        let auto_side: StyleEdit = Box::new(move |style| {
+            if height {
+                style.size.height = Dimension::auto();
+            } else {
+                style.size.width = Dimension::auto();
+            }
+        });
+        if let Ok(text) = value.extract::<String>() {
+            if text == "fit-content" {
+                return Ok(Change::Size {
+                    height,
+                    mode: SizeMode::Fit,
+                    edit: auto_side,
+                });
+            }
+            let text = text.trim();
+            if text.starts_with("calc(") || text.split_whitespace().count() > 1 {
+                let calc = parse_calc(text).ok_or_else(|| {
+                    invalid(
+                        name,
+                        "a number, \"auto\", \"fit-content\", a percentage like \"50%\", or a \
+                         percentage plus pixels like \"calc(100% - 16)\"",
+                    )
+                })?;
+                // A mix of the two is a calc size; a lone percentage or pixel
+                // count is the plain size it says.
+                return Ok(match (calc.percent != 0.0, calc.px != 0.0) {
+                    (true, true) => Change::Size {
+                        height,
+                        mode: SizeMode::Calc(calc),
+                        edit: auto_side,
+                    },
+                    (true, false) => plain_size(height, Dimension::percent(calc.percent)),
+                    (false, _) => plain_size(height, Dimension::length(calc.px.max(0.0))),
+                });
+            }
         }
         if let Some(edit) = parse_layout(name, value) {
             return edit.map(|edit| Change::Size {
                 height,
-                fit: false,
+                mode: SizeMode::Plain,
                 edit,
             });
         }
@@ -1289,7 +1376,16 @@ impl Node {
             if let Some(value) = animatable_to_py(node, name, false, py)? {
                 return Ok(value);
             }
-            let fit = node.fit_content;
+            let (fit, calc) = (node.fit_content, node.calc_size);
+            if let Some(len) = match name {
+                "width" => calc.width,
+                "height" => calc.height,
+                _ => None,
+            } {
+                let sign = if len.px < 0.0 { '-' } else { '+' };
+                let text = format!("calc({}% {sign} {}px)", len.percent * 100.0, len.px.abs());
+                return Ok(pyo3::types::PyString::new(py, &text).into_any().unbind());
+            }
             if (name == "width" && fit.width) || (name == "height" && fit.height) {
                 return Ok(pyo3::types::PyString::new(py, "fit-content")
                     .into_any()
@@ -1755,6 +1851,7 @@ impl Node {
         };
         let mut style = None;
         let mut fit = node.fit_content;
+        let mut calc = node.calc_size;
         let mut kind_changed = false;
         let mut resize_terminal = false;
         let mut reset_rows = false;
@@ -1796,16 +1893,19 @@ impl Node {
                 Change::HitTestable(hit_testable) => node.hit_testable = hit_testable,
                 Change::Shader(shader) => node.shader = shader,
                 Change::Style(edit) => edit(style.get_or_insert_with(|| node.layout_style.clone())),
-                Change::Size {
-                    height,
-                    fit: on,
-                    edit,
-                } => {
+                Change::Size { height, mode, edit } => {
                     edit(style.get_or_insert_with(|| node.layout_style.clone()));
+                    let on = matches!(mode, SizeMode::Fit);
+                    let mixed = match mode {
+                        SizeMode::Calc(len) => Some(len),
+                        _ => None,
+                    };
                     if height {
                         fit.height = on;
+                        calc.height = mixed;
                     } else {
                         fit.width = on;
+                        calc.width = mixed;
                     }
                 }
                 Change::Kind(kind_change) => {
@@ -2016,6 +2116,8 @@ impl Node {
         // 0.5.6.2 (#176, #177): a side that fits the text depends on the text,
         // its font and its wrapping, so a change to any of them lays it out again.
         tree.set_fit_content(self.id, fit);
+        tree.set_calc_size(self.id, false, calc.width);
+        tree.set_calc_size(self.id, true, calc.height);
         if kind_changed && fit.any() {
             tree.relayout(self.id);
         }

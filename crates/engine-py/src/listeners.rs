@@ -138,10 +138,13 @@ pub(crate) enum EventType {
     ComposeEnd,
     /// 0.5.6 (#165): a text input's caret moved or its text changed.
     CaretMove,
+    /// 0.5.6.2 (#178): the node's laid-out size changed (or it was laid out for
+    /// the first time); carries `width`, `height`, `old_value`, `new_value`.
+    Layout,
 }
 
 impl EventType {
-    const ALL: [EventType; 36] = [
+    const ALL: [EventType; 37] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -178,6 +181,7 @@ impl EventType {
         Self::ComposeUpdate,
         Self::ComposeEnd,
         Self::CaretMove,
+        Self::Layout,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -218,6 +222,7 @@ impl EventType {
             Self::ComposeUpdate => "compose_update",
             Self::ComposeEnd => "compose_end",
             Self::CaretMove => "caret_move",
+            Self::Layout => "layout",
         }
     }
 
@@ -238,6 +243,7 @@ impl EventType {
                 | Self::ComposeUpdate
                 | Self::ComposeEnd
                 | Self::CaretMove
+                | Self::Layout
         )
     }
 
@@ -601,6 +607,25 @@ pub(crate) fn fire_scroll_changes(ctx: &NodeContext<'_>, py: Python<'_>) {
         deliver(ctx, py, EventType::Scroll, view, None, |e| {
             e.old_value = pyo3::IntoPyObjectExt::into_py_any(old, py).ok();
             e.new_value = pyo3::IntoPyObjectExt::into_py_any(new, py).ok();
+        });
+    }
+}
+
+/// 0.5.6.2 (#178): a `layout` event for every watched node whose laid-out size
+/// changed since the last call (`Tree::take_layout_changes`): `width`/`height`
+/// are the new size and `old_value`/`new_value` the `(width, height)` before
+/// (`None` the first time) and after. Called after a frame's layout.
+pub(crate) fn fire_layout_changes(ctx: &NodeContext<'_>, py: Python<'_>) {
+    let changes = ctx.tree.borrow_mut().take_layout_changes();
+    for (node, old, new) in changes {
+        deliver(ctx, py, EventType::Layout, node, None, |e| {
+            e.width = Some(f64::from(new.0));
+            e.height = Some(f64::from(new.1));
+            e.old_value = old.and_then(|(w, h)| {
+                pyo3::IntoPyObjectExt::into_py_any((f64::from(w), f64::from(h)), py).ok()
+            });
+            e.new_value =
+                pyo3::IntoPyObjectExt::into_py_any((f64::from(new.0), f64::from(new.1)), py).ok();
         });
     }
 }

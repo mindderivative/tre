@@ -73,6 +73,27 @@ toolbar = window.create("box", width="100%", height=48, padding=8, gap=8,
 Sizes are pixels, `"auto"`, or a percentage of the parent: `width="50%"`. A text
 node can also be `"fit-content"`: the size of its text (see
 [Sizing text to its content](text.md#sizing-text-to-its-content)).
+
+**Mixed units (0.5.6.2).** `width` and `height` also take a percentage plus
+pixels, written `"calc(100% - 16)"`, `"100% - 16"` or `"33% + 10"` (a space
+around each `+` and `-`, as in CSS; `px` is optional): the whole width except a
+strip, a third and ten pixels. The percentage is taken of the same box a plain
+`"50%"` is: the parent's content box for a node in the flow, its padding box for
+an absolute one. It follows the parent when the parent is resized, and reads back
+as `"calc(100% - 16px)"`.
+
+```python
+bar = window.create("box", width="100% - 16", height=40)
+```
+
+The tree resolves it after laying out the parent and then lays out again, so it
+costs a second layout pass on the frames where a parent changed size, and only
+for trees that use it. Limits: it is for `width` and `height`, not `min_*` or
+`max_*`; in a grid it is taken of the grid container, not the item's cell; and a
+size its own parent depends on (a row as wide as its children, with a child that
+is `"100% - 16"` of the row) has no answer, so it is left `auto` and a warning is
+logged. For a strip stretched between two edges of an absolute node, `left` and
+`right` (below) say it without a calculation.
 As a flex child, a node can grow into spare room with `flex_grow`, shrink
 with `flex_shrink`, and start from `flex_basis`; `align_self` overrides its
 parent's `align_items` for it alone. A sidebar that keeps its width while the
@@ -139,11 +160,41 @@ badge = window.create("box", position="absolute", x=28, y=-4, width=16, height=1
 icon_button.add_child(badge)
 ```
 
+**Insets (0.5.6.2).** `left`, `top`, `right` and `bottom` (and `inset`, all four
+at once) place the node from each edge of its parent; `x` and `y` are `left` and
+`top`. Set both edges of an axis and leave that size `auto`, and the node is
+stretched between them: a strip 8 pixels in from each side, or a scrim that fills
+its parent:
+
+```python
+bar = window.create("box", position="absolute", left=8, right=8, bottom=8, height=40)
+scrim = window.create("box", position="absolute", inset=0, fill=(0, 0, 0, 0x80))
+```
+
+The insets are measured from the parent's edge, not its padding, and they follow
+the parent when it is resized. A margin shrinks the stretched node. A size that is
+not `auto` wins over the second inset (`left=8, right=8, width="100%"` is the
+parent's whole width). On a node in the flow the insets offset it from where it
+was laid out, as in CSS (`right=8` moves it 8 pixels left).
+
 Content that floats over the whole window — menus, dialogs, tooltips — goes
 in a [layer](layers.md) instead, which also handles placement, input, and
 focus.
 
 ## Reading the layout
+
+**The `layout` event (0.5.6.2).** To be told when a node's size changes, rather
+than polling each frame, listen for `layout`. It fires when the node is first laid
+out and whenever its laid-out size changes, whatever the cause: a `set`, the
+parent being resized, a [calc size](#flex-layout) resolving, new text in a
+`"fit-content"` label. `event.width` and `event.height` are the new size;
+`event.old_value` is `None` the first time and the old `(width, height)` after.
+Only a node with a listener is watched, so it costs nothing elsewhere. It doesn't
+bubble, and arrives once a frame, after that frame's layout.
+
+```python
+panel.on("layout", lambda e: chart.set(width=e.width - 32, height=e.height - 32))
+```
 
 `layout_x`, `layout_y`, `layout_width`, and `layout_height` read a node's
 computed box in window coordinates. Reading one runs any pending layout first,

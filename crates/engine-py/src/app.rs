@@ -1096,6 +1096,15 @@ impl App {
                     &runtime.handles.handlers,
                     py,
                 );
+                // 0.5.6.2 (#178): `layout` for every watched node the layout changed.
+                crate::listeners::fire_layout_changes(
+                    &crate::event::NodeContext {
+                        tree: &runtime.handles.tree,
+                        handlers: &runtime.handles.handlers,
+                        completions: &runtime.handles.completions,
+                    },
+                    py,
+                );
 
                 // M40 Phase 1 (§4, §6, §9): the one real place `GpuState::
                 // resize` is called from now -- collapses however many

@@ -37,11 +37,13 @@ Every node.
 
 | Property | Value |
 | --- | --- |
-| `width`, `height` | A number of pixels, `"auto"`, or a percentage such as `"50%"`; on a text node also `"fit-content"`, the size of its text (0.5.6.2) |
+| `width`, `height` | A number of pixels, `"auto"`, or a percentage such as `"50%"`; (0.5.6.2) a percentage plus pixels such as `"calc(100% - 16)"` ([Mixed units](../guide/nodes-and-layout.md#flex-layout)); on a text node also `"fit-content"`, the size of its text |
 | `min_width`, `min_height`, `max_width`, `max_height` | A number of pixels, `"auto"`, or a percentage such as `"50%"` |
 | `aspect_ratio` | Width over height, or `None` |
 | `position` | `"relative"` (in the flow) or `"absolute"` |
-| `x`, `y` | The left and top offset: a number, a percentage, or `"auto"`/`None` |
+| `x`, `y` | The left and top offset: a number, a percentage, or `"auto"`/`None`. The same as `left` and `top` |
+| `left`, `top`, `right`, `bottom` | (0.5.6.2) An inset from that edge of the parent: a number, a percentage, or `"auto"`/`None`. On an absolute node with both edges of an axis set and that side's size `auto`, the node is stretched between them. See [Absolute positioning](../guide/nodes-and-layout.md#absolute-positioning) |
+| `inset` | (0.5.6.2) All four insets at once; reads back as one value, or `(top, right, bottom, left)` when they differ |
 
 ## Flex layout
 

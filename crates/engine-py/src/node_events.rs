@@ -18,7 +18,12 @@ impl Node {
     /// node's listeners when they happen on a descendant.
     fn on(&self, event: &str, handler: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
         let event = EventType::parse(event)?;
-        register_listener(&self.handlers, self.id, event, handler, py)
+        register_listener(&self.handlers, self.id, event, handler, py)?;
+        // 0.5.6.2 (#178): only a node with a `layout` listener is watched.
+        if event == EventType::Layout {
+            self.tree.borrow_mut().watch_layout(self.id, true);
+        }
+        Ok(())
     }
 
     /// Removes this node's listener for `event`, if any.
@@ -27,6 +32,9 @@ impl Node {
         self.handlers
             .borrow_mut()
             .remove(&(self.id, HandlerKey::Listener(event)));
+        if event == EventType::Layout {
+            self.tree.borrow_mut().watch_layout(self.id, false);
+        }
         Ok(())
     }
 
