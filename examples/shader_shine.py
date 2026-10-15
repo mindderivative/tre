@@ -30,6 +30,10 @@ title = window.create(
     font_weight=800,
     fill=(0xE8, 0xB4, 0x4C, 0xFF),
     padding=12,
+    # A text node has no size of its own; "fit-content" gives it its text's. Without
+    # it the node is just its padding, and the effect would crop the text away.
+    width="fit-content",
+    height="fit-content",
 )
 window.root.add_child(title)
 
@@ -47,6 +51,11 @@ assert shine.mode == "effect" and shine.animated
 assert shine.uniforms["speed"] == 0.35 or abs(shine.uniforms["speed"] - 0.35) < 1e-6
 shine.set(uniforms={"speed": 0.5, "glow": (1.0, 0.9, 0.6)})
 assert abs(shine.uniforms["speed"] - 0.5) < 1e-6
+
+# The node is as big as the word plus its padding, so the effect covers the text.
+window.advance(0.0)
+text_width, _ = window.measure_text("SHINE", font_size=96, font_weight=800)
+assert title.get("layout_width") >= text_width + 24, title.get("layout_width")
 
 app = App()
 app.add_window(window)

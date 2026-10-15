@@ -45,6 +45,7 @@ mod dispatch;
 mod focus;
 mod layers;
 mod layout;
+pub use layout::TextMeasure;
 mod nodes;
 mod scroll;
 pub use scroll::KEY_SCROLL_LINE;
@@ -74,7 +75,13 @@ pub struct Tree {
     /// can tell that no node moved or changed size since it last looked.
     layout_epoch: u64,
     taffy_nodes: SecondaryMap<NodeId, taffy::NodeId>,
-    taffy: TaffyTree<()>,
+    /// Each text leaf carries its own `NodeId` as taffy's node context, so the
+    /// measure function (see `text_measure`) can find the text it measures.
+    taffy: TaffyTree<NodeId>,
+    /// 0.5.6.2 (#176, #177): measures a text node's text for `FitContent`; set
+    /// by whoever has a text shaper. With none, a fit side measures zero, as an
+    /// unsized text node always did.
+    text_measure: Option<layout::TextMeasure>,
     /// §14 step 7: which node `TreeUpdate.focus` reports. Moved by
     /// `move_focus` (M4 Phase 1 step 1, §10) in real Tab/Shift-Tab tree
     /// order, not left as inert plain data anymore.
@@ -189,6 +196,7 @@ impl Tree {
             snap_pending: Vec::new(),
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
+            text_measure: None,
             focused: None,
             hovered: None,
             pressed: None,
@@ -297,9 +305,12 @@ impl Tree {
             NodeKind::Svg(_) => self.svg_count += 1,
             _ => {}
         }
+        let style = layout::laid_out_style(&kind, &layout_style);
+        // A text leaf carries its own id, for the measure function. The key is
+        // minted below, so the context is set once it exists.
         let taffy_node = self
             .taffy
-            .new_leaf(layout::laid_out_style(&kind, &layout_style))
+            .new_leaf(style)
             .expect("TaffyTree::new_leaf is infallible for a leaf with no children");
         let id = self.nodes.insert_with_key(|id| Node {
             id,
@@ -318,8 +329,14 @@ impl Tree {
             shader: None,
             visible: true,
             z_index: 0,
+            fit_content: crate::node::FitContent::default(),
         });
         self.taffy_nodes.insert(id, taffy_node);
+        if matches!(self.nodes[id].kind, NodeKind::Text(_)) {
+            self.taffy
+                .set_node_context(taffy_node, Some(id))
+                .expect("the taffy node was just made");
+        }
         match &self.nodes[id].kind {
             NodeKind::Image(_) => {
                 self.image_ids.insert(id);

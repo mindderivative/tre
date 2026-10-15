@@ -70,7 +70,9 @@ toolbar = window.create("box", width="100%", height=48, padding=8, gap=8,
                         align_items="center", justify_content="space_between")
 ```
 
-Sizes are pixels, `"auto"`, or a percentage of the parent: `width="50%"`.
+Sizes are pixels, `"auto"`, or a percentage of the parent: `width="50%"`. A text
+node can also be `"fit-content"`: the size of its text (see
+[Sizing text to its content](text.md#sizing-text-to-its-content)).
 As a flex child, a node can grow into spare room with `flex_grow`, shrink
 with `flex_shrink`, and start from `flex_basis`; `align_self` overrides its
 parent's `align_items` for it alone. A sidebar that keeps its width while the

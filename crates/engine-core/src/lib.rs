@@ -51,11 +51,11 @@ pub use input::{
 };
 pub use layout_anim::{LayoutAnim, LayoutProp};
 pub use node::{
-    Blend, CaretShape, CellColor, ContentFit, CornerRadii, Cursor, ImageState, InputMode,
-    ItemExtent, Mask, Node, NodeId, NodeKind, NodeTransform, PaintProperties, SCROLLBAR_GRAB_SLOP,
-    SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows,
-    SnapAlign, TerminalCell, TerminalPalette, TerminalState, TextAlign, TextFieldState,
-    TextOptions, TextSpan, TextState, VirtualListState, WindowRegion,
+    Blend, CaretShape, CellColor, ContentFit, CornerRadii, Cursor, FitContent, ImageState,
+    InputMode, ItemExtent, Mask, Node, NodeId, NodeKind, NodeTransform, PaintProperties,
+    SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS,
+    ScrollViewState, Shadow, Shadows, SnapAlign, TerminalCell, TerminalPalette, TerminalState,
+    TextAlign, TextFieldState, TextOptions, TextSpan, TextState, VirtualListState, WindowRegion,
 };
 pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
@@ -67,6 +67,6 @@ pub use svg::{
     SvgNode, SvgPaint, SvgPath, SvgPattern, SvgShadow, SvgState, SvgStroke,
 };
 pub use tree::{
-    AccessLine, FocusDirection, KEY_SCROLL_LINE, LayoutAnimError, TextPart, Touched, Tree,
-    from_access_id, node_id_as_u64, to_access_id,
+    AccessLine, FocusDirection, KEY_SCROLL_LINE, LayoutAnimError, TextMeasure, TextPart, Touched,
+    Tree, from_access_id, node_id_as_u64, to_access_id,
 };

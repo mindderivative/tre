@@ -41,7 +41,109 @@ pub(super) fn laid_out_style(kind: &NodeKind, style: &Style) -> Style {
     out
 }
 
+/// 0.5.6.2 (#176, #177): measures `state`'s text, wrapped within `max_width`
+/// when given, as `(width, height)` -- what a text shaper's `measure` returns.
+/// `Send` so a `Tree` stays one.
+pub type TextMeasure = Box<dyn FnMut(&crate::node::TextState, Option<f32>) -> (f32, f32) + Send>;
+
+/// The size taffy gets for a text leaf (`id`) whose sides are `FitContent`: the
+/// text's own width and wrapped height, or zero on a side that doesn't fit (a
+/// text node has no size of its own). `known` is a side the layout has already
+/// decided (from the node's `width`/`height`, or its parent), `available` the
+/// space its parent offers.
+fn fit_size(
+    nodes: &Nodes,
+    measure: &mut Option<TextMeasure>,
+    id: NodeId,
+    known: Size<Option<f32>>,
+    available: Size<AvailableSpace>,
+) -> Size<f32> {
+    let Some(node) = nodes.get(id) else {
+        return Size::ZERO;
+    };
+    let NodeKind::Text(state) = &node.kind else {
+        return Size::ZERO;
+    };
+    let fit = node.fit_content;
+    let Some(measure) = measure.as_mut().filter(|_| fit.any()) else {
+        return Size::ZERO;
+    };
+    let width = if !fit.width {
+        0.0
+    } else if let Some(width) = known.width {
+        width
+    } else {
+        // One line (or one per paragraph), then narrowed to the offered space
+        // when the text wraps. Min-content is the longest word: a width of
+        // zero breaks at every opportunity.
+        let widest = measure(state, None).0.ceil();
+        match available.width {
+            _ if !state.options.wrap => widest,
+            AvailableSpace::MinContent => measure(state, Some(0.0)).0.ceil(),
+            AvailableSpace::MaxContent => widest,
+            AvailableSpace::Definite(space) => widest.min(space.max(0.0)),
+        }
+    };
+    let height = if !fit.height {
+        0.0
+    } else if let Some(height) = known.height {
+        height
+    } else {
+        let wrap_at = if fit.width { Some(width) } else { known.width };
+        measure(state, wrap_at.filter(|_| state.options.wrap)).1
+    };
+    Size { width, height }
+}
+
 impl Tree {
+    /// 0.5.6.2 (#176, #177): sets how text is measured for `FitContent`. A
+    /// window installs its text shaper here; without one a fit side is zero.
+    pub fn set_text_measure(&mut self, measure: TextMeasure) {
+        self.text_measure = Some(measure);
+    }
+
+    /// 0.5.6.2 (#176, #177): sets which sides of text node `id` take the text's
+    /// own size. Marks the node for layout.
+    pub fn set_fit_content(&mut self, id: NodeId, fit: crate::node::FitContent) {
+        let Some(node) = self.nodes.get_mut(id) else {
+            return;
+        };
+        if node.fit_content == fit {
+            return;
+        }
+        node.fit_content = fit;
+        self.relayout(id);
+    }
+
+    /// 0.5.6.2 (#176, #177): marks `id` for layout again: its text, font or
+    /// fit changed, and a fit side's size depends on all of those.
+    pub fn relayout(&mut self, id: NodeId) {
+        self.dirty = true;
+        if let Some(&taffy_node) = self.taffy_nodes.get(id) {
+            let _ = self.taffy.mark_dirty(taffy_node);
+        }
+    }
+
+    /// One taffy pass over `root`, with text leaves measured through the
+    /// `Tree`'s text measure.
+    fn run_taffy(&mut self, root: taffy::NodeId, available: Size<AvailableSpace>) {
+        let nodes = &self.nodes;
+        let measure = &mut self.text_measure;
+        self.taffy
+            .compute_layout_with_measure(root, available, |inputs, _, id, style| {
+                taffy::compute_leaf_layout(
+                    inputs,
+                    style,
+                    |_, _| 0.0,
+                    |known, space| match id {
+                        Some(&mut id) => fit_size(nodes, measure, id, known, space),
+                        None => Size::ZERO,
+                    },
+                )
+            })
+            .expect("compute_layout: taffy layout computation failed");
+    }
+
     /// Computes layout for `root`'s whole subtree. §5's `layout_style`
     /// lives on `Node`, not duplicated here -- `insert`/`add_child` are
     /// this module's only two places a `taffy::NodeId` is minted or
@@ -60,9 +162,7 @@ impl Tree {
         let clean =
             self.last_layout == Some(asked) && !self.taffy.dirty(root_taffy).unwrap_or(true);
         if !clean {
-            self.taffy
-                .compute_layout(root_taffy, available_space)
-                .expect("compute_layout: taffy layout computation failed");
+            self.run_taffy(root_taffy, available_space);
             self.last_layout = Some(asked);
             self.layout_epoch += 1;
         }
@@ -75,9 +175,7 @@ impl Tree {
         // anywhere in this `Tree` -- every other real `compute_layout`
         // caller pays nothing extra.
         if self.sync_scroll_view_layouts() {
-            self.taffy
-                .compute_layout(root_taffy, available_space)
-                .expect("compute_layout: taffy layout computation failed (scroll view sync pass)");
+            self.run_taffy(root_taffy, available_space);
             self.layout_epoch += 1;
         }
         // M37 (§5, §7, §11.7): the real fix for the hit-test-after-
@@ -87,16 +185,12 @@ impl Tree {
         // no-op call (`false`) whenever no `NodeKind::VirtualList` has
         // anything materialized yet.
         if self.sync_virtual_list_layouts() {
-            self.taffy
-                .compute_layout(root_taffy, available_space)
-                .expect("compute_layout: taffy layout computation failed (virtual list sync pass)");
+            self.run_taffy(root_taffy, available_space);
             self.layout_epoch += 1;
         }
         // M96: anchored layers go where they fit, once their sizes are known.
         if self.place_layers(root) {
-            self.taffy
-                .compute_layout(root_taffy, available_space)
-                .expect("compute_layout: taffy layout computation failed (layer placement pass)");
+            self.run_taffy(root_taffy, available_space);
             self.layout_epoch += 1;
         }
     }

@@ -53,11 +53,23 @@ panel = window.create(
 window.root.add_child(panel)
 
 label = window.create(
-    "text", text="Julia set, drawn by a fill shader", font_size=22, fill=(255, 255, 255, 255)
+    "text",
+    text="Julia set, drawn by a fill shader",
+    font_size=22,
+    fill=(255, 255, 255, 255),
+    # The panel centres its children, which would leave a text node zero wide
+    # and wrapped one word to a line; "fit-content" sizes it to its text.
+    width="fit-content",
+    height="fit-content",
 )
 panel.add_child(label)
 
 assert panel.get("shader") == julia and julia.mode == "fill"
+
+# One line, at the bottom of the panel.
+window.advance(0.0)
+_, one_line = window.measure_text(label.get("text"), font_size=22)
+assert label.get("layout_height") == one_line, label.get("layout_height")
 
 app = App()
 app.add_window(window)

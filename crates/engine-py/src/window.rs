@@ -265,6 +265,19 @@ impl PyWindow {
             )));
         }
         let mut tree = Tree::new();
+        // 0.5.6.2 (#176, #177): a text node sized `"fit-content"` is measured by the
+        // same shaper `window.measure_text` uses, so it takes the size that
+        // call reports.
+        tree.set_text_measure(Box::new(|state, max_width| {
+            let font = engine_render::FontSpec {
+                family: &state.font_family,
+                weight: state.font_weight,
+                size: state.font_size,
+                line_height: state.line_height,
+                options: &state.options,
+            };
+            crate::shaper::with(|shaper| shaper.measure(&state.content, &font, max_width))
+        }));
         let root = tree.insert(
             NodeKind::Container,
             Style {
