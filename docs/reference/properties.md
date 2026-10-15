@@ -37,7 +37,7 @@ Every node.
 
 | Property | Value |
 | --- | --- |
-| `width`, `height` | A number of pixels, `"auto"`, or a percentage such as `"50%"`; on a text node also `"fit-content"`, the size of its text (0.5.6.2) |
+| `width`, `height` | A number of pixels, `"auto"`, or a percentage such as `"50%"`; (0.5.6.2) a percentage plus pixels such as `"calc(100% - 16)"` ([Mixed units](../guide/nodes-and-layout.md#flex-layout)); on a text node also `"fit-content"`, the size of its text |
 | `min_width`, `min_height`, `max_width`, `max_height` | A number of pixels, `"auto"`, or a percentage such as `"50%"` |
 | `aspect_ratio` | Width over height, or `None` |
 | `position` | `"relative"` (in the flow) or `"absolute"` |

@@ -73,6 +73,27 @@ toolbar = window.create("box", width="100%", height=48, padding=8, gap=8,
 Sizes are pixels, `"auto"`, or a percentage of the parent: `width="50%"`. A text
 node can also be `"fit-content"`: the size of its text (see
 [Sizing text to its content](text.md#sizing-text-to-its-content)).
+
+**Mixed units (0.5.6.2).** `width` and `height` also take a percentage plus
+pixels, written `"calc(100% - 16)"`, `"100% - 16"` or `"33% + 10"` (a space
+around each `+` and `-`, as in CSS; `px` is optional): the whole width except a
+strip, a third and ten pixels. The percentage is taken of the same box a plain
+`"50%"` is: the parent's content box for a node in the flow, its padding box for
+an absolute one. It follows the parent when the parent is resized, and reads back
+as `"calc(100% - 16px)"`.
+
+```python
+bar = window.create("box", width="100% - 16", height=40)
+```
+
+The tree resolves it after laying out the parent and then lays out again, so it
+costs a second layout pass on the frames where a parent changed size, and only
+for trees that use it. Limits: it is for `width` and `height`, not `min_*` or
+`max_*`; in a grid it is taken of the grid container, not the item's cell; and a
+size its own parent depends on (a row as wide as its children, with a child that
+is `"100% - 16"` of the row) has no answer, so it is left `auto` and a warning is
+logged. For a strip stretched between two edges of an absolute node, `left` and
+`right` (below) say it without a calculation.
 As a flex child, a node can grow into spare room with `flex_grow`, shrink
 with `flex_shrink`, and start from `flex_basis`; `align_self` overrides its
 parent's `align_items` for it alone. A sidebar that keeps its width while the

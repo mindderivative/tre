@@ -82,6 +82,12 @@ pub struct Tree {
     /// by whoever has a text shaper. With none, a fit side measures zero, as an
     /// unsized text node always did.
     text_measure: Option<layout::TextMeasure>,
+    /// 0.5.6.2 (#178): the nodes with a `calc` size, which `compute_layout`
+    /// resolves after taffy has laid out their parents. Ids of nodes since
+    /// removed are dropped when it next runs.
+    calc_nodes: Vec<NodeId>,
+    /// 0.5.6.2 (#178): calc sides given up on since `take_calc_conflicts`.
+    calc_conflicts: Vec<(NodeId, bool)>,
     /// §14 step 7: which node `TreeUpdate.focus` reports. Moved by
     /// `move_focus` (M4 Phase 1 step 1, §10) in real Tab/Shift-Tab tree
     /// order, not left as inert plain data anymore.
@@ -197,6 +203,8 @@ impl Tree {
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
             text_measure: None,
+            calc_nodes: Vec::new(),
+            calc_conflicts: Vec::new(),
             focused: None,
             hovered: None,
             pressed: None,
@@ -330,6 +338,7 @@ impl Tree {
             visible: true,
             z_index: 0,
             fit_content: crate::node::FitContent::default(),
+            calc_size: crate::node::CalcSize::default(),
         });
         self.taffy_nodes.insert(id, taffy_node);
         if matches!(self.nodes[id].kind, NodeKind::Text(_)) {

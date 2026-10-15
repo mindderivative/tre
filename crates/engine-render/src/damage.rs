@@ -1705,6 +1705,8 @@ fn node_fingerprint_with(
         shader,
         // 0.5.6.2 (#176, #177): a fit-content side reaches paint as the box size.
         fit_content: _,
+        // 0.5.6.2 (#178): a calc size reaches paint as the box size, likewise.
+        calc_size: _,
     } = node;
     visible.hash(h);
     z_index.hash(h);

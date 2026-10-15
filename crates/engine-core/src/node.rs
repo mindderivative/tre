@@ -1598,6 +1598,8 @@ pub struct Node {
     /// 0.5.6.2 (#176, #177): which sides of a text node are the size of its
     /// text. See `FitContent`.
     pub fit_content: FitContent,
+    /// 0.5.6.2 (#178): which sides are a `calc` size. See `CalcSize`.
+    pub calc_size: CalcSize,
 }
 
 /// 0.5.6.2 (#176, #177): `width="fit-content"` and `height="fit-content"` on a
@@ -1618,6 +1620,39 @@ impl FitContent {
     /// Whether either side fits the text.
     pub fn any(self) -> bool {
         self.width || self.height
+    }
+}
+
+/// 0.5.6.2 (#178): a size that mixes units, `percent` of the parent's box plus
+/// `px` pixels: `width="calc(100% - 16)"` is `percent: 1.0, px: -16.0`. taffy has
+/// no way to lay out a size like this, so the tree resolves it itself, after a
+/// layout pass, and lays out again with the result as pixels
+/// (`Tree::set_calc_size`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CalcLen {
+    /// A fraction: `1.0` is 100%.
+    pub percent: f32,
+    pub px: f32,
+}
+
+impl CalcLen {
+    /// The size when the percentage's base is `basis` pixels, never negative.
+    pub fn resolve(self, basis: f32) -> f32 {
+        (self.percent * basis + self.px).max(0.0)
+    }
+}
+
+/// 0.5.6.2 (#178): the sides of a node whose size is a `CalcLen`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CalcSize {
+    pub width: Option<CalcLen>,
+    pub height: Option<CalcLen>,
+}
+
+impl CalcSize {
+    /// Whether either side is a calc size.
+    pub fn any(self) -> bool {
+        self.width.is_some() || self.height.is_some()
     }
 }
 
