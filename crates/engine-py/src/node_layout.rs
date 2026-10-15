@@ -20,7 +20,7 @@ use taffy::style::{ExpandedDimension, ExpandedLengthPercentage, ExpandedLengthPe
 pub(crate) type StyleEdit = Box<dyn FnOnce(&mut Style)>;
 
 /// Every taffy-style layout property, in the order errors list them.
-pub(crate) const LAYOUT_PROPS: [&str; 42] = [
+pub(crate) const LAYOUT_PROPS: [&str; 47] = [
     "width",
     "height",
     "min_width",
@@ -31,6 +31,12 @@ pub(crate) const LAYOUT_PROPS: [&str; 42] = [
     "position",
     "x",
     "y",
+    // 0.5.6.2 (#178): the four insets; `x` and `y` are `left` and `top`.
+    "left",
+    "top",
+    "right",
+    "bottom",
+    "inset",
     "flex_direction",
     "flex_wrap",
     "align_items",
@@ -372,13 +378,32 @@ fn parse_known(name: &str, value: &Bound<'_, PyAny>) -> PyResult<StyleEdit> {
             let v = keyword(&POSITION, value, name)?;
             edit(move |s| s.position = v)
         }
-        "x" => {
+        "x" | "left" => {
             let v = length_percentage_auto(value, name)?;
             edit(move |s| s.inset.left = v)
         }
-        "y" => {
+        "y" | "top" => {
             let v = length_percentage_auto(value, name)?;
             edit(move |s| s.inset.top = v)
+        }
+        "right" => {
+            let v = length_percentage_auto(value, name)?;
+            edit(move |s| s.inset.right = v)
+        }
+        "bottom" => {
+            let v = length_percentage_auto(value, name)?;
+            edit(move |s| s.inset.bottom = v)
+        }
+        "inset" => {
+            let v = length_percentage_auto(value, name)?;
+            edit(move |s| {
+                s.inset = Rect {
+                    left: v,
+                    right: v,
+                    top: v,
+                    bottom: v,
+                }
+            })
         }
         "flex_direction" => {
             let v = keyword(&FLEX_DIRECTION, value, name)?;
@@ -556,8 +581,11 @@ pub(crate) fn read_layout(
         "max_height" => length_percentage_auto_to_py(style.max_size.height, py),
         "aspect_ratio" => to_py(style.aspect_ratio.map(f64::from), py),
         "position" => to_py(name_of(&POSITION, &style.position), py),
-        "x" => length_percentage_auto_to_py(style.inset.left, py),
-        "y" => length_percentage_auto_to_py(style.inset.top, py),
+        "x" | "left" => length_percentage_auto_to_py(style.inset.left, py),
+        "y" | "top" => length_percentage_auto_to_py(style.inset.top, py),
+        "right" => length_percentage_auto_to_py(style.inset.right, py),
+        "bottom" => length_percentage_auto_to_py(style.inset.bottom, py),
+        "inset" => sides_to_py(style.inset, length_percentage_auto_to_py, py),
         "flex_direction" => to_py(name_of(&FLEX_DIRECTION, &style.flex_direction), py),
         "flex_wrap" => to_py(name_of(&FLEX_WRAP, &style.flex_wrap), py),
         "align_items" => to_py(style.align_items.map(|v| name_of(&ALIGN, &v)), py),

@@ -139,6 +139,23 @@ badge = window.create("box", position="absolute", x=28, y=-4, width=16, height=1
 icon_button.add_child(badge)
 ```
 
+**Insets (0.5.6.2).** `left`, `top`, `right` and `bottom` (and `inset`, all four
+at once) place the node from each edge of its parent; `x` and `y` are `left` and
+`top`. Set both edges of an axis and leave that size `auto`, and the node is
+stretched between them: a strip 8 pixels in from each side, or a scrim that fills
+its parent:
+
+```python
+bar = window.create("box", position="absolute", left=8, right=8, bottom=8, height=40)
+scrim = window.create("box", position="absolute", inset=0, fill=(0, 0, 0, 0x80))
+```
+
+The insets are measured from the parent's edge, not its padding, and they follow
+the parent when it is resized. A margin shrinks the stretched node. A size that is
+not `auto` wins over the second inset (`left=8, right=8, width="100%"` is the
+parent's whole width). On a node in the flow the insets offset it from where it
+was laid out, as in CSS (`right=8` moves it 8 pixels left).
+
 Content that floats over the whole window — menus, dialogs, tooltips — goes
 in a [layer](layers.md) instead, which also handles placement, input, and
 focus.
