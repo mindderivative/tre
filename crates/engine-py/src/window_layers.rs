@@ -18,11 +18,17 @@ use crate::node::Node;
 use crate::node_handles;
 use crate::window::PyWindow;
 
-pub(crate) const PLACEMENT: [(&str, Placement); 4] = [
+pub(crate) const PLACEMENT: [(&str, Placement); 9] = [
     ("below", Placement::Below),
     ("above", Placement::Above),
     ("start", Placement::Start),
     ("end", Placement::End),
+    // 0.5.6.2 (#179): the node's centre on a point of the anchor.
+    ("top_start", Placement::TopStart),
+    ("top_end", Placement::TopEnd),
+    ("bottom_start", Placement::BottomStart),
+    ("bottom_end", Placement::BottomEnd),
+    ("center", Placement::Center),
 ];
 
 type FocusTransition = Option<(Option<NodeId>, Option<NodeId>)>;
@@ -34,9 +40,15 @@ impl PyWindow {
     /// the `placement` side (`"below"`, `"above"`, `"start"`, `"end"`),
     /// flipped or shifted to fit the window -- `node.get("layer_placement")`
     /// reports the side used; without one it sits at its own `x`/`y`.
+    /// (0.5.6.2) `placement` also takes `"top_start"`, `"top_end"`,
+    /// `"bottom_start"`, `"bottom_end"` and `"center"`: the layer's centre on
+    /// that point of the anchor, never flipped or shifted. `offset=(dx, dy)`
+    /// moves the attachment point, in the anchor's own coordinates; `flip=False`
+    /// keeps a side placement from flipping or shifting too.
     /// `modal` blocks input beneath it and moves focus into it;
     /// `dismissible` delivers `dismiss` to it on an outside press or Escape.
-    #[pyo3(signature = (node, anchor=None, placement="below", modal=false, dismissible=true))]
+    #[pyo3(signature = (node, anchor=None, placement="below", modal=false, dismissible=true, offset=(0.0, 0.0), flip=true))]
+    #[allow(clippy::too_many_arguments)]
     fn show_layer(
         &self,
         node: PyRef<'_, Node>,
@@ -44,8 +56,15 @@ impl PyWindow {
         placement: &str,
         modal: bool,
         dismissible: bool,
+        offset: (f64, f64),
+        flip: bool,
         py: Python<'_>,
     ) -> PyResult<()> {
+        if !(offset.0.is_finite() && offset.1.is_finite()) {
+            return Err(PyValueError::new_err(
+                "show_layer: `offset` must be a pair of finite numbers",
+            ));
+        }
         let (tree, root) = (self.handles.tree.clone(), self.handles.root);
         for handle in std::iter::once(&node).chain(anchor.as_ref()) {
             if !Rc::ptr_eq(&handle.tree, &tree) {
@@ -62,6 +81,8 @@ impl PyWindow {
             modal,
             dismissible,
             placement: Some(placement),
+            offset,
+            pinned: !flip,
             restore_focus,
             ..Default::default()
         };

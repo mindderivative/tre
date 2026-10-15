@@ -614,12 +614,19 @@ class Window:
         placement: str = "below",
         modal: bool = False,
         dismissible: bool = True,
+        offset: tuple[float, float] = (0.0, 0.0),
+        flip: bool = True,
     ) -> None:
         """M96: shows `node` over the window's content, above every layer
         already open. With `anchor`, it's placed against that node on the
         `placement` side (`"below"`, `"above"`, `"start"`, `"end"`),
         flipped or shifted to fit at every layout; without one it sits at
-        its own `x`/`y`. `modal` blocks input beneath it and moves focus
+        its own `x`/`y`. (0.5.6.2) `placement` also takes `"top_start"`,
+        `"top_end"`, `"bottom_start"`, `"bottom_end"` and `"center"`: the
+        layer's centre on that point of the anchor, never flipped or shifted.
+        `offset=(dx, dy)` moves the point it attaches to, in the anchor's own
+        coordinates (a scaled anchor scales it); `flip=False` keeps a side
+        placement from flipping or shifting too. `modal` blocks input beneath it and moves focus
         into it; `dismissible` delivers `dismiss` to it on an outside press
         (which it consumes) or Escape (the topmost dismissible layer only).
         Events inside a layer stop at it, and it's its own Tab scope."""

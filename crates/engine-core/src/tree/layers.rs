@@ -1,6 +1,7 @@
 //! Overlays and layers: opening, placing, and dismissing them, and hit-testing past them.
 
 use super::*;
+use crate::overlay::AnchorBox;
 
 impl Tree {
     /// §14 step 13 (§11.3): positions `content` with `Position::
@@ -295,11 +296,47 @@ impl Tree {
         }
     }
 
+    /// 0.5.6.2 (#179): `anchor`'s box in window space: the bounds of its
+    /// laid-out box's corners through its composed transform (scroll offsets and
+    /// scale included), the rectangle a node is placed against.
+    pub(super) fn anchor_box(&self, anchor: NodeId) -> AnchorBox {
+        let size = self.layout(anchor).size;
+        let (w, h) = (f64::from(size.width), f64::from(size.height));
+        let transform = self.composed_transform(anchor);
+        let corners =
+            [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)].map(|(x, y)| transform * Point::new(x, y));
+        let x0 = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let x1 = corners
+            .iter()
+            .map(|p| p.x)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let y0 = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let y1 = corners
+            .iter()
+            .map(|p| p.y)
+            .fold(f64::NEG_INFINITY, f64::max);
+        AnchorBox {
+            x: x0,
+            y: y0,
+            w: x1 - x0,
+            h: y1 - y0,
+        }
+    }
+
+    /// 0.5.6.2 (#179): `offset`, given in `anchor`'s own coordinates, as the
+    /// displacement it is in window space: a scaled anchor scales it.
+    pub(super) fn anchor_offset(&self, anchor: NodeId, offset: (f64, f64)) -> (f64, f64) {
+        let [a, b, c, d, _, _] = self.composed_transform(anchor).as_coeffs();
+        (a * offset.0 + c * offset.1, b * offset.0 + d * offset.1)
+    }
+
     /// M96: places every anchored layer against its anchor, preferring
     /// `placement`, flipping to the opposite side when that side lacks
     /// the room and the other has more, then shifting along both axes to
     /// stay inside `root`. Records the side used as `placed`. Returns
-    /// whether any layer moved, so layout runs again.
+    /// whether any layer moved, so layout runs again. 0.5.6.2 (#179): a
+    /// placement that names a point of the anchor, or a layer that is `pinned`,
+    /// is neither flipped nor shifted; `offset` moves the attachment point.
     pub(super) fn place_layers(&mut self, root: NodeId) -> bool {
         let window = {
             let size = self.layout(root).size;
@@ -314,37 +351,40 @@ impl Tree {
             if self.nodes.get(anchor).is_none() {
                 continue;
             }
-            let (ax, ay) = self.absolute_position(anchor);
-            let anchor_size = self.layout(anchor).size;
-            let (aw, ah) = (f64::from(anchor_size.width), f64::from(anchor_size.height));
+            let target = self.anchor_box(anchor);
+            let (dx, dy) = self.anchor_offset(anchor, meta.offset);
             let size = self.layout(layer).size;
             let (w, h) = (f64::from(size.width), f64::from(size.height));
             // Room on each side of the anchor.
             let room = |side: Placement| match side {
-                Placement::Below => window.1 - (ay + ah),
-                Placement::Above => ay,
-                Placement::Start => ax,
-                Placement::End => window.0 - (ax + aw),
+                Placement::Below => window.1 - (target.y + target.h),
+                Placement::Above => target.y,
+                Placement::Start => target.x,
+                Placement::End => window.0 - (target.x + target.w),
+                _ => f64::INFINITY,
             };
             let needed = |side: Placement| match side {
                 Placement::Below | Placement::Above => h,
-                Placement::Start | Placement::End => w,
+                _ => w,
             };
-            let side = if room(preferred) < needed(preferred)
+            let fits = !meta.pinned && !preferred.is_point();
+            let side = if fits
+                && room(preferred) < needed(preferred)
                 && room(preferred.opposite()) > room(preferred)
             {
                 preferred.opposite()
             } else {
                 preferred
             };
-            let (x, y) = match side {
-                Placement::Below => (ax, ay + ah),
-                Placement::Above => (ax, ay - h),
-                Placement::Start => (ax - w, ay),
-                Placement::End => (ax + aw, ay),
-            };
+            let (x, y) = side.origin(target, w, h);
+            let (x, y) = (x + dx, y + dy);
             let fit = |at: f64, extent: f64, limit: f64| at.min(limit - extent).max(0.0);
-            let (x, y) = (fit(x, w, window.0) as f32, fit(y, h, window.1) as f32);
+            let (x, y) = if fits {
+                (fit(x, w, window.0), fit(y, h, window.1))
+            } else {
+                (x, y)
+            };
+            let (x, y) = (x as f32, y as f32);
             let mut style = self.nodes[layer].layout_style.clone();
             let inset = TaffyRect {
                 left: length(x),

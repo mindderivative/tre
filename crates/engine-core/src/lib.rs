@@ -58,7 +58,7 @@ pub use node::{
     TerminalPalette, TerminalState, TextAlign, TextFieldState, TextOptions, TextSpan, TextState,
     VirtualListState, WindowRegion,
 };
-pub use overlay::{OverlayMeta, Placement};
+pub use overlay::{AnchorBox, OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
 pub use shader::{
     FRAME_BLOCK_SIZE, Shader, ShaderError, ShaderMode, UniformKind, UniformValue, frame_block,
