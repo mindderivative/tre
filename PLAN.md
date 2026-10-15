@@ -15,11 +15,16 @@ entry that the user moves to `Ready`.
 
 Found by running `tools/verify.sh` on a fresh machine (2026-10-10), and since:
 
-- **#178** — insets, mixed-unit sizes and a node layout event, from Tesserae
-  (#261): done, in review as PR #182 (stacked on #181, now retargeted to `main`).
 - **#179** — place a node against another node in the tree, and at its corners
   (anchored layout), from Tesserae (#262): not started. It builds on #178's
   insets and `layout` event.
+
+Done on 2026-10-15 (PR #182, merged to `main`): **#178**, from Tesserae (#261):
+`left`, `top`, `right`, `bottom` and `inset` on a node; `width`/`height` as a
+percentage plus pixels (`"calc(100% - 16)"`), resolved by the tree after layout
+because taffy's own calc resolver is a stub; and a node `layout` event for a
+watched node's size. Not for `min_*`/`max_*`, and in a grid a calc size is taken
+of the container.
 
 Done on 2026-10-15 (PR #181, merged to `main`): **#176** and **#177**, one cause:
 a text node has no size of its own, so a centred label was 0 wide (wrapped one
