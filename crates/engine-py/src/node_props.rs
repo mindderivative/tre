@@ -8,8 +8,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use engine_core::{
-    AccessValue, Animated, CalcLen, CornerRadii, Cursor, Interpolate, Live, NodeId, NodeKind,
-    PathData, Role, Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
+    AccessValue, Anchored, Animated, CalcLen, CornerRadii, Cursor, Interpolate, Live, NodeId,
+    NodeKind, PathData, Placement, Role, Shadow, Shadows, TerminalPalette, Tree, WindowRegion,
 };
 use peniko::Color;
 use peniko::kurbo::Rect;
@@ -26,7 +26,11 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 66] = [
+const SETTABLE: [&str; 69] = [
+    // 0.5.6.2 (#179): placed against another node.
+    "anchor",
+    "placement",
+    "offset",
     "visible",
     "z_index",
     "clip_children",
@@ -139,6 +143,15 @@ const LIVE: [(&str, Live); 3] = [
     ("assertive", Live::Assertive),
 ];
 
+/// 0.5.6.2 (#179): one of `anchor`, `placement` or `offset`; a `set` applies them
+/// in order to the node's current anchoring.
+pub(crate) enum AnchorEdit {
+    /// `None` puts the node back in the flow.
+    Anchor(Option<NodeId>),
+    Placement(Placement),
+    Offset((f64, f64)),
+}
+
 /// 0.5.6.2 (#176, #177, #178): what a `width` or `height` value is.
 #[derive(Clone, Copy)]
 pub(crate) enum SizeMode {
@@ -193,6 +206,8 @@ pub(crate) enum Change {
         edit: StyleEdit,
     },
     Kind(KindChange),
+    /// 0.5.6.2 (#179): `anchor`, `placement` or `offset`.
+    Anchor(AnchorEdit),
     /// M96: a canvas's `draw`, or a virtual list's `materialize` or
     /// `size_hint` -- stored in the handler map.
     Callback(HandlerKey, Py<PyAny>),
@@ -1265,6 +1280,86 @@ fn parse_related(
 
 /// Every property `set` accepts, parsed and checked against `kind` --
 /// nothing is applied until all of them pass.
+/// 0.5.6.2 (#179): `anchor` (a node of this window, or `None`), `placement` (a
+/// layer placement name) or `offset` (a pair of numbers).
+fn parse_anchor(
+    name: &str,
+    value: &Bound<'_, PyAny>,
+    tree: &Rc<RefCell<Tree>>,
+) -> PyResult<Change> {
+    Ok(Change::Anchor(match name {
+        "anchor" => {
+            if value.is_none() {
+                AnchorEdit::Anchor(None)
+            } else {
+                let node: PyRef<'_, Node> = value
+                    .extract()
+                    .map_err(|_| invalid(name, "a node of this window, or None"))?;
+                if !Rc::ptr_eq(&node.tree, tree) {
+                    return Err(crate::error::EngineError::ForeignNode.into());
+                }
+                node.check_alive()?;
+                AnchorEdit::Anchor(Some(node.id))
+            }
+        }
+        "placement" => {
+            let text: String = required(value, name, "a str")?;
+            AnchorEdit::Placement(
+                crate::node_layout::lookup(&crate::window_layers::PLACEMENT, &text)
+                    .map_err(|expected| invalid(name, &expected))?,
+            )
+        }
+        _ => {
+            let expected = "a pair of numbers (dx, dy)";
+            let pair: (f64, f64) = value
+                .extract()
+                .ok()
+                .filter(|(x, y): &(f64, f64)| {
+                    x.is_finite() && y.is_finite() && !value.is_instance_of::<pyo3::types::PyBool>()
+                })
+                .ok_or_else(|| invalid(name, expected))?;
+            AnchorEdit::Offset(pair)
+        }
+    }))
+}
+
+/// 0.5.6.2 (#179): checks a `set` or `create`'s anchor changes before any is
+/// applied: an anchor may not be the node itself or inside it (`id`, when the node
+/// exists), and `placement` and `offset` need an anchor, from this call or before
+/// (`anchored`).
+pub(crate) fn check_anchor_changes(
+    tree: &Tree,
+    id: Option<NodeId>,
+    mut anchored: bool,
+    changes: &[Change],
+) -> PyResult<()> {
+    for change in changes {
+        let Change::Anchor(edit) = change else {
+            continue;
+        };
+        match edit {
+            AnchorEdit::Anchor(Some(anchor)) => {
+                if id.is_some_and(|id| tree.anchor_cycle(id, *anchor)) {
+                    return Err(PyValueError::new_err(
+                        "node property `anchor`: a node cannot be placed against itself \
+                         or a node inside it",
+                    ));
+                }
+                anchored = true;
+            }
+            AnchorEdit::Anchor(None) => anchored = false,
+            AnchorEdit::Placement(_) | AnchorEdit::Offset(_) if !anchored => {
+                return Err(PyValueError::new_err(
+                    "node properties `placement` and `offset` need an `anchor`: set one \
+                     in the same call or before",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn parse_all(
     props: Option<&Bound<'_, PyDict>>,
     kind: &NodeKind,
@@ -1284,6 +1379,10 @@ pub(crate) fn parse_all(
             }
             if name == "shader" {
                 changes.push(parse_shader(&value, tree)?);
+                continue;
+            }
+            if matches!(name.as_str(), "anchor" | "placement" | "offset") {
+                changes.push(parse_anchor(&name, &value, tree)?);
                 continue;
             }
             if name == "describedby" || name == "controls" {
@@ -1323,6 +1422,7 @@ impl Node {
                 .get(self.id)
                 .ok_or(crate::error::EngineError::Destroyed)?;
             let changes = parse_all(props, &node.kind, &self.tree)?;
+            check_anchor_changes(&tree, Some(self.id), node.anchored.is_some(), &changes)?;
             for change in &changes {
                 if let Change::Shader(Some(shader)) = change
                     && tree.shader_cycle(self.id, shader)
@@ -1375,6 +1475,33 @@ impl Node {
             })?;
             if let Some(value) = animatable_to_py(node, name, false, py)? {
                 return Ok(value);
+            }
+            match name {
+                "anchor" => {
+                    return match node.anchored.as_deref() {
+                        Some(a) => Ok(Py::new(py, self.handle_to(a.anchor))?.into_any()),
+                        None => Ok(py.None()),
+                    };
+                }
+                "placement" => {
+                    return Ok(match node.anchored.as_deref() {
+                        Some(a) => crate::window_layers::PLACEMENT
+                            .iter()
+                            .find(|(_, p)| *p == a.placement)
+                            .map(|(n, _)| *n)
+                            .into_pyobject(py)?
+                            .into_any()
+                            .unbind(),
+                        None => py.None(),
+                    });
+                }
+                "offset" => {
+                    return Ok(match node.anchored.as_deref() {
+                        Some(a) => a.offset.into_pyobject(py)?.into_any().unbind(),
+                        None => py.None(),
+                    });
+                }
+                _ => {}
             }
             let (fit, calc) = (node.fit_content, node.calc_size);
             if let Some(len) = match name {
@@ -1852,6 +1979,8 @@ impl Node {
         let mut style = None;
         let mut fit = node.fit_content;
         let mut calc = node.calc_size;
+        let mut anchored = node.anchored.as_deref().copied();
+        let mut anchor_changed = false;
         let mut kind_changed = false;
         let mut resize_terminal = false;
         let mut reset_rows = false;
@@ -1906,6 +2035,30 @@ impl Node {
                     } else {
                         fit.width = on;
                         calc.width = mixed;
+                    }
+                }
+                Change::Anchor(edit) => {
+                    anchor_changed = true;
+                    match edit {
+                        AnchorEdit::Anchor(None) => anchored = None,
+                        AnchorEdit::Anchor(Some(anchor)) => {
+                            let before = anchored;
+                            anchored = Some(Anchored {
+                                anchor,
+                                placement: before.map_or(Placement::default(), |a| a.placement),
+                                offset: before.map_or((0.0, 0.0), |a| a.offset),
+                            });
+                        }
+                        AnchorEdit::Placement(placement) => {
+                            if let Some(a) = anchored.as_mut() {
+                                a.placement = placement;
+                            }
+                        }
+                        AnchorEdit::Offset(offset) => {
+                            if let Some(a) = anchored.as_mut() {
+                                a.offset = offset;
+                            }
+                        }
                     }
                 }
                 Change::Kind(kind_change) => {
@@ -2118,6 +2271,9 @@ impl Node {
         tree.set_fit_content(self.id, fit);
         tree.set_calc_size(self.id, false, calc.width);
         tree.set_calc_size(self.id, true, calc.height);
+        if anchor_changed {
+            tree.set_anchor(self.id, anchored);
+        }
         if kind_changed && fit.any() {
             tree.relayout(self.id);
         }

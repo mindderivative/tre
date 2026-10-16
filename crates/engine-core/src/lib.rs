@@ -51,14 +51,14 @@ pub use input::{
 };
 pub use layout_anim::{LayoutAnim, LayoutProp};
 pub use node::{
-    Blend, CalcLen, CalcSize, CaretShape, CellColor, ContentFit, CornerRadii, Cursor, FitContent,
-    ImageState, InputMode, ItemExtent, Mask, Node, NodeId, NodeKind, NodeTransform,
+    Anchored, Blend, CalcLen, CalcSize, CaretShape, CellColor, ContentFit, CornerRadii, Cursor,
+    FitContent, ImageState, InputMode, ItemExtent, Mask, Node, NodeId, NodeKind, NodeTransform,
     PaintProperties, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
     SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, SnapAlign, TerminalCell,
     TerminalPalette, TerminalState, TextAlign, TextFieldState, TextOptions, TextSpan, TextState,
     VirtualListState, WindowRegion,
 };
-pub use overlay::{OverlayMeta, Placement};
+pub use overlay::{AnchorBox, OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
 pub use shader::{
     FRAME_BLOCK_SIZE, Shader, ShaderError, ShaderMode, UniformKind, UniformValue, frame_block,

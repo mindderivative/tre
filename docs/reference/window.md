@@ -33,7 +33,7 @@ window.root.add_child(card)
 ## Layers
 
 **`show_layer(node, anchor=None, placement="below", modal=False,
-dismissible=True)`** shows `node` over the window's content, and
+dismissible=True, offset=(0, 0), flip=True)`** shows `node` over the window's content, and
 **`hide_layer(node)`** hides it — for menus, dialogs, tooltips, and sheets.
 See [Layers](layers.md).
 

@@ -49,6 +49,19 @@ pub type LayoutChange = (NodeId, Option<(f32, f32)>, (f32, f32));
 /// `settle_calc_sizes` gives up on it.
 const CALC_PASSES: usize = 4;
 
+/// 0.5.6.2 (#179): place-and-lay-out-again passes an anchored node gets before
+/// `settle_anchored` gives up on it (a chain of anchors needs one pass a link).
+const ANCHOR_PASSES: usize = 4;
+
+/// Whether two insets are the same length, to a hundredth of a pixel.
+fn same_inset(
+    a: taffy::style::LengthPercentageAuto,
+    b: taffy::style::LengthPercentageAuto,
+) -> bool {
+    use taffy::style::ExpandedLengthPercentageAuto::Length;
+    matches!((a.expand(), b.expand()), (Length(a), Length(b)) if (a - b).abs() < 0.01)
+}
+
 /// The size a percentage of `parent` is taken of, as taffy takes it for a plain
 /// `"50%"`: the parent's content box for a node in the flow, its padding box for
 /// an absolute one (measured: a 300x200 parent with `padding=10` gives 280x180
@@ -223,6 +236,12 @@ impl Tree {
         if !self.calc_nodes.is_empty() {
             self.settle_calc_sizes(root_taffy, available_space);
         }
+        // 0.5.6.2 (#179): nodes placed against another node, once the anchors'
+        // positions are known. Every call, not only after a taffy pass: an
+        // anchor moves with a scroll or a transform without any layout.
+        if !self.anchored_nodes.is_empty() {
+            self.settle_anchored(root_taffy, available_space);
+        }
         // M96: anchored layers go where they fit, once their sizes are known.
         if self.place_layers(root) {
             self.run_taffy(root_taffy, available_space);
@@ -261,6 +280,155 @@ impl Tree {
     /// is returned to `auto` rather than drifting every frame.
     pub fn take_calc_conflicts(&mut self) -> Vec<(NodeId, bool)> {
         std::mem::take(&mut self.calc_conflicts)
+    }
+
+    /// 0.5.6.2 (#179): whether anchoring `id` to `anchor` would be a cycle: it is
+    /// `id` itself, or inside `id`'s subtree (so its position would depend on
+    /// where `id` is put). `Tree::set_anchor` refuses it.
+    pub fn anchor_cycle(&self, id: NodeId, anchor: NodeId) -> bool {
+        let mut current = Some(anchor);
+        while let Some(node) = current {
+            if node == id {
+                return true;
+            }
+            current = self.nodes.get(node).and_then(|n| n.parent);
+        }
+        false
+    }
+
+    /// 0.5.6.2 (#179): places `id` against another node in the tree (`Some`), or
+    /// puts it back in the flow (`None`). While anchored it is absolute and its
+    /// `inset` is the tree's to write after each layout; setting `x`, `right` and
+    /// the like on it has no lasting effect. Returns `false`, changing nothing,
+    /// when the anchor is gone or is `id` or inside it (`anchor_cycle`).
+    pub fn set_anchor(&mut self, id: NodeId, anchored: Option<crate::node::Anchored>) -> bool {
+        if self.nodes.get(id).is_none() {
+            return false;
+        }
+        match anchored {
+            Some(anchored) => {
+                if self.nodes.get(anchored.anchor).is_none()
+                    || self.anchor_cycle(id, anchored.anchor)
+                {
+                    return false;
+                }
+                let node = self.nodes.get_mut(id).expect("checked above");
+                if node.anchored.as_deref() == Some(&anchored) {
+                    return true;
+                }
+                node.anchored = Some(Box::new(anchored));
+                if !self.anchored_nodes.contains(&id) {
+                    self.anchored_nodes.push(id);
+                }
+                let mut style = self.nodes[id].layout_style.clone();
+                if style.position != taffy::style::Position::Absolute {
+                    style.position = taffy::style::Position::Absolute;
+                    self.set_layout_style(id, style);
+                } else {
+                    self.relayout(id);
+                }
+            }
+            None => {
+                let node = self.nodes.get_mut(id).expect("checked above");
+                if node.anchored.take().is_none() {
+                    return true;
+                }
+                self.anchored_nodes.retain(|&n| n != id);
+                let mut style = self.nodes[id].layout_style.clone();
+                style.position = taffy::style::Position::Relative;
+                style.inset = TaffyRect {
+                    left: auto(),
+                    right: auto(),
+                    top: auto(),
+                    bottom: auto(),
+                };
+                self.set_layout_style(id, style);
+            }
+        }
+        true
+    }
+
+    /// 0.5.6.2 (#179): the anchored nodes `compute_layout` gave up on since this
+    /// was last called: their anchors depend on each other with no solution (A is
+    /// placed against B and B against A), so each was put back in the flow.
+    pub fn take_anchor_conflicts(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.anchor_conflicts)
+    }
+
+    /// Places every anchored node against its anchor and lays out again while any
+    /// of them moved, up to `ANCHOR_PASSES` times.
+    fn settle_anchored(&mut self, root: taffy::NodeId, available: Size<AvailableSpace>) {
+        for pass in 0..=ANCHOR_PASSES {
+            let moved = self.place_anchored();
+            if moved.is_empty() {
+                return;
+            }
+            if pass == ANCHOR_PASSES {
+                for id in moved {
+                    self.set_anchor(id, None);
+                    tracing::warn!(
+                        "an anchored node's position has no fixed point (it and its anchor depend on each other): put back in the flow"
+                    );
+                    self.anchor_conflicts.push(id);
+                }
+            }
+            self.run_taffy(root, available);
+            self.layout_epoch += 1;
+        }
+    }
+
+    /// Writes each anchored node's place into its style, from its anchor's last
+    /// layout; returns the nodes that moved.
+    fn place_anchored(&mut self) -> Vec<NodeId> {
+        self.anchored_nodes
+            .retain(|&id| self.nodes.get(id).is_some_and(|n| n.anchored.is_some()));
+        let mut moved = Vec::new();
+        for id in self.anchored_nodes.clone() {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            let (Some(anchored), Some(parent)) = (node.anchored.as_deref().copied(), node.parent)
+            else {
+                continue;
+            };
+            if self.nodes.get(anchored.anchor).is_none() {
+                continue;
+            }
+            let target = self.anchor_box(anchored.anchor);
+            let (dx, dy) = self.anchor_offset(anchored.anchor, anchored.offset);
+            let size = self.layout(id).size;
+            let (x, y) =
+                anchored
+                    .placement
+                    .origin(target, f64::from(size.width), f64::from(size.height));
+            // The window-space point, in the parent's own space: that is what an
+            // inset is, whatever scrolling or transforms sit above the parent.
+            let local = self.composed_transform(parent).inverse() * Point::new(x + dx, y + dy);
+            let (shift_x, shift_y) = self.scroll_shift(id);
+            let (left, top) = ((local.x - shift_x) as f32, (local.y - shift_y) as f32);
+            if !(left.is_finite() && top.is_finite()) {
+                continue;
+            }
+            let inset = TaffyRect {
+                left: length(left),
+                top: length(top),
+                right: auto(),
+                bottom: auto(),
+            };
+            let mut style = node.layout_style.clone();
+            let same = same_inset(style.inset.left, inset.left)
+                && same_inset(style.inset.top, inset.top)
+                && style.inset.right == inset.right
+                && style.inset.bottom == inset.bottom
+                && style.position == taffy::style::Position::Absolute;
+            if !same {
+                style.inset = inset;
+                style.position = taffy::style::Position::Absolute;
+                self.set_layout_style(id, style);
+                moved.push(id);
+            }
+        }
+        moved
     }
 
     /// 0.5.6.2 (#178): starts (or, with `false`, stops) reporting `id`'s laid-out

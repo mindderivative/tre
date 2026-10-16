@@ -181,6 +181,42 @@ Content that floats over the whole window — menus, dialogs, tooltips — goes
 in a [layer](layers.md) instead, which also handles placement, input, and
 focus.
 
+## Anchored layout
+
+**Placing a node against another node (0.5.6.2).** To put a badge on the corner of
+a distant button, a label beside a field, or a marker on a chart point, give the
+node an `anchor`:
+
+```python
+badge = window.create("box", width=16, height=16, corner_radius=8,
+                      anchor=button, placement="top_end", offset=(-2, 2))
+header.add_child(badge)   # any parent: the button need not be near it
+```
+
+After each layout the tree puts the node at `placement` of the anchor's box, in
+the same pass, so it follows the anchor with no lag, through scrolling, scaling and
+other transforms above either of them. The node stays an ordinary child of its own
+parent, unlike a [layer](layers.md): it is clipped by `clip_children`, ordered by
+`z_index` with its siblings, is in the parent's Tab order, and its events bubble to
+its parent.
+
+`placement` is `"below"` (the default), `"above"`, `"start"` or `"end"` (outside
+the anchor, aligned to its start edge), or `"top_start"`, `"top_end"`,
+`"bottom_start"`, `"bottom_end"` or `"center"`: the node's **centre** on that point
+of the anchor. `offset=(dx, dy)` moves the point the node attaches to, in the
+anchor's own coordinates (+x toward the end, +y down; a scaled anchor scales it).
+`anchor=None` puts the node back in the flow.
+
+Rules: setting an anchor makes the node absolute, and the tree writes its insets
+after every layout, so `x`, `right` and the like on it have no lasting effect.
+Unlike a layer it is never flipped or shifted to fit. A node cannot be anchored to
+itself or to a node inside it (a `ValueError`); two nodes anchored to each other
+have no answer, so they are put back in the flow and a warning is logged; a chain
+(A to B to C) works. If the anchor is removed the node stays where it was. The
+node's own `translate_*`, `scale` and `rotation_deg` apply on top of the place it
+is put. The anchor's box is the bounds of its laid-out box through its transform.
+`placement` and `offset` need an `anchor`, in the same call or before.
+
 ## Reading the layout
 
 **The `layout` event (0.5.6.2).** To be told when a node's size changes, rather

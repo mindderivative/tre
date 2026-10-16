@@ -26,6 +26,15 @@ pub enum Placement {
     Start,
     /// After the anchor on the horizontal axis.
     End,
+    /// 0.5.6.2 (#179): the node's centre on the anchor's top-start corner, for
+    /// a badge or a marker. This and the three below, and `Center`, name a
+    /// *point* of the anchor and never flip or shift to fit.
+    TopStart,
+    TopEnd,
+    BottomStart,
+    BottomEnd,
+    /// The node's centre on the anchor's centre.
+    Center,
 }
 
 impl Placement {
@@ -35,14 +44,55 @@ impl Placement {
             Self::Above => Self::Below,
             Self::Start => Self::End,
             Self::End => Self::Start,
+            // A point has no other side.
+            point => point,
         }
     }
+
+    /// 0.5.6.2 (#179): whether this names a point of the anchor (a corner or
+    /// its centre) rather than a side of it.
+    pub fn is_point(self) -> bool {
+        matches!(
+            self,
+            Self::TopStart | Self::TopEnd | Self::BottomStart | Self::BottomEnd | Self::Center
+        )
+    }
+
+    /// 0.5.6.2 (#179): where a node `w` x `h` goes against `anchor`, as its
+    /// top-left corner, before any offset. The four sides put the node outside
+    /// the anchor, aligned to the anchor's start edge; a point puts the node's
+    /// centre on that point.
+    pub fn origin(self, anchor: AnchorBox, w: f64, h: f64) -> (f64, f64) {
+        let AnchorBox { x, y, w: aw, h: ah } = anchor;
+        let centred = |cx: f64, cy: f64| (cx - w / 2.0, cy - h / 2.0);
+        match self {
+            Self::Below => (x, y + ah),
+            Self::Above => (x, y - h),
+            Self::Start => (x - w, y),
+            Self::End => (x + aw, y),
+            Self::TopStart => centred(x, y),
+            Self::TopEnd => centred(x + aw, y),
+            Self::BottomStart => centred(x, y + ah),
+            Self::BottomEnd => centred(x + aw, y + ah),
+            Self::Center => centred(x + aw / 2.0, y + ah / 2.0),
+        }
+    }
+}
+
+/// 0.5.6.2 (#179): an anchor's box in window space (after its transform), the
+/// rectangle a node is placed against.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AnchorBox {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
 }
 
 /// One open overlay: a legacy one (`Tree::open_overlay`), which closes
 /// itself on dismissal, or an M96 layer (`Tree::show_layer`), which reports
 /// dismissal instead. `Tree` keeps them in stacking order, newest on top.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct OverlayMeta {
     /// Positions the overlay's root relative to this node's computed
     /// bounds. Always set for a legacy overlay; a layer without one sits
@@ -66,6 +116,14 @@ pub struct OverlayMeta {
     pub placement: Option<Placement>,
     /// M96: the side the last layout actually placed the layer on.
     pub placed: Option<Placement>,
+    /// 0.5.6.2 (#179): moves the point of the anchor the layer attaches to, in
+    /// the anchor's own coordinates (a scaled anchor scales it).
+    pub offset: (f64, f64),
+    /// 0.5.6.2 (#179): `true` never flips the layer to the other side or shifts
+    /// it to fit the window, so it stays where it was placed. A placement that
+    /// names a point of the anchor never does either way. `false`, the default,
+    /// is what layers always did.
+    pub pinned: bool,
     /// M96: the node that held focus when the layer opened, for
     /// `hide_layer` to hand focus back to.
     pub restore_focus: Option<NodeId>,
