@@ -13,11 +13,20 @@ entry that the user moves to `Ready`.
 
 ## Backlog (not scoped)
 
-Found by running `tools/verify.sh` on a fresh machine (2026-10-10), and since:
+Nothing from the 2026-10-10 fresh-machine `tools/verify.sh` run or from Tesserae's
+requests (#178, #179) is open; what is, is below.
 
-- **#179** — place a node against another node in the tree, and at its corners
-  (anchored layout), from Tesserae (#262): not started. It builds on #178's
-  insets and `layout` event.
+Done on 2026-10-16 (PR #183, merged to `main`): **#179**, anchored layout, from
+Tesserae (#262). Layers take `top_start`, `top_end`, `bottom_start`, `bottom_end`
+and `center` (the node's centre on that point of the anchor, never flipped or
+shifted), plus `offset=(dx, dy)` in the anchor's own coordinates and `flip=False`;
+and an ordinary node takes `anchor`, `placement` and `offset`, placed against the
+anchor in the same layout pass, through scrolling and transforms, and staying a
+child of its own parent (clipped, ordered and bubbling as one). An in-tree node
+has no `flip`. Tesserae has been told (its #261 and #262); the 0.5.6.1 and 0.5.6.2
+work is on `main` and not yet released or tagged, so Tesserae's pinned tests
+(`test_size_recipes.py`, `test_anchored_overlay.py`) change when it adopts the
+release.
 
 Done on 2026-10-15 (PR #182, merged to `main`): **#178**, from Tesserae (#261):
 `left`, `top`, `right`, `bottom` and `inset` on a node; `width`/`height` as a
