@@ -21,3 +21,6 @@ python/tre/*.dylib
 # interpreter it ran under and the scan root. Each machine writes its own.
 /graphify-out/.graphify_python
 /graphify-out/.graphify_root
+# The Obsidian vault `graphify export obsidian` writes: one file per node, regenerated
+# from graph.json on demand, so not tracked.
+/graphify-out/obsidian/
