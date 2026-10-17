@@ -1,4 +1,4 @@
-//! 0.5.6.2 (#176, #177): a text node takes its text's own size on a side marked
+//! 0.5.7 (#176, #177): a text node takes its text's own size on a side marked
 //! `FitContent`, whatever the parent's `align_items`; an unmarked side stays the
 //! zero a text node has always had. The text is measured with a stand-in (10 px a
 //! character, 20 px a line), so the layout is what is under test, not a font.

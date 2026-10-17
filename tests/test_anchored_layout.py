@@ -1,4 +1,4 @@
-"""0.5.6.2 (#179): a node placed against another node in the tree.
+"""0.5.7 (#179): a node placed against another node in the tree.
 
 `anchor=`, `placement=` and `offset=` on an ordinary node put it at `placement` of
 the anchor's box -- a badge on the corner of a distant button, a label beside a

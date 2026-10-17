@@ -589,7 +589,7 @@ impl PyWindow {
             }
         };
         let changes = parse_all(Some(&props), &node_kind, &self.handles.tree)?;
-        // 0.5.6.2 (#179): `placement` and `offset` need an `anchor` in this call.
+        // 0.5.7 (#179): `placement` and `offset` need an `anchor` in this call.
         crate::node_props::check_anchor_changes(
             &self.handles.tree.borrow(),
             None,

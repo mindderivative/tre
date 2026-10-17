@@ -1703,11 +1703,11 @@ fn node_fingerprint_with(
         // 0.5.0 M3: which presses move the window; paints nothing.
         window_region: _,
         shader,
-        // 0.5.6.2 (#176, #177): a fit-content side reaches paint as the box size.
+        // 0.5.7 (#176, #177): a fit-content side reaches paint as the box size.
         fit_content: _,
-        // 0.5.6.2 (#178): a calc size reaches paint as the box size, likewise.
+        // 0.5.7 (#178): a calc size reaches paint as the box size, likewise.
         calc_size: _,
-        // 0.5.6.2 (#179): where an anchored node is reaches paint as its position.
+        // 0.5.7 (#179): where an anchored node is reaches paint as its position.
         anchored: _,
     } = node;
     visible.hash(h);

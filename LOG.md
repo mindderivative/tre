@@ -1,22 +1,24 @@
-# LOG — Branch `0.5.x`: custom windowing to 0.5.6
+# LOG — Branch `0.5.x`: custom windowing to 0.5.7
 
 ## Status
 
-**0.5.6 released (2026-10-09, PR #167, tag `v0.5.6`).** `main` is at 0.5.6 and
-CI is green. No branch is in flight: nothing is scoped for 0.5.7 or 0.6 yet.
+**0.5.6 released (2026-10-09, PR #167, tag `v0.5.6`).** `main` is ahead of it with
+the 0.5.7 work (below), CI is green, and the 0.5.7 release is scoped in #184 and
+not yet tagged.
 Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 `BUILD_TRACKER_ARCHIVE_*.md` files are the pre-GitHub trackers). Open
 issues: #47, #48 (macOS and Windows title bars on hardware), #91 (WGSL on
-real GPUs), #118 (baseline on Mac, Windows, low-end hardware), #132-#134
-(touch, OS file drag and drop, reduced-motion and contrast on hardware),
-#158 (a burst of `wp_fifo_v1` barriers after a resize), and the two found
-by the 2026-10-10 verify run, below (#168, #169).
+real GPUs: the Linux half is done; Windows, macOS and a video input are held),
+#118 (baseline on Mac, Windows, low-end hardware), #132-#134 (touch, OS file
+drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
+`wp_fifo_v1` barriers after a resize), and #184 (the release itself).
 
-## 0.5.6.1 (in progress)
+## 0.5.7 (in progress)
 
-Milestone 0.5.6.1 (Ready: #91 Linux real-GPU check, #168 emoji colour,
-#169 Wayland minimum size). Versioning slows down: a fourth number for small
-releases.
+Milestone 0.5.7: #168, #169, #175 to #179 and the Linux half of #91. It was built
+as 0.5.6.1 and then 0.5.6.2, small releases with a fourth number, until it held
+five features; it ships as 0.5.7 and the working labels were renamed (98 uses).
+The `0.5.6 (#NNN)` stamps in the code are 0.5.6's own and were left alone.
 
 **#169, step 1 (2026-10-10).** The fullscreen-ordering theory in the scope was
 wrong: on COSMIC Wayland a plain window does not grow to a larger minimum
@@ -68,7 +70,11 @@ resize border, a double-click on the title bar, an opt-in window menu. M4
 upgrade page. M6 (#36, #41): the release. The step-by-step trail is in git
 history for this file and in `BUILD_TRACKER_ARCHIVE_0.5.md`.
 
-## 0.5.6.2 (in progress)
+## 0.5.7, continued: the features
+
+The rest of the 0.5.7 work: the features, and the repeat of the Linux GPU check
+(#91). The fixes are in the first block, above; the Releases and 0.5.0 history
+sections ended up between the two.
 
 **#175, bitmap colour emoji (2026-10-11).** #168 left a bitmap emoji (CBDT on
 Linux, `sbix` on macOS) drawing nothing, with three ways forward listed. None
@@ -206,6 +212,47 @@ bounding region to flip within; layers cover menus.
 Tests: `engine-core/tests/anchored.rs` (9), `tests/test_layer_points.py` (12),
 `tests/test_anchored_layout.py` (25).
 
+**#91, the Linux real-GPU check, repeated on the CachyOS install (2026-10-16).**
+The 2026-10-10 check (Pop!_OS, COSMIC) was done on the same hardware; this one is
+on KDE Plasma Wayland with newer drivers: **AMD Radeon 890M (RADV STRIX1), Mesa
+26.2.4**, kernel 7.2.10; the software adapter is llvmpipe (LLVM 23.1.1). The test
+support code now names the adapter once per process and
+`TRE_TEST_FORCE_FALLBACK=1` selects the software one (carried over from the
+`gpu-check-91` branch, which also holds the first run's notes); from Python,
+`VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json` (or `lvp_icd.json`)
+pins the adapter.
+
+- *Pixel tests:* the whole `engine-render` suite, 324 passed, 0 failed, 12
+  ignored, on RADV **and** on llvmpipe; `shader_fill` 28/28 on both. (#168's emoji
+  failure of the first run is gone.)
+- *The examples, RADV against llvmpipe, offscreen:* no pixel differs by more than
+  one level (`shader_panel` 34 to 36% of pixels by one level, `shader_shine` 0.1
+  to 0.2%). The fractal fills the rounded panel, clipped at the corners, with its
+  label on one line; `shader_shine` shows its text (#176, #177). Both run live on
+  RADV and exit clean.
+- *The shine band crosses glyphs only where there is text:* measured against the
+  same scene with no shader at eight clock times, 0 background pixels change at
+  any of them, and glyph pixels brighten (2631 at t=1.0, 6038 at 1.5, 4566 at 2.0,
+  326 at 2.5, 0 at 3.0, 3669 at 4.0).
+- *Banding:* the fractal's flat colour steps are the shader's own integer
+  escape-count colouring (`julia.wgsl`: `m = steps / 80.0`), the same on both
+  adapters; the checklist's "no banding" does not fit it as written.
+- *Inputs and effects, in a live window on RADV:* an image input shows the image;
+  replacing its pixels repaints it; a shader reading another shader's output shows
+  it and repaints too. An effect over a node with children, through 420x240,
+  600x320, 300x180, 800x480 and back, matches a direct draw (0.00% of pixels, max
+  difference 0) and is identical to its first render when the size returns. (#176's
+  second note, 0.4% of pixels, did not reproduce in this scene.)
+- *Idle (5 s, start-up included):* no shader 1.0% of a core and one frame; a still
+  shader the same; an animated one 7.8% at 60 frames a second.
+- *GPU health (#65):* `simulate("gpu_error")` and `simulate("gpu_lost")` reach
+  their listeners, which is all the simulation promises. A real stall or device
+  loss was **not** run: it can freeze the compositor. The kernel's GPU hang timeout
+  here is amdgpu's default (10 s, recovery automatic).
+
+Left under #91: Windows (DX12) and macOS (Metal); a video node as an input
+(nothing here to feed one); and the real stall and loss checks.
+
 ## Verify on a fresh machine (2026-10-10)
 
 `tools/verify.sh` was run on a new Pop!_OS 24.04 box (Wayland, Rust 1.98.0,
@@ -227,7 +274,7 @@ tests fail to link (`unable to find library -lpython3.12`). Fixed on branch
 `docs-python3-dev-171`; CI's package list needs no change, since its runners
 ship the Python headers.
 
-**#168, found (2026-10-10, 0.5.6.1).** The scope read the test's `off/on`
+**#168, found (2026-10-10, 0.5.7).** The scope read the test's `off/on`
 output backwards: with system fonts on, the emoji draws *nothing* (0 inked
 pixels; 184 with them off is the missing-glyph box). The machine's Noto Color
 Emoji is a CBDT bitmap font, and at the pinned Vello revision (`b408cd00`) a
@@ -242,4 +289,4 @@ the machine's font draws, and `docs/guide/text.md` no longer claims bitmap
 emoji draw in colour (it said so; that was wrong) and says to register a COLR
 font. macOS's sbix is a bitmap format too: expected blank, not checked. The
 real fix is upstream (a bitmap-glyph path in `vello_gpu`) or our own drawing of
-the strike as an image: not in 0.5.6.1.
+the strike as an image: left out then, and done as #175 (above).

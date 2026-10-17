@@ -20,7 +20,7 @@ smallvec = "1"
 slotmap = "1.1.1"
 naga = { workspace = true }
 taffy = "0.14.0"
-# 0.5.6.2 (#178): reports a calc size layout gave up on. Already a direct
+# 0.5.7 (#178): reports a calc size layout gave up on. Already a direct
 # dependency of engine-render and engine-py, so the lock gains no crate.
 tracing = "0.1.44"
 # 0.5.4 (#141): parses an SVG document into groups and paths. `text` (#143)

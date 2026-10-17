@@ -1096,7 +1096,7 @@ impl App {
                     &runtime.handles.handlers,
                     py,
                 );
-                // 0.5.6.2 (#178): `layout` for every watched node the layout changed.
+                // 0.5.7 (#178): `layout` for every watched node the layout changed.
                 crate::listeners::fire_layout_changes(
                     &crate::event::NodeContext {
                         tree: &runtime.handles.tree,

@@ -41,15 +41,15 @@ pub(super) fn laid_out_style(kind: &NodeKind, style: &Style) -> Style {
     out
 }
 
-/// 0.5.6.2 (#178): a watched node's size change, `(node, old, new)` with `old`
+/// 0.5.7 (#178): a watched node's size change, `(node, old, new)` with `old`
 /// `None` the first time.
 pub type LayoutChange = (NodeId, Option<(f32, f32)>, (f32, f32));
 
-/// 0.5.6.2 (#178): resolve-and-lay-out-again passes a calc size gets before
+/// 0.5.7 (#178): resolve-and-lay-out-again passes a calc size gets before
 /// `settle_calc_sizes` gives up on it.
 const CALC_PASSES: usize = 4;
 
-/// 0.5.6.2 (#179): place-and-lay-out-again passes an anchored node gets before
+/// 0.5.7 (#179): place-and-lay-out-again passes an anchored node gets before
 /// `settle_anchored` gives up on it (a chain of anchors needs one pass a link).
 const ANCHOR_PASSES: usize = 4;
 
@@ -85,7 +85,7 @@ fn same_length(a: taffy::style::Dimension, b: taffy::style::Dimension) -> bool {
     matches!((a.expand(), b.expand()), (Length(a), Length(b)) if (a - b).abs() < 0.01)
 }
 
-/// 0.5.6.2 (#176, #177): measures `state`'s text, wrapped within `max_width`
+/// 0.5.7 (#176, #177): measures `state`'s text, wrapped within `max_width`
 /// when given, as `(width, height)` -- what a text shaper's `measure` returns.
 /// `Send` so a `Tree` stays one.
 pub type TextMeasure = Box<dyn FnMut(&crate::node::TextState, Option<f32>) -> (f32, f32) + Send>;
@@ -140,13 +140,13 @@ fn fit_size(
 }
 
 impl Tree {
-    /// 0.5.6.2 (#176, #177): sets how text is measured for `FitContent`. A
+    /// 0.5.7 (#176, #177): sets how text is measured for `FitContent`. A
     /// window installs its text shaper here; without one a fit side is zero.
     pub fn set_text_measure(&mut self, measure: TextMeasure) {
         self.text_measure = Some(measure);
     }
 
-    /// 0.5.6.2 (#176, #177): sets which sides of text node `id` take the text's
+    /// 0.5.7 (#176, #177): sets which sides of text node `id` take the text's
     /// own size. Marks the node for layout.
     pub fn set_fit_content(&mut self, id: NodeId, fit: crate::node::FitContent) {
         let Some(node) = self.nodes.get_mut(id) else {
@@ -159,7 +159,7 @@ impl Tree {
         self.relayout(id);
     }
 
-    /// 0.5.6.2 (#176, #177): marks `id` for layout again: its text, font or
+    /// 0.5.7 (#176, #177): marks `id` for layout again: its text, font or
     /// fit changed, and a fit side's size depends on all of those.
     pub fn relayout(&mut self, id: NodeId) {
         self.dirty = true;
@@ -232,11 +232,11 @@ impl Tree {
             self.run_taffy(root_taffy, available_space);
             self.layout_epoch += 1;
         }
-        // 0.5.6.2 (#178): sizes that mix units, resolved against their parents' boxes.
+        // 0.5.7 (#178): sizes that mix units, resolved against their parents' boxes.
         if !self.calc_nodes.is_empty() {
             self.settle_calc_sizes(root_taffy, available_space);
         }
-        // 0.5.6.2 (#179): nodes placed against another node, once the anchors'
+        // 0.5.7 (#179): nodes placed against another node, once the anchors'
         // positions are known. Every call, not only after a taffy pass: an
         // anchor moves with a scroll or a transform without any layout.
         if !self.anchored_nodes.is_empty() {
@@ -249,7 +249,7 @@ impl Tree {
         }
     }
 
-    /// 0.5.6.2 (#178): makes one side of `id`'s size a `calc` (or, with `None`,
+    /// 0.5.7 (#178): makes one side of `id`'s size a `calc` (or, with `None`,
     /// an ordinary size again). The style's size on that side is the caller's to
     /// set, to `auto` for a new calc side: layout runs once with it, then
     /// `compute_layout` resolves the calc against the parent's box and writes
@@ -273,7 +273,7 @@ impl Tree {
         self.relayout(id);
     }
 
-    /// 0.5.6.2 (#178): the calc sizes `compute_layout` gave up on since this was
+    /// 0.5.7 (#178): the calc sizes `compute_layout` gave up on since this was
     /// last called, as `(node, is_height)`. A calc side that is still changing
     /// after several resolve-and-lay-out-again passes has no fixed point -- its
     /// parent is sized by it (`child = parent - 16`, `parent = child`) -- so it
@@ -282,7 +282,7 @@ impl Tree {
         std::mem::take(&mut self.calc_conflicts)
     }
 
-    /// 0.5.6.2 (#179): whether anchoring `id` to `anchor` would be a cycle: it is
+    /// 0.5.7 (#179): whether anchoring `id` to `anchor` would be a cycle: it is
     /// `id` itself, or inside `id`'s subtree (so its position would depend on
     /// where `id` is put). `Tree::set_anchor` refuses it.
     pub fn anchor_cycle(&self, id: NodeId, anchor: NodeId) -> bool {
@@ -296,7 +296,7 @@ impl Tree {
         false
     }
 
-    /// 0.5.6.2 (#179): places `id` against another node in the tree (`Some`), or
+    /// 0.5.7 (#179): places `id` against another node in the tree (`Some`), or
     /// puts it back in the flow (`None`). While anchored it is absolute and its
     /// `inset` is the tree's to write after each layout; setting `x`, `right` and
     /// the like on it has no lasting effect. Returns `false`, changing nothing,
@@ -348,7 +348,7 @@ impl Tree {
         true
     }
 
-    /// 0.5.6.2 (#179): the anchored nodes `compute_layout` gave up on since this
+    /// 0.5.7 (#179): the anchored nodes `compute_layout` gave up on since this
     /// was last called: their anchors depend on each other with no solution (A is
     /// placed against B and B against A), so each was put back in the flow.
     pub fn take_anchor_conflicts(&mut self) -> Vec<NodeId> {
@@ -431,7 +431,7 @@ impl Tree {
         moved
     }
 
-    /// 0.5.6.2 (#178): starts (or, with `false`, stops) reporting `id`'s laid-out
+    /// 0.5.7 (#178): starts (or, with `false`, stops) reporting `id`'s laid-out
     /// size through `take_layout_changes`. A watched node's first laid-out size
     /// is reported too.
     pub fn watch_layout(&mut self, id: NodeId, on: bool) {
@@ -442,7 +442,7 @@ impl Tree {
         }
     }
 
-    /// 0.5.6.2 (#178): every watched node whose laid-out size has changed since
+    /// 0.5.7 (#178): every watched node whose laid-out size has changed since
     /// this was last asked, as `(node, old, new)` with `old` `None` the first
     /// time -- by comparison, as `take_scroll_changes` does, so no cause is
     /// missed: a `set`, a parent's resize, a text edit, a calc size resolving.

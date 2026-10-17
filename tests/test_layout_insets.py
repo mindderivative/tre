@@ -1,4 +1,4 @@
-"""0.5.6.2 (#178): `left`, `top`, `right`, `bottom` and `inset`.
+"""0.5.7 (#178): `left`, `top`, `right`, `bottom` and `inset`.
 
 An absolute node used to be placed by `x` and `y` alone, so "8 pixels from each
 side" could not be said. With both edges of an axis set and the size `auto`, the

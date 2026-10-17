@@ -1,4 +1,4 @@
-"""0.5.6.2 (#178): the node `layout` event.
+"""0.5.7 (#178): the node `layout` event.
 
 A node with a `layout` listener is told when its laid-out size changes, and when
 it is first laid out: `event.width`/`event.height` are the new size,

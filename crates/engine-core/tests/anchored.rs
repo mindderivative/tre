@@ -1,4 +1,4 @@
-//! 0.5.6.2 (#179): a node placed against another node, anywhere in the tree.
+//! 0.5.7 (#179): a node placed against another node, anywhere in the tree.
 //! After each layout the tree puts the node's box at `placement` of its anchor's
 //! box, so it follows the anchor with no lag and stays an ordinary child of its
 //! own parent. These are the tree-level proofs; `tests/test_anchored_layout.py`

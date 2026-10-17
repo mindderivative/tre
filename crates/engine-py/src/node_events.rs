@@ -19,7 +19,7 @@ impl Node {
     fn on(&self, event: &str, handler: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
         let event = EventType::parse(event)?;
         register_listener(&self.handlers, self.id, event, handler, py)?;
-        // 0.5.6.2 (#178): only a node with a `layout` listener is watched.
+        // 0.5.7 (#178): only a node with a `layout` listener is watched.
         if event == EventType::Layout {
             self.tree.borrow_mut().watch_layout(self.id, true);
         }

@@ -1595,17 +1595,17 @@ pub struct Node {
     /// effect on its own content (`Effect`). Shared between nodes; drawn by
     /// the renderer in a later milestone.
     pub shader: Option<std::sync::Arc<crate::Shader>>,
-    /// 0.5.6.2 (#176, #177): which sides of a text node are the size of its
+    /// 0.5.7 (#176, #177): which sides of a text node are the size of its
     /// text. See `FitContent`.
     pub fit_content: FitContent,
-    /// 0.5.6.2 (#178): which sides are a `calc` size. See `CalcSize`.
+    /// 0.5.7 (#178): which sides are a `calc` size. See `CalcSize`.
     pub calc_size: CalcSize,
-    /// 0.5.6.2 (#179): `Some` places the node against another node in the tree.
+    /// 0.5.7 (#179): `Some` places the node against another node in the tree.
     /// Boxed: most nodes have none.
     pub anchored: Option<Box<Anchored>>,
 }
 
-/// 0.5.6.2 (#179): a node placed against another node, wherever that is in the
+/// 0.5.7 (#179): a node placed against another node, wherever that is in the
 /// tree: after each layout the tree puts this node's box at `placement` of the
 /// `anchor`'s box (`offset` moves the point, in the anchor's own coordinates),
 /// through the anchor's scroll offsets and transforms, so it follows the anchor
@@ -1619,7 +1619,7 @@ pub struct Anchored {
     pub offset: (f64, f64),
 }
 
-/// 0.5.6.2 (#176, #177): `width="fit-content"` and `height="fit-content"` on a
+/// 0.5.7 (#176, #177): `width="fit-content"` and `height="fit-content"` on a
 /// text node. A text node has no size of its own: unsized it is zero wide, which
 /// is why a centred label wrapped one word to a line and an effect over it cropped
 /// the text. A side marked here takes the text's own size instead, measured through
@@ -1640,7 +1640,7 @@ impl FitContent {
     }
 }
 
-/// 0.5.6.2 (#178): a size that mixes units, `percent` of the parent's box plus
+/// 0.5.7 (#178): a size that mixes units, `percent` of the parent's box plus
 /// `px` pixels: `width="calc(100% - 16)"` is `percent: 1.0, px: -16.0`. taffy has
 /// no way to lay out a size like this, so the tree resolves it itself, after a
 /// layout pass, and lays out again with the result as pixels
@@ -1659,7 +1659,7 @@ impl CalcLen {
     }
 }
 
-/// 0.5.6.2 (#178): the sides of a node whose size is a `CalcLen`.
+/// 0.5.7 (#178): the sides of a node whose size is a `CalcLen`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CalcSize {
     pub width: Option<CalcLen>,

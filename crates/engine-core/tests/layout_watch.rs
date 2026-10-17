@@ -1,4 +1,4 @@
-//! 0.5.6.2 (#178): `Tree::watch_layout` and `take_layout_changes`, which a node's
+//! 0.5.7 (#178): `Tree::watch_layout` and `take_layout_changes`, which a node's
 //! `layout` event is built on: a watched node reports its laid-out size when it
 //! first has one and whenever it changes, by comparison, so every cause is seen.
 

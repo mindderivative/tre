@@ -22,7 +22,7 @@ caps the lines shown, and `overflow="ellipsis"` ends a cut line with "…".
 
 ## Sizing text to its content
 
-**`"fit-content"` (0.5.6.2).** Set `width="fit-content"` and
+**`"fit-content"` (0.5.7).** Set `width="fit-content"` and
 `height="fit-content"` and a text node is the size of its text, wherever it sits:
 
 ```python
@@ -110,10 +110,10 @@ where no installed font has a script it still shows boxes. Text the bundled
 fonts cover is unaffected either way, and turning the switch off again returns
 to the exact same frames.
 
-**Colour emoji (0.5.6.2).** Colour emoji draw in colour from a font in the COLR
+**Colour emoji (0.5.7).** Colour emoji draw in colour from a font in the COLR
 format (Windows' Segoe UI Emoji, a Noto Color Emoji COLR build) and from a
 bitmap font: the CBDT format of the Noto Color Emoji package most Linux
-distributions install, and macOS's Apple Color Emoji (`sbix`). Before 0.5.6.2 a
+distributions install, and macOS's Apple Color Emoji (`sbix`). Before 0.5.7 a
 bitmap emoji drew nothing. A bitmap emoji is a picture, so it is drawn from the
 glyph cache whatever `set_glyph_cache` says, and it scales from the nearest
 size the font ships rather than from an outline: a large emoji is a magnified
