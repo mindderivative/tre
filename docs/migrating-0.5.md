@@ -120,6 +120,49 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.7
+
+### Added
+
+- Text that fits its content: `width="fit-content"` and `height="fit-content"` on a text node
+  make it the size of its text, so a label in a box that centres its children is one line, and an
+  effect shader over padded text covers it. See
+  [Sizing text to its content](guide/text.md#sizing-text-to-its-content).
+- Insets: `left`, `top`, `right`, `bottom` and `inset` on a node (`x` and `y` are `left` and `top`).
+  Both edges of an axis on an absolute node with an `auto` size stretch it between them. See
+  [Absolute positioning](guide/nodes-and-layout.md#absolute-positioning).
+- Mixed-unit sizes: `width` and `height` take a percentage plus pixels, `"calc(100% - 16)"`. See
+  [Mixed units](guide/nodes-and-layout.md#flex-layout).
+- A node `layout` event: it fires when a node is first laid out and whenever its size changes, with
+  `width`, `height`, `old_value` and `new_value`. Only a node with a listener is watched. See
+  [The layout event](guide/nodes-and-layout.md#reading-the-layout).
+- Anchored layout: `anchor`, `placement` and `offset` on any node place it against another node of
+  the window, following it with no lag, as an ordinary child of its own parent. Layers take the
+  corner placements `top_start`, `top_end`, `bottom_start`, `bottom_end` and `center`, an `offset`
+  and `flip=False`. See [Anchored layout](guide/nodes-and-layout.md#anchored-layout) and
+  [Layers](guide/layers.md).
+- Bitmap colour emoji (the CBDT format most Linux distributions install, and macOS's `sbix`) now
+  draw in colour with `set_system_fonts(True)`; they drew nothing before. `sbix` is the same code
+  path but has not been checked on a Mac.
+
+### Fixed
+
+- A window below its minimum size no longer reports a resize about 60 times a second on Wayland
+  when the compositor holds its size.
+
+### Behavior changes
+
+- A layer's anchor is now taken as its box *through its transform* (the bounds of its transformed
+  corners). Before, only its top-left went through the transform, so a scaled or rotated anchor
+  places a layer differently now.
+- `show_layer` with an unknown `placement` now lists nine names in its `ValueError`, not four.
+- `"fit-content"` is accepted for `width` and `height` on any node (it means `auto` on a node that
+  is not text), and `get` reads it back; a calc size reads back as `"calc(100% - 16px)"`.
+- `left`, `top`, `right`, `bottom`, `inset`, `anchor`, `placement`, `offset` and the `layout` event
+  raised `ValueError` as unknown names before and are accepted now.
+- The wheel carries four more Rust crates (`png`, `fdeflate`, `miniz_oxide`, `zlib-rs`), pulled in
+  by the bitmap emoji support.
+
 ## 0.5.6
 
 ### Added

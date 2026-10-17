@@ -1,22 +1,24 @@
-# LOG — Branch `0.5.x`: custom windowing to 0.5.6
+# LOG — Branch `0.5.x`: custom windowing to 0.5.7
 
 ## Status
 
-**0.5.6 released (2026-10-09, PR #167, tag `v0.5.6`).** `main` is at 0.5.6 and
-CI is green. No branch is in flight: nothing is scoped for 0.5.7 or 0.6 yet.
+**0.5.6 released (2026-10-09, PR #167, tag `v0.5.6`).** `main` is ahead of it with
+the 0.5.7 work (below), CI is green, and the 0.5.7 release is scoped in #184 and
+not yet tagged.
 Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 `BUILD_TRACKER_ARCHIVE_*.md` files are the pre-GitHub trackers). Open
 issues: #47, #48 (macOS and Windows title bars on hardware), #91 (WGSL on
-real GPUs), #118 (baseline on Mac, Windows, low-end hardware), #132-#134
-(touch, OS file drag and drop, reduced-motion and contrast on hardware),
-#158 (a burst of `wp_fifo_v1` barriers after a resize), and the two found
-by the 2026-10-10 verify run, below (#168, #169).
+real GPUs: the Linux half is done; Windows, macOS and a video input are held),
+#118 (baseline on Mac, Windows, low-end hardware), #132-#134 (touch, OS file
+drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
+`wp_fifo_v1` barriers after a resize), and #184 (the release itself).
 
-## 0.5.6.1 (in progress)
+## 0.5.7 (in progress)
 
-Milestone 0.5.6.1 (Ready: #91 Linux real-GPU check, #168 emoji colour,
-#169 Wayland minimum size). Versioning slows down: a fourth number for small
-releases.
+Milestone 0.5.7: #168, #169, #175 to #179 and the Linux half of #91. It was built
+as 0.5.6.1 and then 0.5.6.2, small releases with a fourth number, until it held
+five features; it ships as 0.5.7 and the working labels were renamed (98 uses).
+The `0.5.6 (#NNN)` stamps in the code are 0.5.6's own and were left alone.
 
 **#169, step 1 (2026-10-10).** The fullscreen-ordering theory in the scope was
 wrong: on COSMIC Wayland a plain window does not grow to a larger minimum
@@ -68,7 +70,11 @@ resize border, a double-click on the title bar, an opt-in window menu. M4
 upgrade page. M6 (#36, #41): the release. The step-by-step trail is in git
 history for this file and in `BUILD_TRACKER_ARCHIVE_0.5.md`.
 
-## 0.5.6.2 (in progress)
+## 0.5.7, continued: the features
+
+The rest of the 0.5.7 work: the features, and the repeat of the Linux GPU check
+(#91). The fixes are in the first block, above; the Releases and 0.5.0 history
+sections ended up between the two.
 
 **#175, bitmap colour emoji (2026-10-11).** #168 left a bitmap emoji (CBDT on
 Linux, `sbix` on macOS) drawing nothing, with three ways forward listed. None
@@ -268,7 +274,7 @@ tests fail to link (`unable to find library -lpython3.12`). Fixed on branch
 `docs-python3-dev-171`; CI's package list needs no change, since its runners
 ship the Python headers.
 
-**#168, found (2026-10-10, 0.5.6.1).** The scope read the test's `off/on`
+**#168, found (2026-10-10, 0.5.7).** The scope read the test's `off/on`
 output backwards: with system fonts on, the emoji draws *nothing* (0 inked
 pixels; 184 with them off is the missing-glyph box). The machine's Noto Color
 Emoji is a CBDT bitmap font, and at the pinned Vello revision (`b408cd00`) a
@@ -283,4 +289,4 @@ the machine's font draws, and `docs/guide/text.md` no longer claims bitmap
 emoji draw in colour (it said so; that was wrong) and says to register a COLR
 font. macOS's sbix is a bitmap format too: expected blank, not checked. The
 real fix is upstream (a bitmap-glyph path in `vello_gpu`) or our own drawing of
-the strike as an image: not in 0.5.6.1.
+the strike as an image: left out then, and done as #175 (above).
