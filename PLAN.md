@@ -1,4 +1,4 @@
-# PLAN — toward 0.5.7
+# PLAN — after 0.5.7
 
 *(Replaces the 0.5.0 plan, custom windowing (#28), which shipped in 0.5.0
 and is recorded in `LOG.md`. From 0.5.0 every step is tracked in the GitHub
@@ -7,9 +7,9 @@ project Tesserae Rendering Engine; the old trackers are archived as
 
 ## Where we are
 
-`main` is at 0.5.6 (released 2026-10-09, PR #167) plus the 0.5.7 work; CI is
-green. The release is #184, in progress on branch `0.5.7`: nothing is tagged or
-published yet. Per `CLAUDE.md`, work starts from a scoped `Backlog` entry that
+`main` is at 0.5.7 (released 2026-10-17: PR #185, tag `v0.5.7`, on PyPI as
+`tesserae-engine==0.5.7`; installed and smoke-tested in a clean venv). The
+release was #184. Nothing is in progress. Per `CLAUDE.md`, work starts from a scoped `Backlog` entry that
 the user moves to `Ready`.
 
 ## Backlog (not scoped)
@@ -52,7 +52,7 @@ emoji: COLR draws, bitmap-only emoji fonts are a documented limit, and the
 Done on 2026-10-14 (PR #180, merged to `main`): **#175** (bitmap colour emoji:
 a CBDT or `sbix` emoji draws in colour, through glifo's glyph atlas whatever
 `set_glyph_cache` says; `sbix` is the same code path but unchecked without a
-Mac). The 0.5.7 changes are on `main` and not yet released or tagged.
+Mac). These shipped in 0.5.7.
 
 Verification on hardware or other platforms (each needs a machine we do not
 have here): #47 macOS and #48 Windows title bars, #91 WGSL on real GPUs, #118
