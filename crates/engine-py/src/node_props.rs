@@ -27,7 +27,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
 const SETTABLE: [&str; 69] = [
-    // 0.5.6.2 (#179): placed against another node.
+    // 0.5.7 (#179): placed against another node.
     "anchor",
     "placement",
     "offset",
@@ -143,7 +143,7 @@ const LIVE: [(&str, Live); 3] = [
     ("assertive", Live::Assertive),
 ];
 
-/// 0.5.6.2 (#179): one of `anchor`, `placement` or `offset`; a `set` applies them
+/// 0.5.7 (#179): one of `anchor`, `placement` or `offset`; a `set` applies them
 /// in order to the node's current anchoring.
 pub(crate) enum AnchorEdit {
     /// `None` puts the node back in the flow.
@@ -152,7 +152,7 @@ pub(crate) enum AnchorEdit {
     Offset((f64, f64)),
 }
 
-/// 0.5.6.2 (#176, #177, #178): what a `width` or `height` value is.
+/// 0.5.7 (#176, #177, #178): what a `width` or `height` value is.
 #[derive(Clone, Copy)]
 pub(crate) enum SizeMode {
     /// A number, `"auto"` or a percentage: the style holds it.
@@ -198,7 +198,7 @@ pub(crate) enum Change {
     /// 0.5.1 (#66): the node's `shader`; `None` clears it.
     Shader(Option<std::sync::Arc<engine_core::Shader>>),
     Style(StyleEdit),
-    /// 0.5.6.2 (#176, #177, #178): a `width` or `height`, and which kind of
+    /// 0.5.7 (#176, #177, #178): a `width` or `height`, and which kind of
     /// size it is. Any other value clears the last.
     Size {
         height: bool,
@@ -206,7 +206,7 @@ pub(crate) enum Change {
         edit: StyleEdit,
     },
     Kind(KindChange),
-    /// 0.5.6.2 (#179): `anchor`, `placement` or `offset`.
+    /// 0.5.7 (#179): `anchor`, `placement` or `offset`.
     Anchor(AnchorEdit),
     /// M96: a canvas's `draw`, or a virtual list's `materialize` or
     /// `size_hint` -- stored in the handler map.
@@ -797,7 +797,7 @@ fn optional_bool(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<bool>>
     boolean(value, name).map(Some)
 }
 
-/// 0.5.6.2 (#178): `"calc(100% - 16)"`, `"100% - 16px"`, `"33% + 10"`: percentages
+/// 0.5.7 (#178): `"calc(100% - 16)"`, `"100% - 16px"`, `"33% + 10"`: percentages
 /// and pixel counts joined by ` + ` and ` - ` (spaces required, as in CSS), with
 /// or without the `calc(...)`. `None` if it is not that.
 fn parse_calc(text: &str) -> Option<CalcLen> {
@@ -1280,7 +1280,7 @@ fn parse_related(
 
 /// Every property `set` accepts, parsed and checked against `kind` --
 /// nothing is applied until all of them pass.
-/// 0.5.6.2 (#179): `anchor` (a node of this window, or `None`), `placement` (a
+/// 0.5.7 (#179): `anchor` (a node of this window, or `None`), `placement` (a
 /// layer placement name) or `offset` (a pair of numbers).
 fn parse_anchor(
     name: &str,
@@ -1323,7 +1323,7 @@ fn parse_anchor(
     }))
 }
 
-/// 0.5.6.2 (#179): checks a `set` or `create`'s anchor changes before any is
+/// 0.5.7 (#179): checks a `set` or `create`'s anchor changes before any is
 /// applied: an anchor may not be the node itself or inside it (`id`, when the node
 /// exists), and `placement` and `offset` need an anchor, from this call or before
 /// (`anchored`).
@@ -2266,7 +2266,7 @@ impl Node {
         if let Some(style) = style {
             tree.set_layout_style(self.id, style);
         }
-        // 0.5.6.2 (#176, #177): a side that fits the text depends on the text,
+        // 0.5.7 (#176, #177): a side that fits the text depends on the text,
         // its font and its wrapping, so a change to any of them lays it out again.
         tree.set_fit_content(self.id, fit);
         tree.set_calc_size(self.id, false, calc.width);

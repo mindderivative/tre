@@ -74,7 +74,7 @@ Sizes are pixels, `"auto"`, or a percentage of the parent: `width="50%"`. A text
 node can also be `"fit-content"`: the size of its text (see
 [Sizing text to its content](text.md#sizing-text-to-its-content)).
 
-**Mixed units (0.5.6.2).** `width` and `height` also take a percentage plus
+**Mixed units (0.5.7).** `width` and `height` also take a percentage plus
 pixels, written `"calc(100% - 16)"`, `"100% - 16"` or `"33% + 10"` (a space
 around each `+` and `-`, as in CSS; `px` is optional): the whole width except a
 strip, a third and ten pixels. The percentage is taken of the same box a plain
@@ -160,7 +160,7 @@ badge = window.create("box", position="absolute", x=28, y=-4, width=16, height=1
 icon_button.add_child(badge)
 ```
 
-**Insets (0.5.6.2).** `left`, `top`, `right` and `bottom` (and `inset`, all four
+**Insets (0.5.7).** `left`, `top`, `right` and `bottom` (and `inset`, all four
 at once) place the node from each edge of its parent; `x` and `y` are `left` and
 `top`. Set both edges of an axis and leave that size `auto`, and the node is
 stretched between them: a strip 8 pixels in from each side, or a scrim that fills
@@ -183,7 +183,7 @@ focus.
 
 ## Anchored layout
 
-**Placing a node against another node (0.5.6.2).** To put a badge on the corner of
+**Placing a node against another node (0.5.7).** To put a badge on the corner of
 a distant button, a label beside a field, or a marker on a chart point, give the
 node an `anchor`:
 
@@ -219,7 +219,7 @@ is put. The anchor's box is the bounds of its laid-out box through its transform
 
 ## Reading the layout
 
-**The `layout` event (0.5.6.2).** To be told when a node's size changes, rather
+**The `layout` event (0.5.7).** To be told when a node's size changes, rather
 than polling each frame, listen for `layout`. It fires when the node is first laid
 out and whenever its laid-out size changes, whatever the cause: a `set`, the
 parent being resized, a [calc size](#flex-layout) resolving, new text in a

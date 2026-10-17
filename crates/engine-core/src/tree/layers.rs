@@ -296,7 +296,7 @@ impl Tree {
         }
     }
 
-    /// 0.5.6.2 (#179): `anchor`'s box in window space: the bounds of its
+    /// 0.5.7 (#179): `anchor`'s box in window space: the bounds of its
     /// laid-out box's corners through its composed transform (scroll offsets and
     /// scale included), the rectangle a node is placed against.
     pub(super) fn anchor_box(&self, anchor: NodeId) -> AnchorBox {
@@ -323,7 +323,7 @@ impl Tree {
         }
     }
 
-    /// 0.5.6.2 (#179): `offset`, given in `anchor`'s own coordinates, as the
+    /// 0.5.7 (#179): `offset`, given in `anchor`'s own coordinates, as the
     /// displacement it is in window space: a scaled anchor scales it.
     pub(super) fn anchor_offset(&self, anchor: NodeId, offset: (f64, f64)) -> (f64, f64) {
         let [a, b, c, d, _, _] = self.composed_transform(anchor).as_coeffs();
@@ -334,7 +334,7 @@ impl Tree {
     /// `placement`, flipping to the opposite side when that side lacks
     /// the room and the other has more, then shifting along both axes to
     /// stay inside `root`. Records the side used as `placed`. Returns
-    /// whether any layer moved, so layout runs again. 0.5.6.2 (#179): a
+    /// whether any layer moved, so layout runs again. 0.5.7 (#179): a
     /// placement that names a point of the anchor, or a layer that is `pinned`,
     /// is neither flipped nor shifted; `offset` moves the attachment point.
     pub(super) fn place_layers(&mut self, root: NodeId) -> bool {

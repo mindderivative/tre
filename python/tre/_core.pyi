@@ -304,7 +304,7 @@ class Node:
         `event.property` and `event.finished`), `submit` (Enter in a single-line
         text input), `compose_start`/`compose_update`/`compose_end` (an IME
         composition) and `caret_move` (a text input's caret moved).
-        (0.5.6.2) Also `layout` (the node's laid-out size changed, or it was
+        (0.5.7) Also `layout` (the node's laid-out size changed, or it was
         first laid out: `event.width`, `event.height`, and `event.old_value` /
         `event.new_value` as `(width, height)`; only a node with a listener is
         watched).
@@ -621,7 +621,7 @@ class Window:
         already open. With `anchor`, it's placed against that node on the
         `placement` side (`"below"`, `"above"`, `"start"`, `"end"`),
         flipped or shifted to fit at every layout; without one it sits at
-        its own `x`/`y`. (0.5.6.2) `placement` also takes `"top_start"`,
+        its own `x`/`y`. (0.5.7) `placement` also takes `"top_start"`,
         `"top_end"`, `"bottom_start"`, `"bottom_end"` and `"center"`: the
         layer's centre on that point of the anchor, never flipped or shifted.
         `offset=(dx, dy)` moves the point it attaches to, in the anchor's own

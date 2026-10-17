@@ -40,7 +40,7 @@ listing the valid ones.
 | `submit` | Enter in a single-line text input (0.5.6) | no |
 | `compose_start`, `compose_update`, `compose_end` | An IME composition began, changed or ended in a text input; `text` is the preedit text and `preedit_cursor` the IME's cursor range. The commit follows as `input` and `change` (0.5.6) | no |
 | `caret_move` | A text input's caret moved or its text changed by a key, click or drag; `caret` is its rectangle and `inserted` the bytes an edit inserted. Not for `set` (0.5.6) | no |
-| `layout` | The node's laid-out size changed, or it was laid out for the first time, by any cause (a `set`, a parent's resize, a calc size, new text); `width`/`height` are the new size and `old_value`/`new_value` the `(width, height)` before (`None` the first time) and after. Only a node with a listener is watched; once a frame (0.5.6.2) | no |
+| `layout` | The node's laid-out size changed, or it was laid out for the first time, by any cause (a `set`, a parent's resize, a calc size, new text); `width`/`height` are the new size and `old_value`/`new_value` the `(width, height)` before (`None` the first time) and after. Only a node with a listener is watched; once a frame (0.5.7) | no |
 | `dismiss` | An outside press or Escape asked a [layer](layers.md) to close | no |
 | `a11y_action` | An assistive technology requested `increment`, `decrement`, `expand`, `collapse`, `scroll_into_view`, or `set_value` (its activate and focus requests arrive as `click` and `focus`) | yes |
 

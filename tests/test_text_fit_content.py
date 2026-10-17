@@ -1,4 +1,4 @@
-"""0.5.6.2 (#176, #177): `width="fit-content"` and `height="fit-content"`.
+"""0.5.7 (#176, #177): `width="fit-content"` and `height="fit-content"`.
 
 A text node has no size of its own: unsized it is zero wide, so a label in a box
 that centres its children wrapped one word to a line (#177), and an effect shader

@@ -78,23 +78,23 @@ pub struct Tree {
     /// Each text leaf carries its own `NodeId` as taffy's node context, so the
     /// measure function (see `text_measure`) can find the text it measures.
     taffy: TaffyTree<NodeId>,
-    /// 0.5.6.2 (#176, #177): measures a text node's text for `FitContent`; set
+    /// 0.5.7 (#176, #177): measures a text node's text for `FitContent`; set
     /// by whoever has a text shaper. With none, a fit side measures zero, as an
     /// unsized text node always did.
     text_measure: Option<layout::TextMeasure>,
-    /// 0.5.6.2 (#178): the nodes with a `calc` size, which `compute_layout`
+    /// 0.5.7 (#178): the nodes with a `calc` size, which `compute_layout`
     /// resolves after taffy has laid out their parents. Ids of nodes since
     /// removed are dropped when it next runs.
     calc_nodes: Vec<NodeId>,
-    /// 0.5.6.2 (#178): calc sides given up on since `take_calc_conflicts`.
+    /// 0.5.7 (#178): calc sides given up on since `take_calc_conflicts`.
     calc_conflicts: Vec<(NodeId, bool)>,
-    /// 0.5.6.2 (#179): the nodes placed against another node, which
+    /// 0.5.7 (#179): the nodes placed against another node, which
     /// `compute_layout` places after taffy has laid out their anchors. Ids of
     /// nodes since removed are dropped when it next runs.
     anchored_nodes: Vec<NodeId>,
-    /// 0.5.6.2 (#179): anchors given up on since `take_anchor_conflicts`.
+    /// 0.5.7 (#179): anchors given up on since `take_anchor_conflicts`.
     anchor_conflicts: Vec<NodeId>,
-    /// 0.5.6.2 (#178): the nodes that have a `layout` listener, each with the
+    /// 0.5.7 (#178): the nodes that have a `layout` listener, each with the
     /// size last reported for it (`None` until its first layout is reported).
     /// Empty for most trees, which then pay nothing.
     layout_watch: std::collections::HashMap<NodeId, Option<(f32, f32)>>,

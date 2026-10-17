@@ -24,7 +24,7 @@ pub const CLEAR: Color = Color::from_rgba8(0, 0, 0, 0);
 
 /// A device and queue on the default adapter, with its real limits.
 ///
-/// 0.5.6.1 (#91): the adapter's name, backend and type go to stderr, once per
+/// 0.5.7 (#91): the adapter's name, backend and type go to stderr, once per
 /// test process (`cargo test -- --nocapture` shows them), so a pixel test's
 /// result can be tied to the GPU it ran on. `TRE_TEST_FORCE_FALLBACK=1` asks
 /// for the software adapter instead (lavapipe on Linux), to compare the two.

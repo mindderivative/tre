@@ -37,16 +37,16 @@ Every node.
 
 | Property | Value |
 | --- | --- |
-| `width`, `height` | A number of pixels, `"auto"`, or a percentage such as `"50%"`; (0.5.6.2) a percentage plus pixels such as `"calc(100% - 16)"` ([Mixed units](../guide/nodes-and-layout.md#flex-layout)); on a text node also `"fit-content"`, the size of its text |
+| `width`, `height` | A number of pixels, `"auto"`, or a percentage such as `"50%"`; (0.5.7) a percentage plus pixels such as `"calc(100% - 16)"` ([Mixed units](../guide/nodes-and-layout.md#flex-layout)); on a text node also `"fit-content"`, the size of its text |
 | `min_width`, `min_height`, `max_width`, `max_height` | A number of pixels, `"auto"`, or a percentage such as `"50%"` |
 | `aspect_ratio` | Width over height, or `None` |
 | `position` | `"relative"` (in the flow) or `"absolute"` |
 | `x`, `y` | The left and top offset: a number, a percentage, or `"auto"`/`None`. The same as `left` and `top` |
-| `left`, `top`, `right`, `bottom` | (0.5.6.2) An inset from that edge of the parent: a number, a percentage, or `"auto"`/`None`. On an absolute node with both edges of an axis set and that side's size `auto`, the node is stretched between them. See [Absolute positioning](../guide/nodes-and-layout.md#absolute-positioning) |
-| `inset` | (0.5.6.2) All four insets at once; reads back as one value, or `(top, right, bottom, left)` when they differ |
-| `anchor` | (0.5.6.2) A node of the same window to place this node against, or `None` (the default). While set the node is absolute and the tree places it after each layout. See [Anchored layout](../guide/nodes-and-layout.md#anchored-layout) |
-| `placement` | (0.5.6.2) With an `anchor`: `"below"` (default), `"above"`, `"start"`, `"end"`, or a point of the anchor to centre on: `"top_start"`, `"top_end"`, `"bottom_start"`, `"bottom_end"`, `"center"`. Reads back `None` with no anchor |
-| `offset` | (0.5.6.2) With an `anchor`: `(dx, dy)` moves the point the node attaches to, in the anchor's own coordinates |
+| `left`, `top`, `right`, `bottom` | (0.5.7) An inset from that edge of the parent: a number, a percentage, or `"auto"`/`None`. On an absolute node with both edges of an axis set and that side's size `auto`, the node is stretched between them. See [Absolute positioning](../guide/nodes-and-layout.md#absolute-positioning) |
+| `inset` | (0.5.7) All four insets at once; reads back as one value, or `(top, right, bottom, left)` when they differ |
+| `anchor` | (0.5.7) A node of the same window to place this node against, or `None` (the default). While set the node is absolute and the tree places it after each layout. See [Anchored layout](../guide/nodes-and-layout.md#anchored-layout) |
+| `placement` | (0.5.7) With an `anchor`: `"below"` (default), `"above"`, `"start"`, `"end"`, or a point of the anchor to centre on: `"top_start"`, `"top_end"`, `"bottom_start"`, `"bottom_end"`, `"center"`. Reads back `None` with no anchor |
+| `offset` | (0.5.7) With an `anchor`: `(dx, dy)` moves the point the node attaches to, in the anchor's own coordinates |
 
 ## Flex layout
 
@@ -235,7 +235,7 @@ Plus `font_size` and the `palette` on
 | --- | --- |
 | `kind` | The node's kind, by the name `create` takes — `"box"`, `"text"`, `"text_input"`, ... |
 | `focused` | Whether the node has keyboard focus |
-| `layer_placement` | A shown [layer](layers.md)'s side or point of its anchor — `"below"`, `"above"`, `"start"`, `"end"`, or (0.5.6.2) `"top_start"`, `"top_end"`, `"bottom_start"`, `"bottom_end"`, `"center"` — or `None` |
+| `layer_placement` | A shown [layer](layers.md)'s side or point of its anchor — `"below"`, `"above"`, `"start"`, `"end"`, or (0.5.7) `"top_start"`, `"top_end"`, `"bottom_start"`, `"bottom_end"`, `"center"` — or `None` |
 | `layout_x`, `layout_y` | The node's position in the window, as drawn — its own and its ancestors' transforms included |
 | `layout_width`, `layout_height` | Its computed size, before any `scale` |
 

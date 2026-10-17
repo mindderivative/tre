@@ -1,4 +1,4 @@
-"""0.5.6.2 (#179): corner and centre placements, `offset` and `flip` for layers.
+"""0.5.7 (#179): corner and centre placements, `offset` and `flip` for layers.
 
 `placement` also names a *point* of the anchor -- `top_start`, `top_end`,
 `bottom_start`, `bottom_end`, `center` -- and the layer's centre goes there, for a

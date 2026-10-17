@@ -31,7 +31,7 @@ pub(crate) const LAYOUT_PROPS: [&str; 47] = [
     "position",
     "x",
     "y",
-    // 0.5.6.2 (#178): the four insets; `x` and `y` are `left` and `top`.
+    // 0.5.7 (#178): the four insets; `x` and `y` are `left` and `top`.
     "left",
     "top",
     "right",

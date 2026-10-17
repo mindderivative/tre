@@ -1,4 +1,4 @@
-//! 0.5.6.2 (#178): a size that mixes units -- a percentage plus pixels, as in
+//! 0.5.7 (#178): a size that mixes units -- a percentage plus pixels, as in
 //! `width="calc(100% - 16)"` -- is resolved by the tree against its parent's box
 //! after a layout pass, because taffy cannot lay such a size out itself.
 

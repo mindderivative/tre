@@ -1,4 +1,4 @@
-"""0.5.6.2 (#178): mixed-unit sizes, `width="calc(100% - 16)"`.
+"""0.5.7 (#178): mixed-unit sizes, `width="calc(100% - 16)"`.
 
 A percentage plus pixels, resolved against the parent's box after layout (taffy
 cannot lay such a size out itself): the whole width except a strip, a third and

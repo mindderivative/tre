@@ -138,7 +138,7 @@ pub(crate) enum EventType {
     ComposeEnd,
     /// 0.5.6 (#165): a text input's caret moved or its text changed.
     CaretMove,
-    /// 0.5.6.2 (#178): the node's laid-out size changed (or it was laid out for
+    /// 0.5.7 (#178): the node's laid-out size changed (or it was laid out for
     /// the first time); carries `width`, `height`, `old_value`, `new_value`.
     Layout,
 }
@@ -611,7 +611,7 @@ pub(crate) fn fire_scroll_changes(ctx: &NodeContext<'_>, py: Python<'_>) {
     }
 }
 
-/// 0.5.6.2 (#178): a `layout` event for every watched node whose laid-out size
+/// 0.5.7 (#178): a `layout` event for every watched node whose laid-out size
 /// changed since the last call (`Tree::take_layout_changes`): `width`/`height`
 /// are the new size and `old_value`/`new_value` the `(width, height)` before
 /// (`None` the first time) and after. Called after a frame's layout.

@@ -23,7 +23,7 @@ pub(crate) const PLACEMENT: [(&str, Placement); 9] = [
     ("above", Placement::Above),
     ("start", Placement::Start),
     ("end", Placement::End),
-    // 0.5.6.2 (#179): the node's centre on a point of the anchor.
+    // 0.5.7 (#179): the node's centre on a point of the anchor.
     ("top_start", Placement::TopStart),
     ("top_end", Placement::TopEnd),
     ("bottom_start", Placement::BottomStart),
@@ -40,7 +40,7 @@ impl PyWindow {
     /// the `placement` side (`"below"`, `"above"`, `"start"`, `"end"`),
     /// flipped or shifted to fit the window -- `node.get("layer_placement")`
     /// reports the side used; without one it sits at its own `x`/`y`.
-    /// (0.5.6.2) `placement` also takes `"top_start"`, `"top_end"`,
+    /// (0.5.7) `placement` also takes `"top_start"`, `"top_end"`,
     /// `"bottom_start"`, `"bottom_end"` and `"center"`: the layer's centre on
     /// that point of the anchor, never flipped or shifted. `offset=(dx, dy)`
     /// moves the attachment point, in the anchor's own coordinates; `flip=False`

@@ -48,7 +48,7 @@ itself at every layout, so it follows its anchor.
 `menu.get("layer_placement")` says which side it landed on — for a menu
 that grows upward, or an arrow that points the right way.
 
-**Corners, the centre, and an offset (0.5.6.2).** `placement` can also name a
+**Corners, the centre, and an offset (0.5.7).** `placement` can also name a
 *point* of the anchor: `"top_start"`, `"top_end"`, `"bottom_start"`,
 `"bottom_end"` or `"center"` put the layer's **centre** on that point, for a badge
 or a marker on a corner. A point is never flipped or shifted to fit: it stays on
