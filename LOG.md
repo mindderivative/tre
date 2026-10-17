@@ -206,6 +206,47 @@ bounding region to flip within; layers cover menus.
 Tests: `engine-core/tests/anchored.rs` (9), `tests/test_layer_points.py` (12),
 `tests/test_anchored_layout.py` (25).
 
+**#91, the Linux real-GPU check, repeated on the CachyOS install (2026-10-16).**
+The 2026-10-10 check (Pop!_OS, COSMIC) was done on the same hardware; this one is
+on KDE Plasma Wayland with newer drivers: **AMD Radeon 890M (RADV STRIX1), Mesa
+26.2.4**, kernel 7.2.10; the software adapter is llvmpipe (LLVM 23.1.1). The test
+support code now names the adapter once per process and
+`TRE_TEST_FORCE_FALLBACK=1` selects the software one (carried over from the
+`gpu-check-91` branch, which also holds the first run's notes); from Python,
+`VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json` (or `lvp_icd.json`)
+pins the adapter.
+
+- *Pixel tests:* the whole `engine-render` suite, 324 passed, 0 failed, 12
+  ignored, on RADV **and** on llvmpipe; `shader_fill` 28/28 on both. (#168's emoji
+  failure of the first run is gone.)
+- *The examples, RADV against llvmpipe, offscreen:* no pixel differs by more than
+  one level (`shader_panel` 34 to 36% of pixels by one level, `shader_shine` 0.1
+  to 0.2%). The fractal fills the rounded panel, clipped at the corners, with its
+  label on one line; `shader_shine` shows its text (#176, #177). Both run live on
+  RADV and exit clean.
+- *The shine band crosses glyphs only where there is text:* measured against the
+  same scene with no shader at eight clock times, 0 background pixels change at
+  any of them, and glyph pixels brighten (2631 at t=1.0, 6038 at 1.5, 4566 at 2.0,
+  326 at 2.5, 0 at 3.0, 3669 at 4.0).
+- *Banding:* the fractal's flat colour steps are the shader's own integer
+  escape-count colouring (`julia.wgsl`: `m = steps / 80.0`), the same on both
+  adapters; the checklist's "no banding" does not fit it as written.
+- *Inputs and effects, in a live window on RADV:* an image input shows the image;
+  replacing its pixels repaints it; a shader reading another shader's output shows
+  it and repaints too. An effect over a node with children, through 420x240,
+  600x320, 300x180, 800x480 and back, matches a direct draw (0.00% of pixels, max
+  difference 0) and is identical to its first render when the size returns. (#176's
+  second note, 0.4% of pixels, did not reproduce in this scene.)
+- *Idle (5 s, start-up included):* no shader 1.0% of a core and one frame; a still
+  shader the same; an animated one 7.8% at 60 frames a second.
+- *GPU health (#65):* `simulate("gpu_error")` and `simulate("gpu_lost")` reach
+  their listeners, which is all the simulation promises. A real stall or device
+  loss was **not** run: it can freeze the compositor. The kernel's GPU hang timeout
+  here is amdgpu's default (10 s, recovery automatic).
+
+Left under #91: Windows (DX12) and macOS (Metal); a video node as an input
+(nothing here to feed one); and the real stall and loss checks.
+
 ## Verify on a fresh machine (2026-10-10)
 
 `tools/verify.sh` was run on a new Pop!_OS 24.04 box (Wayland, Rust 1.98.0,
