@@ -16,11 +16,13 @@ __pycache__/
 python/tre/*.so
 python/tre/*.pyd
 python/tre/*.dylib
-# graphify-out/ is tracked (the graph, its report and its extraction cache), except
-# the two files graphify writes with this machine's absolute paths in them: the
-# interpreter it ran under and the scan root. Each machine writes its own.
+# graphify-out/ is ignored. It was committed once (c817406), and a .gitignore entry
+# does not untrack files that are already tracked: those stay tracked, and show
+# changes on every rebuild, until `git rm -r --cached graphify-out` removes them.
+# The more specific lines below still apply to anything not tracked: the two files
+# graphify writes with this machine's absolute paths in them (the interpreter it ran
+# under and the scan root), and the Obsidian vault `graphify export obsidian` writes.
+/graphify-out/
 /graphify-out/.graphify_python
 /graphify-out/.graphify_root
-# The Obsidian vault `graphify export obsidian` writes: one file per node, regenerated
-# from graph.json on demand, so not tracked.
 /graphify-out/obsidian/
