@@ -42,7 +42,8 @@ pub use animation::{
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
 pub use gesture::{
-    Gesture, GestureConfig, GestureKind, GesturePhase, GestureRecognizer, TouchPhase,
+    Gesture, GestureConfig, GestureKind, GesturePhase, GestureRecognizer, SwipeDirection,
+    TouchPhase,
 };
 pub use gradient::{Gradient, GradientShape, GradientStop};
 pub use input::{

@@ -176,6 +176,12 @@ class Event:
     """`pinch`: the distance between fingers over what it was at the start."""
     scale_delta: float | None
     """`pinch`: `scale` over the previous event's -- the step to apply."""
+    rotation: float | None
+    """`rotate`: the angle the fingers have turned, in radians, positive clockwise."""
+    rotation_delta: float | None
+    """`rotate`: the turn since the last event, in radians."""
+    direction: str | None
+    """`swipe`: `"left"`, `"right"`, `"up"` or `"down"`."""
     total_x: float | None
     """`pan`, `pinch`: how far the gesture has moved in all."""
     total_y: float | None
@@ -480,6 +486,8 @@ class Window:
         always_on_top: bool = ...,
         resizable: bool = ...,
         skip_taskbar: bool = ...,
+        touch_slop: float = ...,
+        touch_target_slop: float = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -491,7 +499,10 @@ class Window:
         the kept frame; off by default. (0.5.4) `profile_nodes`: `True` times each
         node the paint walk reaches, so `frame_stats()['profile']` can say where
         the scene-building time went; off by default (it costs two clock reads a
-        node). (0.5.4) `glyph_cache`: `True` draws text from a cache of rendered glyph
+        node). (0.5.7) `touch_slop`: how far, in layout pixels, a finger may wander and still be
+        a tap or a long press (default 10); `touch_target_slop`: how far from a node that
+        listens for touches a touch still counts as on it (default 0, off). (0.5.4)
+        `glyph_cache`: `True` draws text from a cache of rendered glyph
         images instead of each glyph's outline: about four times cheaper to build, but
         the images are rasterised once and then placed, so edge pixels differ slightly
         from the default (the text is in the same place); off by default. (0.5.0) `decorations`: whether the
@@ -538,7 +549,10 @@ class Window:
         `resizable`, and `skip_taskbar` (Windows only); live, or at open."""
         ...
     @overload
-    def get(self, name: Literal["width", "height", "scale_factor"]) -> float: ...
+    def get(
+        self,
+        name: Literal["width", "height", "scale_factor", "touch_slop", "touch_target_slop"],
+    ) -> float: ...
     @overload
     def get(self, name: Literal["title"]) -> str: ...
     @overload

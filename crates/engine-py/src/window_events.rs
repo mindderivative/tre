@@ -251,7 +251,21 @@ impl PyWindow {
 /// 0.5.0 M2: the window properties `set` takes, for its error messages.
 const SETTABLE: &str = "title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, \
     min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
-    dpi_scaling, transparent, blur_behind, click_through, x, y, always_on_top, resizable, skip_taskbar";
+    dpi_scaling, transparent, blur_behind, click_through, x, y, always_on_top, resizable, skip_taskbar, \
+    touch_slop, touch_target_slop";
+
+/// 0.5.7 (#132): a distance in layout pixels, zero or more.
+fn extract_distance(name: &str, value: &Bound<'_, PyAny>) -> PyResult<f64> {
+    value
+        .extract::<f64>()
+        .ok()
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "window property `{name}` must be a number of pixels, zero or more"
+            ))
+        })
+}
 
 /// 0.5.6 (#159): a window position coordinate in logical pixels.
 fn extract_coordinate(name: &str, value: &Bound<'_, PyAny>) -> PyResult<f64> {
@@ -812,6 +826,7 @@ impl PyWindow {
         let (mut x, mut y) = (None, None);
         let (mut always_on_top, mut resizable, mut skip_taskbar) = (None, None, None);
         let mut system_menu = None;
+        let (mut touch_slop, mut touch_target_slop) = (None, None);
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -886,6 +901,12 @@ impl PyWindow {
                             PyValueError::new_err("window property `system_menu` must be a bool")
                         })?);
                     }
+                    "touch_slop" => {
+                        touch_slop = Some(extract_distance(&name, &value)?);
+                    }
+                    "touch_target_slop" => {
+                        touch_target_slop = Some(extract_distance(&name, &value)?);
+                    }
                     "icon" => {
                         icon = Some(if value.is_none() {
                             None
@@ -921,6 +942,12 @@ impl PyWindow {
         }
         if let Some(on) = profile_nodes {
             self.handles.profile_nodes.set(on);
+        }
+        if let Some(slop) = touch_slop {
+            self.handles.touch.borrow_mut().set_slop(slop);
+        }
+        if let Some(slop) = touch_target_slop {
+            self.handles.touch.borrow_mut().set_target_slop(slop);
         }
         if let Some(on) = glyph_cache {
             self.handles.glyph_cache.set(on);
@@ -1315,6 +1342,24 @@ impl PyWindow {
                 .to_owned()
                 .into_any()
                 .unbind(),
+            "touch_slop" => self
+                .handles
+                .touch
+                .borrow()
+                .slop()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
+            "touch_target_slop" => self
+                .handles
+                .touch
+                .borrow()
+                .target_slop()
+                .into_pyobject(py)?
+                .to_owned()
+                .into_any()
+                .unbind(),
             "glyph_cache" => self
                 .handles
                 .glyph_cache
@@ -1377,7 +1422,7 @@ impl PyWindow {
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
                      native_controls, gpu_watchdog, present_mode, dpi_scaling, transparent, \
                      transparent_active, blur_behind, click_through, x, y, always_on_top, resizable, \
-                     skip_taskbar"
+                     skip_taskbar, touch_slop, touch_target_slop"
                 )));
             }
         })

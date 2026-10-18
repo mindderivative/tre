@@ -120,6 +120,9 @@ pub(crate) enum EventType {
     LongPress,
     Pan,
     Pinch,
+    /// 0.5.7 (#132): two fingers turning, and a fast flick in one direction.
+    Rotate,
+    Swipe,
     /// 0.5.4 (#114): files dragged over, away from, or dropped on the node.
     FileHover,
     FileHoverCancel,
@@ -144,7 +147,7 @@ pub(crate) enum EventType {
 }
 
 impl EventType {
-    const ALL: [EventType; 37] = [
+    const ALL: [EventType; 39] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -171,6 +174,8 @@ impl EventType {
         Self::LongPress,
         Self::Pan,
         Self::Pinch,
+        Self::Rotate,
+        Self::Swipe,
         Self::FileHover,
         Self::FileHoverCancel,
         Self::FileDrop,
@@ -212,6 +217,8 @@ impl EventType {
             Self::LongPress => "long_press",
             Self::Pan => "pan",
             Self::Pinch => "pinch",
+            Self::Rotate => "rotate",
+            Self::Swipe => "swipe",
             Self::FileHover => "file_hover",
             Self::FileHoverCancel => "file_hover_cancel",
             Self::FileDrop => "file_drop",

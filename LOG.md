@@ -14,6 +14,39 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #132, touch: rotation, swipe, the slops (2026-10-18)
+
+Built and tested with simulated fingers (as #113 was), the recognizer's arithmetic in
+`engine-core/src/gesture.rs` (6 new unit tests) and the events in
+`tests/test_touch_extras.py` (13).
+
+- *Momentum:* nothing to add. A pan that lifts mid-flick already coasts the scroller
+  under it (0.5.4: an exponential decay from the release velocity), and an app that
+  takes the pan gets `velocity_x`/`velocity_y` on `ended` to do its own.
+- *Rotation:* a `rotate` event (`rotation`, `rotation_delta` in radians, positive
+  clockwise on the screen) from the same two fingers a pinch uses, once the line
+  between them has turned past 0.12 rad (about 7 degrees); the first event carries
+  the whole turn so far so the steps add up. A turn across the +/- pi branch cut is a
+  small step. It comes with the pinch; a pure pinch sends none.
+- *Swipe:* a `swipe` event (`direction` by the larger axis, `velocity_x`/`y`,
+  `total_x`/`y`) right after a pan's `ended` when it lifted at 600 px/s or more after
+  40 px or more. `GestureConfig` holds the three thresholds.
+- *Slop:* `window.set(touch_slop=...)` (get too; default 10) sets the tap/long-press
+  wander in layout pixels. Layout pixels are already device-independent (a scale
+  factor of 2 does not shrink them), so the issue's "physical size" is only
+  reachable with a monitor size, which winit 0.30 does not give; the setting is the
+  app's lever for dense screens. Documented as a limit.
+- *Touch-target slop:* `window.set(touch_target_slop=...)` (default 0, off). A touch
+  that lands off every listening node (`click`, `pointer_down`, `tap`, `long_press`,
+  `pan`, `swipe`, `pinch`, `rotate`, `touch_start`) goes to the nearest listening
+  node whose layout box is within the slop; its touch events and the pointer press
+  that stands in for the finger go there (the press at the nearest point of its box,
+  while the finger stays within the slop), so a near miss clicks. A touch on a
+  listening node is never pulled to another. The box is the layout box, before any
+  transform. Off by default so nothing changes for existing apps.
+- *Not run:* a real touch screen (none on the dev machine); Windows touch and the
+  macOS trackpad pinch are #187 and #188.
+
 ### #133, OS file drag and drop on X11 (2026-10-18)
 
 `tools/xdnd_source.py` is a scripted XDND (version 5) drag source over libX11 and
