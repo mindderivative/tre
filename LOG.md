@@ -2,18 +2,17 @@
 
 ## Status
 
-**0.5.6 released (2026-10-09, PR #167, tag `v0.5.6`).** `main` is ahead of it with
-the 0.5.7 work (below), CI is green, and the 0.5.7 release is scoped in #184 and
-not yet tagged.
+**0.5.7 released (2026-10-17, PR #185, tag `v0.5.7`, PyPI `tesserae-engine==0.5.7`).**
+0.5.6 was released 2026-10-09 (PR #167, tag `v0.5.6`).
 Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 `BUILD_TRACKER_ARCHIVE_*.md` files are the pre-GitHub trackers). Open
 issues: #47, #48 (macOS and Windows title bars on hardware), #91 (WGSL on
 real GPUs: the Linux half is done; Windows, macOS and a video input are held),
 #118 (baseline on Mac, Windows, low-end hardware), #132-#134 (touch, OS file
 drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
-`wp_fifo_v1` barriers after a resize), and #184 (the release itself).
+`wp_fifo_v1` barriers after a resize).
 
-## 0.5.7 (in progress)
+## 0.5.7 (released 2026-10-17)
 
 Milestone 0.5.7: #168, #169, #175 to #179 and the Linux half of #91. It was built
 as 0.5.6.1 and then 0.5.6.2, small releases with a fourth number, until it held
