@@ -12,6 +12,24 @@ real GPUs: the Linux half is done; Windows, macOS and a video input are held),
 drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 `wp_fifo_v1` barriers after a resize).
 
+## After 0.5.7 (unreleased)
+
+### #158: the burst of `wp_fifo_v1` barriers after a resize (2026-10-18)
+
+Finding: not a bug. `RUST_LOG=engine_py=debug` now logs `resize pacing began`
+(with the size) and `resize pacing settled`. A sweep of real size requests on KDE
+Wayland (RADV, Mesa 26.2.4; the window's minimum size raised every 16 ms for 1.5 s,
+traced with `WAYLAND_DEBUG=1`) showed one `began`, one `settled` 0.4 s after the
+last resize, and one swapchain reconfigure at the restore. During the sweep there
+were 0 barriers (Mailbox); at the restore three `set_barrier`/`wait_barrier`
+commits landed 0.2 ms apart, then one every 16.7 ms: the new vsync swapchain's
+images being presented as fast as the loop could fill them, until the fifo
+throttles. That is the swapchain's frame depth, not the restore flipping back and
+forth. The 12 in the Tesserae run is the same effect on a deeper queue or a busier
+frame. A test pins that each sweep ends in exactly one restore and a resumed sweep
+starts a fresh cycle. Not run: an interactive compositor-driven resize (no way to
+inject pointer drags on Wayland here).
+
 ## 0.5.7 (released 2026-10-17)
 
 Milestone 0.5.7: #168, #169, #175 to #179 and the Linux half of #91. It was built

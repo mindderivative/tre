@@ -321,6 +321,7 @@ impl GpuState {
     /// first never committed with a vsync barrier.
     fn settle_pacing(&mut self, now: Instant) {
         if self.pacing.settle(now) {
+            tracing::debug!("resize pacing settled");
             self.apply_present_mode();
         }
     }
@@ -354,6 +355,9 @@ impl GpuState {
         }
         // 0.5.5 (#155): a window being resized presents without a vsync
         // barrier; this reconfigure carries the mode change, so it costs no extra.
+        if !self.pacing.active() {
+            tracing::debug!(width, height, "resize pacing began");
+        }
         self.pacing.resized(now);
         self.surface_config.present_mode = self.present_mode_now();
         self.surface_config.width = width;
