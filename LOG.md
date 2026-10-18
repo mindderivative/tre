@@ -29,7 +29,7 @@ tre window on XWayland (KDE Plasma, CachyOS):
   position for a file event is the pointer's last, wherever it was before. A drop
   pointed at a node's middle reached the window's listener and not the node's.
   Documented in the events guide (window-level listeners are the way on X11); a fix
-  needs the drag's own coordinates from winit or a raw XDND handler (filed as a
+  needs the drag's own coordinates from winit or a raw XDND handler (filed as #189, a
   Backlog issue).
 - *Tests:* `tests/test_file_drop_x11.py` (3; need an X display, skip without) covers
   the multi-file hover and drop as one event each, the cancel, and pins the position
