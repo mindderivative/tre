@@ -14,6 +14,33 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #91, the shader check under X11 on the real GPU (2026-10-18)
+
+Same machine as the Wayland checks (AMD Radeon 890M, RADV, Mesa 26.2.4, KDE Plasma
+on CachyOS; llvmpipe the software adapter), run in an XWayland window
+(`env -u WAYLAND_DISPLAY DISPLAY=:0`, the process maps libvulkan_radeon and the
+xcb/X11 libraries). A native Plasma X11 session was not tried; XWayland is the X11
+path Mesa uses here. `tools/check_shaders_live.py` is the new live script.
+
+- *Pixel tests:* `shader_fill` 28/28 on RADV and on llvmpipe (offscreen, so the
+  window system does not enter it).
+- *The examples, RADV against llvmpipe under X11:* `shader_panel` 36.2% of pixels
+  by one level, `shader_shine` 0.14%, nothing larger: the same as under Wayland.
+  Both examples run live on RADV under X11 and exit clean.
+- *Video input:* an `image` node whose pixels are replaced 30 times (the video
+  case, see the painting guide) feeds a shader; every frame's snapshot shows that
+  frame's colour (30 of 30).
+- *Effect over children across resizes (X11):* equal to a direct draw (0 differing
+  pixels) at 560x400, 700x460 and 820x520, forced by raising the minimum size.
+- *CPU:* a still shader and an empty window idle at 0.0 to 0.2% of a core with no
+  frames drawn; an animated one 3.3 to 3.9% at 60 frames a second, the same on X11
+  and Wayland. (`App.run(max_frames=...)` runs flat out, so an idle measurement must
+  not use it: it read 99% until that was removed.)
+- *Banding:* the checklist wording does not fit the Julia example. Its colour steps
+  are the shader's own integer escape count; `julia.wgsl` now says so.
+- Not run: a real `gpu_stalled` or `gpu_lost` (can freeze the compositor), and a
+  native X11 session. Windows (DX12) and macOS (Metal) are #187 and #188.
+
 ### #158: the burst of `wp_fifo_v1` barriers after a resize (2026-10-18)
 
 Finding: not a bug. `RUST_LOG=engine_py=debug` now logs `resize pacing began`
