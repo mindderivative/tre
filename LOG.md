@@ -14,6 +14,29 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #133, OS file drag and drop on X11 (2026-10-18)
+
+`tools/xdnd_source.py` is a scripted XDND (version 5) drag source over libX11 and
+ctypes: a separate X client that drags files onto a named window the way a file
+manager does, so the path is exercised with nobody holding the mouse. Against a live
+tre window on XWayland (KDE Plasma, CachyOS):
+
+- *Hover, cancel, drop:* a drag of two files is one `file_hover` with both paths, an
+  abandoned drag (XdndLeave) is one `file_hover_cancel`, a drop is one `file_drop`
+  with both paths; moving the drag over three points does not repeat the hover.
+- *Position:* none. winit 0.30's X11 backend reads the XdndPosition messages itself
+  and does not surface them, and the pointer does not move during a drag, so tre's
+  position for a file event is the pointer's last, wherever it was before. A drop
+  pointed at a node's middle reached the window's listener and not the node's.
+  Documented in the events guide (window-level listeners are the way on X11); a fix
+  needs the drag's own coordinates from winit or a raw XDND handler (filed as a
+  Backlog issue).
+- *Tests:* `tests/test_file_drop_x11.py` (3; need an X display, skip without) covers
+  the multi-file hover and drop as one event each, the cancel, and pins the position
+  limit so it fails when it is fixed.
+- Not run: Wayland (winit 0.30 delivers no file events there), and Windows and
+  macOS, which are #187 and #188.
+
 ### #134, the OS reduced-motion and contrast preferences on Linux (2026-10-18)
 
 KDE Plasma 6.8's portal (`xdg-desktop-portal-kde` 6.8.0, settings portal version 2)
