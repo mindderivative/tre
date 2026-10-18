@@ -180,7 +180,7 @@ window.on("high_contrast", lambda e: use_high_contrast_palette(e.high_contrast))
 The engine reports them and changes nothing itself: durations are the app's to
 shorten, and colours its to swap. Linux reads the settings portal's
 `reduced-motion` and `contrast` (with GNOME's `enable-animations` and
-`high-contrast` for an older portal) and its changes arrive live; Windows reads the
+`high-contrast` for an older portal, read and watched alike, but only where the newer keys are absent) and its changes arrive live; Windows reads the
 client-area animation setting and the High Contrast theme, macOS the "Reduce motion"
 and "Increase contrast" options. Windows and macOS announce no change, so the event
 fires when the window regains focus after one. Only the Linux read is checked on real

@@ -14,6 +14,29 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #134, the OS reduced-motion and contrast preferences on Linux (2026-10-18)
+
+KDE Plasma 6.8's portal (`xdg-desktop-portal-kde` 6.8.0, settings portal version 2)
+publishes `org.freedesktop.appearance` `contrast` and `reduced-motion` (both 0 here,
+and `window.get` agrees). Found by writing the test: the watcher listened only to the
+appearance namespace, so on a portal older than those keys (GNOME's
+`enable-animations` and `high-contrast`) the reads fell back but a live change never
+arrived. It now watches every `SettingChanged`, and the GNOME keys count only where
+the newer ones are absent, as in the reads.
+
+`tests/test_os_preferences_live.py` drives a real window through a stand-in portal
+(`tests/fake_portal.py`, PyGObject) on a throwaway `dbus-daemon`, so no desktop
+setting is touched: the reads from a new-key portal, from a GNOME-only portal and
+with no portal (`None`); live events from the new keys (an unchanged value says
+nothing); live events from the GNOME keys (fails on the old watcher); and the GNOME
+keys not overriding a portal that has the new ones. The event cases need a display,
+the rest only the bus; all skip without `dbus-daemon` or PyGObject.
+
+Not done: flipping the real setting in System Settings, which changes the
+maintainer's desktop. The manual check is `python examples/accessibility_preferences.py
+--watch`, then change the setting and watch the card; Windows and macOS are #187
+and #188.
+
 ### #91, the shader check under X11 on the real GPU (2026-10-18)
 
 Same machine as the Wayland checks (AMD Radeon 890M, RADV, Mesa 26.2.4, KDE Plasma
