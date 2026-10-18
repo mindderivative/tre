@@ -9,7 +9,7 @@
 * **Done:** Move approved `In review` entries to `Done` then update documentation on the finished entry.
 
 ## Memory Policy
-* **YOU MUST** update your local memory using the memory MCP server as soon as a local commit finishes.
+* **YOU MUST** record decisions, lessons, standing instructions and project status in your local memory (the memory MCP server), not every commit. Update the one `tre-v2-gui-framework` entity in place; do not add a diary entry per commit. The history lives in `LOG.md`, the issues and git.
 
 ## Documentation Policy
 * **IMPORTANT:** Update all relevant documentation immediately upon completing any milestone, phase, stage, step, or feature.
