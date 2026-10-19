@@ -58,6 +58,7 @@ nav:
       - Accessibility: guide/accessibility.md
       - Layers: guide/layers.md
       - Docking: guide/docking.md
+      - Bars and Panels: guide/bars-and-panels.md
       - Threading: guide/threading.md
       - Custom Title Bars: guide/custom-title-bars.md
       - Shaders: guide/shaders.md
@@ -74,6 +75,7 @@ nav:
       - Paint, paths, and animation: reference/paint.md
       - Events and listeners: reference/events.md
       - Layers: reference/layers.md
+      - LayerWindow: reference/layer-window.md
       - Painter: reference/painter.md
       - Shader: reference/shader.md
   - Architecture: architecture.md

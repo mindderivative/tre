@@ -1,5 +1,9 @@
 # Layers
 
+> Not to be confused with a Wayland *layer surface* (a bar or panel the compositor places):
+> that is a [`LayerWindow`](layer-window.md), a window of its own. This page is the nodes that
+> float over a window's content.
+
 One mechanism for everything that floats over a window's
 content — dialogs, menus, tooltips, snackbars, side sheets, drawers, context
 menus. You build the content from ordinary nodes; Tesserae Engine stacks it, places it,
