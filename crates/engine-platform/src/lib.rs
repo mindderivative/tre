@@ -80,7 +80,11 @@
 
 pub mod appearance;
 pub mod cursors;
+#[cfg(target_os = "linux")]
+pub mod layer;
 pub mod layer_config;
+#[cfg(target_os = "linux")]
+mod layer_keys;
 pub mod titlebar;
 
 use std::cell::RefCell;

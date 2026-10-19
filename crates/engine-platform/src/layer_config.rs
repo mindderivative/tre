@@ -217,13 +217,13 @@ impl LayerConfig {
                  include both \"top\" and \"bottom\"",
             ));
         }
-        if let Some(edge) = self.exclusive_edge {
-            if !self.anchor.contains(edge) {
-                return Err(error(
-                    "exclusive_edge",
-                    "must be one of the edges in `anchor`",
-                ));
-            }
+        if let Some(edge) = self.exclusive_edge
+            && !self.anchor.contains(edge)
+        {
+            return Err(error(
+                "exclusive_edge",
+                "must be one of the edges in `anchor`",
+            ));
         }
         if self.exclusive_zone < -1 {
             return Err(error(

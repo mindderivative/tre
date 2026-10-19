@@ -28,6 +28,16 @@ winit = "0.30.13"
 # `async-io`; `blocking-api` adds only the synchronous wrappers.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5.5", default-features = false, features = ["async-io", "blocking-api"] }
+# 0.5.7 (#198): layer-shell surfaces (a bar, a panel) on a second event queue of
+# the Wayland connection `winit` already owns. All are in the lock through
+# `winit`; `smithay-client-toolkit` is used without its `xkbcommon` feature (that
+# links libxkbcommon at build time, which a wheel must not) -- the keyboard goes
+# through `xkbcommon-dl`, which loads the library when a layer surface needs it.
+smithay-client-toolkit = { version = "0.19.2", default-features = false }
+wayland-backend = { version = "0.3.10", features = ["client_system"] }
+xkbcommon-dl = "0.4.2"
+memmap2 = "0.9"
+libc = "0.2"
 
 # 0.5.0 M3 (issue #28): the system's double-click time, for double-clicking
 # a framework-drawn title bar. Both are `winit`'s own dependencies at these
