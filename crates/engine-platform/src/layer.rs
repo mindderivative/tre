@@ -74,6 +74,45 @@ pub struct RawPtr(pub NonNull<c_void>);
 unsafe impl Send for RawPtr {}
 unsafe impl Sync for RawPtr {}
 
+/// A request to open a layer surface: what `engine-py` hands the loop.
+pub struct LayerRequest {
+    /// Which registered window this is; handed back in the hooks.
+    pub token: u64,
+    pub config: LayerConfig,
+    /// Auto-exit after this many frames (a self-asserting demo or test), as a window's.
+    pub max_frames: Option<u32>,
+}
+
+/// What a host needs to draw a layer surface once the compositor has sized it.
+pub struct LayerSurfaceInfo {
+    pub id: u64,
+    pub display: RawPtr,
+    pub surface: RawPtr,
+    /// The buffer's size in physical pixels (`logical * scale`).
+    pub width: u32,
+    pub height: u32,
+    pub scale: f64,
+    /// For `update`, `set_cursor` and `destroy`.
+    pub controller: LayerController,
+}
+
+/// Something that happened to a layer surface that is not input or a frame.
+#[derive(Debug)]
+pub enum LayerNotice {
+    Closed(CloseReason),
+    OutputChanged(String),
+    /// It could not be made.
+    Failed(String),
+}
+
+/// The host's side of the loop for layer surfaces.
+pub struct LayerHooks {
+    /// The surface has a size: build the GPU side from the info. `false` abandons it.
+    pub on_created: Box<dyn FnMut(winit::window::WindowId, u64, LayerSurfaceInfo) -> bool>,
+    /// `(id, token, notice)`.
+    pub on_notice: Box<dyn FnMut(winit::window::WindowId, u64, LayerNotice)>,
+}
+
 /// Why a layer surface ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseReason {
@@ -81,6 +120,8 @@ pub enum CloseReason {
     Compositor,
     /// The output it was bound to went away.
     OutputRemoved,
+    /// The app closed it.
+    App,
 }
 
 /// What the layer thread tells the loop.

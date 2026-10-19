@@ -85,7 +85,19 @@ pub mod layer;
 pub mod layer_config;
 #[cfg(target_os = "linux")]
 mod layer_keys;
+#[cfg(target_os = "linux")]
+mod layer_loop;
 pub mod titlebar;
+
+/// 0.5.7 (#198): what a host hands the loop to run layer surfaces; only Linux has them.
+#[cfg(target_os = "linux")]
+pub use layer::LayerHooks;
+#[cfg(not(target_os = "linux"))]
+pub struct LayerHooks;
+#[cfg(target_os = "linux")]
+use layer_loop::PerLayer;
+#[cfg(not(target_os = "linux"))]
+struct PerLayer;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -446,6 +458,12 @@ enum PlatformEvent {
     /// 0.5.0 M2: report window `id`'s current size as a resize --
     /// `EventLoopWaker::report_size`.
     ReportSize(WindowId),
+    /// 0.5.7 (#198): open a layer surface (`WindowOpener::open_layer`).
+    #[cfg(target_os = "linux")]
+    OpenLayer(layer::LayerRequest),
+    /// 0.5.7 (#198): something the layer thread has to say.
+    #[cfg(target_os = "linux")]
+    Layer(layer::LayerEvent),
 }
 
 impl From<accesskit_winit::Event> for PlatformEvent {
@@ -467,6 +485,12 @@ impl WindowOpener {
         let _ = self
             .proxy
             .send_event(PlatformEvent::OpenWindow(request, false));
+    }
+
+    /// 0.5.7 (#198): queues a layer surface to open as the loop starts.
+    #[cfg(target_os = "linux")]
+    pub fn open_layer(&self, request: layer::LayerRequest) {
+        let _ = self.proxy.send_event(PlatformEvent::OpenLayer(request));
     }
 }
 
@@ -509,6 +533,13 @@ impl EventLoopWaker {
         let _ = self
             .proxy
             .send_event(PlatformEvent::OpenWindow(request, true));
+    }
+
+    /// 0.5.7 (#198): asks the loop to open a layer surface while it runs, or before
+    /// (`WindowOpener`); the result reaches the `LayerHooks`.
+    #[cfg(target_os = "linux")]
+    pub fn open_layer(&self, request: layer::LayerRequest) {
+        let _ = self.proxy.send_event(PlatformEvent::OpenLayer(request));
     }
 
     /// 0.5.0 M2 (issue #28): asks the loop to close window `id` as if the
@@ -634,6 +665,7 @@ where
         on_lifecycle,
         setup,
         None,
+        None,
     )
 }
 
@@ -658,6 +690,7 @@ pub fn run_windowed_multi_with<C, F, A, S, N, X, L>(
     on_lifecycle: L,
     setup: S,
     idle: Option<IdleHooks>,
+    layers: Option<LayerHooks>,
 ) -> Result<(), winit::error::EventLoopError>
 where
     C: FnMut(WindowId, u64, Arc<Window>) -> bool,
@@ -706,6 +739,12 @@ where
         on_lifecycle,
         idle,
         released: false,
+        layer_hooks: layers,
+        layers: HashMap::new(),
+        #[cfg(target_os = "linux")]
+        layer_host: None,
+        #[cfg(target_os = "linux")]
+        next_layer: 0,
     };
     let result = event_loop.run_app(&mut app);
     // The loop may end right after a wait began: take the lock back.
@@ -816,6 +855,14 @@ struct MultiWindowApp<C, F, A, N, X, L> {
     idle: Option<IdleHooks>,
     /// Whether `idle.release` has been called with no `reacquire` since.
     released: bool,
+    /// 0.5.7 (#198): the host's callbacks for layer surfaces, and the surfaces
+    /// open now, keyed by the id minted for each (see `layer_loop`).
+    layer_hooks: Option<LayerHooks>,
+    layers: HashMap<WindowId, PerLayer>,
+    #[cfg(target_os = "linux")]
+    layer_host: Option<layer::LayerHost>,
+    #[cfg(target_os = "linux")]
+    next_layer: u64,
 }
 
 impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
@@ -842,6 +889,14 @@ impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
+impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
+    fn run_layer_frames(&mut self, _: &ActiveEventLoop) {}
+    fn close_layer(&mut self, _: &ActiveEventLoop, _: WindowId) {}
+    fn wake_layers(&mut self) {}
+    fn tell_layers(&mut self, _: InputEvent) {}
+}
+
 impl<C, F, A, N, X, L> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X, L>
 where
     C: FnMut(WindowId, u64, Arc<Window>) -> bool,
@@ -857,6 +912,7 @@ where
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         cursors::flush(event_loop);
+        self.run_layer_frames(event_loop);
         self.park();
     }
 
@@ -1041,12 +1097,14 @@ where
                 for win in self.windows.values_mut() {
                     win.request_redraw();
                 }
+                self.wake_layers();
             }
             PlatformEvent::ThemeChanged(dark) => {
                 for (&id, win) in &self.windows {
                     (self.on_input)(id, InputEvent::ThemeChanged { dark });
                     win.window.request_redraw();
                 }
+                self.tell_layers(InputEvent::ThemeChanged { dark });
             }
             PlatformEvent::ReducedMotionChanged(reduced) => {
                 for (&id, win) in &mut self.windows {
@@ -1054,6 +1112,7 @@ where
                     (self.on_input)(id, InputEvent::ReducedMotionChanged { reduced });
                     win.window.request_redraw();
                 }
+                self.tell_layers(InputEvent::ReducedMotionChanged { reduced });
             }
             PlatformEvent::HighContrastChanged(high) => {
                 for (&id, win) in &mut self.windows {
@@ -1061,6 +1120,7 @@ where
                     (self.on_input)(id, InputEvent::HighContrastChanged { high });
                     win.window.request_redraw();
                 }
+                self.tell_layers(InputEvent::HighContrastChanged { high });
             }
             PlatformEvent::ReportSize(id) => {
                 if let Some(win) = self.windows.get(&id) {
@@ -1083,11 +1143,17 @@ where
                 {
                     (self.on_lifecycle)(id, WindowLifecycle::Closed);
                     self.windows.remove(&id);
-                    if self.windows.is_empty() {
+                    if self.windows.is_empty() && self.layers.is_empty() {
                         event_loop.exit();
                     }
+                } else {
+                    self.close_layer(event_loop, id);
                 }
             }
+            #[cfg(target_os = "linux")]
+            PlatformEvent::OpenLayer(request) => self.open_layer(event_loop, request),
+            #[cfg(target_os = "linux")]
+            PlatformEvent::Layer(event) => self.layer_event(event_loop, event),
         }
     }
 
@@ -1101,6 +1167,7 @@ where
         self.attach();
         let Self {
             windows,
+            layers,
             on_frame,
             build_access_update,
             on_input,
@@ -1119,7 +1186,7 @@ where
                 if on_lifecycle(window_id, WindowLifecycle::CloseRequested) {
                     on_lifecycle(window_id, WindowLifecycle::Closed);
                     windows.remove(&window_id);
-                    if windows.is_empty() {
+                    if windows.is_empty() && layers.is_empty() {
                         event_loop.exit();
                     }
                 }
@@ -1149,7 +1216,7 @@ where
                 {
                     on_lifecycle(window_id, WindowLifecycle::Closed);
                     windows.remove(&window_id);
-                    if windows.is_empty() {
+                    if windows.is_empty() && layers.is_empty() {
                         event_loop.exit();
                     }
                     return;

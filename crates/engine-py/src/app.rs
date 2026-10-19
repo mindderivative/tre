@@ -1821,6 +1821,7 @@ impl App {
                 });
             },
             Some(idle),
+            None,
         );
 
         // M87: this run's loop is gone -- a `call_soon` from now on just
