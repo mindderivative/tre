@@ -2065,7 +2065,10 @@ impl App {
                             // The surface is dropped with its runtime, before the platform
                             // loop asks for the Wayland surface to be destroyed.
                             layer.id.set(None);
-                            *layer.controller.borrow_mut() = None;
+                            #[cfg(target_os = "linux")]
+                            {
+                                *layer.controller.borrow_mut() = None;
+                            }
                             drop(runtimes);
                             runtimes_for_lifecycle_drop.borrow_mut().remove(&window_id);
                         }

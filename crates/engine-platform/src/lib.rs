@@ -99,6 +99,7 @@ pub struct LayerHooks;
 #[cfg(target_os = "linux")]
 use layer_loop::PerLayer;
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 struct PerLayer;
 
 use std::cell::RefCell;
@@ -859,6 +860,7 @@ struct MultiWindowApp<C, F, A, N, X, L> {
     released: bool,
     /// 0.5.7 (#198): the host's callbacks for layer surfaces, and the surfaces
     /// open now, keyed by the id minted for each (see `layer_loop`).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     layer_hooks: Option<LayerHooks>,
     layers: HashMap<WindowId, PerLayer>,
     #[cfg(target_os = "linux")]

@@ -4,7 +4,7 @@
 
 A quick reference to everything `import tre` gives you: each class with its properties, methods and events, short descriptions, and what it inherits. The [Rust API](rust.md) is what these classes sit on. The **Details** link on a class goes to its longer page (behavior, examples, edge cases).
 
-`Node` and `Window` take most of their properties by name through `set`, `get` and (for the animatable ones) `animate`, and their events by name through `on`; those names are listed with the class. None of these classes can be subclassed.
+`Node` and `Window` take most of their properties by name through `set`, `get` and (for the animatable ones) `animate`, and their events by name through `on`; those names are listed with the class. None of these classes is meant to be subclassed.
 
 | Class | Purpose |
 | --- | --- |
@@ -13,6 +13,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | [`StatsHandle`](#statshandle) | Reads a window's frame statistics from any thread, without waiting for the loop. |
 | [`TimerHandle`](#timerhandle) | Cancels a timer set with `Window.after` or `Window.every`. |
 | [`Window`](#window) | Owns a node tree and its size and title; creates nodes, shows layers, docks panels. |
+| [`LayerWindow`](#layerwindow) | A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surface). |
 | [`Node`](#node) | A handle to one node in a window's tree: properties, animation, events, structure. |
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
 | [`Painter`](#painter) | The drawing surface a canvas node's `draw` callback receives. |
@@ -20,6 +21,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | [`CursorImage`](#cursorimage) | A pointer shape drawn from pixels, for a node's `cursor`. |
 | [`Shader`](#shader) | WGSL that paints a node (a fill) or transforms its rendered content (an effect). |
 | [`ShaderError`](#shadererror) | A shader's source or names are wrong, positioned in the WGSL you gave. |
+| [`UnsupportedPlatform`](#unsupportedplatform) | Raised where a feature needs a platform this process is not on (a `LayerWindow` without a layer shell). |
 
 ## App { #app }
 
@@ -170,7 +172,8 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `color_scheme` | `dark` | The OS switched between light and dark. |
 | `scale_factor` | `scale_factor` | The window moved to a display with a different scale. |
 | `close_requested` | — | The user asked to close; `event.cancel()` keeps it open. |
-| `closed` | — | The window closed. |
+| `closed` | `reason` (a `LayerWindow`) | The window closed. |
+| `configure`, `output_changed`, `warning` | `width`, `height` / `output` / `key`, `message` | A `LayerWindow`: the compositor sized it / it entered an output / a setting the protocol ignores. |
 | `dock_target`, `dock_drop` | `side`, `panel` | A docking drag moved into a zone / ended. |
 | `maximized`, `active` | `maximized`, `active` | The window was maximized or restored / gained or lost focus. |
 | `titlebar_inset` | `titlebar_inset` | The OS controls' area over the content changed. |
@@ -180,6 +183,24 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `file_hover`, `file_hover_cancel`, `file_drop` | `paths`, `path` | Files dragged over, away from, or dropped on the window (0.5.4). |
 | `reduced_motion`, `high_contrast` | `reduced_motion`, `high_contrast` | The OS's motion or contrast preference changed (0.5.4). |
 | `frame` | `stats` | A frame was drawn and presented; `stats` holds its costs (0.5.4). |
+
+## LayerWindow { #layerwindow }
+
+A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surface).
+
+**Inherits:** [`Window`](#window) → [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [LayerWindow reference](../reference/layer-window.md)
+
+**Constructor:** `LayerWindow(namespace: str, *, layer: Literal['background', 'bottom', 'top', 'overlay']=..., anchor: str | Sequence[str] | None=..., size: tuple[int, int] | None=..., exclusive_zone: int | None=..., exclusive_edge: None=..., margin: int | tuple[int, int, int, int] | None=..., keyboard: Literal['none', 'on_demand', 'exclusive']=..., output: str | None=...)`
+
+**Methods:**
+
+| Method | Description |
+| --- | --- |
+| `close() -> None` | Closes the surface on the loop's next turn: `close_requested` first (a listener may cancel it with `event.cancel()`), then… |
+| `get(name: str) -> Any` | Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`, `exclusive_edge`, `margin`, `keyboard`… |
+| `set(**props: Any) -> None` | Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`, `margin`, `keyboard`) in one commit, with the keys… |
+
+**Events:** none.
 
 ## Node { #node }
 
@@ -412,6 +433,7 @@ What a listener receives when it takes one argument; never constructed directly.
 | `rotation` | `float \| None` |  |
 | `rotation_delta` | `float \| None` |  |
 | `direction` | `str \| None` |  |
+| `output` | `str \| None` |  |
 | `total_x` | `float \| None` |  |
 | `total_y` | `float \| None` |  |
 | `velocity_x` | `float \| None` |  |
@@ -533,10 +555,19 @@ A shader's source or names are wrong, positioned in the WGSL you gave.
 
 **Events:** none.
 
+## UnsupportedPlatform { #unsupportedplatform }
+
+Raised where a feature needs a platform this process is not on (a `LayerWindow` without a layer shell).
+
+**Inherits:** [`RuntimeError`](https://docs.python.org/3/library/exceptions.html#RuntimeError) → [`Exception`](https://docs.python.org/3/library/exceptions.html#Exception) → [`BaseException`](https://docs.python.org/3/library/exceptions.html#BaseException) → [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [UnsupportedPlatform reference](../reference/layer-window.md#errors)
+
+**Events:** none.
+
 ## Module functions and constants { #module }
 
 | Name | Description |
 | --- | --- |
+| `supports(feature: str) -> bool` | Whether this process can use an optional feature. |
 | `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded. |
 | `set_system_fonts(enabled: bool) -> None` | Lets text use the fonts installed on this machine: for the glyphs the bundled and registered fonts lack (CJK, Hebrew, Indic… |
 | `system_fonts() -> bool` | Whether system fonts are on (`set_system_fonts`). |

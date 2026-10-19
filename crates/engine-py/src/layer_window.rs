@@ -75,8 +75,10 @@ pub(crate) struct LayerState {
     /// The loop's number for the surface once it exists.
     pub(crate) id: Cell<Option<u64>>,
     /// Why the surface closed: `"compositor"`, `"output_removed"` or `"app"`.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(crate) closed_reason: RefCell<Option<&'static str>>,
     /// Warnings from the constructor, delivered as events once the window opens.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(crate) pending_warnings: RefCell<Vec<(String, String)>>,
     #[cfg(target_os = "linux")]
     pub(crate) controller: RefCell<Option<engine_platform::layer::LayerController>>,
