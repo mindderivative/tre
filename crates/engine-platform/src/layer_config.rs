@@ -245,6 +245,46 @@ impl LayerConfig {
     }
 }
 
+/// Whether layer surfaces can be made here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Availability {
+    /// The compositor offers `zwlr_layer_shell_v1`.
+    Supported,
+    /// No display at all (a CI run): a layer window can be built and driven with
+    /// `simulate`, `advance` and `snapshot`, but not opened.
+    Headless,
+    /// A display with no layer shell (X11, GNOME's Mutter, Windows, macOS); the string
+    /// says why.
+    Unsupported(String),
+}
+
+/// Where this process stands on layer surfaces.
+pub fn availability() -> Availability {
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return if crate::layer::supported() {
+                Availability::Supported
+            } else {
+                Availability::Unsupported(
+                    "this Wayland compositor has no zwlr_layer_shell_v1 (GNOME's Mutter has none)"
+                        .into(),
+                )
+            };
+        }
+        if std::env::var_os("DISPLAY").is_some() {
+            return Availability::Unsupported(
+                "an X11 session has no layer shell: layer surfaces are Wayland only".into(),
+            );
+        }
+        Availability::Headless
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Availability::Unsupported("layer surfaces are Wayland only (Linux)".into())
+    }
+}
+
 /// The edge names the Python layer accepts for `anchor` and `exclusive_edge`.
 pub fn parse_anchor<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Anchors, ConfigError> {
     let mut bits = 0;

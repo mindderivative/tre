@@ -182,6 +182,10 @@ class Event:
     """`rotate`: the turn since the last event, in radians."""
     direction: str | None
     """`swipe`: `"left"`, `"right"`, `"up"` or `"down"`."""
+    output: str | None
+    """`output_changed`: the output's connector name. (`closed` on a `LayerWindow` sets
+    `reason`: `"compositor"`, `"output_removed"` or `"app"`; `warning` sets `key`, the
+    setting, and `message`.)"""
     total_x: float | None
     """`pan`, `pinch`: how far the gesture has moved in all."""
     total_y: float | None

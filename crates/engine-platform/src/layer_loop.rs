@@ -24,7 +24,7 @@ use crate::{MultiWindowApp, PlatformEvent, WindowLifecycle};
 const LAYER_ID_TAG: u64 = 1 << 63;
 
 /// The `WindowId` the loop uses for layer surface number `n`.
-pub(crate) fn window_id(n: u64) -> WindowId {
+pub fn window_id(n: u64) -> WindowId {
     WindowId::from(LAYER_ID_TAG | n)
 }
 
@@ -202,8 +202,11 @@ where
                 if let Some(layer) = self.layers.remove(&wid) {
                     self.notice(wid, layer.token, LayerNotice::Closed(reason));
                     if layer.opened {
+                        // The host drops its `wgpu` surface here; only then is the
+                        // `wl_surface` destroyed.
                         (self.on_lifecycle)(wid, WindowLifecycle::Closed);
                     }
+                    layer.controller.destroy(layer.id);
                     self.exit_if_empty(event_loop);
                 }
             }
@@ -211,6 +214,7 @@ where
                 let wid = window_id(id);
                 if let Some(layer) = self.layers.remove(&wid) {
                     self.notice(wid, layer.token, LayerNotice::Failed(message));
+                    layer.controller.destroy(layer.id);
                     self.exit_if_empty(event_loop);
                 }
             }

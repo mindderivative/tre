@@ -706,7 +706,8 @@ impl LayerShellHandler for State {
         } else {
             CloseReason::Compositor
         };
-        self.destroy(id);
+        // Not destroyed here: the loop drops its `wgpu` surface first and then asks
+        // for `Destroy`, so the `wl_surface` is never gone while a swapchain uses it.
         self.emit(LayerEvent::Closed { id, reason });
     }
 
@@ -840,7 +841,11 @@ impl PointerHandler for State {
                             -f64::from(vertical.discrete),
                         )
                     } else {
-                        ScrollDelta::Pixels(-horizontal.absolute, -vertical.absolute)
+                        let scale = self.scale_of(id);
+                        ScrollDelta::Pixels(
+                            -horizontal.absolute * scale,
+                            -vertical.absolute * scale,
+                        )
                     };
                     self.input(id, InputEvent::Scroll { delta, position });
                 }

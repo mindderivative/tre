@@ -87,6 +87,8 @@ pub mod layer_config;
 mod layer_keys;
 #[cfg(target_os = "linux")]
 mod layer_loop;
+#[cfg(target_os = "linux")]
+pub use layer_loop::window_id as layer_window_id;
 pub mod titlebar;
 
 /// 0.5.7 (#198): what a host hands the loop to run layer surfaces; only Linux has them.
