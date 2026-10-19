@@ -111,6 +111,9 @@ pub struct LayerHooks {
     pub on_created: Box<dyn FnMut(winit::window::WindowId, u64, LayerSurfaceInfo) -> bool>,
     /// `(id, token, notice)`.
     pub on_notice: Box<dyn FnMut(winit::window::WindowId, u64, LayerNotice)>,
+    /// The loop is ending: drop every GPU surface made from a layer surface now, while
+    /// the Wayland connection is still alive (it is gone once the loop returns).
+    pub on_shutdown: Box<dyn FnMut()>,
 }
 
 /// Why a layer surface ended.
@@ -345,6 +348,8 @@ struct Surf {
     size: (u32, u32),
     scale: f64,
     announced: bool,
+    /// The shape the app last asked for, applied whenever the pointer enters.
+    cursor: CursorIcon,
 }
 
 struct Repeat {
@@ -499,6 +504,7 @@ impl State {
                 size: (0, 0),
                 scale: 1.0,
                 announced: false,
+                cursor: CursorIcon::Default,
             },
         );
         self.apply(id, &config);
@@ -807,6 +813,12 @@ impl PointerHandler for State {
                 PointerEventKind::Enter { serial } => {
                     self.pointer_enter_serial = serial;
                     self.pointer_focus = Some(id);
+                    // The compositor forgets the cursor on entry: set the app's again.
+                    if let (Some(device), Some(surf)) =
+                        (&self.cursor_device, self.surfaces.get(&id))
+                    {
+                        device.set_shape(serial, shape_of(surf.cursor));
+                    }
                     self.input(id, InputEvent::PointerMoved { position });
                 }
                 PointerEventKind::Leave { .. } => {
@@ -1228,6 +1240,9 @@ fn run(
                 Command::Create(id, config) => state.create(&qh, id, config),
                 Command::Update(id, config) => state.apply(id, &config),
                 Command::Cursor(id, icon) => {
+                    if let Some(surf) = state.surfaces.get_mut(&id) {
+                        surf.cursor = icon;
+                    }
                     if state.pointer_focus == Some(id)
                         && let Some(device) = &state.cursor_device
                     {

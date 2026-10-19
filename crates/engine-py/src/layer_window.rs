@@ -108,15 +108,13 @@ fn names_error(key: &str, what: &str, names: &[&str]) -> PyErr {
 }
 
 fn parse_layer(name: &str) -> PyResult<LayerKind> {
-    LayerKind::parse(name).ok_or_else(|| {
-        names_error("layer", &format!("layer {name:?}"), &LayerKind::NAMES)
-    })
+    LayerKind::parse(name)
+        .ok_or_else(|| names_error("layer", &format!("layer {name:?}"), &LayerKind::NAMES))
 }
 
 fn parse_keyboard(name: &str) -> PyResult<KeyboardMode> {
-    KeyboardMode::parse(name).ok_or_else(|| {
-        names_error("keyboard", &format!("mode {name:?}"), &KeyboardMode::NAMES)
-    })
+    KeyboardMode::parse(name)
+        .ok_or_else(|| names_error("keyboard", &format!("mode {name:?}"), &KeyboardMode::NAMES))
 }
 
 /// `anchor` as a bit set: a sequence of edge names, or one name.
@@ -135,9 +133,9 @@ fn extract_edge(key: &'static str, value: &Bound<'_, PyAny>) -> PyResult<Option<
     if value.is_none() {
         return Ok(None);
     }
-    let name: String = value
-        .extract()
-        .map_err(|_| PyValueError::new_err(format!("LayerWindow {key}: must be an edge name or None")))?;
+    let name: String = value.extract().map_err(|_| {
+        PyValueError::new_err(format!("LayerWindow {key}: must be an edge name or None"))
+    })?;
     Anchors::edge(&name)
         .map(Some)
         .ok_or_else(|| names_error(key, &format!("edge {name:?}"), &Anchors::NAMES))
@@ -164,7 +162,9 @@ fn extract_margin(value: &Bound<'_, PyAny>) -> PyResult<(i32, i32, i32, i32)> {
 
 fn extract_zone(value: &Bound<'_, PyAny>) -> PyResult<i32> {
     value.extract::<i32>().map_err(|_| {
-        PyValueError::new_err("LayerWindow exclusive_zone: must be a whole number of pixels, 0, or -1")
+        PyValueError::new_err(
+            "LayerWindow exclusive_zone: must be a whole number of pixels, 0, or -1",
+        )
     })
 }
 
@@ -181,8 +181,16 @@ fn edge_name(bit: u8) -> &'static str {
 /// A layer window's logical size before a compositor assigns one.
 fn headless_size(config: &LayerConfig) -> (u32, u32) {
     (
-        if config.size.0 == 0 { HEADLESS_WIDTH } else { config.size.0 },
-        if config.size.1 == 0 { HEADLESS_HEIGHT } else { config.size.1 },
+        if config.size.0 == 0 {
+            HEADLESS_WIDTH
+        } else {
+            config.size.0
+        },
+        if config.size.1 == 0 {
+            HEADLESS_HEIGHT
+        } else {
+            config.size.1
+        },
     )
 }
 
@@ -243,7 +251,10 @@ impl PyLayerWindow {
                 .map(|v| extract_edge("exclusive_edge", v))
                 .transpose()?
                 .flatten(),
-            margin: margin.map(extract_margin).transpose()?.unwrap_or((0, 0, 0, 0)),
+            margin: margin
+                .map(extract_margin)
+                .transpose()?
+                .unwrap_or((0, 0, 0, 0)),
             keyboard: parse_keyboard(keyboard)?,
             output,
         };
@@ -370,7 +381,12 @@ impl PyLayerWindow {
             .expect("a LayerWindow has layer state");
         let config = state.config.borrow();
         Ok(match name {
-            "namespace" => config.namespace.clone().into_pyobject(py)?.into_any().unbind(),
+            "namespace" => config
+                .namespace
+                .clone()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
             "layer" => config.layer.name().into_pyobject(py)?.into_any().unbind(),
             "anchor" => PyTuple::new(py, config.anchor.names())?.into_any().unbind(),
             "size" => config.size.into_pyobject(py)?.into_any().unbind(),
@@ -382,7 +398,12 @@ impl PyLayerWindow {
                 .into_any()
                 .unbind(),
             "margin" => config.margin.into_pyobject(py)?.into_any().unbind(),
-            "keyboard" => config.keyboard.name().into_pyobject(py)?.into_any().unbind(),
+            "keyboard" => config
+                .keyboard
+                .name()
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
             "output" => config.output.clone().into_pyobject(py)?.into_any().unbind(),
             _ => {
                 drop(config);
@@ -398,7 +419,8 @@ impl PyLayerWindow {
         #[cfg(target_os = "linux")]
         {
             let base = slf.as_super().borrow();
-            if let (Some(layer), Some(waker)) = (&base.handles.layer, base.handles.waker.borrow().as_ref())
+            if let (Some(layer), Some(waker)) =
+                (&base.handles.layer, base.handles.waker.borrow().as_ref())
                 && let Some(id) = layer.id.get()
             {
                 waker.close_window(engine_platform::layer_window_id(id));

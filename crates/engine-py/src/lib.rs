@@ -19,6 +19,7 @@ mod files;
 mod frame_stats;
 mod gradient;
 mod grid;
+mod layer_window;
 mod listeners;
 mod node;
 mod node_callbacks;
@@ -37,7 +38,6 @@ mod thread_handle;
 mod timers;
 mod touch;
 mod trace;
-mod layer_window;
 mod window;
 mod window_docking;
 mod window_events;
@@ -51,11 +51,11 @@ pub use app::App;
 pub use canvas::Painter;
 pub use error::EngineError;
 pub use event::Event;
+pub use layer_window::PyLayerWindow;
 pub use node::Node;
 pub use shader::Shader;
 pub use thread_handle::LoopHandle;
 pub use window::PyWindow;
-pub use layer_window::PyLayerWindow;
 
 /// The compiled extension module Python actually imports, as
 /// `tre._core` (`pyproject.toml`'s `module-name`) -- `python/tre/
@@ -65,7 +65,10 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<App>()?;
     m.add_class::<PyWindow>()?;
     m.add_class::<PyLayerWindow>()?;
-    m.add("UnsupportedPlatform", m.py().get_type::<layer_window::UnsupportedPlatform>())?;
+    m.add(
+        "UnsupportedPlatform",
+        m.py().get_type::<layer_window::UnsupportedPlatform>(),
+    )?;
     m.add_function(wrap_pyfunction!(layer_window::supports, m)?)?;
     m.add_class::<Node>()?;
     m.add_class::<Painter>()?;

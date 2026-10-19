@@ -296,6 +296,16 @@ where
         }
     }
 
+    /// The loop is exiting: the host drops its GPU surfaces, then the layer thread
+    /// destroys the Wayland ones and ends, all while `winit`'s connection is alive.
+    pub(crate) fn shutdown_layers(&mut self) {
+        if let Some(hooks) = &mut self.layer_hooks {
+            (hooks.on_shutdown)();
+        }
+        self.layers.clear();
+        self.layer_host = None;
+    }
+
     /// Every layer surface wants a frame (a wake from another thread).
     pub(crate) fn wake_layers(&mut self) {
         for layer in self.layers.values_mut() {

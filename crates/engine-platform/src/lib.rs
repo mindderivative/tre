@@ -897,6 +897,7 @@ impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
     fn close_layer(&mut self, _: &ActiveEventLoop, _: WindowId) {}
     fn wake_layers(&mut self) {}
     fn tell_layers(&mut self, _: InputEvent) {}
+    fn shutdown_layers(&mut self) {}
 }
 
 impl<C, F, A, N, X, L> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X, L>
@@ -910,6 +911,11 @@ where
 {
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
         self.attach();
+    }
+
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        self.attach();
+        self.shutdown_layers();
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {

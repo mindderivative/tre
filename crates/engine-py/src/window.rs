@@ -371,7 +371,7 @@ impl PyWindow {
                 layer: None,
             },
         })))
-        }
+    }
 }
 
 #[pymethods]
