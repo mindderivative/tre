@@ -80,6 +80,7 @@
 
 pub mod appearance;
 pub mod cursors;
+pub mod layer_config;
 pub mod titlebar;
 
 use std::cell::RefCell;
