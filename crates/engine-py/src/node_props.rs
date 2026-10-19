@@ -1334,6 +1334,14 @@ pub(crate) fn check_anchor_changes(
     changes: &[Change],
 ) -> PyResult<()> {
     for change in changes {
+        if let Change::WindowRegion(WindowRegion::Drag) = change
+            && !tree.window_drag_allowed()
+        {
+            return Err(PyValueError::new_err(
+                "node property `window_region`: \"drag\" moves a window, and the compositor \
+                 places a LayerWindow, so there is none to drag",
+            ));
+        }
         let Change::Anchor(edit) = change else {
             continue;
         };

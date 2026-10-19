@@ -66,7 +66,7 @@ listener may keep it open with `event.cancel()`), then `closed` with reason `"ap
 The protocol's mistakes are `ValueError`s that name the key, raised before anything is
 sent to the compositor (a bad request would end the connection): a `0` size with the two
 anchors it needs missing, an unknown `layer`, `keyboard` or edge name, a `margin` that is
-not four numbers, an `exclusive_zone` below `-1`.
+not four numbers, an `exclusive_zone` below `-1`. A node's `window_region="drag"` (a title bar that moves its window) raises on a `LayerWindow`'s nodes: the compositor places the surface, so there is no window to drag.
 
 `LayerWindow(...)` raises **`UnsupportedPlatform`** (a `RuntimeError`) where there is no
 layer shell: an X11 session, GNOME's Mutter, Windows and macOS. It does not quietly turn

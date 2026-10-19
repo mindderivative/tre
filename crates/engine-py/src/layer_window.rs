@@ -275,6 +275,7 @@ impl PyLayerWindow {
         handles.dpi_scaling.set(true);
         handles.transparent.set(true);
         handles.layer = Some(Rc::new(LayerState::new(config, warnings)));
+        handles.tree.borrow_mut().set_window_drag_allowed(false);
         Ok(PyClassInitializer::from(base).add_subclass(Self))
     }
 

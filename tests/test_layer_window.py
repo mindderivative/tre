@@ -230,3 +230,18 @@ def test_without_a_layer_shell_the_constructor_raises(env, expect):
 
 def test_unsupported_platform_is_a_runtime_error():
     assert issubclass(UnsupportedPlatform, RuntimeError)
+
+
+def test_a_node_cannot_be_a_window_drag_region_on_a_layer_window():
+    # The compositor places the surface: there is no window to drag.
+    w = bar()
+    node = w.create("box", width=10, height=10)
+    with pytest.raises(ValueError, match="window_region"):
+        node.set(window_region="drag")
+    with pytest.raises(ValueError, match="window_region"):
+        w.create("box", window_region="drag")
+    node.set(window_region="none")  # "none" and None are fine
+    node.set(window_region=None)
+    # An ordinary window still takes it.
+    ordinary = Window(width=100, height=40)
+    ordinary.create("box", window_region="drag")
