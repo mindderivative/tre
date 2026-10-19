@@ -1,6 +1,6 @@
 # LayerWindow: the design (#198)
 
-Phase 2 of [#195](https://github.com/mindderivative/tre/issues/195) (TRE-REQ-001 from Tesserae Shell). **Decided 2026-10-19, in build (#198).** It rests on the spike's findings (`layer-surface-spike.md`, #196): layer surfaces on a second event queue of the `wl_display` `winit` owns. Where the maintainer has to choose, the choice is marked **Decision** with a recommendation.
+Phase 2 of [#195](https://github.com/mindderivative/tre/issues/195) (TRE-REQ-001 from Tesserae Shell). **Decided 2026-10-19, built (#198).** The [reference](../reference/layer-window.md) and the [guide](../guide/bars-and-panels.md) say how it works; this page keeps the reasoning, and "As built" at the end lists where the build differs from the plan. It rests on the spike's findings (`layer-surface-spike.md`, #196): layer surfaces on a second event queue of the `wl_display` `winit` owns. Where the maintainer has to choose, the choice is marked **Decision** with a recommendation.
 
 ## What it is
 
@@ -61,3 +61,35 @@ The spike measured the seams; none is large.
 ## Steps (from #198)
 
 1. This page and the decisions above. 2. The platform layer (second queue, thread, id type). 3. Surface and render. 4. Input. 5. Validation and events. 6. Capability and headless. 7. Tests (headless pytest; live KWin tests that skip elsewhere, checking the zone by maximising a tre window, keyboard modes, and input through a virtual `uinput` device when writable). 8. Docs, a runnable example, LOG.
+
+## As built
+
+Where the build differs from, or settled, what the sections above said.
+
+- **Ids.** A layer surface has no `winit` `WindowId`, and instead of a new id type in every
+  callback (the plan above), each surface is given a `WindowId` minted from the high-bit range
+  of the `u64`s `winit`'s `WindowId` converts from. The ids `winit` makes on every platform are
+  pointers or small numbers and never set the top bit. The loop's callbacks kept their
+  signatures and a layer surface is one more window to them (`engine-platform/src/layer_loop.rs`).
+- **No `smithay-client-toolkit` keyboard.** Its keyboard module needs the `xkbcommon` crate,
+  which links libxkbcommon when built; a wheel must not depend on that library to import. The
+  keymap is handled with `xkbcommon-dl` (already in the build through `winit`; it loads the
+  library at run time), and key repeat is the layer thread's own timer. `sctk` 0.19 is the
+  version already in the lock.
+- **Shutdown order.** `winit` destroys its Wayland connection when the loop returns, so the
+  layer side is shut down from `ApplicationHandler::exiting`: the host drops its `wgpu`
+  surfaces first, the layer thread then destroys the Wayland surfaces and ends. A surface the
+  compositor closes is destroyed only after the loop has dropped its `wgpu` surface.
+- **Availability.** `LayerWindow(...)` raises `UnsupportedPlatform` where there is a display but
+  no layer shell. With no display at all (`WAYLAND_DISPLAY` and `DISPLAY` both unset) it is
+  built headless, so a CI run can drive one with `simulate`, `advance` and `snapshot`, and
+  opening it needs a compositor. This is how decision 2 and the headless requirement fit.
+- **`exclusive_edge`** is validated but refused: the protocol request is from version 5 and the
+  toolkit binds up to version 4. A follow-up if a corner-anchored reserving surface is needed.
+- **`output=`** is a connector name resolved through `wl_output` v4; `output_changed` carries
+  the name. The `Output` objects and hot-plug events stay in phase 3.
+- **Defaults.** The root has no padding or gap; layout is logical with the surface's scale
+  (`dpi_scaling` on); the surface is transparent.
+- **Not done in this phase:** IME (input-method preedit) and AccessKit on layer surfaces, each
+  its own follow-up as decided; the frame-callback-driven redraw (a surface draws when something
+  changed, paced by the swapchain's present, as a window).
