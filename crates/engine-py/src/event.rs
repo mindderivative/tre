@@ -192,6 +192,16 @@ pub struct Event {
     /// 0.5.4: `pinch`: `scale` over the previous event's, the step to apply.
     #[pyo3(get)]
     pub(crate) scale_delta: Option<f64>,
+    /// 0.5.7 (#132): `rotate`: the angle the fingers have turned, in radians,
+    /// positive clockwise on the screen.
+    #[pyo3(get)]
+    pub(crate) rotation: Option<f64>,
+    /// 0.5.7 (#132): `rotate`: the turn since the last event, in radians.
+    #[pyo3(get)]
+    pub(crate) rotation_delta: Option<f64>,
+    /// 0.5.7 (#132): `swipe`: `"left"`, `"right"`, `"up"` or `"down"`.
+    #[pyo3(get)]
+    pub(crate) direction: Option<String>,
     /// 0.5.4: `pan`/`pinch`: how far the gesture has moved in all.
     #[pyo3(get)]
     pub(crate) total_x: Option<f64>,
@@ -324,6 +334,9 @@ impl Event {
             count: None,
             scale: None,
             scale_delta: None,
+            rotation: None,
+            rotation_delta: None,
+            direction: None,
             total_x: None,
             total_y: None,
             velocity_x: None,

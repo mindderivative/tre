@@ -67,13 +67,15 @@ A touch screen (0.5.4) delivers each finger as `touch_start`, `touch_move`,
 `touch_end` and `touch_cancel`, with `event.pointer_id` telling fingers apart.
 A finger's events all go to the node it landed on, wherever it moves, so a drag
 that leaves a node keeps reporting to it. The engine also recognizes four
-gestures from the fingers and delivers them as events:
+gestures from the fingers and delivers them as events (rotate and swipe are new in 0.5.7):
 
 | Event | When | Fields |
 | --- | --- | --- |
 | `tap` | a quick touch and release in place | `count` (2 for a double tap) |
 | `long_press` | a touch held in place half a second | position |
 | `pan` | one finger dragging past a 10 pixel slop | `phase`, `delta_x`/`delta_y` (since the last event), `total_x`/`total_y`, and on `"ended"` `velocity_x`/`velocity_y` in pixels a second |
+| `rotate` | the same two fingers turning about their midpoint, past about 7 degrees (0.12 radians) | `phase`, `rotation` (radians from the start, positive clockwise on the screen), `rotation_delta` (since the last event; the first event carries the whole turn so far) |
+| `swipe` | a pan that lifted at 600 pixels a second or more after travelling 40 pixels or more | `direction` (`"left"`, `"right"`, `"up"`, `"down"`: the larger axis), `velocity_x`/`velocity_y`, `total_x`/`total_y`; it follows the pan's own `ended` |
 | `pinch` | two fingers moving together or apart; also a trackpad pinch | `phase`, `scale` (against the start), `scale_delta` (against the last event), `delta_x`/`delta_y` and `total_x`/`total_y` of the midpoint |
 
 ```python
@@ -101,10 +103,33 @@ coast either (its own code decides what a lift means; the `ended` event carries
 already sends its own steady stream of scroll events, so those are left alone.
 There is no overscroll bounce.
 
-Limits: there is no rotation gesture; and the engine's touch handling was written
-and tested with simulated touches (`window.simulate`), not on a touch screen, so
-the coast's friction is a considered default (a 0.35 second decay constant) that
-real fingers may want tuned.
+A rotation comes with the pinch the same fingers make (a pinch's wobble under about
+7 degrees is not one). A swipe is the pan plus its lift: a `pan` listener still gets
+every step, and `swipe` says it was a flick and which way.
+
+Two settings (0.5.7) make touch easier on imprecise fingers, both in layout pixels,
+which are device-independent (a scale factor of 2 does not halve them):
+
+```python
+window.set(touch_slop=14)         # how far a finger may wander and still be a tap
+window.set(touch_target_slop=10)  # a touch this near a button counts as on it
+```
+
+`touch_slop` (default 10) is how far a touch may move before it is a pan rather than
+a tap or a long press. `touch_target_slop` (default 0, off) lets a touch that lands
+within that distance of a node that listens for touches (`click`, `pointer_down`,
+`tap`, `long_press`, `pan`, `swipe`, `pinch`, `rotate` or `touch_start`) go to that node, the
+nearest one, when nothing under the finger listens: its touch events come from that node and the
+press stands in for a pointer press on its box, so a near miss still clicks. The box is the node's layout box,
+before any transform. A touch that lands on a listening node, or inside one, is never pulled elsewhere.
+
+Limits: layout pixels are not millimetres, so a screen that reports a scale factor of
+1 but is physically dense gets a smaller finger than the default expects; `touch_slop`
+and `touch_target_slop` are the app's to raise there (winit gives no physical size to
+derive it from). And the engine's touch handling was written and tested with
+simulated touches (`window.simulate`), not on a touch screen, so the coast's friction
+is a considered default (a 0.35 second decay constant) that real fingers may want
+tuned.
 
 ## Files dragged from the OS
 
@@ -128,7 +153,7 @@ is yours.
 Limits: the OS gives a file drag no position of its own while it is over the window,
 so the node is the one under the pointer's last known position, which on some
 platforms is where it was when the drag entered; for a full-window drop target,
-listen on the window. File drag and drop works on Windows, macOS and X11. It does not
+listen on the window. On X11 this was measured (0.5.7): the pointer does not move during a drag, so a drop whose pointer never entered the window reaches the window's listener and no node's. File drag and drop works on Windows, macOS and X11. It does not
 on Wayland (`winit` 0.30 doesn't implement it there), so a Wayland session never
 fires these events; `simulate` does.
 

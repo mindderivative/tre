@@ -36,6 +36,32 @@ pub enum GestureKind {
     Pan,
     /// Two fingers moving together or apart (and, with them, across).
     Pinch,
+    /// 0.5.7 (#132): two fingers turning about their midpoint, once past the
+    /// rotation slop. Comes with the pinch the same fingers make.
+    Rotate,
+    /// 0.5.7 (#132): a pan that lifted fast and far enough to be a flick in one
+    /// direction. Comes just after the pan's own `Ended`.
+    Swipe { direction: SwipeDirection },
+}
+
+/// The way a swipe went: the pan's dominant axis.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwipeDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+impl SwipeDirection {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+            Self::Up => "up",
+            Self::Down => "down",
+        }
+    }
 }
 
 /// Where a pan or a pinch is in its life. A tap and a long press are one-shot
@@ -68,6 +94,11 @@ pub struct Gesture {
     pub scale_delta: f64,
     /// A pan's speed when its fingers lift, in pixels per second; zero otherwise.
     pub velocity: Vec2,
+    /// A rotation's angle so far, in radians from where the fingers started,
+    /// positive clockwise on the screen (y down); zero for any other gesture.
+    pub rotation: f64,
+    /// A rotation's step since the last event, in radians.
+    pub rotation_delta: f64,
 }
 
 impl Gesture {
@@ -82,6 +113,8 @@ impl Gesture {
             scale: 1.0,
             scale_delta: 1.0,
             velocity: Vec2::ZERO,
+            rotation: 0.0,
+            rotation_delta: 0.0,
         }
     }
 }
@@ -102,6 +135,14 @@ pub struct GestureConfig {
     /// double tap.
     pub double_tap_gap: Duration,
     pub double_tap_distance: f64,
+    /// 0.5.7 (#132): how far two fingers have to turn, in radians, before it is
+    /// a rotation (about 7 degrees): less is the wobble of a pinch.
+    pub rotate_slop: f64,
+    /// 0.5.7 (#132): a pan is a swipe if it lifts at least this fast, in pixels
+    /// a second, ...
+    pub swipe_velocity: f64,
+    /// ... and has travelled at least this far, in pixels.
+    pub swipe_distance: f64,
 }
 
 impl Default for GestureConfig {
@@ -112,7 +153,42 @@ impl Default for GestureConfig {
             tap_max: Duration::from_millis(300),
             double_tap_gap: Duration::from_millis(300),
             double_tap_distance: 30.0,
+            rotate_slop: 0.12,
+            swipe_velocity: 600.0,
+            swipe_distance: 40.0,
         }
+    }
+}
+
+/// The angle of the line from `a` to `b`, in radians (y down: clockwise is positive).
+fn angle(a: Point, b: Point) -> f64 {
+    (b.y - a.y).atan2(b.x - a.x)
+}
+
+/// `to - from` brought into (-pi, pi]: a turn across the branch cut is a small step.
+fn angle_step(from: f64, to: f64) -> f64 {
+    let mut step = to - from;
+    while step > std::f64::consts::PI {
+        step -= std::f64::consts::TAU;
+    }
+    while step <= -std::f64::consts::PI {
+        step += std::f64::consts::TAU;
+    }
+    step
+}
+
+/// Which way a flick went: the larger of the two axes.
+fn swipe_direction(velocity: Vec2) -> SwipeDirection {
+    if velocity.x.abs() >= velocity.y.abs() {
+        if velocity.x < 0.0 {
+            SwipeDirection::Left
+        } else {
+            SwipeDirection::Right
+        }
+    } else if velocity.y < 0.0 {
+        SwipeDirection::Up
+    } else {
+        SwipeDirection::Down
     }
 }
 
@@ -153,6 +229,11 @@ enum State {
         start_distance: f64,
         last_scale: f64,
         began: bool,
+        /// 0.5.7 (#132): the line between the fingers last time, the turn so
+        /// far, and whether it has passed the slop (a rotation has begun).
+        last_angle: f64,
+        rotation: f64,
+        rotating: bool,
     },
     /// A pinch ended with a finger still down: nothing until all lift.
     Spent(Vec<u64>),
@@ -189,6 +270,16 @@ impl GestureRecognizer {
             state: State::Idle,
             last_tap: None,
         }
+    }
+
+    /// 0.5.7 (#132): the distance, in layout pixels, a touch may wander and still
+    /// be a tap or a long press. Takes effect with the next touch.
+    pub fn set_slop(&mut self, slop: f64) {
+        self.config.slop = slop.max(0.0);
+    }
+
+    pub fn slop(&self) -> f64 {
+        self.config.slop
     }
 
     /// Whether any finger is down: the caller should keep polling while so.
@@ -340,7 +431,25 @@ impl GestureRecognizer {
                         samples.push((now, position));
                         gesture.velocity = release_velocity(&samples, now);
                     }
-                    vec![gesture]
+                    let mut out = vec![gesture];
+                    // 0.5.7 (#132): a fast, long enough lift is also a swipe.
+                    if ended
+                        && gesture.velocity.hypot() >= self.config.swipe_velocity
+                        && (position - origin).hypot() >= self.config.swipe_distance
+                    {
+                        let mut swipe = Gesture::new(
+                            GestureKind::Swipe {
+                                direction: swipe_direction(gesture.velocity),
+                            },
+                            GesturePhase::Ended,
+                            position,
+                            origin,
+                        );
+                        swipe.total = gesture.total;
+                        swipe.velocity = gesture.velocity;
+                        out.push(swipe);
+                    }
+                    out
                 }
                 TouchPhase::Started => {
                     self.state = State::Panning {
@@ -390,6 +499,9 @@ impl GestureRecognizer {
                     start_distance,
                     last_scale,
                     began,
+                    last_angle,
+                    rotation,
+                    rotating,
                 },
                 phase,
             ) => {
@@ -410,6 +522,9 @@ impl GestureRecognizer {
                         start_distance,
                         last_scale,
                         began,
+                        last_angle,
+                        rotation,
+                        rotating,
                     };
                     return Vec::new();
                 };
@@ -439,6 +554,31 @@ impl GestureRecognizer {
                         } else {
                             1.0
                         };
+                        // 0.5.7 (#132): the turn of the line between the fingers.
+                        let now_angle = angle(a.position, b.position);
+                        let step = angle_step(last_angle, now_angle);
+                        let rotation = rotation + step;
+                        let was_rotating = rotating;
+                        let rotating = rotating || rotation.abs() >= self.config.rotate_slop;
+                        let mut out = vec![gesture];
+                        if rotating {
+                            // The first event carries the whole turn so far, so an
+                            // app that applies each step ends up at the right angle.
+                            let mut turn = Gesture::new(
+                                GestureKind::Rotate,
+                                if was_rotating {
+                                    GesturePhase::Changed
+                                } else {
+                                    GesturePhase::Began
+                                },
+                                mid,
+                                origin_midpoint,
+                            );
+                            turn.delta = mid - last_midpoint;
+                            turn.rotation = rotation;
+                            turn.rotation_delta = if was_rotating { step } else { rotation };
+                            out.push(turn);
+                        }
                         self.state = State::Pinching {
                             a,
                             b,
@@ -447,8 +587,11 @@ impl GestureRecognizer {
                             start_distance,
                             last_scale: scale,
                             began: true,
+                            last_angle: now_angle,
+                            rotation,
+                            rotating,
                         };
-                        vec![gesture]
+                        out
                     }
                     TouchPhase::Ended | TouchPhase::Cancelled => {
                         finger.position = position;
@@ -469,7 +612,22 @@ impl GestureRecognizer {
                             origin_midpoint,
                         );
                         gesture.scale = last_scale;
-                        vec![gesture]
+                        let mut out = vec![gesture];
+                        if rotating {
+                            let mut turn = Gesture::new(
+                                GestureKind::Rotate,
+                                if phase == TouchPhase::Ended {
+                                    GesturePhase::Ended
+                                } else {
+                                    GesturePhase::Cancelled
+                                },
+                                mid,
+                                origin_midpoint,
+                            );
+                            turn.rotation = rotation;
+                            out.push(turn);
+                        }
+                        out
                     }
                 }
             }
@@ -500,6 +658,9 @@ impl GestureRecognizer {
             start_distance,
             last_scale: 1.0,
             began: false,
+            last_angle: angle(a.position, b.position),
+            rotation: 0.0,
+            rotating: false,
         };
     }
 
@@ -792,5 +953,161 @@ mod tests {
                 .is_empty()
         );
         assert!(r.is_active());
+    }
+
+    // --- 0.5.7 (#132): rotation and swipe
+
+    /// Two fingers `r` apart about (100, 100) at `radians` (0 = the second to the right).
+    fn pair(radians: f64, r: f64) -> (Point, Point) {
+        let (dx, dy) = (radians.cos() * r / 2.0, radians.sin() * r / 2.0);
+        (p(100.0 - dx, 100.0 - dy), p(100.0 + dx, 100.0 + dy))
+    }
+
+    fn rotates(gestures: &[Gesture]) -> Vec<&Gesture> {
+        gestures
+            .iter()
+            .filter(|g| g.kind == GestureKind::Rotate)
+            .collect()
+    }
+
+    /// Moves both fingers to `pair(radians, r)`, finger 1 then finger 2 (each its own
+    /// touch event, as a screen sends them); returns everything they said.
+    fn turn_to(r: &mut GestureRecognizer, c: &Clock, ms: u64, radians: f64) -> Vec<Gesture> {
+        let (a, b) = pair(radians, 100.0);
+        let mut out = r.touch(1, TouchPhase::Moved, a, c.at(ms));
+        out.extend(r.touch(2, TouchPhase::Moved, b, c.at(ms + 1)));
+        out
+    }
+
+    #[test]
+    fn two_fingers_turning_past_the_slop_are_a_rotation_that_begins_with_the_whole_turn() {
+        let (mut r, c) = (GestureRecognizer::default(), clock());
+        let (a0, b0) = pair(0.0, 100.0);
+        r.touch(1, TouchPhase::Started, a0, c.at(0));
+        r.touch(2, TouchPhase::Started, b0, c.at(10));
+        // A small wobble (0.05 rad, under the 0.12 slop): a pinch, no rotation.
+        let g = turn_to(&mut r, &c, 20, 0.05);
+        assert!(rotates(&g).is_empty(), "{g:?}");
+        assert!(g.iter().any(|g| g.kind == GestureKind::Pinch));
+        // Past the slop: it begins once, carrying the whole turn so far, and the
+        // steps add up to the turn.
+        let g = turn_to(&mut r, &c, 30, 0.3);
+        let turns = rotates(&g);
+        assert_eq!(turns[0].phase, GesturePhase::Began);
+        assert!(turns[1..].iter().all(|t| t.phase == GesturePhase::Changed));
+        assert!((turns[0].rotation_delta - turns[0].rotation).abs() < 1e-9);
+        assert!((turns.last().unwrap().rotation - 0.3).abs() < 1e-9);
+        let steps: f64 = turns.iter().map(|t| t.rotation_delta).sum();
+        assert!((steps - 0.3).abs() < 1e-9, "{steps}");
+        // Then only steps.
+        let g = turn_to(&mut r, &c, 40, 0.5);
+        let turns = rotates(&g);
+        assert!(turns.iter().all(|t| t.phase == GesturePhase::Changed));
+        assert!((turns.last().unwrap().rotation - 0.5).abs() < 1e-9);
+        let steps: f64 = turns.iter().map(|t| t.rotation_delta).sum();
+        assert!((steps - 0.2).abs() < 1e-9, "{steps}");
+        // And it ends with the pinch, still carrying the total.
+        let g = r.touch(2, TouchPhase::Ended, pair(0.5, 100.0).1, c.at(50));
+        let turns = rotates(&g);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].phase, GesturePhase::Ended);
+        assert!((turns[0].rotation - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_turn_the_other_way_is_negative_and_a_turn_across_the_branch_cut_is_a_small_step() {
+        let (mut r, c) = (GestureRecognizer::default(), clock());
+        let start = std::f64::consts::PI - 0.1; // just under the cut
+        let (a0, b0) = pair(start, 100.0);
+        r.touch(1, TouchPhase::Started, a0, c.at(0));
+        r.touch(2, TouchPhase::Started, b0, c.at(10));
+        // Clockwise (positive) across pi: the angle wraps to -pi + 0.2.
+        let g = turn_to(&mut r, &c, 20, start + 0.3);
+        assert!((rotates(&g).last().unwrap().rotation - 0.3).abs() < 1e-9);
+        // Back, and past the start the other way.
+        let g = turn_to(&mut r, &c, 30, start - 0.4);
+        assert!((rotates(&g).last().unwrap().rotation - -0.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn two_fingers_that_only_pinch_never_rotate() {
+        let (mut r, c) = (GestureRecognizer::default(), clock());
+        let (a0, b0) = pair(0.0, 100.0);
+        r.touch(1, TouchPhase::Started, a0, c.at(0));
+        r.touch(2, TouchPhase::Started, b0, c.at(10));
+        for (i, width) in [120.0, 160.0, 90.0].into_iter().enumerate() {
+            let (a, b) = pair(0.0, width);
+            r.touch(1, TouchPhase::Moved, a, c.at(20 + i as u64 * 10));
+            let g = r.touch(2, TouchPhase::Moved, b, c.at(25 + i as u64 * 10));
+            assert!(rotates(&g).is_empty());
+        }
+        let g = r.touch(1, TouchPhase::Ended, pair(0.0, 90.0).0, c.at(100));
+        assert!(rotates(&g).is_empty());
+    }
+
+    fn flick(
+        r: &mut GestureRecognizer,
+        c: &Clock,
+        from: Point,
+        to: Point,
+        ms: u64,
+    ) -> Vec<Gesture> {
+        r.touch(1, TouchPhase::Started, from, c.at(0));
+        let steps = 5;
+        for i in 1..=steps {
+            let t = i as f64 / steps as f64;
+            let at = Point::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+            r.touch(1, TouchPhase::Moved, at, c.at(ms * i / steps));
+        }
+        r.touch(1, TouchPhase::Ended, to, c.at(ms))
+    }
+
+    #[test]
+    fn a_fast_long_pan_is_a_swipe_in_its_dominant_direction_after_the_pan_ends() {
+        for (to, direction) in [
+            (p(300.0, 105.0), SwipeDirection::Right),
+            (p(-100.0, 95.0), SwipeDirection::Left),
+            (p(105.0, 300.0), SwipeDirection::Down),
+            (p(95.0, -100.0), SwipeDirection::Up),
+        ] {
+            let (mut r, c) = (GestureRecognizer::default(), clock());
+            let g = flick(&mut r, &c, p(100.0, 100.0), to, 150);
+            assert_eq!(g.len(), 2, "{g:?}");
+            assert_eq!(g[0].kind, GestureKind::Pan);
+            assert_eq!(g[0].phase, GesturePhase::Ended);
+            assert_eq!(g[1].kind, GestureKind::Swipe { direction });
+            assert!(g[1].velocity.hypot() >= 600.0);
+            assert!(g[1].total.hypot() >= 40.0);
+        }
+    }
+
+    #[test]
+    fn a_slow_or_short_pan_is_not_a_swipe() {
+        let (mut r, c) = (GestureRecognizer::default(), clock());
+        // Far but slow (200 px in 2 s = 100 px/s).
+        let g = flick(&mut r, &c, p(0.0, 0.0), p(200.0, 0.0), 2000);
+        assert_eq!(g.len(), 1);
+        // Fast but short (25 px in 20 ms = 1250 px/s, under the 40 px distance).
+        let (mut r, c) = (GestureRecognizer::default(), clock());
+        let g = flick(&mut r, &c, p(0.0, 0.0), p(25.0, 0.0), 20);
+        assert!(
+            g.iter()
+                .all(|g| !matches!(g.kind, GestureKind::Swipe { .. })),
+            "{g:?}"
+        );
+    }
+
+    #[test]
+    fn the_slop_can_be_set_and_the_pan_begins_past_it() {
+        let (mut r, c) = (GestureRecognizer::default(), clock());
+        r.set_slop(30.0);
+        assert_eq!(r.slop(), 30.0);
+        r.touch(1, TouchPhase::Started, p(0.0, 0.0), c.at(0));
+        assert!(
+            r.touch(1, TouchPhase::Moved, p(25.0, 0.0), c.at(10))
+                .is_empty()
+        );
+        let g = r.touch(1, TouchPhase::Moved, p(35.0, 0.0), c.at(20));
+        assert_eq!(g[0].kind, GestureKind::Pan);
     }
 }

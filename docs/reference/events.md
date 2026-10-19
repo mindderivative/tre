@@ -31,6 +31,8 @@ listing the valid ones.
 | `long_press` | A touch held in place for half a second (0.5.4) | yes |
 | `pan` | One finger dragging past a small slop; `phase` is `"began"`, `"changed"`, `"ended"` or `"cancelled"` (0.5.4) | yes |
 | `pinch` | Two fingers moving together or apart, or a trackpad pinch; carries `scale` and `scale_delta` (0.5.4) | yes |
+| `rotate` | Two fingers turning about their midpoint, once past about 7 degrees; carries `rotation` and `rotation_delta` in radians (0.5.7) | yes |
+| `swipe` | A pan that lifted fast (600 px/s) and far (40 px) enough: `direction` is `"left"`, `"right"`, `"up"` or `"down"`, after the pan's own `ended` (0.5.7) | yes |
 | `key_down`, `key_up` | A key is pressed or released while the node, or a descendant, has focus (the root gets keys when nothing is focused) | yes |
 | `input` | Committed text arrives for the focused text field | yes |
 | `focus`, `unfocus` | A node gains or loses keyboard focus | yes |
@@ -180,7 +182,7 @@ window.on("high_contrast", lambda e: use_high_contrast_palette(e.high_contrast))
 The engine reports them and changes nothing itself: durations are the app's to
 shorten, and colours its to swap. Linux reads the settings portal's
 `reduced-motion` and `contrast` (with GNOME's `enable-animations` and
-`high-contrast` for an older portal) and its changes arrive live; Windows reads the
+`high-contrast` for an older portal, read and watched alike, but only where the newer keys are absent) and its changes arrive live; Windows reads the
 client-area animation setting and the High Contrast theme, macOS the "Reduce motion"
 and "Increase contrast" options. Windows and macOS announce no change, so the event
 fires when the window regains focus after one. Only the Linux read is checked on real
@@ -201,6 +203,8 @@ hardware; the Windows and macOS code is compiled for those targets and untested.
 | `phase` | `pan`, `pinch` — `"began"`, `"changed"`, `"ended"`, `"cancelled"` |
 | `count` | `tap` — 1, or 2 for a double tap |
 | `scale`, `scale_delta` | `pinch` — the distance between fingers over what it was at the start, and over what it was at the last event |
+| `rotation`, `rotation_delta` | `rotate` — the angle the fingers have turned from where they started, and since the last event, in radians (positive is clockwise on the screen); the first event carries the whole turn so far |
+| `direction` | `swipe` — `"left"`, `"right"`, `"up"` or `"down"`, the pan's larger axis; `velocity_x`/`velocity_y` and `total_x`/`total_y` come with it |
 | `delta_x`, `delta_y` | (also) `pan`, `pinch` — how far the point (a pan's finger, a pinch's midpoint) moved since the last event |
 | `total_x`, `total_y` | `pan`, `pinch` — how far it has moved in all |
 | `velocity_x`, `velocity_y` | `pan` when it ends — the speed the finger lifted at, in pixels a second |

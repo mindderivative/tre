@@ -12,6 +12,130 @@ real GPUs: the Linux half is done; Windows, macOS and a video input are held),
 drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 `wp_fifo_v1` barriers after a resize).
 
+## After 0.5.7 (unreleased)
+
+### #132, touch: rotation, swipe, the slops (2026-10-18)
+
+Built and tested with simulated fingers (as #113 was), the recognizer's arithmetic in
+`engine-core/src/gesture.rs` (6 new unit tests) and the events in
+`tests/test_touch_extras.py` (13).
+
+- *Momentum:* nothing to add. A pan that lifts mid-flick already coasts the scroller
+  under it (0.5.4: an exponential decay from the release velocity), and an app that
+  takes the pan gets `velocity_x`/`velocity_y` on `ended` to do its own.
+- *Rotation:* a `rotate` event (`rotation`, `rotation_delta` in radians, positive
+  clockwise on the screen) from the same two fingers a pinch uses, once the line
+  between them has turned past 0.12 rad (about 7 degrees); the first event carries
+  the whole turn so far so the steps add up. A turn across the +/- pi branch cut is a
+  small step. It comes with the pinch; a pure pinch sends none.
+- *Swipe:* a `swipe` event (`direction` by the larger axis, `velocity_x`/`y`,
+  `total_x`/`y`) right after a pan's `ended` when it lifted at 600 px/s or more after
+  40 px or more. `GestureConfig` holds the three thresholds.
+- *Slop:* `window.set(touch_slop=...)` (get too; default 10) sets the tap/long-press
+  wander in layout pixels. Layout pixels are already device-independent (a scale
+  factor of 2 does not shrink them), so the issue's "physical size" is only
+  reachable with a monitor size, which winit 0.30 does not give; the setting is the
+  app's lever for dense screens. Documented as a limit.
+- *Touch-target slop:* `window.set(touch_target_slop=...)` (default 0, off). A touch
+  that lands off every listening node (`click`, `pointer_down`, `tap`, `long_press`,
+  `pan`, `swipe`, `pinch`, `rotate`, `touch_start`) goes to the nearest listening
+  node whose layout box is within the slop; its touch events and the pointer press
+  that stands in for the finger go there (the press at the nearest point of its box,
+  while the finger stays within the slop), so a near miss clicks. A touch on a
+  listening node is never pulled to another. The box is the layout box, before any
+  transform. Off by default so nothing changes for existing apps.
+- *Not run:* a real touch screen (none on the dev machine); Windows touch and the
+  macOS trackpad pinch are #187 and #188.
+
+### #133, OS file drag and drop on X11 (2026-10-18)
+
+`tools/xdnd_source.py` is a scripted XDND (version 5) drag source over libX11 and
+ctypes: a separate X client that drags files onto a named window the way a file
+manager does, so the path is exercised with nobody holding the mouse. Against a live
+tre window on XWayland (KDE Plasma, CachyOS):
+
+- *Hover, cancel, drop:* a drag of two files is one `file_hover` with both paths, an
+  abandoned drag (XdndLeave) is one `file_hover_cancel`, a drop is one `file_drop`
+  with both paths; moving the drag over three points does not repeat the hover.
+- *Position:* none. winit 0.30's X11 backend reads the XdndPosition messages itself
+  and does not surface them, and the pointer does not move during a drag, so tre's
+  position for a file event is the pointer's last, wherever it was before. A drop
+  pointed at a node's middle reached the window's listener and not the node's.
+  Documented in the events guide (window-level listeners are the way on X11); a fix
+  needs the drag's own coordinates from winit or a raw XDND handler (filed as #189, a
+  Backlog issue).
+- *Tests:* `tests/test_file_drop_x11.py` (3; need an X display, skip without) covers
+  the multi-file hover and drop as one event each, the cancel, and pins the position
+  limit so it fails when it is fixed.
+- Not run: Wayland (winit 0.30 delivers no file events there), and Windows and
+  macOS, which are #187 and #188.
+
+### #134, the OS reduced-motion and contrast preferences on Linux (2026-10-18)
+
+KDE Plasma 6.8's portal (`xdg-desktop-portal-kde` 6.8.0, settings portal version 2)
+publishes `org.freedesktop.appearance` `contrast` and `reduced-motion` (both 0 here,
+and `window.get` agrees). Found by writing the test: the watcher listened only to the
+appearance namespace, so on a portal older than those keys (GNOME's
+`enable-animations` and `high-contrast`) the reads fell back but a live change never
+arrived. It now watches every `SettingChanged`, and the GNOME keys count only where
+the newer ones are absent, as in the reads.
+
+`tests/test_os_preferences_live.py` drives a real window through a stand-in portal
+(`tests/fake_portal.py`, PyGObject) on a throwaway `dbus-daemon`, so no desktop
+setting is touched: the reads from a new-key portal, from a GNOME-only portal and
+with no portal (`None`); live events from the new keys (an unchanged value says
+nothing); live events from the GNOME keys (fails on the old watcher); and the GNOME
+keys not overriding a portal that has the new ones. The event cases need a display,
+the rest only the bus; all skip without `dbus-daemon` or PyGObject.
+
+Not done: flipping the real setting in System Settings, which changes the
+maintainer's desktop. The manual check is `python examples/accessibility_preferences.py
+--watch`, then change the setting and watch the card; Windows and macOS are #187
+and #188.
+
+### #91, the shader check under X11 on the real GPU (2026-10-18)
+
+Same machine as the Wayland checks (AMD Radeon 890M, RADV, Mesa 26.2.4, KDE Plasma
+on CachyOS; llvmpipe the software adapter), run in an XWayland window
+(`env -u WAYLAND_DISPLAY DISPLAY=:0`, the process maps libvulkan_radeon and the
+xcb/X11 libraries). A native Plasma X11 session was not tried; XWayland is the X11
+path Mesa uses here. `tools/check_shaders_live.py` is the new live script.
+
+- *Pixel tests:* `shader_fill` 28/28 on RADV and on llvmpipe (offscreen, so the
+  window system does not enter it).
+- *The examples, RADV against llvmpipe under X11:* `shader_panel` 36.2% of pixels
+  by one level, `shader_shine` 0.14%, nothing larger: the same as under Wayland.
+  Both examples run live on RADV under X11 and exit clean.
+- *Video input:* an `image` node whose pixels are replaced 30 times (the video
+  case, see the painting guide) feeds a shader; every frame's snapshot shows that
+  frame's colour (30 of 30).
+- *Effect over children across resizes (X11):* equal to a direct draw (0 differing
+  pixels) at 560x400, 700x460 and 820x520, forced by raising the minimum size.
+- *CPU:* a still shader and an empty window idle at 0.0 to 0.2% of a core with no
+  frames drawn; an animated one 3.3 to 3.9% at 60 frames a second, the same on X11
+  and Wayland. (`App.run(max_frames=...)` runs flat out, so an idle measurement must
+  not use it: it read 99% until that was removed.)
+- *Banding:* the checklist wording does not fit the Julia example. Its colour steps
+  are the shader's own integer escape count; `julia.wgsl` now says so.
+- Not run: a real `gpu_stalled` or `gpu_lost` (can freeze the compositor), and a
+  native X11 session. Windows (DX12) and macOS (Metal) are #187 and #188.
+
+### #158: the burst of `wp_fifo_v1` barriers after a resize (2026-10-18)
+
+Finding: not a bug. `RUST_LOG=engine_py=debug` now logs `resize pacing began`
+(with the size) and `resize pacing settled`. A sweep of real size requests on KDE
+Wayland (RADV, Mesa 26.2.4; the window's minimum size raised every 16 ms for 1.5 s,
+traced with `WAYLAND_DEBUG=1`) showed one `began`, one `settled` 0.4 s after the
+last resize, and one swapchain reconfigure at the restore. During the sweep there
+were 0 barriers (Mailbox); at the restore three `set_barrier`/`wait_barrier`
+commits landed 0.2 ms apart, then one every 16.7 ms: the new vsync swapchain's
+images being presented as fast as the loop could fill them, until the fifo
+throttles. That is the swapchain's frame depth, not the restore flipping back and
+forth. The 12 in the Tesserae run is the same effect on a deeper queue or a busier
+frame. A test pins that each sweep ends in exactly one restore and a resumed sweep
+starts a fresh cycle. Not run: an interactive compositor-driven resize (no way to
+inject pointer drags on Wayland here).
+
 ## 0.5.7 (released 2026-10-17)
 
 Milestone 0.5.7: #168, #169, #175 to #179 and the Linux half of #91. It was built

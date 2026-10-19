@@ -263,6 +263,35 @@ mod tests {
     }
 
     #[test]
+    fn every_restore_reconfigures_once_and_a_sweep_that_resumes_starts_a_new_cycle() {
+        // 0.5.7 (#158): the restore is one `settle`, so one swapchain
+        // reconfigure; a resize arriving after it starts a fresh cycle and ends
+        // with exactly one more. The loop never flips back and forth.
+        use std::time::{Duration, Instant};
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        let mut pacing = ResizePacing::default();
+        let mut restores = 0;
+        for cycle in 0..3u64 {
+            let start = t0 + ms(cycle * 2_000);
+            // A sweep of resizes every 16 ms for a second, polled all along.
+            for step in 0..60u64 {
+                let now = start + ms(step * 16);
+                pacing.resized(now);
+                assert!(!pacing.settle(now), "no restore while the sweep goes on");
+            }
+            let last = start + ms(59 * 16);
+            for poll in 0..200u64 {
+                if pacing.settle(last + ms(poll * 5)) {
+                    restores += 1;
+                }
+            }
+            assert!(!pacing.active(), "at rest after the restore");
+        }
+        assert_eq!(restores, 3, "one restore per sweep");
+    }
+
+    #[test]
     fn resizing_never_makes_a_low_latency_window_wait_for_the_display() {
         use std::time::Instant;
         let mut pacing = ResizePacing::default();

@@ -17,6 +17,10 @@ fn shade(p: Pixel) -> vec4<f32> {
     if (steps >= 80.0) {
         return vec4<f32>(u.inside.rgb, 1.0);
     }
+    // The flat colour steps are deliberate: `steps` is a whole number, so the
+    // colour changes once per escape count. They are not a precision or
+    // banding fault, and they are the same on every adapter (checked on RADV
+    // and llvmpipe, Wayland and X11: no pixel differs by more than one level).
     let m = steps / 80.0;
     let wave = 0.5 + 0.5 * cos(6.28318 * (vec3<f32>(m * 2.5) + vec3<f32>(0.0, 0.33, 0.67)));
     return vec4<f32>(wave * 0.9 + vec3<f32>(0.05), 1.0);

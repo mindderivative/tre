@@ -216,32 +216,38 @@ pub(crate) mod portal {
                 let Ok(proxy) = proxy(&connection) else {
                     return;
                 };
-                let Ok(changes) =
-                    proxy.receive_signal_with_args("SettingChanged", &[(0, NAMESPACE)])
-                else {
+                // Every setting, not just the appearance namespace: a portal
+                // older than the reduced-motion and contrast keys announces
+                // GNOME's `enable-animations` and `high-contrast` instead.
+                let Ok(changes) = proxy.receive_signal("SettingChanged") else {
                     return;
                 };
                 let mut last_dark = read().ok().flatten();
                 let mut last_motion = reduced_motion();
                 let mut last_contrast = high_contrast();
                 for message in changes {
-                    let Ok((_, key, value)) =
+                    let Ok((namespace, key, value)) =
                         message.body().deserialize::<(String, String, OwnedValue)>()
                     else {
                         continue;
                     };
-                    let Some(raw) = scheme_of(&value) else {
-                        continue;
-                    };
-                    let change = match key.as_str() {
-                        KEY => match super::scheme_is_dark(raw) {
-                            Some(dark) if last_dark != Some(dark) => {
-                                last_dark = Some(dark);
-                                Change::Dark(dark)
+                    let change = match (namespace.as_str(), key.as_str()) {
+                        (NAMESPACE, KEY) => {
+                            let Some(raw) = scheme_of(&value) else {
+                                continue;
+                            };
+                            match super::scheme_is_dark(raw) {
+                                Some(dark) if last_dark != Some(dark) => {
+                                    last_dark = Some(dark);
+                                    Change::Dark(dark)
+                                }
+                                _ => continue,
                             }
-                            _ => continue,
-                        },
-                        "reduced-motion" => {
+                        }
+                        (NAMESPACE, "reduced-motion") => {
+                            let Some(raw) = scheme_of(&value) else {
+                                continue;
+                            };
                             let reduced = super::reduced_motion_of(raw);
                             if last_motion == Some(reduced) {
                                 continue;
@@ -249,8 +255,38 @@ pub(crate) mod portal {
                             last_motion = Some(reduced);
                             Change::ReducedMotion(reduced)
                         }
-                        "contrast" => {
+                        (NAMESPACE, "contrast") => {
+                            let Some(raw) = scheme_of(&value) else {
+                                continue;
+                            };
                             let high = super::high_contrast_of(raw);
+                            if last_contrast == Some(high) {
+                                continue;
+                            }
+                            last_contrast = Some(high);
+                            Change::HighContrast(high)
+                        }
+                        // The older portal's keys count only where the newer
+                        // ones are absent, as in `reduced_motion` itself.
+                        ("org.gnome.desktop.interface", "enable-animations")
+                            if appearance_u32("reduced-motion").is_none() =>
+                        {
+                            let Some(on) = bool_of(&value) else {
+                                continue;
+                            };
+                            let reduced = !on;
+                            if last_motion == Some(reduced) {
+                                continue;
+                            }
+                            last_motion = Some(reduced);
+                            Change::ReducedMotion(reduced)
+                        }
+                        ("org.gnome.desktop.a11y.interface", "high-contrast")
+                            if appearance_u32("contrast").is_none() =>
+                        {
+                            let Some(high) = bool_of(&value) else {
+                                continue;
+                            };
                             if last_contrast == Some(high) {
                                 continue;
                             }
