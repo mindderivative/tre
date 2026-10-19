@@ -1,6 +1,6 @@
 # LayerWindow: the design (#198)
 
-Phase 2 of [#195](https://github.com/mindderivative/tre/issues/195) (TRE-REQ-001 from Tesserae Shell). **Proposed, not built.** It rests on the spike's findings (`layer-surface-spike.md`, #196): layer surfaces on a second event queue of the `wl_display` `winit` owns. Where the maintainer has to choose, the choice is marked **Decision** with a recommendation.
+Phase 2 of [#195](https://github.com/mindderivative/tre/issues/195) (TRE-REQ-001 from Tesserae Shell). **Decided 2026-10-19, in build (#198).** It rests on the spike's findings (`layer-surface-spike.md`, #196): layer surfaces on a second event queue of the `wl_display` `winit` owns. Where the maintainer has to choose, the choice is marked **Decision** with a recommendation.
 
 ## What it is
 
@@ -50,7 +50,7 @@ The spike measured the seams; none is large.
 - **Input.** A second seat delivers pointer, button, scroll and key events to the layer side. Both seats receive every surface's events, so every handler first checks the event's surface is its own. Key repeat is tre's own timer (the toolkit's needs a second event loop); the cursor comes from `wp_cursor_shape_v1`; touch is written to the protocol and untestable on the dev machine; IME (`zwp_text_input_v3`) comes last and may be its own issue.
 - **Headless.** A `Window` with no OS window already runs `simulate`, `advance` and `snapshot` with no display. A `LayerWindow` constructed where there is no layer shell would raise, so the headless path needs a way to build one for tests: the constructor takes the validation and state without the surface, and the surface exists only once `App.run()` opens it on a compositor that has the role.
 
-## Decisions for the maintainer
+## Decisions (the maintainer accepted all five recommendations, 2026-10-19)
 
 1. **A subclass of `Window`, or one `Window` with a role.** *Recommendation: the subclass (shown to work).* It keeps `Window`'s signature unchanged and `LayerWindow`'s extra keys honest; a role flag would put layer-only keys on every window and make most `set()` errors a runtime role check.
 2. **Raise `UnsupportedPlatform`, or degrade to a plain window.** *Recommendation: raise.* A bar that quietly lacks its exclusive zone is a worse failure than a clear error; the shell can build its own fallback from `Window`.
