@@ -87,6 +87,7 @@ pub mod layer_config;
 mod layer_keys;
 #[cfg(target_os = "linux")]
 mod layer_loop;
+pub mod outputs;
 #[cfg(target_os = "linux")]
 pub use layer_loop::window_id as layer_window_id;
 pub mod titlebar;
@@ -467,6 +468,9 @@ enum PlatformEvent {
     /// 0.5.7 (#198): something the layer thread has to say.
     #[cfg(target_os = "linux")]
     Layer(layer::LayerEvent),
+    /// 0.5.7 (#202): start reporting output changes (`EventLoopWaker::watch_outputs`).
+    #[cfg(target_os = "linux")]
+    WatchOutputs,
 }
 
 impl From<accesskit_winit::Event> for PlatformEvent {
@@ -543,6 +547,13 @@ impl EventLoopWaker {
     #[cfg(target_os = "linux")]
     pub fn open_layer(&self, request: layer::LayerRequest) {
         let _ = self.proxy.send_event(PlatformEvent::OpenLayer(request));
+    }
+
+    /// 0.5.7 (#202): asks the loop to start reporting output changes to the
+    /// `LayerHooks`, if it is not already.
+    #[cfg(target_os = "linux")]
+    pub fn watch_outputs(&self) {
+        let _ = self.proxy.send_event(PlatformEvent::WatchOutputs);
     }
 
     /// 0.5.0 M2 (issue #28): asks the loop to close window `id` as if the
@@ -900,6 +911,7 @@ impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
     fn wake_layers(&mut self) {}
     fn tell_layers(&mut self, _: InputEvent) {}
     fn shutdown_layers(&mut self) {}
+    fn start_output_watch(&mut self, _: &ActiveEventLoop) {}
 }
 
 impl<C, F, A, N, X, L> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X, L>
@@ -929,6 +941,7 @@ where
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         cursors::flush(event_loop);
         self.attach();
+        self.start_output_watch(event_loop);
         // Windows are created lazily, in `user_event`, as `OpenWindow`
         // requests arrive -- not eagerly here. `setup`'s own
         // `open_window` calls (sent before the loop starts) are queued
@@ -1164,6 +1177,13 @@ where
             PlatformEvent::OpenLayer(request) => self.open_layer(event_loop, request),
             #[cfg(target_os = "linux")]
             PlatformEvent::Layer(event) => self.layer_event(event_loop, event),
+            #[cfg(target_os = "linux")]
+            PlatformEvent::WatchOutputs => {
+                if let Some(hooks) = &mut self.layer_hooks {
+                    hooks.watch_outputs = true;
+                }
+                self.start_output_watch(event_loop);
+            }
         }
     }
 

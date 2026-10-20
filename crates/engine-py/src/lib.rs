@@ -28,6 +28,7 @@ mod node_handles;
 mod node_kind_props;
 mod node_layout;
 mod node_props;
+mod outputs;
 mod scale;
 mod shader;
 mod shaper;
@@ -53,6 +54,7 @@ pub use error::EngineError;
 pub use event::Event;
 pub use layer_window::PyLayerWindow;
 pub use node::Node;
+pub use outputs::PyOutput;
 pub use shader::Shader;
 pub use thread_handle::LoopHandle;
 pub use window::PyWindow;
@@ -65,6 +67,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<App>()?;
     m.add_class::<PyWindow>()?;
     m.add_class::<PyLayerWindow>()?;
+    m.add_class::<PyOutput>()?;
     m.add(
         "UnsupportedPlatform",
         m.py().get_type::<layer_window::UnsupportedPlatform>(),

@@ -62,6 +62,26 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 - Installs a `tracing` log subscriber as early as possible — set
   `RUST_LOG` to control verbosity (e.g. `RUST_LOG=warn python app.py`).
 
+## `outputs`
+
+**`outputs() -> list[Output]`** (0.5.7) — the screens the compositor has, top to bottom and left
+to right, read now, so it works before `run()` (a shell decides how many bars to make first). Each
+is an [`Output`](outputs.md). The list is empty where the platform cannot say: on anything but
+Wayland, and where the compositor does not report connector names.
+
+```python
+for out in app.outputs():
+    app.add_window(make_bar(output=out))
+```
+
+## `on`, `off` and `simulate`
+
+**`on(event, handler)`**, **`off(event)`**, **`simulate(event, **fields)`** (0.5.7) — listeners for
+changes in the set of screens: `output_added`, `output_removed` and `output_updated`. A handler
+takes the [`Output`](outputs.md) (or nothing). There is one handler per event and a second `on`
+replaces it. See [Outputs](outputs.md#events). `simulate` delivers an event as the compositor
+would, for tests with no display.
+
 ## `thread_handle`
 
 **`thread_handle() -> LoopHandle`**

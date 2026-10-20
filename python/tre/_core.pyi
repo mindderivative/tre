@@ -37,6 +37,7 @@ __all__ = [
     "App",
     "Window",
     "LayerWindow",
+    "Output",
     "Node",
     "Painter",
     "Event",
@@ -832,8 +833,8 @@ class LayerWindow(Window):
     `exclusive_zone` is how many pixels to reserve along the anchored edge (0 reserves
     none, -1 ignores other surfaces' zones). `margin` is `(top, right, bottom, left)`, or
     one number for all four; a negative margin is accepted. `keyboard` is `"none"`,
-    `"on_demand"` or `"exclusive"`. `output` is a connector name such as `"DP-1"`; `None`
-    lets the compositor choose, and it chooses differently from run to run.
+    `"on_demand"` or `"exclusive"`. `output` is an `Output` (from `App.outputs()`) or a connector name such as
+    `"DP-1"`; `None` lets the compositor choose, and it chooses differently from run to run.
 
     The protocol's errors raise `ValueError` naming the key, before anything is sent to
     the compositor. It raises `UnsupportedPlatform` where there is no layer shell (X11,
@@ -859,7 +860,7 @@ class LayerWindow(Window):
         exclusive_edge: None = ...,
         margin: int | tuple[int, int, int, int] | None = ...,
         keyboard: Literal["none", "on_demand", "exclusive"] = ...,
-        output: str | None = ...,
+        output: str | Output | None = ...,
     ) -> LayerWindow: ...
     def set(self, **props: Any) -> None:
         """Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`,
@@ -879,6 +880,47 @@ class LayerWindow(Window):
         """Closes the surface on the loop's next turn: `close_requested` first (a listener may
         cancel it with `event.cancel()`), then `closed` with reason `"app"`."""
         ...
+
+@final
+class Output:
+    """(0.5.7) A screen the compositor has. Read-only; two `Output`s are equal when their
+    connector names are. Get them from `App.outputs()` or an output event's handler;
+    `LayerWindow(output=...)` takes one."""
+
+    @property
+    def name(self) -> str:
+        """The connector name (`"DP-1"`, `"HDMI-A-1"`): stable across runs."""
+        ...
+    @property
+    def description(self) -> str:
+        """The compositor's description (make, model, serial)."""
+        ...
+    @property
+    def x(self) -> int:
+        """The output's left edge in the desktop's logical layout."""
+        ...
+    @property
+    def y(self) -> int:
+        """The output's top edge in the desktop's logical layout."""
+        ...
+    @property
+    def width(self) -> int:
+        """The logical width, in pixels."""
+        ...
+    @property
+    def height(self) -> int:
+        """The logical height, in pixels."""
+        ...
+    @property
+    def scale_factor(self) -> float:
+        """Physical over logical pixels: 1.5 on a 1.5x output."""
+        ...
+    @property
+    def transform(self) -> str:
+        """`"normal"`, `"90"`, `"180"`, `"270"`, or one of those after `"flipped_"`."""
+        ...
+    def __eq__(self, other: object, /) -> bool: ...
+    def __hash__(self) -> int: ...
 
 class UnsupportedPlatform(RuntimeError):
     """A feature this platform does not have: `LayerWindow` needs a Wayland compositor with
@@ -921,6 +963,27 @@ class App:
         be set up (no adapter, no device, or an unsupported surface), or
         if no window was added.
         """
+        ...
+    def outputs(self) -> list[Output]:
+        """(0.5.7) The screens the compositor has, top to bottom and left to right, read
+        now (so it works before `run()`). Empty where the platform cannot say (not
+        Wayland)."""
+        ...
+    def on(self, event: Literal["output_added", "output_removed", "output_updated"], handler: Callable[..., object]) -> None:
+        """(0.5.7) Registers `handler(output)` for a screen being plugged in, removed, or
+        moved, resized, rescaled or rotated. One handler per event; a second replaces
+        the first. Outputs that exist when the app starts are not "added": read them
+        with `outputs()`. Needs the compositor's layer shell (the events come from the
+        same connection a `LayerWindow` uses)."""
+        ...
+    def off(self, event: Literal["output_added", "output_removed", "output_updated"]) -> None:
+        """(0.5.7) Removes the handler for an output event."""
+        ...
+    def simulate(self, event: Literal["output_added", "output_removed", "output_updated"], **fields: Any) -> None:
+        """(0.5.7) Delivers an output event as the compositor would, for tests with no
+        display: `app.simulate("output_added", name="DP-2", width=2560, height=1440)`.
+        Fields: `name` (required), `description`, `x`, `y`, `width`, `height`,
+        `scale_factor`, `transform`."""
         ...
 
 @final
