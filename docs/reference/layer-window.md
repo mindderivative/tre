@@ -40,7 +40,7 @@ margin=0, keyboard="none", output=None)`**
 | `exclusive_zone` | Pixels to reserve along the anchored edge, so maximised windows stop short of it. `0` reserves none; `-1` ignores other surfaces' zones and takes the whole output. A positive zone counts only for a surface anchored to one edge, or to one edge and both edges across it (a bar anchored `"top"`, `"left"`, `"right"`); with any other `anchor` the compositor treats it as `0`, and a `warning` event says so. |
 | `margin` | `(top, right, bottom, left)` in logical pixels, or one number for all four. Negative is accepted and moves the surface past the screen edge. |
 | `keyboard` | `"none"`: never gets key events. `"on_demand"`: gets them when the user focuses it (a click). `"exclusive"`: takes the keyboard on opening, and nothing else gets keys until it closes. |
-| `output` | An [`Output`](outputs.md) (from `App.outputs()`) or a connector name (`"DP-1"`, `"HDMI-A-1"`) to bind it to. `None` lets the compositor choose, and it chooses differently from run to run, so a surface meant for one screen names it. Constructor only. |
+| `output` | An [`Output`](outputs.md) (from `App.outputs()`) or a connector name (`"DP-1"`, `"HDMI-A-1"`) to bind it to. `None` picks the output at position (0, 0), or the first by name if none is there, the same on every run (the compositor's own choice alternates). A surface meant for another screen names it. Constructor only. |
 
 `exclusive_edge` (the edge a corner-anchored surface's zone is for) needs layer-shell
 protocol version 5, which this build does not bind yet; passing it raises `ValueError`.
@@ -87,7 +87,7 @@ Window events apply, with these additions (see [Events](events.md)):
 
 | Event | Fires | Fields |
 |---|---|---|
-| `configure` | The compositor assigned a size: when the surface first has one, and whenever it changes. `resize` fires too. | `width`, `height` in logical pixels |
+| `configure` | The compositor assigned a size: when the surface first has one, and whenever it changes (a repeat of the same size, which sway sends, is not a change). `resize` fires too. | `width`, `height` in logical pixels |
 | `closed` | The surface is gone | `reason`: `"compositor"`, `"output_removed"` or `"app"` |
 | `output_changed` | The surface entered an output | `output`: its connector name |
 | `warning` | A setting the protocol accepts but ignores | `key` (the setting), `message` |

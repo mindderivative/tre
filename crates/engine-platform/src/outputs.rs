@@ -78,6 +78,22 @@ pub enum OutputEvent {
     Removed(OutputInfo),
 }
 
+/// Which output a surface with no `output` goes to, given each output's `(name, x, y)`:
+/// the one at (0, 0), else the first by name. The compositor's own choice alternates
+/// between runs, so a surface meant for "the main screen" would move.
+pub fn default_output(outputs: &[(String, i32, i32)]) -> Option<usize> {
+    outputs
+        .iter()
+        .position(|(_, x, y)| (*x, *y) == (0, 0))
+        .or_else(|| {
+            outputs
+                .iter()
+                .enumerate()
+                .min_by(|a, b| a.1.0.cmp(&b.1.0))
+                .map(|(i, _)| i)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,5 +147,20 @@ mod tests {
         assert_eq!(transform_name(3), "270");
         assert_eq!(transform_name(5), "flipped_90");
         assert_eq!(transform_name(99), "normal");
+    }
+
+    #[test]
+    fn the_default_output_is_the_one_at_the_origin_else_the_first_by_name() {
+        let o = |n: &str, x, y| (n.to_string(), x, y);
+        assert_eq!(
+            default_output(&[o("DP-1", 0, 1080), o("HDMI-A-1", 0, 0)]),
+            Some(1)
+        );
+        assert_eq!(
+            default_output(&[o("HDMI-A-1", 10, 0), o("DP-1", 0, 1080)]),
+            Some(1)
+        );
+        assert_eq!(default_output(&[o("B", 5, 5), o("A", 1, 1)]), Some(1));
+        assert_eq!(default_output(&[]), None);
     }
 }

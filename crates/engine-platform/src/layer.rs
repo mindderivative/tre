@@ -485,6 +485,10 @@ struct State {
     known_outputs: HashMap<ObjectId, OutputInfo>,
     /// Set once the initial roundtrips are done: outputs that exist at start are not news.
     outputs_ready: bool,
+    /// Surfaces the compositor has closed whose reason is not yet known: a compositor
+    /// sends `closed` before it removes the output, so the reason is settled after a
+    /// roundtrip (see `settle_closed`).
+    closing: Vec<u64>,
     alive: bool,
 }
 
@@ -571,9 +575,42 @@ impl State {
         layer.commit();
     }
 
+    /// Emits `Closed` for each surface the compositor closed. A surface bound to an output
+    /// that is no longer there was closed because of it, and that is only known once the
+    /// removal has been read, so the caller roundtrips first.
+    fn settle_closed(&mut self) {
+        for id in std::mem::take(&mut self.closing) {
+            let output_gone = self.surfaces.get(&id).is_some_and(|s| {
+                s.output
+                    .as_ref()
+                    .is_some_and(|o| self.outputs.info(o).is_none())
+            });
+            let reason = if output_gone {
+                CloseReason::OutputRemoved
+            } else {
+                CloseReason::Compositor
+            };
+            // Not destroyed here: the loop drops its `wgpu` surface first and then asks
+            // for `Destroy`, so the `wl_surface` is never gone while a swapchain uses it.
+            self.emit(LayerEvent::Closed { id, reason });
+        }
+    }
+
     fn create(&mut self, qh: &QueueHandle<Self>, id: u64, config: LayerConfig) {
         let output = match &config.output {
-            None => None,
+            None => {
+                // Not the compositor's choice: it alternates between runs.
+                let all: Vec<_> = self.outputs.outputs().collect();
+                let infos: Vec<(String, i32, i32)> = all
+                    .iter()
+                    .filter_map(|o| output_info(&self.outputs, o).map(|i| (i.name, i.x, i.y)))
+                    .collect();
+                if infos.len() == all.len() {
+                    crate::outputs::default_output(&infos).map(|i| all[i].clone())
+                } else {
+                    None
+                }
+            }
             Some(name) => {
                 let found = self
                     .outputs
@@ -845,20 +882,8 @@ impl LayerShellHandler for State {
             .find(|(_, s)| s.layer.wl_surface() == layer.wl_surface())
             .map(|(id, _)| *id);
         let Some(id) = id else { return };
-        // A surface bound to an output that is no longer there was closed because of it.
-        let output_gone = self.surfaces.get(&id).is_some_and(|s| {
-            s.output
-                .as_ref()
-                .is_some_and(|o| self.outputs.info(o).is_none())
-        });
-        let reason = if output_gone {
-            CloseReason::OutputRemoved
-        } else {
-            CloseReason::Compositor
-        };
-        // Not destroyed here: the loop drops its `wgpu` surface first and then asks
-        // for `Destroy`, so the `wl_surface` is never gone while a swapchain uses it.
-        self.emit(LayerEvent::Closed { id, reason });
+        // The reason waits for the output's fate: `closed` comes before the removal.
+        self.closing.push(id);
     }
 
     fn configure(
@@ -1368,6 +1393,7 @@ fn run(
         touch_positions: HashMap::new(),
         known_outputs: HashMap::new(),
         outputs_ready: false,
+        closing: Vec::new(),
         alive: true,
     };
     // Learn the outputs and seats before anything is asked of them.
@@ -1425,6 +1451,10 @@ fn run(
         if queue.dispatch_pending(&mut state).is_err() {
             break;
         }
+        if !state.closing.is_empty() {
+            let _ = queue.roundtrip(&mut state);
+            state.settle_closed();
+        }
         let timeout = state.repeat.as_ref().map_or(-1, |r| {
             r.next
                 .saturating_duration_since(Instant::now())
@@ -1456,6 +1486,10 @@ fn run(
         }
         if queue.dispatch_pending(&mut state).is_err() {
             break;
+        }
+        if !state.closing.is_empty() {
+            let _ = queue.roundtrip(&mut state);
+            state.settle_closed();
         }
     }
     // Every surface is destroyed before the thread (and its queue) goes.
