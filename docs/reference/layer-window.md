@@ -29,7 +29,7 @@ app.run()
 ## The settings
 
 **`LayerWindow(namespace, *, layer="top", anchor=None, size=(0, 0), exclusive_zone=0,
-margin=0, keyboard="none", output=None)`**
+margin=0, keyboard="none", output=None, input_region=None)`**
 
 | Setting | Meaning |
 |---|---|
@@ -41,6 +41,7 @@ margin=0, keyboard="none", output=None)`**
 | `margin` | `(top, right, bottom, left)` in logical pixels, or one number for all four. Negative is accepted and moves the surface past the screen edge. |
 | `keyboard` | `"none"`: never gets key events. `"on_demand"`: gets them when the user focuses it (a click). `"exclusive"`: takes the keyboard on opening, and nothing else gets keys until it closes. |
 | `output` | An [`Output`](outputs.md) (from `App.outputs()`) or a connector name (`"DP-1"`, `"HDMI-A-1"`) to bind it to. `None` picks the output at position (0, 0), or the first by name if none is there, the same on every run (the compositor's own choice alternates). A surface meant for another screen names it. Constructor only. |
+| `input_region` | Where the compositor delivers pointer and touch input. `None`: the whole surface. `[]`: nothing, so clicks fall through to the window below. A list of `(x, y, width, height)` rectangles in logical pixels from the surface's top-left, rounded outward, at most 256: input lands only inside them. Live through `set()`. `click_through=True` is `input_region=[]` on a `LayerWindow` (and `False` gives the whole surface back); giving both with different meanings raises `ValueError`. `"auto"` (the shapes of drawn nodes) is not available yet. |
 
 `exclusive_edge` (the edge a corner-anchored surface's zone is for) needs layer-shell
 protocol version 5, which this build does not bind yet; passing it raises `ValueError`.
@@ -113,9 +114,7 @@ new `LayerWindow` for a new output.
 
 ## Not yet
 
-`input_region` (so a transparent
-surface can let clicks through), animating a margin, dragging a surface by its margin,
-and `PopupWindow` are later parts of the same work (issue #195). Until `input_region`
-exists a surface takes pointer input over its whole area, so a full-screen transparent
-surface would block the desktop. AccessKit (screen reader) support for layer surfaces
-has not been checked.
+Animating a margin, dragging a surface by its margin,
+and `PopupWindow` are later parts of the same work (issue #195). `input_region="auto"` (a region that
+follows the drawn shapes) is the second half of #204. AccessKit (screen reader) support for layer
+surfaces has not been checked.

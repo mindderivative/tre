@@ -138,6 +138,61 @@ pub struct LayerConfig {
     pub keyboard: KeyboardMode,
     /// A connector name (`"DP-1"`); `None` lets the compositor choose.
     pub output: Option<String>,
+    /// Where the compositor delivers pointer and touch input, as `(x, y, width, height)`
+    /// rectangles in logical pixels from the surface's top-left. `None` is the whole
+    /// surface; `Some(vec![])` is nothing (clicks fall through).
+    pub input_region: Option<Vec<Rect>>,
+}
+
+/// `(x, y, width, height)` in whole logical pixels.
+pub type Rect = (i32, i32, i32, i32);
+
+/// The most rectangles one input region may have. A shape the engine decomposes into
+/// scanline bands stays well inside this; a hand-written list that exceeds it is refused.
+pub const MAX_REGION_RECTS: usize = 256;
+
+/// Explicit rectangles as given (floats, logical pixels) to whole-pixel ones, rounded
+/// outward so a rectangle never shrinks: a click on a pixel the app drew is never lost.
+pub fn region_from_floats(rects: &[(f64, f64, f64, f64)]) -> Result<Vec<Rect>, ConfigError> {
+    if rects.len() > MAX_REGION_RECTS {
+        return Err(error(
+            "input_region",
+            format!(
+                "has {} rectangles; at most {MAX_REGION_RECTS} are allowed",
+                rects.len()
+            ),
+        ));
+    }
+    let mut out = Vec::with_capacity(rects.len());
+    for &(x, y, w, h) in rects {
+        if !(x.is_finite() && y.is_finite() && w.is_finite() && h.is_finite()) {
+            return Err(error(
+                "input_region",
+                "rectangle values must be finite numbers",
+            ));
+        }
+        if w <= 0.0 || h <= 0.0 {
+            return Err(error(
+                "input_region",
+                "each rectangle needs a width and a height above 0 (use [] for no input)",
+            ));
+        }
+        let (left, top) = (x.floor(), y.floor());
+        let (right, bottom) = ((x + w).ceil(), (y + h).ceil());
+        if [left, top, right, bottom]
+            .iter()
+            .any(|v| v.abs() > f64::from(i32::MAX / 2))
+        {
+            return Err(error("input_region", "rectangle values are out of range"));
+        }
+        out.push((
+            left as i32,
+            top as i32,
+            (right - left) as i32,
+            (bottom - top) as i32,
+        ));
+    }
+    Ok(out)
 }
 
 impl Default for LayerConfig {
@@ -152,6 +207,7 @@ impl Default for LayerConfig {
             margin: (0, 0, 0, 0),
             keyboard: KeyboardMode::None,
             output: None,
+            input_region: None,
         }
     }
 }
@@ -229,6 +285,17 @@ impl LayerConfig {
             return Err(error(
                 "exclusive_zone",
                 "must be a number of pixels, 0, or -1 (ignore other surfaces' zones)",
+            ));
+        }
+        if let Some(rects) = &self.input_region
+            && rects.len() > MAX_REGION_RECTS
+        {
+            return Err(error(
+                "input_region",
+                format!(
+                    "has {} rectangles; at most {MAX_REGION_RECTS} are allowed",
+                    rects.len()
+                ),
             ));
         }
         let mut warnings = Vec::new();
@@ -409,5 +476,22 @@ mod tests {
         assert_eq!(a.names(), vec!["top", "left", "right"]);
         assert_eq!(parse_anchor(["middle"]).unwrap_err().key, "anchor");
         assert!(parse_anchor([]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_region_rounds_outward_and_refuses_empty_or_huge_ones() {
+        assert_eq!(
+            region_from_floats(&[(0.5, 1.2, 10.0, 2.0)]).unwrap(),
+            vec![(0, 1, 11, 3)]
+        );
+        assert_eq!(
+            region_from_floats(&[(-4.0, 0.0, 4.0, 4.0)]).unwrap(),
+            vec![(-4, 0, 4, 4)]
+        );
+        assert!(region_from_floats(&[(0.0, 0.0, 0.0, 5.0)]).is_err());
+        assert!(region_from_floats(&[(0.0, 0.0, f64::NAN, 5.0)]).is_err());
+        assert!(region_from_floats(&vec![(0.0, 0.0, 1.0, 1.0); MAX_REGION_RECTS + 1]).is_err());
+        assert!(region_from_floats(&vec![(0.0, 0.0, 1.0, 1.0); MAX_REGION_RECTS]).is_ok());
+        assert_eq!(region_from_floats(&[]).unwrap(), vec![]);
     }
 }

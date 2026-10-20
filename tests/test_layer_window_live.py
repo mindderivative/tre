@@ -430,6 +430,66 @@ app.run()
     assert next(e for e in events if e["kind"] == "text")["value"] == "pasted-text"
 
 
+REGION = """
+import json, os, sys, threading, time
+from tre import App, LayerWindow, Window
+
+args = json.loads(os.environ["REGION_ARGS"])
+app = App()
+def say(kind, **kw):
+    print(json.dumps({"kind": kind, **kw}), flush=True)
+behind = Window(width=200, height=100, title="tre-test-behind")
+behind.root.set(fill=(255, 0, 0, 255))
+behind.root.on("click", lambda e: say("window_click"))
+app.add_window(behind)
+overlay = LayerWindow("tre-test-overlay", layer="overlay", anchor=("top", "bottom", "left", "right"),
+                      size=(0, 0), exclusive_zone=0, output=args["output"], input_region=args["region"])
+overlay.root.set(fill=(0, 0, 0, 0))
+overlay.root.on("click", lambda e: say("layer_click"))
+app.add_window(overlay)
+threading.Thread(target=lambda: (time.sleep(args["seconds"]), os._exit(0)), daemon=True).start()
+threading.Thread(target=lambda: (time.sleep(2.5), say("ready")), daemon=True).start()
+app.run()
+"""
+
+
+def _click_at(x, y, origin=(0, 0)):
+    """Clicks at output-local (x, y) with `wlrctl`'s virtual pointer: it moves relatively,
+    so go far past the layout's corner first (the compositor clamps there)."""
+    for command in (
+        ["pointer", "move", "-9000", "-9000"],
+        ["pointer", "move", str(origin[0] + x), str(origin[1] + y)],
+        ["pointer", "click", "left"],
+    ):
+        subprocess.run(["wlrctl", *command], capture_output=True, timeout=10)
+        time.sleep(0.2)
+
+
+@pytest.mark.parametrize(
+    "region, inside, outside",
+    [
+        (None, "layer_click", "layer_click"),
+        ([], "window_click", "window_click"),
+        ([(0, 0, 200, 200)], "layer_click", "window_click"),
+    ],
+)
+def test_input_region_decides_who_gets_the_click(children, region, inside, outside):
+    import shutil
+    if not shutil.which("wlrctl"):
+        pytest.skip("needs wlrctl (a virtual pointer) to click")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    child = children(REGION, REGION_ARGS=json.dumps({"output": name, "region": region, "seconds": 9}))
+    child.events(until="ready", timeout=20)
+    x0, y0, _, _ = outputs()[name]
+    for (x, y) in ((100, 100), (700, 400)):
+        _click_at(x, y, (x0, y0))
+        time.sleep(0.5)
+    events = child.events(timeout=4)
+    clicks = [e["kind"] for e in events if e["kind"].endswith("_click")]
+    assert clicks == [inside, outside], clicks
+
+
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):
     names = list(outputs())
     bars = [dict(output=n) for n in names]

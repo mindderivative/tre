@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use engine_core::{InputEvent, PointerButton, ScrollDelta, TouchPhase, ctrl_shortcut};
 use peniko::kurbo::Point;
-use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
+use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::globals::{GlobalList, registry_queue_init};
 use smithay_client_toolkit::reexports::client::protocol::{
@@ -571,6 +571,19 @@ impl State {
             KeyboardMode::OnDemand => KeyboardInteractivity::OnDemand,
             KeyboardMode::Exclusive => KeyboardInteractivity::Exclusive,
         });
+        // The input region is double-buffered state like the rest: set it before the commit.
+        let region = config.input_region.as_ref().map(|rects| {
+            let region = Region::new(&self.compositor).ok()?;
+            for &(x, y, w, h) in rects {
+                region.add(x, y, w, h);
+            }
+            Some(region)
+        });
+        match region {
+            None => surf.surface.set_input_region(None),
+            Some(Some(region)) => surf.surface.set_input_region(Some(region.wl_region())),
+            Some(None) => {} // the compositor refused a region object; keep what is set
+        }
         surf.config = config.clone();
         layer.commit();
     }

@@ -195,7 +195,7 @@ A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surfa
 
 **Inherits:** [`Window`](#window) → [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [LayerWindow reference](../reference/layer-window.md)
 
-**Constructor:** `LayerWindow(namespace: str, *, layer: Literal['background', 'bottom', 'top', 'overlay']=..., anchor: str | Sequence[str] | None=..., size: tuple[int, int] | None=..., exclusive_zone: int | None=..., exclusive_edge: None=..., margin: int | tuple[int, int, int, int] | None=..., keyboard: Literal['none', 'on_demand', 'exclusive']=..., output: str | Output | None=...)`
+**Constructor:** `LayerWindow(namespace: str, *, layer: Literal['background', 'bottom', 'top', 'overlay']=..., anchor: str | Sequence[str] | None=..., size: tuple[int, int] | None=..., exclusive_zone: int | None=..., exclusive_edge: None=..., margin: int | tuple[int, int, int, int] | None=..., keyboard: Literal['none', 'on_demand', 'exclusive']=..., output: str | Output | None=..., input_region: Sequence[tuple[float, float, float, float]] | None=..., click_through: bool | None=...)`
 
 **Methods:**
 
@@ -203,7 +203,7 @@ A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surfa
 | --- | --- |
 | `close() -> None` | Closes the surface on the loop's next turn: `close_requested` first (a listener may cancel it with `event.cancel()`), then… |
 | `get(name: str) -> Any` | Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`, `exclusive_edge`, `margin`, `keyboard`… |
-| `set(**props: Any) -> None` | Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`, `margin`, `keyboard`) in one commit, with the keys… |
+| `set(**props: Any) -> None` | Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`, `margin`, `keyboard`, `input_region`… |
 
 **Events:** none.
 

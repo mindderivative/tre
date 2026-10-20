@@ -834,7 +834,11 @@ class LayerWindow(Window):
     none, -1 ignores other surfaces' zones). `margin` is `(top, right, bottom, left)`, or
     one number for all four; a negative margin is accepted. `keyboard` is `"none"`,
     `"on_demand"` or `"exclusive"`. `output` is an `Output` (from `App.outputs()`) or a connector name such as
-    `"DP-1"`; `None` lets the compositor choose, and it chooses differently from run to run.
+    `"DP-1"`; `None` picks the output at (0, 0), or the first by name, the same on every run.
+    `input_region` is where the compositor delivers pointer and touch input: `None` (the
+    whole surface), `[]` (nothing; clicks fall through) or a list of `(x, y, width,
+    height)` rectangles in logical pixels, rounded outward, at most 256. `click_through=True`
+    is `input_region=[]`; saying both with different meanings raises.
 
     The protocol's errors raise `ValueError` naming the key, before anything is sent to
     the compositor. It raises `UnsupportedPlatform` where there is no layer shell (X11,
@@ -861,10 +865,12 @@ class LayerWindow(Window):
         margin: int | tuple[int, int, int, int] | None = ...,
         keyboard: Literal["none", "on_demand", "exclusive"] = ...,
         output: str | Output | None = ...,
+        input_region: Sequence[tuple[float, float, float, float]] | None = ...,
+        click_through: bool | None = ...,
     ) -> LayerWindow: ...
     def set(self, **props: Any) -> None:
         """Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`,
-        `margin`, `keyboard`) in one commit, with the keys `Window.set` shares that mean
+        `margin`, `keyboard`, `input_region`, `click_through`) in one commit, with the keys `Window.set` shares that mean
         something to a placed surface. Raises `ValueError`, changing nothing, for a bad
         value, for a window key that means nothing here (`title`, `decorations`,
         `maximized`, `fullscreen`, `resize_border`, `system_menu`, `min_width`,
