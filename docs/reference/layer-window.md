@@ -101,7 +101,8 @@ new `LayerWindow` for a new output.
   follows fractional scaling). The root has **no padding or gap**, unlike a `Window`'s,
   and the window is **transparent**, so a rounded or floating bar needs no backdrop.
 - **Input** is as a window's: pointer, buttons and scroll; keys (named keys, text, the
-  clipboard shortcuts, and key repeat from the compositor's own rate); touch where the
+  clipboard shortcuts, and key repeat from the compositor's own rate; copy and paste go through the
+  compositor's data-control protocol, so they work on a session with no X server); touch where the
   seat has it; the cursor shape a node asks for. Text arrives as typed (compose and dead
   keys work through the keymap); input-method (IME) preedit is not wired for layer
   surfaces yet. A click on a bar does not focus another window's keyboard: with

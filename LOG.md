@@ -23,8 +23,11 @@ now it fires only on a change); a bar's `closed` after an unplugged output said 
 after a roundtrip, so it says `output_removed`); `LayerWindow.get("scale_factor")` was 1.0
 at any scale (now the surface's scale). `output=None` now picks the output at (0, 0), else the
 first by name, instead of the compositor's alternating choice. New live tests: `output=None`
-lands on the origin output, unplug (sway only), 1.5x scale (sway only). Not yet run: paste,
-transparent pixels (need `grim`, `wl-clipboard`, `wtype`), touch, other GPUs.
+lands on the origin output, unplug, 1.5x scale, transparent pixels (`grim`), and paste (`wtype`, `wl-copy`),
+all sway only. Paste was a real gap: the clipboard went through XWayland only, so on a session with
+no X server a paste into any window did nothing (`read_clipboard()` was `None`); `arboard`'s
+`wayland-data-control` feature now reads and writes it through the compositor (KWin and wlroots offer
+it). Not yet run: touch, other GPUs, labwc, the fullscreen frame-callback check.
 
 ### #202, outputs as objects (2026-10-19)
 
