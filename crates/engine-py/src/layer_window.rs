@@ -263,12 +263,21 @@ fn extract_region(value: &Bound<'_, PyAny>) -> PyResult<Region> {
             )))
         };
     }
-    let rects: Vec<(f64, f64, f64, f64)> = value.extract().map_err(|_| {
+    let bad = || {
         PyValueError::new_err(
             "LayerWindow input_region: must be None, [], \"auto\" or a list of \
              (x, y, width, height) rectangles",
         )
-    })?;
+    };
+    // Each rectangle may be a tuple or a list of four numbers.
+    let rows: Vec<Vec<f64>> = value.extract().map_err(|_| bad())?;
+    let rects: Vec<(f64, f64, f64, f64)> = rows
+        .into_iter()
+        .map(|r| match r[..] {
+            [x, y, w, h] => Ok((x, y, w, h)),
+            _ => Err(bad()),
+        })
+        .collect::<PyResult<_>>()?;
     engine_platform::layer_config::region_from_floats(&rects)
         .map(|r| Region::Rects(Some(r)))
         .map_err(|e| value_error(&e))

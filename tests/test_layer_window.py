@@ -325,3 +325,8 @@ def test_auto_is_a_region_that_follows_what_is_drawn():
     assert w.get("input_region") == []
     with pytest.raises(ValueError, match="disagree"):
         bar(input_region="auto", click_through=True)
+
+
+def test_a_rectangle_may_be_a_list_as_well_as_a_tuple():
+    w = bar(input_region=[[0, 0, 10, 10], (5, 5, 2, 2)])
+    assert w.get("input_region") == [(0, 0, 10, 10), (5, 5, 2, 2)]
