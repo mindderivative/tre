@@ -7893,3 +7893,153 @@ mod access_states_0_5_6 {
         assert!(node(&update, button).described_by().is_empty());
     }
 }
+
+// ---- 0.5.7 (#204): hit testing follows corner_radius, and the input region ----
+
+/// A root `size` x `size`, with no paint (alpha 0), holding the boxes `placed` adds.
+fn region_scene(size: f32) -> (Tree, NodeId) {
+    let mut tree = Tree::new();
+    let style = Style {
+        display: taffy::Display::Flex,
+        size: Size {
+            width: length(size),
+            height: length(size),
+        },
+        ..Default::default()
+    };
+    let paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
+    let root = tree.insert(NodeKind::Container, style, paint);
+    (tree, root)
+}
+
+fn placed(tree: &mut Tree, root: NodeId, x: f32, y: f32, w: f32, h: f32, radius: f64) -> NodeId {
+    let (kind, mut style, mut paint) = leaf(w, h);
+    style.position = Position::Absolute;
+    style.inset = TaffyRect {
+        left: length(x),
+        top: length(y),
+        right: auto(),
+        bottom: auto(),
+    };
+    paint.corner_radius = crate::animation::Animated::new(radius);
+    let id = tree.insert(kind, style, paint);
+    tree.add_child(root, id);
+    id
+}
+
+fn laid_out(tree: &mut Tree, root: NodeId, size: f32) {
+    tree.compute_layout(
+        root,
+        Size {
+            width: AvailableSpace::Definite(size),
+            height: AvailableSpace::Definite(size),
+        },
+    );
+}
+
+fn covered(rects: &[(i32, i32, i32, i32)], x: i32, y: i32) -> bool {
+    rects
+        .iter()
+        .any(|&(rx, ry, w, h)| x >= rx && x < rx + w && y >= ry && y < ry + h)
+}
+
+#[test]
+fn a_rounded_box_does_not_hit_in_its_clipped_corner() {
+    let (mut tree, root) = region_scene(200.0);
+    let circle = placed(&mut tree, root, 50.0, 50.0, 100.0, 100.0, 50.0);
+    laid_out(&mut tree, root, 200.0);
+    // The middle and the middle of an edge are in; the box's corner is not.
+    assert_eq!(tree.hit_test(root, Point::new(100.0, 100.0)), Some(circle));
+    assert_eq!(tree.hit_test(root, Point::new(100.0, 52.0)), Some(circle));
+    assert_eq!(tree.hit_test(root, Point::new(52.0, 52.0)), Some(root));
+}
+
+#[test]
+fn an_unrounded_box_hits_to_its_corner_as_before() {
+    let (mut tree, root) = region_scene(200.0);
+    let square = placed(&mut tree, root, 50.0, 50.0, 100.0, 100.0, 0.0);
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(tree.hit_test(root, Point::new(50.5, 50.5)), Some(square));
+}
+
+#[test]
+fn the_region_of_a_plain_box_is_that_box_and_an_undrawn_root_adds_nothing() {
+    let (mut tree, root) = region_scene(200.0);
+    placed(&mut tree, root, 10.0, 20.0, 60.0, 30.0, 0.0);
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(
+        tree.input_region(root, (200.0, 200.0), 256),
+        vec![(10, 20, 60, 30)]
+    );
+}
+
+#[test]
+fn the_region_of_a_circle_leaves_the_corners_and_covers_every_inside_pixel() {
+    let (mut tree, root) = region_scene(200.0);
+    placed(&mut tree, root, 50.0, 50.0, 100.0, 100.0, 50.0);
+    laid_out(&mut tree, root, 200.0);
+    let rects = tree.input_region(root, (200.0, 200.0), 256);
+    assert!(
+        !rects.is_empty() && rects.len() <= 256,
+        "{} rects",
+        rects.len()
+    );
+    assert!(
+        !covered(&rects, 51, 51),
+        "the box's corner is outside the circle"
+    );
+    for y in 50..150 {
+        for x in 50..150 {
+            let (dx, dy) = (f64::from(x) + 0.5 - 100.0, f64::from(y) + 0.5 - 100.0);
+            if dx.hypot(dy) <= 49.0 {
+                assert!(covered(&rects, x, y), "({x}, {y}) is inside the circle");
+            }
+        }
+    }
+}
+
+#[test]
+fn the_region_skips_hidden_non_hit_testable_and_see_through_nodes() {
+    let (mut tree, root) = region_scene(200.0);
+    let hidden = placed(&mut tree, root, 0.0, 0.0, 20.0, 20.0, 0.0);
+    tree.get_mut(hidden).unwrap().visible = false;
+    let opted_out = placed(&mut tree, root, 30.0, 0.0, 20.0, 20.0, 0.0);
+    tree.set_hit_testable(opted_out, false);
+    let clear = placed(&mut tree, root, 60.0, 0.0, 20.0, 20.0, 0.0);
+    tree.get_mut(clear).unwrap().paint.background.current = Color::from_rgba8(0, 0, 0, 0);
+    placed(&mut tree, root, 90.0, 0.0, 20.0, 20.0, 0.0);
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(
+        tree.input_region(root, (200.0, 200.0), 256),
+        vec![(90, 0, 20, 20)]
+    );
+}
+
+#[test]
+fn the_region_stays_within_the_cap_and_the_surface() {
+    let (mut tree, root) = region_scene(2000.0);
+    for i in 0..300 {
+        placed(
+            &mut tree,
+            root,
+            (i % 7) as f32 * 40.0,
+            i as f32 * 6.0,
+            20.0,
+            3.0,
+            0.0,
+        );
+    }
+    placed(&mut tree, root, 1900.0, 1900.0, 300.0, 300.0, 0.0);
+    laid_out(&mut tree, root, 2000.0);
+    let rects = tree.input_region(root, (2000.0, 2000.0), 256);
+    assert!(rects.len() <= 256, "{} rects", rects.len());
+    assert!(
+        rects
+            .iter()
+            .all(|&(x, y, w, h)| x >= 0 && y >= 0 && x + w <= 2000 && y + h <= 2000)
+    );
+    assert!(
+        covered(&rects, 1950, 1950),
+        "a cut coarser still covers what was drawn"
+    );
+}

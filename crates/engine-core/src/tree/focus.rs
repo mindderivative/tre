@@ -110,7 +110,7 @@ impl Tree {
                             .sqrt()
                             <= *tolerance
                     }
-                    None => rect_contains(layout, local_point),
+                    None => region::shape_contains(&node.paint, layout, local_point),
                 },
                 // M30 Phase 1 (§5, §7): a bare `Text` label never claims a
                 // hit itself -- it's decorative content inside a clickable
@@ -126,7 +126,7 @@ impl Tree {
                         || state.options.spans.iter().any(|s| s.link.is_some()))
                         && rect_contains(layout, local_point)
                 }
-                _ => rect_contains(layout, local_point),
+                _ => region::shape_contains(&node.paint, layout, local_point),
             }
         };
         hit.then_some((id, local_point))

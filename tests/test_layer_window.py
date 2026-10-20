@@ -292,7 +292,7 @@ def test_click_through_and_input_region_must_agree():
 
 @pytest.mark.parametrize(
     "bad",
-    ["auto", "everything", (0, 0, 4, 4), [(0, 0, 0, 4)], [(0, 0, 4, -1)], [(0, 0, float("nan"), 4)], [(0, 0, 4)], 7],
+    ["everything", "AUTO", (0, 0, 4, 4), [(0, 0, 0, 4)], [(0, 0, 4, -1)], [(0, 0, float("nan"), 4)], [(0, 0, 4)], 7],
 )
 def test_a_bad_input_region_raises_and_changes_nothing(bad):
     w = bar(input_region=[(0, 0, 8, 8)])
@@ -311,3 +311,17 @@ def test_an_ordinary_window_keeps_its_own_click_through():
     w = Window(width=100, height=100)
     w.set(click_through=True)
     assert w.get("click_through") is True
+
+
+def test_auto_is_a_region_that_follows_what_is_drawn():
+    w = bar(input_region="auto")
+    assert w.get("input_region") == "auto"
+    assert w.get("click_through") is False
+    w.set(input_region=[(0, 0, 4, 4)])
+    assert w.get("input_region") == [(0, 0, 4, 4)]
+    w.set(input_region="auto")
+    assert w.get("input_region") == "auto"
+    w.set(click_through=True)
+    assert w.get("input_region") == []
+    with pytest.raises(ValueError, match="disagree"):
+        bar(input_region="auto", click_through=True)

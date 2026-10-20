@@ -47,6 +47,7 @@ mod layers;
 mod layout;
 pub use layout::{LayoutChange, TextMeasure};
 mod nodes;
+mod region;
 mod scroll;
 pub use scroll::KEY_SCROLL_LINE;
 #[cfg(test)]

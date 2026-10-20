@@ -836,7 +836,8 @@ class LayerWindow(Window):
     `"on_demand"` or `"exclusive"`. `output` is an `Output` (from `App.outputs()`) or a connector name such as
     `"DP-1"`; `None` picks the output at (0, 0), or the first by name, the same on every run.
     `input_region` is where the compositor delivers pointer and touch input: `None` (the
-    whole surface), `[]` (nothing; clicks fall through) or a list of `(x, y, width,
+    whole surface), `[]` (nothing; clicks fall through), `"auto"` (the shapes of the drawn,
+    hit-testable nodes, rounded corners included) or a list of `(x, y, width,
     height)` rectangles in logical pixels, rounded outward, at most 256. `click_through=True`
     is `input_region=[]`; saying both with different meanings raises.
 
@@ -865,7 +866,7 @@ class LayerWindow(Window):
         margin: int | tuple[int, int, int, int] | None = ...,
         keyboard: Literal["none", "on_demand", "exclusive"] = ...,
         output: str | Output | None = ...,
-        input_region: Sequence[tuple[float, float, float, float]] | None = ...,
+        input_region: Literal["auto"] | Sequence[tuple[float, float, float, float]] | None = ...,
         click_through: bool | None = ...,
     ) -> LayerWindow: ...
     def set(self, **props: Any) -> None:

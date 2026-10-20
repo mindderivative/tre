@@ -1461,6 +1461,20 @@ impl App {
                     py,
                 );
 
+                // 0.5.7 (#204): an `input_region="auto"` surface follows what is drawn.
+                #[cfg(target_os = "linux")]
+                if let Some(layer) = &runtime.handles.layer
+                    && layer.auto_region.get()
+                {
+                    let (width, height) = runtime.handles.logical_size();
+                    layer.update_auto_region(
+                        &runtime.handles.tree,
+                        runtime.handles.root,
+                        (width, height),
+                        any_active,
+                    );
+                }
+
                 // M40 Phase 1 (§4, §6, §9): the one real place `GpuState::
                 // resize` is called from now -- collapses however many
                 // raw `Resized` events arrived since the last real frame

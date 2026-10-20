@@ -195,7 +195,7 @@ A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surfa
 
 **Inherits:** [`Window`](#window) → [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [LayerWindow reference](../reference/layer-window.md)
 
-**Constructor:** `LayerWindow(namespace: str, *, layer: Literal['background', 'bottom', 'top', 'overlay']=..., anchor: str | Sequence[str] | None=..., size: tuple[int, int] | None=..., exclusive_zone: int | None=..., exclusive_edge: None=..., margin: int | tuple[int, int, int, int] | None=..., keyboard: Literal['none', 'on_demand', 'exclusive']=..., output: str | Output | None=..., input_region: Sequence[tuple[float, float, float, float]] | None=..., click_through: bool | None=...)`
+**Constructor:** `LayerWindow(namespace: str, *, layer: Literal['background', 'bottom', 'top', 'overlay']=..., anchor: str | Sequence[str] | None=..., size: tuple[int, int] | None=..., exclusive_zone: int | None=..., exclusive_edge: None=..., margin: int | tuple[int, int, int, int] | None=..., keyboard: Literal['none', 'on_demand', 'exclusive']=..., output: str | Output | None=..., input_region: Literal['auto'] | Sequence[tuple[float, float, float, float]] | None=..., click_through: bool | None=...)`
 
 **Methods:**
 

@@ -254,7 +254,7 @@ avatar.set(mask=None)                                      # clear
   and `rotation_deg`. It is antialiased at the edge.
 - It clips the node's own paint, its `backdrop_blur`, and all of its children, inside the node's
   `opacity`. (`clip_children` clips only the children.)
-- **Hit testing ignores a mask**, as it ignores `clip_children` and rounded corners: a press on
+- **Hit testing ignores a mask**, as it ignores `clip_children`: a press on
   a clipped-away corner still reaches the node. Use `hit_testable` or an event check if that
   matters.
 - It is a shape, not an alpha image: no soft edges, and animating between two masks is not
