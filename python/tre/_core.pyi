@@ -879,6 +879,21 @@ class LayerWindow(Window):
         `blur_behind`) and for `namespace` and `output`, which only the constructor
         takes."""
         ...
+    def animate(
+        self,
+        property: Literal["margin_top", "margin_right", "margin_bottom", "margin_left"],
+        to: float,
+        duration_ms: int = 0,
+        easing: str | tuple[float, float, float, float] | tuple[str, float] | None = None,
+        on_complete: Callable[[], object] | None = None,
+    ) -> None:
+        """Moves one margin to `to` pixels from where it is now, in the engine: one small
+        commit per step and no Python until `on_complete` (called once). Same `duration_ms`,
+        `easing` and `on_complete` as `Node.animate`; the root gets `animation_end`.
+        Retargeting starts from the current value; `set(margin=...)` cancels. Only the four
+        margins animate (a surface's size and `exclusive_zone` are step changes), anything
+        else raises `ValueError`. `advance(ms)` runs it headless."""
+        ...
     def get(self, name: str) -> Any:
         """Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`,
         `exclusive_edge`, `margin`, `keyboard`, `output`) or anything `Window.get` reads."""

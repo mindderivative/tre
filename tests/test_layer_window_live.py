@@ -516,6 +516,55 @@ def test_a_screen_frame_takes_clicks_on_its_ring_and_lets_the_interior_through(c
     _routed(children, "auto", "layer_click", "window_click", [(640, 12), (640, 360)], nodes=ring)
 
 
+def test_a_margin_animation_moves_the_surface_smoothly_and_ends_on_time(children):
+    import shutil
+    if not shutil.which("grim"):
+        pytest.skip("needs grim to read pixels")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    code = """
+import json, os, threading, time
+from tre import App, LayerWindow
+app = App()
+bar = LayerWindow("anim-test", anchor=("top", "left"), size=(200, 40), exclusive_zone=0, output=%r)
+bar.root.set(fill=(200, 100, 50, 255))
+app.add_window(bar)
+handle = app.thread_handle()
+def go():
+    time.sleep(2.0)
+    print(json.dumps({"kind": "start"}), flush=True)
+    handle.call_soon(lambda: bar.animate("margin_top", 300, 800,
+                     on_complete=lambda: print(json.dumps({"kind": "done"}), flush=True)))
+    time.sleep(3)
+    os._exit(0)
+threading.Thread(target=go, daemon=True).start()
+app.run()
+""" % name
+    child = children(code)
+    child.events(until="start", timeout=20)
+    x0, y0, _, _ = outputs()[name]
+
+    def top():
+        shot = subprocess.run(["grim", "-t", "ppm", "-o", name, "-"], capture_output=True, timeout=20).stdout
+        header, rest = shot.split(b"\n255\n", 1)
+        width, height = (int(v) for v in header.split()[1:3])
+        for y in range(height):
+            i = (y * width + 10) * 3
+            if tuple(rest[i : i + 3]) == (200, 100, 50):
+                return y
+        return None
+
+    seen, began = [], time.time()
+    while time.time() - began < 2.0:
+        seen.append(top())
+    positions = [y for y in seen if y is not None]
+    assert positions[-1] == 300, positions[-5:]
+    assert positions == sorted(positions), "the bar only moves one way"
+    middle = {y for y in positions if 0 < y < 300}
+    assert len(middle) >= 5, f"a smooth slide has many steps, saw {sorted(middle)}"
+    assert child.events(until="done", timeout=5)
+
+
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):
     names = list(outputs())
     bars = [dict(output=n) for n in names]

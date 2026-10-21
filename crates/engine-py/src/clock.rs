@@ -40,6 +40,21 @@ pub(crate) fn now(tree: &SharedTree) -> Instant {
         .unwrap_or_else(Instant::now)
 }
 
+/// The time a frame pass ticks animations to: `tree`'s pinned instant after `advance`,
+/// otherwise the instant the loop's turn began, so every window's pass in one turn reads
+/// the same time (0.5.7, #205). Off the loop it is the real clock.
+pub(crate) fn frame_now(tree: &SharedTree) -> Instant {
+    PINNED
+        .with(|pinned| {
+            pinned
+                .borrow()
+                .iter()
+                .find(|(entry, _)| is(entry, tree))
+                .map(|(_, at)| *at)
+        })
+        .unwrap_or_else(engine_platform::turn_instant)
+}
+
 /// Moves `tree`'s time forward by exactly `by` and returns the new time.
 /// The first call pins it at the real current time; from then on only
 /// `advance` moves it.
@@ -56,4 +71,25 @@ pub(crate) fn advance(tree: &SharedTree, by: Duration) -> Instant {
 /// Returns `tree` to the real clock.
 pub(crate) fn unpin(tree: &SharedTree) {
     PINNED.with(|pinned| pinned.borrow_mut().retain(|(entry, _)| !is(entry, tree)));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 0.5.7 (#205): two windows' frame passes in one loop turn read one instant, and a
+    /// window whose clock was pinned by `advance` keeps its own.
+    #[test]
+    fn frame_now_is_one_instant_per_turn_and_a_pinned_tree_keeps_its_own() {
+        let a: SharedTree = Rc::new(RefCell::new(Tree::new()));
+        let b: SharedTree = Rc::new(RefCell::new(Tree::new()));
+        let (first, second) = (frame_now(&a), frame_now(&b));
+        assert_eq!(first.duration_since(first), Duration::ZERO);
+        // Off the loop each read is the real clock, so only order is promised.
+        assert!(second >= first);
+        let pinned = advance(&a, Duration::from_millis(500));
+        assert_eq!(frame_now(&a), pinned);
+        assert_ne!(frame_now(&b), pinned);
+        unpin(&a);
+    }
 }

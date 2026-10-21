@@ -56,6 +56,21 @@ nothing to a surface the compositor places raise too, rather than being ignored:
 `resizable`, `skip_taskbar` and `blur_behind`. `namespace` and `output` can only be given
 to the constructor.
 
+**`animate(property, to, duration_ms=0, easing=None, on_complete=None)`** moves one margin
+(`"margin_top"`, `"margin_right"`, `"margin_bottom"` or `"margin_left"`) to `to` pixels from where
+it is now, with the same `duration_ms`, `easing` (linear, a cubic bezier, or a spring) and
+`on_complete` as `Node.animate`. The engine runs it: one small commit per step, no buffer
+change, and no Python until `on_complete` (called once, when the duration has elapsed). The
+window's root gets `animation_end` (`property`, `finished`). Starting another animation on the
+same margin retargets from the current value (the first one's `on_complete` is not called);
+`set(margin=...)` while one runs cancels it and snaps (`finished=False`). Negative values slide
+a surface past the screen edge. Any other property raises `ValueError`: surface size and
+`exclusive_zone` are step changes, not animations. Headless, `advance(ms)` runs margin
+animations and their callbacks with no compositor. Every window's animations in one loop turn
+read the same time, but Wayland cannot commit two surfaces atomically, so surfaces animating
+together can differ by up to a frame on screen. A margin takes whole pixels (the animation is
+rounded to them).
+
 **`get(name)`** reads those settings (`anchor` as a tuple of names, `margin` as a
 4-tuple), and anything `Window.get` reads.
 
@@ -114,6 +129,6 @@ new `LayerWindow` for a new output.
 
 ## Not yet
 
-Animating a margin, dragging a surface by its margin,
+Dragging a surface by its margin (`window_region="drag_margin"`)
 and `PopupWindow` are later parts of the same work (issue #195). AccessKit (screen reader) support for layer
 surfaces has not been checked.

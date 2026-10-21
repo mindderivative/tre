@@ -201,6 +201,7 @@ A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surfa
 
 | Method | Description |
 | --- | --- |
+| `animate(property, to, duration_ms, easing, on_complete) -> None` | Moves one margin to `to` pixels from where it is now, in the engine: one small commit per step and no Python until `on_complete`… |
 | `close() -> None` | Closes the surface on the loop's next turn: `close_requested` first (a listener may cancel it with `event.cancel()`), then… |
 | `get(name: str) -> Any` | Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`, `exclusive_edge`, `margin`, `keyboard`… |
 | `set(**props: Any) -> None` | Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`, `margin`, `keyboard`, `input_region`… |

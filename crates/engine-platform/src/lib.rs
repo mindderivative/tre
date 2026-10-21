@@ -914,6 +914,19 @@ impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
     fn start_output_watch(&mut self, _: &ActiveEventLoop) {}
 }
 
+thread_local! {
+    /// When the loop's current turn began. Every window's frame pass in the turn reads
+    /// this one instant, so windows animating together agree on the time.
+    static TURN: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
+}
+
+/// 0.5.7 (#205): the instant the loop's current turn began, or the real clock off the loop
+/// (headless). Read by a frame pass so two windows' animations in one turn share a time.
+pub fn turn_instant() -> std::time::Instant {
+    TURN.with(std::cell::Cell::get)
+        .unwrap_or_else(std::time::Instant::now)
+}
+
 impl<C, F, A, N, X, L> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X, L>
 where
     C: FnMut(WindowId, u64, Arc<Window>) -> bool,
@@ -924,6 +937,7 @@ where
     L: FnMut(WindowId, WindowLifecycle) -> bool,
 {
     fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
+        TURN.with(|turn| turn.set(Some(std::time::Instant::now())));
         self.attach();
     }
 

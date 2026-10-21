@@ -193,6 +193,7 @@ enum Command {
     Update(u64, LayerConfig),
     Cursor(u64, CursorIcon),
     InputRegion(u64, Option<Vec<crate::layer_config::Rect>>),
+    Margin(u64, (i32, i32, i32, i32)),
     Destroy(u64),
     Shutdown,
 }
@@ -231,6 +232,12 @@ impl LayerController {
     /// a commit of its own: an idle surface draws no frame to carry it.
     pub fn set_input_region(&self, id: u64, region: Option<Vec<crate::layer_config::Rect>>) {
         self.send(Command::InputRegion(id, region));
+    }
+
+    /// Sets only the margin `(top, right, bottom, left)` and commits it at once: one cheap
+    /// commit per animation step, with no other property re-sent.
+    pub fn set_margin(&self, id: u64, margin: (i32, i32, i32, i32)) {
+        self.send(Command::Margin(id, margin));
     }
 
     /// Destroys the surface; the `wgpu` surface must be dropped first.
@@ -1462,6 +1469,14 @@ fn run(
                         set_region(&state.compositor, &surf.surface, &region);
                         surf.config.input_region = region;
                         surf.surface.commit();
+                    }
+                }
+                Command::Margin(id, margin) => {
+                    if let Some(surf) = state.surfaces.get_mut(&id) {
+                        surf.layer
+                            .set_margin(margin.0, margin.1, margin.2, margin.3);
+                        surf.config.margin = margin;
+                        surf.layer.commit();
                     }
                 }
                 Command::Destroy(id) => state.destroy(id),
