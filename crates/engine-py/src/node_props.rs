@@ -1069,7 +1069,13 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
                 None => WindowRegion::Default,
                 Some("drag") => WindowRegion::Drag,
                 Some("none") => WindowRegion::NoDrag,
-                Some(_) => return Err(invalid(name, "\"drag\", \"none\", or None")),
+                Some("drag_margin") => WindowRegion::DragMargin,
+                Some(_) => {
+                    return Err(invalid(
+                        name,
+                        "\"drag\", \"drag_margin\" (a LayerWindow), \"none\", or None",
+                    ));
+                }
             })
         }
         "data" => {
@@ -1340,6 +1346,14 @@ pub(crate) fn check_anchor_changes(
             return Err(PyValueError::new_err(
                 "node property `window_region`: \"drag\" moves a window, and the compositor \
                  places a LayerWindow, so there is none to drag",
+            ));
+        }
+        if let Change::WindowRegion(WindowRegion::DragMargin) = change
+            && !tree.margin_drag_allowed()
+        {
+            return Err(PyValueError::new_err(
+                "node property `window_region`: \"drag_margin\" moves a layer surface by its \
+                 margins, so only the nodes of a LayerWindow have it",
             ));
         }
         let Change::Anchor(edit) = change else {
@@ -1671,6 +1685,7 @@ impl Node {
                     WindowRegion::Default => py.None(),
                     WindowRegion::Drag => any("drag".into_pyobject(py)?.into_any()),
                     WindowRegion::NoDrag => any("none".into_pyobject(py)?.into_any()),
+                    WindowRegion::DragMargin => any("drag_margin".into_pyobject(py)?.into_any()),
                 },
                 "blend_mode" => any(node.paint.blend.name().into_pyobject(py)?.into_any()),
                 "visible" => any(node.visible.into_pyobject(py)?.to_owned().into_any()),

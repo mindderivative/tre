@@ -179,6 +179,7 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `close_requested` | — | The user asked to close; `event.cancel()` keeps it open. |
 | `closed` | `reason` (a `LayerWindow`) | The window closed. |
 | `configure`, `output_changed`, `warning` | `width`, `height` / `output` / `key`, `message` | A `LayerWindow`: the compositor sized it / it entered an output / a setting the protocol ignores. |
+| `moved` | `margin` | A `LayerWindow`: a `window_region="drag_margin"` drag ended; the final `(top, right, bottom, left)`. |
 | `dock_target`, `dock_drop` | `side`, `panel` | A docking drag moved into a zone / ended. |
 | `maximized`, `active` | `maximized`, `active` | The window was maximized or restored / gained or lost focus. |
 | `titlebar_inset` | `titlebar_inset` | The OS controls' area over the content changed. |
@@ -461,6 +462,7 @@ What a listener receives when it takes one argument; never constructed directly.
 | `rotation_delta` | `float \| None` |  |
 | `direction` | `str \| None` |  |
 | `output` | `str \| None` |  |
+| `margin` | `tuple[int, int, int, int] \| None` |  |
 | `total_x` | `float \| None` |  |
 | `total_y` | `float \| None` |  |
 | `velocity_x` | `float \| None` |  |

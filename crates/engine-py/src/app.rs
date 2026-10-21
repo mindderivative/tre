@@ -1110,6 +1110,23 @@ impl App {
                                         },
                                     );
                                 }
+                                LayerNotice::MarginMoved(margin) => {
+                                    if let Some(layer) = &handles.layer {
+                                        // The drag moved the surface; the window's own record
+                                        // and motion follow it, so a later `set()` or animation
+                                        // starts from where the surface is.
+                                        layer.config.borrow_mut().margin = margin;
+                                        layer.snap_margin(margin, crate::clock::now(&handles.tree));
+                                    }
+                                    listeners::deliver_window(
+                                        &handles.window_listeners,
+                                        py,
+                                        WindowEventType::Moved,
+                                        |e| {
+                                            e.margin = Some(margin);
+                                        },
+                                    );
+                                }
                                 LayerNotice::Failed(message) => {
                                     tracing::error!(%message, "a layer window could not be opened");
                                     if (token as usize) < initial_windows {

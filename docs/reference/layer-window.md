@@ -107,9 +107,33 @@ Window events apply, with these additions (see [Events](events.md)):
 | `closed` | The surface is gone | `reason`: `"compositor"`, `"output_removed"` or `"app"` |
 | `output_changed` | The surface entered an output | `output`: its connector name |
 | `warning` | A setting the protocol accepts but ignores | `key` (the setting), `message` |
+| `moved` | A margin drag ended (see below) | `margin`: the final `(top, right, bottom, left)` |
 
 After `closed` with reason `"compositor"` or `"output_removed"` the window is dead; make a
 new `LayerWindow` for a new output.
+
+## Dragging a surface by its margin
+
+A movable widget (a desktop clock, a floating panel) anchors to an edge or a corner and moves
+by changing its margins. Give a node `window_region="drag_margin"` and a primary press on it,
+or on a non-interactive node inside it, starts a drag: the engine follows the pointer, one
+small commit per input frame, with no Python in the loop, and when the button goes up the
+window gets `moved` with the final `margin`, which the app can save. The usual exclusions apply
+as for `"drag"`: a press on a focusable node, a text input or terminal, a node with a `click`
+listener, or one holding the pointer capture, met before the drag node, is an ordinary press;
+`window_region="none"` on a node keeps a part of the handle from dragging.
+
+- Only the anchored edges move: a surface anchored `"top"` and `"left"` changes `margin_top`
+  and `margin_left`; one anchored `"bottom"` and `"right"` changes the other two, in the
+  opposite direction. An axis anchored to both edges (a bar across the top) or to neither does
+  not move on that axis.
+- The margins are clamped so the surface stays on its output: never negative, never past the
+  far edge. (Other surfaces' exclusive zones do not limit it.)
+- The deltas come from the compositor's relative-pointer protocol, so they are exact however
+  the surface lags behind the pointer. Without that protocol the drag follows the pointer's
+  surface-local position, and can overshoot a little while a commit is still in flight.
+- A running margin animation is stopped where it is when a drag starts. A node's
+  `window_region="drag_margin"` raises on an ordinary `Window`, and `"drag"` still raises here.
 
 ## What it is like to draw on
 
@@ -129,6 +153,5 @@ new `LayerWindow` for a new output.
 
 ## Not yet
 
-Dragging a surface by its margin (`window_region="drag_margin"`)
-and `PopupWindow` are later parts of the same work (issue #195). AccessKit (screen reader) support for layer
+`PopupWindow` is a later part of the same work (issue #195). AccessKit (screen reader) support for layer
 surfaces has not been checked.

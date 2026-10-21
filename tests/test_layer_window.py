@@ -455,3 +455,72 @@ def test_two_windows_animating_together_stay_in_step():
     a.advance(40)
     b.advance(40)
     assert margins(a) == margins(b) == (40, 0, 0, 0)
+
+
+# ---- window_region="drag_margin" (#205) ----
+
+
+def test_drag_margin_is_a_layer_window_region_and_reads_back():
+    w = bar()
+    node = w.create("box", width=40, height=20)
+    w.root.add_child(node)
+    node.set(window_region="drag_margin")
+    assert node.get("window_region") == "drag_margin"
+    node.set(window_region=None)
+    assert node.get("window_region") is None
+
+
+def test_an_ordinary_window_refuses_drag_margin():
+    w = Window(width=100, height=100)
+    node = w.create("box", width=40, height=20)
+    w.root.add_child(node)
+    with pytest.raises(ValueError, match="LayerWindow"):
+        node.set(window_region="drag_margin")
+
+
+def test_a_layer_window_still_refuses_drag_and_names_the_choices_for_a_bad_value():
+    w = bar()
+    node = w.create("box", width=40, height=20)
+    w.root.add_child(node)
+    with pytest.raises(ValueError, match="LayerWindow"):
+        node.set(window_region="drag")
+    with pytest.raises(ValueError, match="drag_margin"):
+        node.set(window_region="slide")
+
+
+def _press(w, x, y):
+    w.simulate("pointer_move", x=x, y=y)
+    w.simulate("pointer_down", x=x, y=y)
+    w.simulate("pointer_up", x=x, y=y)
+
+
+def test_an_interactive_child_of_a_drag_margin_node_is_not_a_drag_handle():
+    w = bar(size=(300, 40), anchor=("top", "left"))
+    handle = w.create("box", width=200, height=30, fill=(1, 2, 3, 255))
+    handle.set(window_region="drag_margin")
+    button = w.create("box", width=40, height=20, fill=(9, 9, 9, 255))
+    handle.add_child(button)
+    w.root.add_child(handle)
+    seen = []
+    button.on("click", lambda e: seen.append("click"))
+    handle.on("pointer_cancel", lambda e: seen.append("cancel"))
+    button.on("pointer_cancel", lambda e: seen.append("cancel"))
+    _press(w, 10, 10)  # on the button: its own click wins
+    assert seen == ["click"]
+
+
+def test_a_non_interactive_drag_margin_node_cancels_the_press():
+    w = bar(size=(300, 40), anchor=("top", "left"))
+    handle = w.create("box", width=100, height=30, fill=(1, 2, 3, 255))
+    handle.set(window_region="drag_margin")
+    w.root.add_child(handle)
+    seen = []
+    handle.on("pointer_cancel", lambda e: seen.append("cancel"))
+    handle.on("pointer_down", lambda e: seen.append("down"))
+    _press(w, 20, 10)
+    assert seen == ["down", "cancel"]
+
+
+def test_moved_is_a_window_event():
+    w = bar()
+    w.on("moved", lambda e: None)

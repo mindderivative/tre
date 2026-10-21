@@ -1688,6 +1688,9 @@ pub enum WindowRegion {
     Drag,
     /// A press here, or inside, never moves the window.
     NoDrag,
+    /// A press here, or on a non-interactive node inside, moves a layer surface by its
+    /// margins (0.5.7, #205). Only a `LayerWindow`'s nodes may have it.
+    DragMargin,
 }
 
 /// M94: the pointer shapes a node can ask for -- CSS's own vocabulary, in

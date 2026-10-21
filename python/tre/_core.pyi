@@ -192,6 +192,9 @@ class Event:
     """`output_changed`: the output's connector name. (`closed` on a `LayerWindow` sets
     `reason`: `"compositor"`, `"output_removed"` or `"app"`; `warning` sets `key`, the
     setting, and `message`.)"""
+    margin: tuple[int, int, int, int] | None
+    """`moved` on a `LayerWindow`: the final `(top, right, bottom, left)` after a
+    `window_region="drag_margin"` drag."""
     total_x: float | None
     """`pan`, `pinch`: how far the gesture has moved in all."""
     total_y: float | None
@@ -850,7 +853,9 @@ class LayerWindow(Window):
 
     Events: `configure` (`width`, `height`, logical), `closed` (`event.reason`:
     `"compositor"`, `"output_removed"` or `"app"`), `output_changed` (`event.output`) and
-    `warning` (`event.key`, `event.message`: a zone the protocol would ignore), besides the
+    `warning` (`event.key`, `event.message`: a zone the protocol would ignore), `moved`
+    (`event.margin`: the final `(top, right, bottom, left)` after a `window_region="drag_margin"`
+    drag), besides the
     window events that apply (`resize`, `close_requested`, `scale_factor`, ...).
     """
 

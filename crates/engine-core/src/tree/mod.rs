@@ -75,6 +75,9 @@ pub struct Tree {
     /// 0.5.7 (#198): whether a node may be a window drag region. `false` for the tree
     /// of a layer surface, which the compositor places: there is no window to move.
     window_drag_allowed: bool,
+    /// 0.5.7 (#205): whether `window_region="drag_margin"` may be set: only on a layer
+    /// surface's tree.
+    margin_drag_allowed: bool,
     /// 0.5.4 (#125): counts the times taffy computed a layout, so a consumer
     /// can tell that no node moved or changed size since it last looked.
     layout_epoch: u64,
@@ -208,6 +211,14 @@ impl Tree {
         self.window_drag_allowed = allowed;
     }
 
+    pub fn set_margin_drag_allowed(&mut self, allowed: bool) {
+        self.margin_drag_allowed = allowed;
+    }
+
+    pub fn margin_drag_allowed(&self) -> bool {
+        self.margin_drag_allowed
+    }
+
     pub fn window_drag_allowed(&self) -> bool {
         self.window_drag_allowed
     }
@@ -216,6 +227,7 @@ impl Tree {
         Self {
             nodes: Nodes::new(),
             window_drag_allowed: true,
+            margin_drag_allowed: false,
             layout_epoch: 0,
             animating: Vec::new(),
             static_selection: Default::default(),

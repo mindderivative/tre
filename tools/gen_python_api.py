@@ -215,6 +215,7 @@ WINDOW_EVENTS = [
     ("`close_requested`", "—", "The user asked to close; `event.cancel()` keeps it open."),
     ("`closed`", "`reason` (a `LayerWindow`)", "The window closed."),
     ("`configure`, `output_changed`, `warning`", "`width`, `height` / `output` / `key`, `message`", "A `LayerWindow`: the compositor sized it / it entered an output / a setting the protocol ignores."),
+    ("`moved`", "`margin`", "A `LayerWindow`: a `window_region=\"drag_margin\"` drag ended; the final `(top, right, bottom, left)`."),
     ("`dock_target`, `dock_drop`", "`side`, `panel`", "A docking drag moved into a zone / ended."),
     ("`maximized`, `active`", "`maximized`, `active`", "The window was maximized or restored / gained or lost focus."),
     ("`titlebar_inset`", "`titlebar_inset`", "The OS controls' area over the content changed."),

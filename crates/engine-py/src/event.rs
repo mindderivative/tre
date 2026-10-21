@@ -206,6 +206,9 @@ pub struct Event {
     /// window reuses `reason`; `warning` reuses `key` for the setting and `message`.)
     #[pyo3(get)]
     pub(crate) output: Option<String>,
+    /// 0.5.7 (#205): `moved`: the surface's margin `(top, right, bottom, left)` after a drag.
+    #[pyo3(get)]
+    pub(crate) margin: Option<(i32, i32, i32, i32)>,
     /// 0.5.4: `pan`/`pinch`: how far the gesture has moved in all.
     #[pyo3(get)]
     pub(crate) total_x: Option<f64>,
@@ -342,6 +345,7 @@ impl Event {
             rotation_delta: None,
             direction: None,
             output: None,
+            margin: None,
             total_x: None,
             total_y: None,
             velocity_x: None,

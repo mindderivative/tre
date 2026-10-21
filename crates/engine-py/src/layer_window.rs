@@ -495,6 +495,7 @@ impl PyLayerWindow {
         layer.snap_margin(layer.config.borrow().margin, Instant::now());
         handles.layer = Some(Rc::new(layer));
         handles.tree.borrow_mut().set_window_drag_allowed(false);
+        handles.tree.borrow_mut().set_margin_drag_allowed(true);
         Ok(PyClassInitializer::from(base).add_subclass(Self))
     }
 

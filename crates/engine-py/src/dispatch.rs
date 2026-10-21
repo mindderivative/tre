@@ -496,6 +496,7 @@ pub(crate) fn process_input(
         listeners::route_input(ctx, target, delivered, py);
     }
     window_drag(ctx, io, delivered, target, py);
+    margin_drag(ctx, io, delivered, target, py);
     // M96: layers an outside press or Escape asked to dismiss.
     let dismissed = ctx.tree.borrow_mut().take_dismissals();
     for layer in dismissed {
@@ -654,6 +655,70 @@ fn window_drag(
     end_press(ctx, io, target, position, py);
 }
 
+/// 0.5.7 (#205): a primary press on a `window_region="drag_margin"` node of a `LayerWindow`
+/// starts moving the surface by its margins. The engine follows the pointer from here (the
+/// layer thread, one commit per input frame) and sends `moved` on release, so Python is not
+/// in the pointer-move loop. The press ends as a window drag's does, with `pointer_cancel`.
+fn margin_drag(
+    ctx: &NodeContext<'_>,
+    io: &WindowIo<'_>,
+    event: &InputEvent,
+    target: Option<NodeId>,
+    py: Python<'_>,
+) {
+    let InputEvent::PointerPressed {
+        position,
+        button: PointerButton::Primary,
+    } = *event
+    else {
+        return;
+    };
+    let Some(layer) = &io.window.layer else {
+        return;
+    };
+    if !starts_margin_drag(ctx, target) {
+        return;
+    }
+    // A running margin animation ends where it is: the drag takes over.
+    layer.snap_margin(layer.config.borrow().margin, crate::clock::now(ctx.tree));
+    #[cfg(target_os = "linux")]
+    if let (Some(controller), Some(id)) = (layer.controller.borrow().as_ref(), layer.id.get()) {
+        controller.begin_margin_drag(id);
+    }
+    end_press(ctx, io, target, position, py);
+}
+
+/// 0.5.7 (#205): `starts_window_drag`'s rule for `"drag_margin"`: walking up from the pressed
+/// node, a `drag_margin` node starts the drag, a `"none"` one does not, and neither does an
+/// interactive node (focusable, text input, terminal, with a `click` listener, or holding the
+/// pointer capture) met first.
+fn starts_margin_drag(ctx: &NodeContext<'_>, target: Option<NodeId>) -> bool {
+    let Some(target) = target else {
+        return false;
+    };
+    let tree = ctx.tree.borrow();
+    let handlers = ctx.handlers.borrow();
+    let capture = tree.pointer_capture();
+    for id in tree.ancestors(target) {
+        let Some(node) = tree.get(id) else {
+            return false;
+        };
+        match node.window_region {
+            engine_core::WindowRegion::DragMargin => return true,
+            engine_core::WindowRegion::NoDrag => return false,
+            engine_core::WindowRegion::Drag | engine_core::WindowRegion::Default => {}
+        }
+        let interactive = node.access.focusable == Some(true)
+            || matches!(node.kind, NodeKind::TextField(_) | NodeKind::Terminal(_))
+            || handlers.contains_key(&(id, HandlerKey::Listener(EventType::Click)))
+            || capture == Some(id);
+        if interactive {
+            return false;
+        }
+    }
+    false
+}
+
 /// 0.5.0 M3: a press the window took -- to move, maximize, or show its
 /// menu -- ends without a click, releasing any pointer capture, and tells
 /// the pressed node with `pointer_cancel`; its release, if the platform
@@ -727,7 +792,9 @@ fn starts_window_drag(ctx: &NodeContext<'_>, target: Option<NodeId>) -> bool {
         };
         match node.window_region {
             engine_core::WindowRegion::Drag => return true,
-            engine_core::WindowRegion::NoDrag => return false,
+            engine_core::WindowRegion::NoDrag | engine_core::WindowRegion::DragMargin => {
+                return false;
+            }
             engine_core::WindowRegion::Default => {}
         }
         let interactive = node.access.focusable == Some(true)

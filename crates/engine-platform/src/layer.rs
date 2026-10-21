@@ -27,6 +27,10 @@ use std::time::{Duration, Instant};
 use engine_core::{InputEvent, PointerButton, ScrollDelta, TouchPhase, ctrl_shortcut};
 use peniko::kurbo::Point;
 use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
+use smithay_client_toolkit::seat::relative_pointer::{
+    RelativeMotionEvent, RelativePointerHandler, RelativePointerState,
+};
+use smithay_client_toolkit::reexports::protocols::wp::relative_pointer::zv1::client::zwp_relative_pointer_v1::ZwpRelativePointerV1;
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::globals::{GlobalList, registry_queue_init};
 use smithay_client_toolkit::reexports::client::protocol::{
@@ -56,8 +60,8 @@ use smithay_client_toolkit::shell::wlr_layer::{
     LayerSurfaceConfigure,
 };
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_layer, delegate_output, delegate_pointer, delegate_registry,
-    delegate_seat, delegate_touch, registry_handlers,
+    delegate_compositor, delegate_layer, delegate_output, delegate_pointer,
+    delegate_registry, delegate_relative_pointer, delegate_seat, delegate_touch, registry_handlers,
 };
 use wayland_backend::client::Backend;
 use winit::window::CursorIcon;
@@ -104,6 +108,8 @@ pub enum LayerNotice {
     OutputChanged(String),
     /// It could not be made.
     Failed(String),
+    /// A margin drag ended: the final `(top, right, bottom, left)`.
+    MarginMoved((i32, i32, i32, i32)),
 }
 
 /// The host's side of the loop for layer surfaces.
@@ -169,6 +175,11 @@ pub enum LayerEvent {
     /// An output appeared, changed or went away (not sent for the ones that existed when
     /// the layer thread started).
     Output(OutputEvent),
+    /// A margin drag the engine ran ended; `margin` is `(top, right, bottom, left)`.
+    MarginMoved {
+        id: u64,
+        margin: (i32, i32, i32, i32),
+    },
 }
 
 /// Why the layer side could not start.
@@ -194,6 +205,7 @@ enum Command {
     Cursor(u64, CursorIcon),
     InputRegion(u64, Option<Vec<crate::layer_config::Rect>>),
     Margin(u64, (i32, i32, i32, i32)),
+    BeginMarginDrag(u64),
     Destroy(u64),
     Shutdown,
 }
@@ -238,6 +250,13 @@ impl LayerController {
     /// commit per animation step, with no other property re-sent.
     pub fn set_margin(&self, id: u64, margin: (i32, i32, i32, i32)) {
         self.send(Command::Margin(id, margin));
+    }
+
+    /// Starts moving the surface by its margins with the pointer, which must be pressed on
+    /// it: the layer thread follows the pointer and ends the drag on release (then sends
+    /// `MarginMoved`). A surface that cannot move on either axis ignores this.
+    pub fn begin_margin_drag(&self, id: u64) {
+        self.send(Command::BeginMarginDrag(id));
     }
 
     /// Destroys the surface; the `wgpu` surface must be dropped first.
@@ -503,7 +522,25 @@ struct State {
     /// sends `closed` before it removes the output, so the reason is settled after a
     /// roundtrip (see `settle_closed`).
     closing: Vec<u64>,
+    relative: RelativePointerState,
+    relative_pointer: Option<ZwpRelativePointerV1>,
+    /// The surface-local position of the pointer, logical pixels, from its last event.
+    pointer_local: (f64, f64),
+    drag: Option<MarginDrag>,
     alive: bool,
+}
+
+/// A margin drag the layer thread is running: the engine moves the surface with the
+/// pointer so Python is never in the loop.
+struct MarginDrag {
+    id: u64,
+    start: (i32, i32, i32, i32),
+    /// Where the pointer was when the drag began, surface-local.
+    press_local: (f64, f64),
+    /// How far the pointer has moved since, logical pixels.
+    moved: (f64, f64),
+    /// The margin last sent.
+    current: (i32, i32, i32, i32),
 }
 
 impl State {
@@ -694,6 +731,9 @@ impl State {
     }
 
     fn destroy(&mut self, id: u64) {
+        if self.drag.as_ref().is_some_and(|d| d.id == id) {
+            self.drag = None;
+        }
         if let Some(surf) = self.surfaces.remove(&id) {
             self.by_surface.remove(&surf.surface.id());
             if self.pointer_focus == Some(id) {
@@ -910,6 +950,169 @@ fn set_region(
     }
 }
 
+impl State {
+    /// The output the surface is on, as a logical `(width, height)`.
+    fn output_size(&self, id: u64) -> Option<(i32, i32)> {
+        let surf = self.surfaces.get(&id)?;
+        let output = surf.output.as_ref()?;
+        let info = self.outputs.info(output)?;
+        let (w, h) = info
+            .logical_size
+            .or_else(|| info.modes.iter().find(|m| m.current).map(|m| m.dimensions))?;
+        Some((w, h))
+    }
+
+    /// Starts a drag of `id` from the pointer's current position, if the pointer is on it
+    /// and it can move on at least one axis (anchored to one edge of that axis only).
+    fn begin_margin_drag(&mut self, id: u64) {
+        let Some(surf) = self.surfaces.get(&id) else {
+            return;
+        };
+        let a = surf.config.anchor;
+        let movable = a.contains(Anchors::LEFT) != a.contains(Anchors::RIGHT)
+            || a.contains(Anchors::TOP) != a.contains(Anchors::BOTTOM);
+        if self.pointer_focus != Some(id) || !movable || self.output_size(id).is_none() {
+            return;
+        }
+        let start = surf.config.margin;
+        self.drag = Some(MarginDrag {
+            id,
+            start,
+            press_local: self.pointer_local,
+            moved: (0.0, 0.0),
+            current: start,
+        });
+    }
+
+    /// The margins for a drag, from the pure [`drag_margins`].
+    fn dragged_margin(&self, drag: &MarginDrag) -> Option<(i32, i32, i32, i32)> {
+        let surf = self.surfaces.get(&drag.id)?;
+        let (out_w, out_h) = self.output_size(drag.id)?;
+        Some(drag_margins(
+            surf.config.anchor,
+            drag.start,
+            drag.moved,
+            (out_w, out_h),
+            (surf.size.0 as i32, surf.size.1 as i32),
+        ))
+    }
+
+    /// Sends the margin if the drag moved it: one commit.
+    fn apply_drag(&mut self) {
+        let Some(drag) = &self.drag else {
+            return;
+        };
+        let Some(margin) = self.dragged_margin(drag) else {
+            return;
+        };
+        if margin == drag.current {
+            return;
+        }
+        let id = drag.id;
+        if let Some(surf) = self.surfaces.get_mut(&id) {
+            surf.layer
+                .set_margin(margin.0, margin.1, margin.2, margin.3);
+            surf.config.margin = margin;
+            surf.layer.commit();
+        }
+        if let Some(drag) = &mut self.drag {
+            drag.current = margin;
+        }
+    }
+
+    /// Without a relative-motion protocol: the drag follows the surface-local position.
+    /// The surface moves under the pointer, so the offset already applied is added to
+    /// the local delta; a commit not yet applied makes this overshoot a little, which
+    /// the relative protocol avoids.
+    fn drag_follow_local(&mut self, id: u64) {
+        let Some(drag) = &mut self.drag else {
+            return;
+        };
+        if drag.id != id {
+            return;
+        }
+        let applied = (
+            f64::from(drag.current.3 - drag.start.3) + f64::from(drag.start.1 - drag.current.1),
+            f64::from(drag.current.0 - drag.start.0) + f64::from(drag.start.2 - drag.current.2),
+        );
+        drag.moved = (
+            applied.0 + (self.pointer_local.0 - drag.press_local.0),
+            applied.1 + (self.pointer_local.1 - drag.press_local.1),
+        );
+        self.apply_drag();
+    }
+
+    /// The primary button went up on `id`: the drag is over; tell the engine the margin.
+    fn end_margin_drag(&mut self, id: u64) {
+        if self.drag.as_ref().is_none_or(|d| d.id != id) {
+            return;
+        }
+        if let Some(drag) = self.drag.take() {
+            self.emit(LayerEvent::MarginMoved {
+                id,
+                margin: drag.current,
+            });
+        }
+    }
+}
+
+/// The margins `(top, right, bottom, left)` for a drag that has moved the pointer `moved`
+/// logical pixels from where `start` was: the anchored edges follow the pointer, clamped so
+/// the surface stays inside the output (`output` and `size` are logical). An axis anchored
+/// to both edges, or to none, does not move.
+pub(crate) fn drag_margins(
+    anchor: Anchors,
+    start: (i32, i32, i32, i32),
+    moved: (f64, f64),
+    output: (i32, i32),
+    size: (i32, i32),
+) -> (i32, i32, i32, i32) {
+    let (dx, dy) = (moved.0.round() as i32, moved.1.round() as i32);
+    let mut m = start;
+    let (left, right) = (
+        anchor.contains(Anchors::LEFT),
+        anchor.contains(Anchors::RIGHT),
+    );
+    let (top, bottom) = (
+        anchor.contains(Anchors::TOP),
+        anchor.contains(Anchors::BOTTOM),
+    );
+    let room_x = (output.0 - size.0).max(0);
+    let room_y = (output.1 - size.1).max(0);
+    if left && !right {
+        m.3 = (start.3 + dx).clamp(0, room_x);
+    } else if right && !left {
+        m.1 = (start.1 - dx).clamp(0, room_x);
+    }
+    if top && !bottom {
+        m.0 = (start.0 + dy).clamp(0, room_y);
+    } else if bottom && !top {
+        m.2 = (start.2 - dy).clamp(0, room_y);
+    }
+    m
+}
+
+impl RelativePointerHandler for State {
+    fn relative_pointer_motion(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &ZwpRelativePointerV1,
+        _: &wl_pointer::WlPointer,
+        event: RelativeMotionEvent,
+    ) {
+        let Some(drag) = &mut self.drag else {
+            return;
+        };
+        if self.pointer_focus != Some(drag.id) {
+            return;
+        }
+        drag.moved.0 += event.delta.0;
+        drag.moved.1 += event.delta.1;
+        self.apply_drag();
+    }
+}
+
 impl LayerShellHandler for State {
     fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
         let id = self
@@ -971,6 +1174,7 @@ impl SeatHandler for State {
         match capability {
             Capability::Pointer => {
                 if let Ok(pointer) = self.seats.get_pointer(qh, &seat) {
+                    self.relative_pointer = self.relative.get_relative_pointer(&pointer, qh).ok();
                     self.cursor_device = self
                         .cursor_manager
                         .as_ref()
@@ -995,6 +1199,8 @@ impl SeatHandler for State {
     ) {
         if capability == Capability::Pointer {
             self.cursor_device = None;
+            self.relative_pointer = None;
+            self.drag = None;
             self.pointer_focus = None;
         }
     }
@@ -1014,6 +1220,7 @@ impl PointerHandler for State {
                 continue;
             };
             let position = self.physical(id, event.position);
+            self.pointer_local = event.position;
             match event.kind {
                 PointerEventKind::Enter { serial } => {
                     self.pointer_enter_serial = serial;
@@ -1033,6 +1240,11 @@ impl PointerHandler for State {
                     self.input(id, InputEvent::PointerLeft);
                 }
                 PointerEventKind::Motion { .. } => {
+                    // Without relative motion the drag follows the surface-local position;
+                    // with it, `relative_pointer_motion` does.
+                    if self.relative_pointer.is_none() {
+                        self.drag_follow_local(id);
+                    }
                     self.input(id, InputEvent::PointerMoved { position });
                 }
                 PointerEventKind::Press { button, .. } => {
@@ -1041,6 +1253,9 @@ impl PointerHandler for State {
                     }
                 }
                 PointerEventKind::Release { button, .. } => {
+                    if button_of(button) == Some(PointerButton::Primary) {
+                        self.end_margin_drag(id);
+                    }
                     if let Some(button) = button_of(button) {
                         self.input(id, InputEvent::PointerReleased { position, button });
                     }
@@ -1188,6 +1403,7 @@ delegate_compositor!(State);
 delegate_output!(State);
 delegate_seat!(State);
 delegate_pointer!(State);
+delegate_relative_pointer!(State);
 delegate_touch!(State);
 delegate_layer!(State);
 delegate_registry!(State);
@@ -1430,6 +1646,10 @@ fn run(
         known_outputs: HashMap::new(),
         outputs_ready: false,
         closing: Vec::new(),
+        relative: RelativePointerState::bind(&globals, &qh),
+        relative_pointer: None,
+        pointer_local: (0.0, 0.0),
+        drag: None,
         alive: true,
     };
     // Learn the outputs and seats before anything is asked of them.
@@ -1471,6 +1691,7 @@ fn run(
                         surf.surface.commit();
                     }
                 }
+                Command::BeginMarginDrag(id) => state.begin_margin_drag(id),
                 Command::Margin(id, margin) => {
                     if let Some(surf) = state.surfaces.get_mut(&id) {
                         surf.layer
@@ -1549,4 +1770,76 @@ fn run(
         state.destroy(id);
     }
     let _ = queue.flush();
+}
+
+#[cfg(test)]
+mod drag_tests {
+    use super::*;
+
+    fn anchored(edges: &[u8]) -> Anchors {
+        let mut a = Anchors(0);
+        for e in edges {
+            a = Anchors(a.0 | e);
+        }
+        a
+    }
+
+    #[test]
+    fn a_top_left_widget_follows_the_pointer_and_stops_at_the_edges() {
+        let a = anchored(&[Anchors::TOP, Anchors::LEFT]);
+        let (out, size) = ((1920, 1080), (200, 100));
+        assert_eq!(
+            drag_margins(a, (10, 0, 0, 20), (30.0, 40.0), out, size),
+            (50, 0, 0, 50)
+        );
+        // Past the right and bottom edges: stops with the widget on the output.
+        assert_eq!(
+            drag_margins(a, (10, 0, 0, 20), (5000.0, 5000.0), out, size),
+            (980, 0, 0, 1720)
+        );
+        // Past the top and left: stops at 0, never negative.
+        assert_eq!(
+            drag_margins(a, (10, 0, 0, 20), (-500.0, -500.0), out, size),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn a_bottom_right_widget_moves_the_other_way() {
+        let a = anchored(&[Anchors::BOTTOM, Anchors::RIGHT]);
+        let (out, size) = ((1000, 500), (100, 100));
+        // The pointer moving right and down brings the widget nearer the right and bottom.
+        assert_eq!(
+            drag_margins(a, (0, 40, 40, 0), (10.0, 20.0), out, size),
+            (0, 30, 20, 0)
+        );
+        assert_eq!(
+            drag_margins(a, (0, 40, 40, 0), (500.0, 500.0), out, size),
+            (0, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn an_axis_anchored_to_both_edges_or_none_does_not_move() {
+        // A bar across the top, anchored left and right as well: it can move down, not along.
+        let bar = anchored(&[Anchors::TOP, Anchors::LEFT, Anchors::RIGHT]);
+        assert_eq!(
+            drag_margins(bar, (5, 6, 7, 8), (100.0, 50.0), (800, 600), (800, 30)),
+            (55, 6, 7, 8)
+        );
+        // Anchored to nothing: neither axis moves.
+        assert_eq!(
+            drag_margins(Anchors(0), (1, 2, 3, 4), (9.0, 9.0), (800, 600), (50, 50)),
+            (1, 2, 3, 4)
+        );
+    }
+
+    #[test]
+    fn a_widget_larger_than_the_output_stays_at_zero() {
+        let a = anchored(&[Anchors::TOP, Anchors::LEFT]);
+        assert_eq!(
+            drag_margins(a, (0, 0, 0, 0), (50.0, 50.0), (100, 100), (300, 300)),
+            (0, 0, 0, 0)
+        );
+    }
 }
