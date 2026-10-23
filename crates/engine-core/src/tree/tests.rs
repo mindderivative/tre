@@ -8043,3 +8043,43 @@ fn the_region_stays_within_the_cap_and_the_surface() {
         "a cut coarser still covers what was drawn"
     );
 }
+
+#[test]
+fn an_open_dismissible_layer_takes_the_whole_surface_and_a_tooltip_does_not() {
+    let (mut tree, root) = region_scene(200.0);
+    let anchor = placed(&mut tree, root, 10.0, 10.0, 40.0, 20.0, 0.0);
+    laid_out(&mut tree, root, 200.0);
+    let before = tree.input_region(root, (200.0, 200.0), 256);
+    assert_eq!(before, vec![(10, 10, 40, 20)]);
+
+    let (kind, style, paint) = leaf(60.0, 40.0);
+    let menu = tree.insert(kind, style, paint);
+    tree.open_overlay(
+        root,
+        anchor,
+        menu,
+        OverlayMeta {
+            dismissible: true,
+            dismiss_on_outside_click: true,
+            ..Default::default()
+        },
+    );
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(
+        tree.input_region(root, (200.0, 200.0), 256),
+        vec![(0, 0, 200, 200)]
+    );
+
+    tree.close_overlay(menu);
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(tree.input_region(root, (200.0, 200.0), 256), before);
+
+    // A tooltip that nothing dismisses leaves the region to its own shape.
+    let (kind, style, paint) = leaf(30.0, 10.0);
+    let tip = tree.insert(kind, style, paint);
+    tree.open_overlay(root, anchor, tip, OverlayMeta::default());
+    laid_out(&mut tree, root, 200.0);
+    let region = tree.input_region(root, (200.0, 200.0), 256);
+    assert_ne!(region, vec![(0, 0, 200, 200)]);
+    assert!(region.len() >= 2, "the anchor and the tooltip");
+}

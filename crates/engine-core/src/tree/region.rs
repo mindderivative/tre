@@ -161,6 +161,18 @@ impl Tree {
         bounds: (f64, f64),
         max_rects: usize,
     ) -> Vec<RegionRect> {
+        // An open dismissible or modal layer needs the press that dismisses it: a click
+        // outside a menu has to reach the engine, or it would fall through to the window
+        // below and the menu would stay open. So while one is open the whole surface takes
+        // input (the dismissing press is then consumed, as `dismissible` says).
+        if self.has_input_grab() {
+            let (w, h) = (bounds.0.ceil() as i32, bounds.1.ceil() as i32);
+            return if w > 0 && h > 0 {
+                vec![(0, 0, w, h)]
+            } else {
+                Vec::new()
+            };
+        }
         let mut polygons = Vec::new();
         self.collect_shapes(root, Affine::IDENTITY, &mut polygons);
         if polygons.is_empty() {
@@ -203,6 +215,13 @@ impl Tree {
             }
             step *= 2;
         }
+    }
+
+    /// Whether an open layer wants presses outside itself: a dismissible or modal one.
+    pub fn has_input_grab(&self) -> bool {
+        self.overlays
+            .iter()
+            .any(|(_, meta)| meta.dismissible || meta.modal || meta.dismiss_on_outside_click)
     }
 
     fn collect_shapes(&self, id: NodeId, parent_transform: Affine, out: &mut Vec<Vec<Point>>) {

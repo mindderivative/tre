@@ -59,6 +59,7 @@ nav:
       - Layers: guide/layers.md
       - Docking: guide/docking.md
       - Bars and Panels: guide/bars-and-panels.md
+      - Menus from a Bar: guide/menus-from-a-bar.md
       - Threading: guide/threading.md
       - Custom Title Bars: guide/custom-title-bars.md
       - Shaders: guide/shaders.md

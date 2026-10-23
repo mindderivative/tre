@@ -289,7 +289,10 @@ def sway_outputs():
     if not (shutil.which("swaymsg") and os.environ.get("SWAYSOCK")):
         pytest.skip("needs sway (SWAYSOCK) to add and unplug an output")
     text = subprocess.run(["swaymsg", "-t", "get_outputs", "-r"], capture_output=True, text=True, timeout=10).stdout
-    return {o["name"] for o in json.loads(text)}
+    try:
+        return {o["name"] for o in json.loads(text)}
+    except ValueError:
+        pytest.skip("SWAYSOCK does not reach a running sway")
 
 
 def test_a_bar_on_an_unplugged_output_closes_with_output_removed(children):
@@ -625,6 +628,129 @@ def test_drag_margin_moves_the_surface_with_the_pointer_and_stops_at_the_output_
     assert len(moved) == 1, events
     got = tuple(moved[0]["margin"])
     assert all(abs(a - b) <= 2 for a, b in zip(got, expected)), (got, expected)
+
+
+MENU_CHILD = os.path.join(os.path.dirname(__file__), "data", "overlay_menu.py")
+
+
+def _menu_session(children, bar_anchor, steps, seconds=16, extra=None):
+    """Runs the overlay-menu prototype on sway and `steps(pointer, go, events)` against it."""
+    sys.path.insert(0, os.path.dirname(__file__))
+    import wlr_pointer
+    if not wlr_pointer.available():
+        pytest.skip("needs pywayland (pip install pywayland) for a virtual pointer")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    x0, y0, out_w, out_h = outputs()[name]
+    layout = outputs().values()
+    width = max(ox + ow for (ox, _, ow, _) in layout)
+    height = max(oy + oh for (_, oy, _, oh) in layout)
+    arguments = {"output": name, "bar_anchor": bar_anchor, "output_height": out_h, "seconds": seconds, **(extra or {})}
+    child = children(open(MENU_CHILD).read(), MENU_ARGS=json.dumps(arguments))
+    child.events(until="ready", timeout=20)
+    pointer = wlr_pointer.Pointer(os.environ)
+    seen = []
+
+    def go(x, y):
+        pointer.move(x0 + x, y0 + y, width, height)
+
+    def kinds(timeout=3):
+        seen.extend(child.events(timeout=timeout))
+        return [e["kind"] for e in seen]
+
+    try:
+        steps(pointer, go, kinds, seen, out_h)
+    finally:
+        pointer.close()
+
+
+def _open_menu(pointer, go, kinds, out_h, bar_anchor):
+    go(130, 16 if bar_anchor[0] == "top" else out_h - 16)
+    pointer.click()
+    time.sleep(0.2)
+    assert "opened" in kinds(), "clicking the bar's button opens the menu"
+    time.sleep(0.8)
+
+
+@pytest.mark.parametrize("how", ["outside_click", "escape", "item"])
+def test_an_overlay_menu_closes_on_outside_click_escape_and_item(children, how):
+    def steps(pointer, go, kinds, seen, out_h):
+        _open_menu(pointer, go, kinds, out_h, ["top", "left", "right"])
+        if how == "outside_click":
+            go(700, 400)
+            pointer.click()
+            got = kinds(4)
+            assert "dismissed" in got and "closed" in got, got
+            # The dismissing press is the menu's: it does not reach the window below.
+            assert "window_click" not in got
+        elif how == "escape":
+            subprocess.run(["wtype", "-s", "300", "-k", "Escape"], timeout=20)
+            got = kinds(4)
+            assert "dismissed" in got and "closed" in got, got
+        else:
+            go(120, 60)  # inside the menu, on item A
+            pointer.click()
+            got = kinds(4)
+            assert "item" in got and "closed" in got, got
+
+    _menu_session(children, ["top", "left", "right"], steps)
+
+
+def test_with_no_menu_open_a_click_reaches_the_window_below(children):
+    def steps(pointer, go, kinds, seen, out_h):
+        go(700, 400)
+        pointer.click()
+        assert "window_click" in kinds(3)
+
+    _menu_session(children, ["top", "left", "right"], steps)
+
+
+def test_a_menu_from_a_bottom_bar_opens_upward(children):
+    import shutil
+    if not shutil.which("grim"):
+        pytest.skip("needs grim to read pixels")
+
+    def steps(pointer, go, kinds, seen, out_h):
+        _open_menu(pointer, go, kinds, out_h, ["bottom", "left", "right"])
+        name = next(iter(outputs()))
+        shot = subprocess.run(["grim", "-t", "ppm", "-o", name, "-"], capture_output=True, timeout=20).stdout
+        header, rest = shot.split(b"\n255\n", 1)
+        width, height = (int(v) for v in header.split()[1:3])
+        rows = [
+            y for y in range(height)
+            if tuple(rest[(y * width + 102) * 3 : (y * width + 102) * 3 + 3]) == (30, 140, 90)
+        ]
+        assert rows, "the menu is on screen"
+        assert max(rows) < height - 32, "it flipped above the bar, not off the bottom"
+
+    _menu_session(children, ["bottom", "left", "right"], steps)
+
+
+def test_hovering_an_item_opens_a_submenu_and_it_takes_clicks(children):
+    def steps(pointer, go, kinds, seen, out_h):
+        _open_menu(pointer, go, kinds, out_h, ["top", "left", "right"])
+        go(120, 100)  # item B
+        got = kinds(3)
+        assert "submenu" in got, got
+        time.sleep(0.5)
+        go(270, 100)  # the submenu's item, to the right of the menu
+        pointer.click()
+        got = kinds(3)
+        assert "item" in got, got
+
+    _menu_session(children, ["top", "left", "right"], steps)
+
+
+def test_an_open_menu_draws_no_frames_while_nothing_moves(children):
+    def steps(pointer, go, kinds, seen, out_h):
+        got = []
+        deadline = time.time() + 12
+        while time.time() < deadline and "idle_frames" not in got:
+            got = kinds(2)
+        idle = next(e for e in seen if e["kind"] == "idle_frames")
+        assert idle["frames"] == 0, idle
+
+    _menu_session(children, ["top", "left", "right"], steps, seconds=14, extra={"probe": True})
 
 
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):

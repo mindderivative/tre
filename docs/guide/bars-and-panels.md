@@ -112,8 +112,9 @@ whether to skip.
 
 ## What is not there yet
 
-A transparent surface that lets clicks through to the window below needs an input region
-(`input_region`), which is not built, so a full-screen overlay would block the desktop; a
-screen frame (a painter surface plus reservers) waits for it. Margin
-animation and drag, and popups that leave the bar's own surface (a tray menu hanging below
-a 32 px bar) are the rest of the work tracked in issue #195.
+A real compositor popup (`PopupWindow`, an `xdg_popup` parented to the bar) is not built. A
+menu or flyout that leaves the bar's own surface works today with a transparent overlay
+`LayerWindow` that exists only while the menu is open: see
+[Menus from a bar](menus-from-a-bar.md). A screen frame (a painter surface plus reservers)
+uses `input_region`, which is built; margin animation and drag are built too (see the
+[LayerWindow reference](../reference/layer-window.md)).
