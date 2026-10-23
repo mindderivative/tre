@@ -12,6 +12,9 @@ to draw its own; see [Window controls and state](#window-controls-and-state).
 window = Window(width=640, height=400, title="Inbox")
 ```
 
+A bar, panel or dock that the compositor places is a [`LayerWindow`](layer-window.md) (0.5.7), a
+`Window` with a different Wayland role.
+
 ## Nodes
 
 **`create(kind, **props) -> Node`** makes a detached node of `kind` —

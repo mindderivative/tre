@@ -42,10 +42,14 @@ CLASS_DESCRIPTIONS = {
     "CursorImage": "A pointer shape drawn from pixels, for a node's `cursor`.",
     "Shader": "WGSL that paints a node (a fill) or transforms its rendered content (an effect).",
     "ShaderError": "A shader's source or names are wrong, positioned in the WGSL you gave.",
+    "LayerWindow": "A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surface).",
+    "UnsupportedPlatform": "Raised where a feature needs a platform this process is not on (a `LayerWindow` without a layer shell).",
 }
 GUIDE = {
     "App": "reference/app.md",
     "Window": "reference/window.md",
+    "LayerWindow": "reference/layer-window.md",
+    "UnsupportedPlatform": "reference/layer-window.md#errors",
     "Node": "reference/node.md",
     "Event": "reference/events.md",
     "Painter": "reference/painter.md",
@@ -57,6 +61,16 @@ GUIDE = {
     "TimerHandle": "reference/window.md#timers-056",
 }
 BASES = {
+    "LayerWindow": [
+        ("Window", "#window"),
+        ("object", PYDOC + "functions.html#object"),
+    ],
+    "UnsupportedPlatform": [
+        ("RuntimeError", PYDOC + "exceptions.html#RuntimeError"),
+        ("Exception", PYDOC + "exceptions.html#Exception"),
+        ("BaseException", PYDOC + "exceptions.html#BaseException"),
+        ("object", PYDOC + "functions.html#object"),
+    ],
     "ShaderError": [
         ("ValueError", PYDOC + "exceptions.html#ValueError"),
         ("Exception", PYDOC + "exceptions.html#Exception"),
@@ -197,7 +211,8 @@ WINDOW_EVENTS = [
     ("`color_scheme`", "`dark`", "The OS switched between light and dark."),
     ("`scale_factor`", "`scale_factor`", "The window moved to a display with a different scale."),
     ("`close_requested`", "—", "The user asked to close; `event.cancel()` keeps it open."),
-    ("`closed`", "—", "The window closed."),
+    ("`closed`", "`reason` (a `LayerWindow`)", "The window closed."),
+    ("`configure`, `output_changed`, `warning`", "`width`, `height` / `output` / `key`, `message`", "A `LayerWindow`: the compositor sized it / it entered an output / a setting the protocol ignores."),
     ("`dock_target`, `dock_drop`", "`side`, `panel`", "A docking drag moved into a zone / ended."),
     ("`maximized`, `active`", "`maximized`, `active`", "The window was maximized or restored / gained or lost focus."),
     ("`titlebar_inset`", "`titlebar_inset`", "The OS controls' area over the content changed."),
@@ -400,7 +415,7 @@ def main() -> int:
     tree = ast.parse(STUB.read_text())
     classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
-    order = ["App", "LoopHandle", "StatsHandle", "TimerHandle", "Window", "Node", "Event", "Painter", "Gradient", "CursorImage", "Shader", "ShaderError"]
+    order = ["App", "LoopHandle", "StatsHandle", "TimerHandle", "Window", "LayerWindow", "Node", "Event", "Painter", "Gradient", "CursorImage", "Shader", "ShaderError", "UnsupportedPlatform"]
     missing = set(classes) - set(order)
     if missing:
         print(f"classes not in the page order: {sorted(missing)}", file=sys.stderr)
@@ -418,7 +433,7 @@ def main() -> int:
         "",
         "`Node` and `Window` take most of their properties by name through `set`, `get` and "
         "(for the animatable ones) `animate`, and their events by name through `on`; those names "
-        "are listed with the class. None of these classes can be subclassed.",
+        "are listed with the class. None of these classes is meant to be subclassed.",
         "",
     ]
     lines += table(

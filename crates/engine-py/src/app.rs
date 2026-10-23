@@ -31,8 +31,8 @@ use std::time::Instant;
 
 use engine_core::{Cursor, InputEvent, NodeId, Tree, from_access_id};
 use engine_platform::{
-    EventLoopWaker, IdleHooks, WindowConfig, WindowLifecycle, WindowOptions, WindowRequest,
-    run_windowed_multi_with,
+    EventLoopWaker, IdleHooks, LayerHooks, WindowConfig, WindowLifecycle, WindowOptions,
+    WindowRequest, run_windowed_multi_with,
 };
 use engine_render::{GpuReport, GpuWatch, PresentChoice, WindowRenderer};
 use peniko::kurbo::Point;
@@ -135,6 +135,22 @@ fn window_request(setup: &WindowSetup, index: usize, max_frames: Option<u32>) ->
     }
 }
 
+/// 0.5.7 (#198): the request that opens `setup`'s layer surface, `None` for an ordinary
+/// window; `index` is its token.
+#[cfg(target_os = "linux")]
+fn layer_request(
+    setup: &WindowSetup,
+    index: usize,
+    max_frames: Option<u32>,
+) -> Option<engine_platform::layer::LayerRequest> {
+    let layer = setup.handles.layer.as_ref()?;
+    Some(engine_platform::layer::LayerRequest {
+        token: index as u64,
+        config: layer.config.borrow().clone(),
+        max_frames,
+    })
+}
+
 /// Hands this run's waker to everything of `setup`'s window that needs it:
 /// its terminals (M31 Phase 6: a PTY reader thread wakes an idle loop with
 /// it) and `window.close()` (0.5.0 M2). A `window.create("terminal", ...)`
@@ -148,10 +164,51 @@ fn attach_waker(setup: &WindowSetup, waker: &EventLoopWaker, alarm: &Arc<crate::
     *setup.handles.waker.borrow_mut() = Some(waker.clone());
 }
 
+/// 0.5.7 (#198): what a `wgpu` surface is made from: a `winit` window, or (a layer
+/// surface, which has none) the raw Wayland display and surface pointers.
+enum SurfaceSource {
+    Window(Arc<Window>),
+    #[cfg(target_os = "linux")]
+    Layer {
+        display: engine_platform::layer::RawPtr,
+        surface: engine_platform::layer::RawPtr,
+    },
+}
+
+impl SurfaceSource {
+    fn create(
+        &self,
+        instance: &wgpu::Instance,
+    ) -> Result<wgpu::Surface<'static>, wgpu::CreateSurfaceError> {
+        match self {
+            Self::Window(window) => instance.create_surface(window.clone()),
+            #[cfg(target_os = "linux")]
+            Self::Layer { display, surface } => {
+                use winit::raw_window_handle::{
+                    RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
+                };
+                // SAFETY: both pointers name live Wayland objects of the layer surface,
+                // which `LayerEvent::Created` promised; the surface is dropped before the
+                // loop asks for the Wayland surface to be destroyed.
+                unsafe {
+                    instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                        raw_display_handle: Some(RawDisplayHandle::Wayland(
+                            WaylandDisplayHandle::new(display.0),
+                        )),
+                        raw_window_handle: RawWindowHandle::Wayland(WaylandWindowHandle::new(
+                            surface.0,
+                        )),
+                    })
+                }
+            }
+        }
+    }
+}
+
 struct GpuState {
-    /// 0.4.0 M6: kept to recreate a lost `surface` for `window`.
+    /// 0.4.0 M6: kept to recreate a lost `surface`.
     instance: wgpu::Instance,
-    window: Arc<Window>,
+    source: SurfaceSource,
     surface: wgpu::Surface<'static>,
     /// M32 Phase 2 (§4, §5): kept around (not just consumed inside
     /// `new`) specifically so `resize` below can reconfigure the
@@ -187,15 +244,15 @@ impl GpuState {
     /// 0.4.0: an `Err` (no adapter, no device, or a surface this adapter
     /// can't drive) ends the run, and `App.run()` raises it.
     fn new(
-        window: Arc<Window>,
+        source: SurfaceSource,
         width: u32,
         height: u32,
         present: PresentChoice,
         transparent: bool,
     ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
-        let surface = instance
-            .create_surface(window.clone())
+        let surface = source
+            .create(&instance)
             .map_err(|err| format!("couldn't create a GPU surface for the window: {err}"))?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
@@ -273,7 +330,7 @@ impl GpuState {
 
         Ok(Self {
             instance,
-            window,
+            source,
             surface,
             surface_config: config,
             device,
@@ -410,7 +467,7 @@ impl GpuState {
     /// was, its kept frame's contents redrawn next frame. Whether that
     /// worked.
     fn recreate_surface(&mut self) -> bool {
-        match self.instance.create_surface(self.window.clone()) {
+        match self.source.create(&self.instance) {
             Ok(surface) => {
                 surface.configure(&self.device, &self.surface_config);
                 self.surface = surface;
@@ -651,7 +708,13 @@ impl App {
         };
         let setup = {
             let borrowed = window.borrow(py);
-            if borrowed.handles.os_window.borrow().is_some() {
+            if borrowed.handles.os_window.borrow().is_some()
+                || borrowed
+                    .handles
+                    .layer
+                    .as_ref()
+                    .is_some_and(|layer| layer.id.get().is_some())
+            {
                 return Err(pyo3::exceptions::PyValueError::new_err(
                     "this window is already open",
                 ));
@@ -675,6 +738,11 @@ impl App {
         };
         let setups = live.setups.borrow();
         attach_waker(&setups[index], &live.waker, &live.alarm);
+        #[cfg(target_os = "linux")]
+        if let Some(request) = layer_request(&setups[index], index, live.max_frames) {
+            live.waker.open_layer(request);
+            return Ok(());
+        }
         live.waker
             .open_window(window_request(&setups[index], index, live.max_frames));
         Ok(())
@@ -762,8 +830,13 @@ impl App {
         let runtimes_for_access = runtimes.clone();
         let runtimes_for_input = runtimes.clone();
         let runtimes_for_lifecycle = runtimes.clone();
+        let runtimes_for_lifecycle_drop = runtimes.clone();
+        #[cfg(target_os = "linux")]
+        let runtimes_for_layer = runtimes.clone();
         let runtimes_for_access_action = runtimes;
         let setups_for_cleanup = setups.clone();
+        #[cfg(target_os = "linux")]
+        let setups_for_layer = setups.clone();
         let setups_for_setup = setups;
         let live_for_setup = self.live.clone();
         let timer_wake: Rc<RefCell<Option<crate::timers::TimerWake>>> = Rc::new(RefCell::new(None));
@@ -777,6 +850,8 @@ impl App {
         let startup_error_for_created = startup_error.clone();
         let startup_error_for_frame = startup_error.clone();
         let startup_error_for_lifecycle = startup_error.clone();
+        #[cfg(target_os = "linux")]
+        let startup_error_for_layer = startup_error.clone();
         let gpu_wake: Rc<RefCell<Option<GpuWake>>> = Rc::new(RefCell::new(None));
         let gpu_wake_for_setup = gpu_wake.clone();
         // 0.5.1 (#92): the loop waits for the next event with this thread's
@@ -803,6 +878,174 @@ impl App {
                 }
             }),
         };
+        // 0.5.7 (#198): layer surfaces (`LayerWindow`). They have no `winit` window, so the
+        // platform loop hands the host the raw Wayland pointers once the compositor has
+        // sized one; everything after that (frames, input, close) goes through the same
+        // callbacks as a window's. Python is taken with `attach`: the loop holds the GIL
+        // whenever it calls these, as for every other callback.
+        #[cfg(target_os = "linux")]
+        let layer_hooks: Option<LayerHooks> = {
+            use engine_platform::layer::{LayerNotice, LayerSurfaceInfo};
+            let created_setups = setups_for_layer.clone();
+            let created_runtimes = runtimes_for_layer.clone();
+            let shutdown_runtimes = runtimes_for_layer;
+            let created_error = startup_error_for_layer.clone();
+            let notice_setups = setups_for_layer;
+            let notice_error = startup_error_for_layer;
+            Some(LayerHooks {
+                on_created: Box::new(
+                    move |window_id: WindowId, token: u64, info: LayerSurfaceInfo| {
+                        Python::attach(|py| {
+                            let handles = created_setups.borrow()[token as usize].handles.clone();
+                            let Some(layer) = handles.layer.clone() else {
+                                return false;
+                            };
+                            handles.width.set(info.width);
+                            handles.height.set(info.height);
+                            layer.scale.set(info.scale);
+                            layer.id.set(Some(info.id));
+                            *layer.controller.borrow_mut() = Some(info.controller.clone());
+                            handles.refresh_scale();
+                            let gpu = match GpuState::new(
+                                SurfaceSource::Layer {
+                                    display: info.display,
+                                    surface: info.surface,
+                                },
+                                info.width,
+                                info.height,
+                                handles.present_mode.get(),
+                                handles.transparent.get(),
+                            ) {
+                                Ok(gpu) => gpu,
+                                Err(err) => {
+                                    if token as usize >= initial_windows {
+                                        tracing::error!(%err, "a layer window added while the app runs could not be set up");
+                                    } else {
+                                        *created_error.borrow_mut() = Some(err);
+                                    }
+                                    layer.id.set(None);
+                                    *layer.controller.borrow_mut() = None;
+                                    return false;
+                                }
+                            };
+                            handles.transparent_active.set(Some(gpu.transparent_active));
+                            handles
+                                .surface_partial
+                                .set(Some(gpu.renderer.has_persistent_target()));
+                            let opened = crate::clock::now(&handles.tree);
+                            created_runtimes.borrow_mut().insert(
+                                window_id,
+                                WindowRuntime {
+                                    handles: handles.clone(),
+                                    gpu,
+                                    opened,
+                                    cursor: Cursor::Default,
+                                    ime: None,
+                                    ime_cache: None,
+                                },
+                            );
+                            // The size the compositor gave, in the logical pixels the app lays out in.
+                            let (width, height) = handles.logical_size();
+                            handles.tree.borrow_mut().dispatch(
+                                handles.root,
+                                InputEvent::Resized {
+                                    width: width as f32,
+                                    height: height as f32,
+                                },
+                                opened,
+                            );
+                            handles.tree.borrow_mut().mark_dirty();
+                            listeners::deliver_window(
+                                &handles.window_listeners,
+                                py,
+                                WindowEventType::Configure,
+                                |e| {
+                                    e.width = Some(width);
+                                    e.height = Some(height);
+                                },
+                            );
+                            for (key, message) in layer.pending_warnings.take() {
+                                listeners::deliver_window(
+                                    &handles.window_listeners,
+                                    py,
+                                    WindowEventType::Warning,
+                                    |e| {
+                                        e.key = Some(key.clone());
+                                        e.message = Some(message.clone());
+                                    },
+                                );
+                            }
+                            true
+                        })
+                    },
+                ),
+                on_notice: Box::new(
+                    move |window_id: WindowId, token: u64, notice: LayerNotice| {
+                        Python::attach(|py| {
+                            let _ = window_id;
+                            let Some(handles) = notice_setups
+                                .borrow()
+                                .get(token as usize)
+                                .map(|s| s.handles.clone())
+                            else {
+                                return;
+                            };
+                            match notice {
+                                LayerNotice::Closed(reason) => {
+                                    if let Some(layer) = &handles.layer {
+                                        *layer.closed_reason.borrow_mut() = Some(match reason {
+                                            engine_platform::layer::CloseReason::Compositor => {
+                                                "compositor"
+                                            }
+                                            engine_platform::layer::CloseReason::OutputRemoved => {
+                                                "output_removed"
+                                            }
+                                            engine_platform::layer::CloseReason::App => "app",
+                                        });
+                                    }
+                                }
+                                LayerNotice::OutputChanged(name) => {
+                                    listeners::deliver_window(
+                                        &handles.window_listeners,
+                                        py,
+                                        WindowEventType::OutputChanged,
+                                        |e| {
+                                            e.output = Some(name.clone());
+                                        },
+                                    );
+                                }
+                                LayerNotice::Failed(message) => {
+                                    tracing::error!(%message, "a layer window could not be opened");
+                                    if (token as usize) < initial_windows {
+                                        *notice_error.borrow_mut() =
+                                            Some(format!("LayerWindow: {message}"));
+                                    }
+                                }
+                            }
+                        });
+                    },
+                ),
+                on_shutdown: Box::new(move || {
+                    // Drop the layer windows' GPU state (and so their `wgpu` surfaces) now.
+                    let mut runtimes = shutdown_runtimes.borrow_mut();
+                    let layer_ids: Vec<WindowId> = runtimes
+                        .iter()
+                        .filter(|(_, r)| r.handles.layer.is_some())
+                        .map(|(id, _)| *id)
+                        .collect();
+                    for id in layer_ids {
+                        if let Some(runtime) = runtimes.remove(&id)
+                            && let Some(layer) = &runtime.handles.layer
+                        {
+                            layer.id.set(None);
+                            *layer.controller.borrow_mut() = None;
+                        }
+                    }
+                }),
+            })
+        };
+        #[cfg(not(target_os = "linux"))]
+        let layer_hooks: Option<LayerHooks> = None;
         let result = run_windowed_multi_with(
             move |window_id, token, window| {
                 let setup_owned = {
@@ -830,7 +1073,7 @@ impl App {
                 }
                 setup.handles.refresh_scale();
                 let gpu = match GpuState::new(
-                    window,
+                    SurfaceSource::Window(window),
                     setup.handles.width.get(),
                     setup.handles.height.get(),
                     setup.handles.present_mode.get(),
@@ -1470,6 +1713,13 @@ impl App {
                         if let Some(window) = runtime.handles.os_window.borrow().as_ref() {
                             window.set_cursor(winit_cursor(wanted));
                         }
+                        #[cfg(target_os = "linux")]
+                        if let Some(layer) = &runtime.handles.layer
+                            && let (Some(controller), Some(id)) =
+                                (layer.controller.borrow().as_ref(), layer.id.get())
+                        {
+                            controller.set_cursor(id, cursor_icon(wanted));
+                        }
                         runtime.cursor = wanted;
                     }
                 }
@@ -1572,6 +1822,17 @@ impl App {
                                 e.height = Some(f64::from(height));
                             },
                         );
+                        if runtime.handles.layer.is_some() {
+                            listeners::deliver_window(
+                                &runtime.handles.window_listeners,
+                                py,
+                                WindowEventType::Configure,
+                                |e| {
+                                    e.width = Some(f64::from(width));
+                                    e.height = Some(f64::from(height));
+                                },
+                            );
+                        }
                         // 0.5.0 M2: `winit` sends no maximize event -- a
                         // maximize or restore arrives as a resize, so the
                         // state is checked after each one.
@@ -1788,14 +2049,29 @@ impl App {
                             )
                     }
                     WindowLifecycle::Closed => {
+                        let layer = runtime.handles.layer.clone();
+                        let reason = layer
+                            .as_ref()
+                            .map(|l| l.closed_reason.borrow().unwrap_or("app").to_string());
                         listeners::deliver_window(
                             &runtime.handles.window_listeners,
                             py,
                             WindowEventType::Closed,
-                            |_| {},
+                            |e| e.reason = reason.clone(),
                         );
                         *runtime.handles.os_window.borrow_mut() = None;
                         runtime.handles.timers.borrow_mut().clear();
+                        if let Some(layer) = layer {
+                            // The surface is dropped with its runtime, before the platform
+                            // loop asks for the Wayland surface to be destroyed.
+                            layer.id.set(None);
+                            #[cfg(target_os = "linux")]
+                            {
+                                *layer.controller.borrow_mut() = None;
+                            }
+                            drop(runtimes);
+                            runtimes_for_lifecycle_drop.borrow_mut().remove(&window_id);
+                        }
                         true
                     }
                 }
@@ -1809,6 +2085,12 @@ impl App {
                 let alarm = timer_wake.alarm.clone();
                 *timer_wake_for_setup.borrow_mut() = Some(timer_wake);
                 for (index, setup) in setups_for_setup.borrow().iter().enumerate() {
+                    #[cfg(target_os = "linux")]
+                    if let Some(request) = layer_request(setup, index, max_frames) {
+                        opener.open_layer(request);
+                        attach_waker(setup, waker, &alarm);
+                        continue;
+                    }
                     opener.open_window(window_request(setup, index, max_frames));
                     attach_waker(setup, waker, &alarm);
                 }
@@ -1821,6 +2103,7 @@ impl App {
                 });
             },
             Some(idle),
+            layer_hooks,
         );
 
         // M87: this run's loop is gone -- a `call_soon` from now on just

@@ -14,6 +14,44 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #198, `LayerWindow` (2026-10-19)
+
+Phase 2 of #195 (TRE-REQ-001 from Tesserae Shell), built on the spike's verdict (go on I2):
+`tre.LayerWindow`, a `Window` whose Wayland role is a layer surface, for bars, panels, docks
+and OSDs. Design in `docs/design/layer-window.md` ("As built" lists the differences), reference
+in `docs/reference/layer-window.md`, guide in `docs/guide/bars-and-panels.md`, example
+`examples/layer_bar.py`.
+
+- *Platform* (`engine-platform`): `layer_config.rs` (the settings and the protocol's rules,
+  validated with no compositor, 7 tests), `layer.rs` (the layer thread: a second event queue on
+  `winit`'s `wl_display`; pointer, touch, keyboard, cursor shape, fractional scale, outputs by
+  name), `layer_keys.rs` (the keymap through `xkbcommon-dl`, 3 tests), `layer_loop.rs` (the
+  surfaces inside the loop, with ids minted from `WindowId::from(u64)`), `LayerHooks` for the
+  host.
+- *Python* (`engine-py`): `LayerWindow(namespace, *, layer, anchor, size, exclusive_zone, margin,
+  keyboard, output)` extending `Window` (which gained `subclass`), `set`/`get`/`close`, the
+  refused window keys, `UnsupportedPlatform`, `tre.supports("layer_shell")`, events `configure`,
+  `output_changed`, `warning` and `closed` with a reason; the surface is made from raw
+  handles (`GpuState` takes a `SurfaceSource`), drawn by `WindowRenderer` unchanged.
+- *Checked on KDE Plasma 6.8 (RADV)*: a bar maps and a maximised window is exactly its
+  `exclusive_zone` shorter; two bars (one per output) and an ordinary window run in one app; a
+  bar added to a running app and closed; an idle bar draws 0 frames and uses 0.0% of a core; an
+  unknown output raises from `run()` listing the real ones; with real pointer, scroll and keys
+  (a virtual `uinput` device, `TRE_LIVE_INPUT=1`): enter, click, wheel, key and leave reach a
+  node, `keyboard="none"` gets no keys, and a bar moved off the screen by a negative margin
+  gets no pointer events.
+- *Found on the way*: a first version crashed at exit because `winit` destroys its Wayland
+  connection when the loop returns (shutdown now runs from `exiting`); and a layer frame
+  asked for as "the OS requested it" never skipped an unchanged frame (52 frames in 5 idle
+  seconds; now 0).
+- *Tests*: `tests/test_layer_window.py` (35, headless), `tests/test_layer_window_live.py` (8;
+  5 run on any Wayland session with the layer shell, 3 need `TRE_LIVE_INPUT=1` and
+  `/dev/uinput`); `tools/verify.sh --cross` passes.
+- *Not done*: `exclusive_edge` (protocol v5, the toolkit binds v4), IME and AccessKit on layer
+  surfaces (follow-ups), `input_region`, outputs as objects, margin animation and drag, popups
+  (phases 3 to 6 of #195), a 1.5x output, and a compositor without the layer shell (X11 and
+  headless raise or build as documented).
+
 ### #196, the layer surface spike (2026-10-18 to 19)
 
 Phase 1 of #195 (TRE-REQ-001 from Tesserae Shell). Verdict: **go, on I2**: layer

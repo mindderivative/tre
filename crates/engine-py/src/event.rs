@@ -202,6 +202,10 @@ pub struct Event {
     /// 0.5.7 (#132): `swipe`: `"left"`, `"right"`, `"up"` or `"down"`.
     #[pyo3(get)]
     pub(crate) direction: Option<String>,
+    /// 0.5.7 (#198): `output_changed`: the output's connector name. (`closed` on a layer
+    /// window reuses `reason`; `warning` reuses `key` for the setting and `message`.)
+    #[pyo3(get)]
+    pub(crate) output: Option<String>,
     /// 0.5.4: `pan`/`pinch`: how far the gesture has moved in all.
     #[pyo3(get)]
     pub(crate) total_x: Option<f64>,
@@ -337,6 +341,7 @@ impl Event {
             rotation: None,
             rotation_delta: None,
             direction: None,
+            output: None,
             total_x: None,
             total_y: None,
             velocity_x: None,

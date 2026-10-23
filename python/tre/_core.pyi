@@ -31,9 +31,12 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from typing import Any, Literal, final, overload
 
+from typing_extensions import disjoint_base
+
 __all__ = [
     "App",
     "Window",
+    "LayerWindow",
     "Node",
     "Painter",
     "Event",
@@ -44,8 +47,10 @@ __all__ = [
     "TimerHandle",
     "Shader",
     "ShaderError",
+    "UnsupportedPlatform",
     "register_font",
     "set_system_fonts",
+    "supports",
     "system_fonts",
 ]
 
@@ -182,6 +187,10 @@ class Event:
     """`rotate`: the turn since the last event, in radians."""
     direction: str | None
     """`swipe`: `"left"`, `"right"`, `"up"` or `"down"`."""
+    output: str | None
+    """`output_changed`: the output's connector name. (`closed` on a `LayerWindow` sets
+    `reason`: `"compositor"`, `"output_removed"` or `"app"`; `warning` sets `key`, the
+    setting, and `message`.)"""
     total_x: float | None
     """`pan`, `pinch`: how far the gesture has moved in all."""
     total_y: float | None
@@ -369,7 +378,7 @@ class Node:
         freed node raises `ValueError`."""
         ...
 
-@final
+@disjoint_base
 class Window:
     """One real OS window and the node tree painted into it. Add one or
     more to an `App`, then call `App.run()`.
@@ -801,6 +810,85 @@ class Window:
         as after `remove()`. Raises `ValueError` if `panel` isn't docked.
         """
         ...
+
+@final
+class LayerWindow(Window):
+    """(0.5.7) A window whose Wayland role is a layer surface: a bar, a panel, a dock or an
+    OSD that the compositor places (an edge, a stacking layer, a size, margins) and that
+    can reserve screen space. It is a `Window` in every way that makes sense (`root`,
+    `create`, `show_layer`, `after`, `every`, `on`, `simulate`, `advance`, `snapshot`,
+    `close`) and is opened by `App.run()` like one.
+
+    ```python
+    bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "right"),
+                      size=(0, 32), exclusive_zone=32)
+    app.add_window(bar)
+    ```
+
+    `namespace` says what the surface is for. `layer` is `"background"`, `"bottom"`,
+    `"top"` or `"overlay"`. `anchor` is a sequence of edge names (`"top"`, `"bottom"`,
+    `"left"`, `"right"`). `size` is `(width, height)` in logical pixels; a 0 stretches
+    between the two edges anchored on that axis, which must both be in `anchor`.
+    `exclusive_zone` is how many pixels to reserve along the anchored edge (0 reserves
+    none, -1 ignores other surfaces' zones). `margin` is `(top, right, bottom, left)`, or
+    one number for all four; a negative margin is accepted. `keyboard` is `"none"`,
+    `"on_demand"` or `"exclusive"`. `output` is a connector name such as `"DP-1"`; `None`
+    lets the compositor choose, and it chooses differently from run to run.
+
+    The protocol's errors raise `ValueError` naming the key, before anything is sent to
+    the compositor. It raises `UnsupportedPlatform` where there is no layer shell (X11,
+    GNOME's Mutter, Windows, macOS); with no display at all it can be built and driven
+    headless (`simulate`, `advance`, `snapshot`), though not opened. A stretched axis is
+    1920 or 1080 logical pixels headless, until `resize` says otherwise. The root has no
+    padding, and layout is in logical pixels, drawn at the surface's scale.
+
+    Events: `configure` (`width`, `height`, logical), `closed` (`event.reason`:
+    `"compositor"`, `"output_removed"` or `"app"`), `output_changed` (`event.output`) and
+    `warning` (`event.key`, `event.message`: a zone the protocol would ignore), besides the
+    window events that apply (`resize`, `close_requested`, `scale_factor`, ...).
+    """
+
+    def __new__(
+        cls,
+        namespace: str,
+        *,
+        layer: Literal["background", "bottom", "top", "overlay"] = ...,
+        anchor: str | Sequence[str] | None = ...,
+        size: tuple[int, int] | None = ...,
+        exclusive_zone: int | None = ...,
+        exclusive_edge: None = ...,
+        margin: int | tuple[int, int, int, int] | None = ...,
+        keyboard: Literal["none", "on_demand", "exclusive"] = ...,
+        output: str | None = ...,
+    ) -> LayerWindow: ...
+    def set(self, **props: Any) -> None:
+        """Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`,
+        `margin`, `keyboard`) in one commit, with the keys `Window.set` shares that mean
+        something to a placed surface. Raises `ValueError`, changing nothing, for a bad
+        value, for a window key that means nothing here (`title`, `decorations`,
+        `maximized`, `fullscreen`, `resize_border`, `system_menu`, `min_width`,
+        `min_height`, `icon`, `x`, `y`, `always_on_top`, `resizable`, `skip_taskbar`,
+        `blur_behind`) and for `namespace` and `output`, which only the constructor
+        takes."""
+        ...
+    def get(self, name: str) -> Any:
+        """Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`,
+        `exclusive_edge`, `margin`, `keyboard`, `output`) or anything `Window.get` reads."""
+        ...
+    def close(self) -> None:
+        """Closes the surface on the loop's next turn: `close_requested` first (a listener may
+        cancel it with `event.cancel()`), then `closed` with reason `"app"`."""
+        ...
+
+class UnsupportedPlatform(RuntimeError):
+    """A feature this platform does not have: `LayerWindow` needs a Wayland compositor with
+    the layer-shell protocol."""
+
+def supports(feature: str) -> bool:
+    """Whether this process can use an optional feature. Only `"layer_shell"` so far
+    (a Wayland compositor with `zwlr_layer_shell_v1`); an unknown name is `False`."""
+    ...
+
 
 @final
 class App:

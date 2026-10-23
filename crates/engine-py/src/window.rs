@@ -60,7 +60,7 @@ pub(crate) type SharedSize = Rc<Cell<u32>>;
 /// map from a `Node` Python object that holds no back-reference to this
 /// `PyWindow` -- shared the exact way `tree: Rc<RefCell<Tree>>` already
 /// is between a `Window` and every `Node` it hands out.
-#[pyclass(name = "Window")]
+#[pyclass(name = "Window", subclass)]
 pub struct PyWindow(ThreadBound<WindowState>);
 thread_bound_shell!(PyWindow => WindowState);
 
@@ -204,6 +204,9 @@ pub(crate) struct WindowHandles {
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
+    /// 0.5.7 (#198): the layer surface's settings and state, for a `LayerWindow`; `None`
+    /// for an ordinary window.
+    pub(crate) layer: Option<Rc<crate::layer_window::LayerState>>,
 }
 
 pub struct WindowState {
@@ -222,13 +225,16 @@ impl WindowHandles {
     /// 0.5.4 (#102): the scale in effect right now, from `dpi_scaling` and the
     /// open window; updates `scale` and says whether it changed.
     pub(crate) fn refresh_scale(&self) -> bool {
-        let wanted = if self.dpi_scaling.get() {
+        let wanted = if !self.dpi_scaling.get() {
+            1.0
+        } else if let Some(layer) = &self.layer {
+            // A layer surface has no `winit` window: its scale is the compositor's.
+            layer.scale.get()
+        } else {
             self.os_window
                 .borrow()
                 .as_ref()
                 .map_or(1.0, |window| window.scale_factor())
-        } else {
-            1.0
         };
         let wanted = if wanted.is_finite() && wanted > 0.0 {
             wanted
@@ -253,11 +259,18 @@ impl WindowHandles {
     }
 }
 
-#[pymethods]
 impl PyWindow {
-    #[new]
-    #[pyo3(signature = (width=480, height=200, title="tre v2", decorations=true))]
-    fn new(width: u32, height: u32, title: &str, decorations: bool) -> PyResult<Self> {
+    /// A window, headless until `App.run()` opens it. `padding` and `gap` are the root
+    /// container's (an ordinary `Window` has 16; a `LayerWindow`'s root has none, as a
+    /// bar's would not want them).
+    pub(crate) fn construct(
+        width: u32,
+        height: u32,
+        title: &str,
+        decorations: bool,
+        padding: f32,
+        gap: f32,
+    ) -> PyResult<Self> {
         // 0.4.0 review: a GPU surface can't be zero-sized.
         if width == 0 || height == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -284,14 +297,14 @@ impl PyWindow {
                 display: taffy::Display::Flex,
                 flex_direction: taffy::FlexDirection::Row,
                 padding: TaffyRect {
-                    left: length(PADDING),
-                    right: length(PADDING),
-                    top: length(PADDING),
-                    bottom: length(PADDING),
+                    left: length(padding),
+                    right: length(padding),
+                    top: length(padding),
+                    bottom: length(padding),
                 },
                 gap: Size {
-                    width: length(GAP),
-                    height: length(GAP),
+                    width: length(gap),
+                    height: length(gap),
                 },
                 size: Size {
                     width: length(width as f32),
@@ -355,8 +368,18 @@ impl PyWindow {
                 last_drag_press: Rc::new(Cell::new(None)),
                 system_menu: Rc::new(Cell::new(false)),
                 waker: Rc::new(RefCell::new(None)),
+                layer: None,
             },
         })))
+    }
+}
+
+#[pymethods]
+impl PyWindow {
+    #[new]
+    #[pyo3(signature = (width=480, height=200, title="tre v2", decorations=true))]
+    fn new(width: u32, height: u32, title: &str, decorations: bool) -> PyResult<Self> {
+        Self::construct(width, height, title, decorations, PADDING, GAP)
     }
 
     /// §11.7's own claim, matching `App::run`'s existing `PyWindow::

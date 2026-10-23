@@ -304,10 +304,16 @@ pub(crate) enum WindowEventType {
     HighContrast,
     /// 0.5.4 (#116): a frame was drawn and presented; `stats` has its costs.
     Frame,
+    /// 0.5.7 (#198), layer windows: the compositor assigned a size.
+    Configure,
+    /// 0.5.7 (#198): the surface entered another output.
+    OutputChanged,
+    /// 0.5.7 (#198): a setting the protocol accepts but ignores.
+    Warning,
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 19] = [
+    const ALL: [WindowEventType; 22] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -327,6 +333,9 @@ impl WindowEventType {
         Self::ReducedMotion,
         Self::HighContrast,
         Self::Frame,
+        Self::Configure,
+        Self::OutputChanged,
+        Self::Warning,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -350,6 +359,9 @@ impl WindowEventType {
             Self::ReducedMotion => "reduced_motion",
             Self::HighContrast => "high_contrast",
             Self::Frame => "frame",
+            Self::Configure => "configure",
+            Self::OutputChanged => "output_changed",
+            Self::Warning => "warning",
         }
     }
 

@@ -786,7 +786,7 @@ impl PyWindow {
     /// fires first, and a listener that cancels it keeps the window open.
     /// It happens on the loop's next turn, not during this call. A window
     /// that isn't open has nothing to close.
-    fn close(&self) {
+    pub(crate) fn close(&self) {
         let window = self.handles.os_window.borrow();
         if let (Some(window), Some(waker)) = (window.as_ref(), self.handles.waker.borrow().as_ref())
         {
@@ -806,7 +806,7 @@ impl PyWindow {
     /// (0.4.1 M8) `show_damage`, and (0.5.0 M2) `decorations`; `width`,
     /// `height`, and `scale_factor` are read-only.
     #[pyo3(signature = (**props))]
-    fn set(&self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+    pub(crate) fn set(&self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
         let mut title = None;
         let mut partial_redraw = None;
         let mut show_damage = None;
@@ -1087,7 +1087,7 @@ impl PyWindow {
     /// for dark, or `None` where the platform can't say (on macOS and
     /// Windows, until `App.run()` opens the window) -- `partial_redraw`,
     /// (0.4.0) `partial_redraw_active`, or (0.4.1) `show_damage`.
-    fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    pub(crate) fn get(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
         Ok(match name {
             "width" => self
                 .handles
