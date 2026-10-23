@@ -14,6 +14,20 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #196, the layer surface spike (2026-10-18 to 19)
+
+Phase 1 of #195 (TRE-REQ-001 from Tesserae Shell). Verdict: **go, on I2**: layer
+surfaces on a second event queue of the `wl_display` `winit` already owns. The full
+findings are in `docs/design/layer-surface-spike.md`; the prototypes stay on the
+unmerged branch `layer-surface-spike` (`spikes/layer-surface/`). Short version: a
+layer surface maps and keeps its exclusive zone; `WindowRenderer` already draws on any
+surface and drew a real tre scene on it; real pointer, scroll and keyboard events
+reached `Tree::dispatch`; a `winit` window and a layer surface shared one connection
+with no deadlock, both seats delivering every surface's events, so each side must
+filter by surface; negative margins, a 1 px reserver and a `-1` painter behave as the
+request needs on KDE Plasma 6.8. Not shown: touch, IME, cursor shape, AccessKit, a 1.5x
+output and output removal.
+
 ### #132, touch: rotation, swipe, the slops (2026-10-18)
 
 Built and tested with simulated fingers (as #113 was), the recognizer's arithmetic in
