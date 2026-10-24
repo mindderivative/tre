@@ -14,6 +14,21 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #203, live checks on KWin and sway (2026-10-20)
+
+Ran the live LayerWindow suite on KWin and on a headless sway 1.12 (`WLR_BACKENDS=headless`,
+wlroots). Found and fixed on sway: `configure` fired twice for one size (sway re-sends it;
+now it fires only on a change); a bar's `closed` after an unplugged output said `compositor`
+(the compositor closes the surface before it removes the output; the reason is now settled
+after a roundtrip, so it says `output_removed`); `LayerWindow.get("scale_factor")` was 1.0
+at any scale (now the surface's scale). `output=None` now picks the output at (0, 0), else the
+first by name, instead of the compositor's alternating choice. New live tests: `output=None`
+lands on the origin output, unplug, 1.5x scale, transparent pixels (`grim`), and paste (`wtype`, `wl-copy`),
+all sway only. Paste was a real gap: the clipboard went through XWayland only, so on a session with
+no X server a paste into any window did nothing (`read_clipboard()` was `None`); `arboard`'s
+`wayland-data-control` feature now reads and writes it through the compositor (KWin and wlroots offer
+it). Not yet run: touch, other GPUs, labwc, the fullscreen frame-callback check.
+
 ### #202, outputs as objects (2026-10-19)
 
 Phase 3 of #195. `tre.Output` (frozen: name, description, x, y, width, height, scale_factor,

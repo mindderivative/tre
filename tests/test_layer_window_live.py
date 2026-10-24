@@ -198,6 +198,19 @@ def outputs():
         size = re.search(r"width: (\d+) px, height: (\d+) px", block)
         if name and position and size:
             found[name.group(1)] = (int(position[1]), int(position[2]), int(size[1]), int(size[2]))
+    # The logical placement (xdg-output) is what a layout uses; `wl_output` x and y are
+    # the physical location, which sway reports as 0, 0 for every output.
+    try:
+        full = subprocess.run(["wayland-info"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        full = ""
+    for logical in re.finditer(
+        r"name: '(\S+)'.*?logical_x: (-?\d+), logical_y: (-?\d+)\s+logical_width: (\d+), logical_height: (\d+)",
+        full,
+        re.S,
+    ):
+        if logical[1] in found:
+            found[logical[1]] = tuple(int(logical[i]) for i in range(2, 6))
     if not found:
         pytest.skip("no outputs found")
     return found
@@ -258,6 +271,163 @@ def test_an_idle_bar_draws_no_frames(children):
     events = child.events(until="idle_frames", timeout=20)
     idle = next(e for e in events if e["kind"] == "idle_frames")
     assert idle["frames"] == 0
+
+
+def test_output_none_lands_on_the_output_at_the_origin_every_run(children):
+    found = outputs()
+    expected = next((n for n, (x, y, _, _) in found.items() if (x, y) == (0, 0)), min(found))
+    landed = set()
+    for _ in range(3):
+        child = bar_child(children, dict(), seconds=3)
+        events = child.events(until="output", timeout=20)
+        landed.add(next(str(e["name"]) for e in events if e["kind"] == "output"))
+    assert landed == {expected}
+
+
+def sway_outputs():
+    import shutil
+    if not (shutil.which("swaymsg") and os.environ.get("SWAYSOCK")):
+        pytest.skip("needs sway (SWAYSOCK) to add and unplug an output")
+    text = subprocess.run(["swaymsg", "-t", "get_outputs", "-r"], capture_output=True, text=True, timeout=10).stdout
+    return {o["name"] for o in json.loads(text)}
+
+
+def test_a_bar_on_an_unplugged_output_closes_with_output_removed(children):
+    before = sway_outputs()
+    subprocess.run(["swaymsg", "create_output"], capture_output=True, timeout=10)
+    time.sleep(0.5)
+    (name,) = sway_outputs() - before
+    if name not in outputs():
+        subprocess.run(["swaymsg", "output", name, "unplug"], capture_output=True, timeout=10)
+        pytest.skip("the session under test is not the sway that SWAYSOCK names")
+    code = BAR.replace(
+        "handle = app.thread_handle()",
+        'app.on("output_removed", lambda o: print(json.dumps({"kind": "removed", "name": o.name}), flush=True))\n'
+        "handle = app.thread_handle()",
+    )
+    child = children(code, BAR_ARGS=json.dumps({"bars": [dict(output=name)], "seconds": 12}))
+    child.events(until="output", timeout=20)
+    subprocess.run(["swaymsg", "output", name, "unplug"], capture_output=True, timeout=10)
+    events = []
+    while {"closed", "removed"} - {e["kind"] for e in events}:
+        batch = child.events(until="closed", timeout=20)
+        assert batch, events
+        events += batch
+    kinds = [e["kind"] for e in events]
+    assert "closed" in kinds and "removed" in kinds, events
+    assert next(e for e in events if e["kind"] == "closed")["reason"] == "output_removed"
+    assert next(e for e in events if e["kind"] == "removed")["name"] == name
+
+
+def test_a_bar_follows_a_fractional_output_scale(children):
+    sway_outputs()  # skips unless sway is reachable
+    name = next(iter(outputs()))
+    if name not in sway_outputs():
+        pytest.skip("the session under test is not the sway that SWAYSOCK names")
+    code = BAR.replace(
+        "handle = app.thread_handle()",
+        """handle = app.thread_handle()
+def read_scale():
+    time.sleep(2)
+    box = []; done = threading.Event()
+    def read():
+        box.append(bars[0].get("scale_factor")); done.set()
+    handle.call_soon(read); done.wait(3)
+    print(json.dumps({"kind": "scale", "value": box[0]}), flush=True)
+threading.Thread(target=read_scale, daemon=True).start()""",
+    )
+    subprocess.run(["swaymsg", "output", name, "scale", "1.5"], capture_output=True, timeout=10)
+    try:
+        child = children(code, BAR_ARGS=json.dumps({"bars": [dict(output=name)], "seconds": 4}))
+        events = child.events(until="scale", timeout=20)
+    finally:
+        subprocess.run(["swaymsg", "output", name, "scale", "1"], capture_output=True, timeout=10)
+    assert next(e for e in events if e["kind"] == "scale")["value"] == pytest.approx(1.5, abs=0.01)
+    # A compositor that re-sends the same size is not a change.
+    sizes = [(e["width"], e["height"]) for e in events if e["kind"] == "configure"]
+    assert len(sizes) == len(set(sizes)), sizes
+
+
+def _on_sway(name):
+    sway_outputs()  # skips unless sway is reachable
+    if name not in sway_outputs():
+        pytest.skip("the session under test is not the sway that SWAYSOCK names")
+
+
+def test_a_transparent_bar_shows_the_desktop_behind_it(children):
+    import shutil
+    if not shutil.which("grim"):
+        pytest.skip("needs grim to read pixels")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    # Something opaque and red behind the bar: sway tiles a new window over the output, and
+    # the bar sits 100px down so it is over the window's body, not sway's title bar.
+    code = BAR.replace("bar.root.set(fill=(0x67, 0x50, 0xA4, 0xFF))", "bar.root.set(fill=(0, 0, 0, 0))").replace(
+        'app.add_window(Window(width=200, height=100, title="tre-test-window"))',
+        'behind = Window(width=200, height=100, title="tre-test-window")\n'
+        "    behind.root.set(fill=(255, 0, 0, 255))\n"
+        "    app.add_window(behind)",
+    )
+    child = children(code, BAR_ARGS=json.dumps({"bars": [dict(output=name, zone=0, margin=(100, 0, 0, 0))], "window": True, "seconds": 6}))
+    child.events(until="configure", timeout=20)
+    time.sleep(2.0)
+    shot = subprocess.run(["grim", "-t", "ppm", "-o", name, "-"], capture_output=True, timeout=20).stdout
+    header, rest = shot.split(b"\n255\n", 1)
+    width = int(header.split()[1])
+    def pixel(x, y):
+        i = (y * width + x) * 3
+        return tuple(rest[i : i + 3])
+    assert pixel(10, 116) == (255, 0, 0), "the bar is see-through where it has no fill"
+    assert pixel(130, 116) == (0xE8, 0xB4, 0x4C), "the opaque box still draws"
+
+
+def test_paste_reaches_a_focused_layer_window_without_x(children):
+    import shutil
+    if not (shutil.which("wtype") and shutil.which("wl-copy")):
+        pytest.skip("needs wtype and wl-copy")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    code = """
+import json, os, threading, time
+from tre import App, LayerWindow
+app = App()
+bar = LayerWindow("paste-test", anchor=("top", "left", "right"), size=(0, 40), exclusive_zone=40,
+                  keyboard="exclusive", output=%r)
+bar.root.set(fill=(30, 30, 30, 255))
+field = bar.create("text_input", width=400, height=30, focusable=True)
+bar.root.add_child(field)
+field.focus()
+app.add_window(bar)
+handle = app.thread_handle()
+def report():
+    print(json.dumps({"kind": "ready"}), flush=True)
+    time.sleep(6)
+    box = []; done = threading.Event()
+    def read():
+        box.append(field.get("text")); done.set()
+    handle.call_soon(read); done.wait(3)
+    print(json.dumps({"kind": "text", "value": box[0]}), flush=True)
+    os._exit(0)
+threading.Thread(target=lambda: (time.sleep(1.5), report()), daemon=True).start()
+app.run()
+""" % name
+    env = {k: v for k, v in os.environ.items() if k != "DISPLAY"}  # no X server to fall back on
+    child = Child(code, **{"DISPLAY": ""})
+    try:
+        child.events(until="ready", timeout=20)
+        copier = subprocess.Popen(["wl-copy", "-f", "pasted-text"], env=env)
+        try:
+            # `-s 300`: a fresh virtual keyboard sends its keymap first, and a key sent at
+            # once is lost.
+            subprocess.run(["wtype", "-s", "300", "xhello"], env=env, timeout=20)
+            subprocess.run(["wtype", "-s", "300", "-M", "ctrl", "a", "-m", "ctrl"], env=env, timeout=20)
+            subprocess.run(["wtype", "-s", "300", "-M", "ctrl", "v", "-m", "ctrl"], env=env, timeout=20)
+            events = child.events(until="text", timeout=20)
+        finally:
+            copier.kill()
+    finally:
+        child.close()
+    assert next(e for e in events if e["kind"] == "text")["value"] == "pasted-text"
 
 
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):

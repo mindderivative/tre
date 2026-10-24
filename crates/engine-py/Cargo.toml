@@ -64,7 +64,10 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 # false` since this phase only needs `get_text`/`set_text` (confirmed
 # real via direct source read), not `arboard`'s own default `image-
 # data` feature (image clipboard support, unneeded here).
-arboard = { version = "3.6.1", default-features = false }
+# 0.5.7 (#203): `wayland-data-control` reads and writes the clipboard through the
+# compositor (wlroots, KWin) instead of only through XWayland, so paste works in a
+# layer window on a session with no X server.
+arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
 # M30 Phase 9 Step 4 (§5, §8, §10): `Terminal`'s own real PTY/VT
 # split -- the identical real "spawn a real pseudo-terminal is OS-
 # specific process management; interpreting its byte stream is the

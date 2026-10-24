@@ -1384,15 +1384,19 @@ impl PyWindow {
                 .into_pyobject(py)?
                 .into_any()
                 .unbind(),
-            "scale_factor" => self
-                .handles
-                .os_window
-                .borrow()
-                .as_ref()
-                .map_or(1.0, |window| window.scale_factor())
-                .into_pyobject(py)?
-                .into_any()
-                .unbind(),
+            "scale_factor" => match &self.handles.layer {
+                // A layer surface has no `winit` window: its scale is the compositor's.
+                Some(layer) => layer.scale.get(),
+                None => self
+                    .handles
+                    .os_window
+                    .borrow()
+                    .as_ref()
+                    .map_or(1.0, |window| window.scale_factor()),
+            }
+            .into_pyobject(py)?
+            .into_any()
+            .unbind(),
             "dark" => {
                 let window = self.handles.os_window.borrow().clone();
                 engine_platform::appearance::current_dark(window.as_deref())

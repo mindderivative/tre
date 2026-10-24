@@ -1047,6 +1047,10 @@ impl App {
                                 opened,
                             );
                             handles.tree.borrow_mut().mark_dirty();
+                            layer.last_configure.set(Some((
+                                (width * 1000.0).round() / 1000.0,
+                                (height * 1000.0).round() / 1000.0,
+                            )));
                             listeners::deliver_window(
                                 &handles.window_listeners,
                                 py,
@@ -1926,7 +1930,13 @@ impl App {
                                 e.height = Some(f64::from(height));
                             },
                         );
-                        if runtime.handles.layer.is_some() {
+                        // Rounded: the size is derived from physical pixels and the scale, and a repeat of
+                        // it can differ in the last bits.
+                        let round = |v: f32| (f64::from(v) * 1000.0).round() / 1000.0;
+                        let size = (round(width), round(height));
+                        if runtime.handles.layer.as_ref().is_some_and(|layer| {
+                            layer.last_configure.replace(Some(size)) != Some(size)
+                        }) {
                             listeners::deliver_window(
                                 &runtime.handles.window_listeners,
                                 py,

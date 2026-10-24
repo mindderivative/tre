@@ -74,6 +74,9 @@ pub(crate) struct LayerState {
     pub(crate) scale: Cell<f64>,
     /// The loop's number for the surface once it exists.
     pub(crate) id: Cell<Option<u64>>,
+    /// The logical size last reported by `configure`; a compositor may re-send the same
+    /// size (sway does), which is not a change.
+    pub(crate) last_configure: Cell<Option<(f64, f64)>>,
     /// Why the surface closed: `"compositor"`, `"output_removed"` or `"app"`.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(crate) closed_reason: RefCell<Option<&'static str>>,
@@ -90,6 +93,7 @@ impl LayerState {
             config: RefCell::new(config),
             scale: Cell::new(1.0),
             id: Cell::new(None),
+            last_configure: Cell::new(None),
             closed_reason: RefCell::new(None),
             pending_warnings: RefCell::new(warnings),
             #[cfg(target_os = "linux")]
