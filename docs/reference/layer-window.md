@@ -130,8 +130,11 @@ listener, or one holding the pointer capture, met before the drag node, is an or
 - The margins are clamped so the surface stays on its output: never negative, never past the
   far edge. (Other surfaces' exclusive zones do not limit it.)
 - The deltas come from the compositor's relative-pointer protocol, so they are exact however
-  the surface lags behind the pointer. Without that protocol the drag follows the pointer's
-  surface-local position, and can overshoot a little while a commit is still in flight.
+  the surface lags behind the pointer. An absolute pointer (a tablet, a virtual machine's,
+  a remote desktop's, and KWin's reading of a `/dev/uinput` absolute device) sends no relative
+  motion; the drag then follows the pointer's surface-local position, which can overshoot a
+  little while a commit is still in flight. The same fallback runs where the compositor has no
+  relative-pointer protocol.
 - A running margin animation is stopped where it is when a drag starts. A node's
   `window_region="drag_margin"` raises on an ordinary `Window`, and `"drag"` still raises here.
 

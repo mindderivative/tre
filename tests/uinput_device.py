@@ -16,7 +16,7 @@ ABS_MAX = 65535
 KEYS = {c: k for c, k in zip("qwertyuiop", range(16, 26))}
 KEYS.update({c: k for c, k in zip("asdfghjkl", range(30, 39))})
 KEYS.update({c: k for c, k in zip("zxcvbnm", range(44, 51))})
-KEYS.update({" ": 57, "\n": 28, "\b": 14})
+KEYS.update({" ": 57, "\n": 28, "\b": 14, "\x1b": 1})  # "\x1b" is Escape
 
 
 class Device:
@@ -54,6 +54,12 @@ class Device:
         self.emit(EV_KEY, button, 1); self.sync(); time.sleep(0.08)
         self.emit(EV_KEY, button, 0); self.sync(); time.sleep(0.15)
 
+    def press(self, button=BTN_LEFT):
+        self.emit(EV_KEY, button, 1); self.sync(); time.sleep(0.1)
+
+    def release(self, button=BTN_LEFT):
+        self.emit(EV_KEY, button, 0); self.sync(); time.sleep(0.15)
+
     def scroll(self, notches):
         self.emit(EV_REL, REL_WHEEL, notches); self.sync(); time.sleep(0.15)
 
@@ -66,3 +72,29 @@ class Device:
     def close(self):
         fcntl.ioctl(self.fd, UI_DEV_DESTROY)
         os.close(self.fd)
+
+
+class Pointer:
+    """`Device` with the interface `wlr_pointer.Pointer` has, so a live test can drive KWin
+    (through /dev/uinput, moving the real pointer) or a headless sway the same way."""
+
+    def __init__(self, layout_width, layout_height):
+        self.device = Device(layout_width, layout_height)
+
+    def move(self, x, y, layout_width=None, layout_height=None):
+        self.device.move(x, y)
+
+    def press(self):
+        self.device.press()
+
+    def release(self):
+        self.device.release()
+
+    def click(self):
+        self.device.click()
+
+    def escape(self):
+        self.device.type("\x1b")
+
+    def close(self):
+        self.device.close()

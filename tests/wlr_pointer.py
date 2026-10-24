@@ -45,6 +45,7 @@ def _bindings():
 
 class Pointer:
     def __init__(self, env):
+        self.env = env
         self.root = _bindings()
         self.process = subprocess.Popen(
             [sys.executable, os.path.abspath(__file__), self.root],
@@ -74,6 +75,9 @@ class Pointer:
     def click(self):
         self._send("click")
         time.sleep(0.1)
+
+    def escape(self):
+        subprocess.run(["wtype", "-s", "300", "-k", "Escape"], env=self.env, timeout=20)
 
     def close(self):
         try:

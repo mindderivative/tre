@@ -18,6 +18,7 @@ def say(kind, **kw):
 behind = Window(width=200, height=100, title="tre-test-behind")
 behind.root.set(fill=(255, 0, 0, 255))
 behind.root.on("click", lambda e: say("window_click"))
+behind.maximize()  # a compositor that floats it (KWin) would leave it small
 app.add_window(behind)
 
 BAR_H = 32

@@ -541,6 +541,10 @@ struct MarginDrag {
     moved: (f64, f64),
     /// The margin last sent.
     current: (i32, i32, i32, i32),
+    /// Whether relative motion has arrived during this drag. An absolute pointer (a tablet,
+    /// a virtual machine's, a remote desktop's) sends none, and then the drag follows the
+    /// surface-local position instead.
+    relative_seen: bool,
 }
 
 impl State {
@@ -981,6 +985,7 @@ impl State {
             press_local: self.pointer_local,
             moved: (0.0, 0.0),
             current: start,
+            relative_seen: false,
         });
     }
 
@@ -1106,6 +1111,11 @@ impl RelativePointerHandler for State {
         };
         if self.pointer_focus != Some(drag.id) {
             return;
+        }
+        if !drag.relative_seen {
+            // From here the exact deltas are the truth; restart from what the local
+            // fallback had worked out, so the hand-over does not jump.
+            drag.relative_seen = true;
         }
         drag.moved.0 += event.delta.0;
         drag.moved.1 += event.delta.1;
@@ -1240,9 +1250,10 @@ impl PointerHandler for State {
                     self.input(id, InputEvent::PointerLeft);
                 }
                 PointerEventKind::Motion { .. } => {
-                    // Without relative motion the drag follows the surface-local position;
-                    // with it, `relative_pointer_motion` does.
-                    if self.relative_pointer.is_none() {
+                    // Without relative motion (no protocol, or an absolute pointer that sends
+                    // none) the drag follows the surface-local position; once relative
+                    // motion arrives, `relative_pointer_motion` does.
+                    if self.drag.as_ref().is_some_and(|d| !d.relative_seen) {
                         self.drag_follow_local(id);
                     }
                     self.input(id, InputEvent::PointerMoved { position });
