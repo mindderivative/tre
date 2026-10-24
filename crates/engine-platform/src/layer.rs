@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use engine_core::{InputEvent, PointerButton, ScrollDelta, TouchPhase, ctrl_shortcut};
 use peniko::kurbo::Point;
-use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState};
+use smithay_client_toolkit::compositor::{CompositorHandler, CompositorState, Region};
 use smithay_client_toolkit::output::{OutputHandler, OutputState};
 use smithay_client_toolkit::reexports::client::globals::{GlobalList, registry_queue_init};
 use smithay_client_toolkit::reexports::client::protocol::{
@@ -192,6 +192,7 @@ enum Command {
     Create(u64, LayerConfig),
     Update(u64, LayerConfig),
     Cursor(u64, CursorIcon),
+    InputRegion(u64, Option<Vec<crate::layer_config::Rect>>),
     Destroy(u64),
     Shutdown,
 }
@@ -224,6 +225,12 @@ impl LayerController {
     /// Sets the pointer's shape over the surface.
     pub fn set_cursor(&self, id: u64, icon: CursorIcon) {
         self.send(Command::Cursor(id, icon));
+    }
+
+    /// Sets only the input region (`None`: the whole surface) and applies it at once, with
+    /// a commit of its own: an idle surface draws no frame to carry it.
+    pub fn set_input_region(&self, id: u64, region: Option<Vec<crate::layer_config::Rect>>) {
+        self.send(Command::InputRegion(id, region));
     }
 
     /// Destroys the surface; the `wgpu` surface must be dropped first.
@@ -571,6 +578,7 @@ impl State {
             KeyboardMode::OnDemand => KeyboardInteractivity::OnDemand,
             KeyboardMode::Exclusive => KeyboardInteractivity::Exclusive,
         });
+        set_region(&self.compositor, &surf.surface, &config.input_region);
         surf.config = config.clone();
         layer.commit();
     }
@@ -870,6 +878,27 @@ impl OutputHandler for State {
             && self.outputs_ready
         {
             self.emit(LayerEvent::Output(OutputEvent::Removed(info)));
+        }
+    }
+}
+
+/// Sets the surface's input region from rectangles (`None`: the whole surface). Double
+/// buffered like the rest of the surface's state: it takes effect at the next commit.
+fn set_region(
+    compositor: &CompositorState,
+    surface: &wl_surface::WlSurface,
+    rects: &Option<Vec<crate::layer_config::Rect>>,
+) {
+    match rects {
+        None => surface.set_input_region(None),
+        Some(rects) => {
+            // If the compositor refuses a region object, keep what is set.
+            if let Ok(region) = Region::new(compositor) {
+                for &(x, y, w, h) in rects {
+                    region.add(x, y, w, h);
+                }
+                surface.set_input_region(Some(region.wl_region()));
+            }
         }
     }
 }
@@ -1426,6 +1455,13 @@ fn run(
                         && let Some(device) = &state.cursor_device
                     {
                         device.set_shape(state.pointer_enter_serial, shape_of(icon));
+                    }
+                }
+                Command::InputRegion(id, region) => {
+                    if let Some(surf) = state.surfaces.get_mut(&id) {
+                        set_region(&state.compositor, &surf.surface, &region);
+                        surf.config.input_region = region;
+                        surf.surface.commit();
                     }
                 }
                 Command::Destroy(id) => state.destroy(id),

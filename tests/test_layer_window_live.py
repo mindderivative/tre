@@ -430,6 +430,92 @@ app.run()
     assert next(e for e in events if e["kind"] == "text")["value"] == "pasted-text"
 
 
+REGION = """
+import json, os, sys, threading, time
+from tre import App, LayerWindow, Window
+
+args = json.loads(os.environ["REGION_ARGS"])
+app = App()
+def say(kind, **kw):
+    print(json.dumps({"kind": kind, **kw}), flush=True)
+behind = Window(width=200, height=100, title="tre-test-behind")
+behind.root.set(fill=(255, 0, 0, 255))
+behind.root.on("click", lambda e: say("window_click"))
+app.add_window(behind)
+overlay = LayerWindow("tre-test-overlay", layer="overlay", anchor=("top", "bottom", "left", "right"),
+                      size=(0, 0), exclusive_zone=0, output=args["output"], input_region=args["region"])
+overlay.root.set(fill=(0, 0, 0, 0))
+if not args.get("nodes"):
+    overlay.root.on("click", lambda e: say("layer_click"))
+for x, y, w, h, radius in args.get("nodes", []):
+    box = overlay.create("box", width=w, height=h, x=x, y=y, position="absolute", fill=(40, 90, 200, 255),
+                         corner_radius=radius)
+    box.on("click", lambda e: say("layer_click"))
+    overlay.root.add_child(box)
+app.add_window(overlay)
+threading.Thread(target=lambda: (time.sleep(args["seconds"]), os._exit(0)), daemon=True).start()
+threading.Thread(target=lambda: (time.sleep(2.5), say("ready")), daemon=True).start()
+app.run()
+"""
+
+
+@pytest.mark.parametrize(
+    "region, inside, outside",
+    [
+        (None, "layer_click", "layer_click"),
+        ([], "window_click", "window_click"),
+        ([(0, 0, 200, 200)], "layer_click", "window_click"),
+    ],
+)
+def test_input_region_decides_who_gets_the_click(children, region, inside, outside):
+    _routed(children, region, inside, outside, [(100, 100), (700, 400)])
+
+
+def _routed(children, region, inside, outside, points, nodes=()):
+    sys.path.insert(0, os.path.dirname(__file__))
+    import wlr_pointer
+    if not wlr_pointer.available():
+        pytest.skip("needs pywayland (pip install pywayland) for a virtual pointer")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    pointer = wlr_pointer.Pointer(os.environ)
+    try:
+        _region_clicks(children, pointer, name, region, [inside, outside], points, nodes)
+    finally:
+        pointer.close()
+
+
+def _region_clicks(children, pointer, name, region, expected, points, nodes):
+    child = children(
+        REGION, REGION_ARGS=json.dumps({"output": name, "region": region, "nodes": list(nodes), "seconds": 9})
+    )
+    child.events(until="ready", timeout=20)
+    x0, y0, _, _ = outputs()[name]
+    layout = outputs().values()
+    layout_width = max(ox + ow for (ox, _, ow, _) in layout)
+    layout_height = max(oy + oh for (_, oy, _, oh) in layout)
+    for (x, y) in points:
+        pointer.move(x0 + x, y0 + y, layout_width, layout_height)
+        pointer.click()
+        time.sleep(0.5)
+    events = child.events(timeout=4)
+    clicks = [e["kind"] for e in events if e["kind"].endswith("_click")]
+    assert clicks == expected, clicks
+
+
+def test_auto_region_follows_a_circle_not_its_box(children):
+    # A 200x200 box with corner_radius 100 is a circle at (400, 200). Its middle is the
+    # layer's; the box's corner, outside the circle, is the window below's.
+    _routed(children, "auto", "layer_click", "window_click", [(500, 300), (408, 208)],
+            nodes=[(400, 200, 200, 200, 100)])
+
+
+def test_a_screen_frame_takes_clicks_on_its_ring_and_lets_the_interior_through(children):
+    # Four bars round the edge of the output: the ring is the layer's, the interior is not.
+    ring = [(0, 0, 1280, 30, 0), (0, 690, 1280, 30, 0), (0, 0, 30, 720, 0), (1250, 0, 30, 720, 0)]
+    _routed(children, "auto", "layer_click", "window_click", [(640, 12), (640, 360)], nodes=ring)
+
+
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):
     names = list(outputs())
     bars = [dict(output=n) for n in names]

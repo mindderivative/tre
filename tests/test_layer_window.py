@@ -245,3 +245,88 @@ def test_a_node_cannot_be_a_window_drag_region_on_a_layer_window():
     # An ordinary window still takes it.
     ordinary = Window(width=100, height=40)
     ordinary.create("box", window_region="drag")
+
+
+# ---- input_region (#204) ----
+
+
+def test_input_region_defaults_to_the_whole_surface():
+    w = bar()
+    assert w.get("input_region") is None
+    assert w.get("click_through") is False
+
+
+def test_input_region_takes_rectangles_and_rounds_them_outward():
+    w = bar(input_region=[(0, 0, 100, 32), (0.5, 1.2, 10, 2)])
+    assert w.get("input_region") == [(0, 0, 100, 32), (0, 1, 11, 3)]
+    w.set(input_region=[(10, 10, 5, 5)])
+    assert w.get("input_region") == [(10, 10, 5, 5)]
+    w.set(input_region=None)
+    assert w.get("input_region") is None
+
+
+def test_an_empty_input_region_is_click_through():
+    w = bar(input_region=[])
+    assert w.get("input_region") == []
+    assert w.get("click_through") is True
+
+
+def test_click_through_is_an_alias_for_an_empty_region():
+    w = bar(click_through=True)
+    assert w.get("input_region") == []
+    w.set(click_through=False)
+    assert w.get("input_region") is None
+    w.set(click_through=True)
+    assert w.get("input_region") == []
+    w.set(input_region=[(0, 0, 4, 4)])
+    assert w.get("click_through") is False
+
+
+def test_click_through_and_input_region_must_agree():
+    with pytest.raises(ValueError, match="disagree"):
+        bar(click_through=True, input_region=[(0, 0, 4, 4)])
+    with pytest.raises(ValueError, match="disagree"):
+        bar(click_through=False, input_region=[])
+    bar(click_through=True, input_region=[])  # the same thing said twice is fine
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["everything", "AUTO", (0, 0, 4, 4), [(0, 0, 0, 4)], [(0, 0, 4, -1)], [(0, 0, float("nan"), 4)], [(0, 0, 4)], 7],
+)
+def test_a_bad_input_region_raises_and_changes_nothing(bad):
+    w = bar(input_region=[(0, 0, 8, 8)])
+    with pytest.raises(ValueError, match="input_region"):
+        w.set(input_region=bad)
+    assert w.get("input_region") == [(0, 0, 8, 8)]
+
+
+def test_input_region_is_capped_at_256_rectangles():
+    bar(input_region=[(0, 0, 1, 1)] * 256)
+    with pytest.raises(ValueError, match="at most 256"):
+        bar(input_region=[(0, 0, 1, 1)] * 257)
+
+
+def test_an_ordinary_window_keeps_its_own_click_through():
+    w = Window(width=100, height=100)
+    w.set(click_through=True)
+    assert w.get("click_through") is True
+
+
+def test_auto_is_a_region_that_follows_what_is_drawn():
+    w = bar(input_region="auto")
+    assert w.get("input_region") == "auto"
+    assert w.get("click_through") is False
+    w.set(input_region=[(0, 0, 4, 4)])
+    assert w.get("input_region") == [(0, 0, 4, 4)]
+    w.set(input_region="auto")
+    assert w.get("input_region") == "auto"
+    w.set(click_through=True)
+    assert w.get("input_region") == []
+    with pytest.raises(ValueError, match="disagree"):
+        bar(input_region="auto", click_through=True)
+
+
+def test_a_rectangle_may_be_a_list_as_well_as_a_tuple():
+    w = bar(input_region=[[0, 0, 10, 10], (5, 5, 2, 2)])
+    assert w.get("input_region") == [(0, 0, 10, 10), (5, 5, 2, 2)]

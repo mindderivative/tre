@@ -14,6 +14,20 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #204, `LayerWindow.input_region` (2026-10-20)
+
+Phase 4 of #195. `input_region` (constructor and `set()`): `None` (whole surface), `[]`
+(nothing, so clicks fall through), rectangles in logical pixels (rounded outward, at most 256),
+or `"auto"` (the shapes of drawn, hit-testable nodes). `click_through=True` is `input_region=[]`
+on a `LayerWindow`; the two disagreeing raises. The layer thread builds a `wl_region` and
+commits it at once, so an idle surface needs no frame; `"auto"` is recomputed after each
+layout, only grows while something animates, and snaps exact when it ends. **Behaviour change
+for every window:** hit testing now follows `corner_radius` / `corner_radii` (a click in a
+clipped-away corner no longer hits the node; masks and `clip_children` are still ignored), so
+what the compositor passes and what tre accepts agree. New: `Tree::input_region` (bands of 2 px
+or more, at most 256 rectangles, never less than drawn). Tests: pure region and hit tests in
+engine-core, headless Python tests; live click routing on sway needs `wlrctl` (not yet run).
+
 ### #203, live checks on KWin and sway (2026-10-20)
 
 Ran the live LayerWindow suite on KWin and on a headless sway 1.12 (`WLR_BACKENDS=headless`,

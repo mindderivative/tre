@@ -17,7 +17,7 @@ use engine_platform::layer_config::{
 };
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyString, PyTuple};
+use pyo3::types::{PyAny, PyDict, PyList, PyString, PyTuple};
 
 use crate::listeners::{self, WindowEventType};
 use crate::window::PyWindow;
@@ -65,6 +65,7 @@ const LIVE: &[&str] = &[
     "exclusive_edge",
     "margin",
     "keyboard",
+    "input_region",
 ];
 
 /// A layer window's state, shared with the run loop.
@@ -77,6 +78,8 @@ pub(crate) struct LayerState {
     /// The logical size last reported by `configure`; a compositor may re-send the same
     /// size (sway does), which is not a change.
     pub(crate) last_configure: Cell<Option<(f64, f64)>>,
+    /// `input_region="auto"`: the region follows the drawn shapes, recomputed after layout.
+    pub(crate) auto_region: Cell<bool>,
     /// Why the surface closed: `"compositor"`, `"output_removed"` or `"app"`.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(crate) closed_reason: RefCell<Option<&'static str>>,
@@ -88,12 +91,58 @@ pub(crate) struct LayerState {
 }
 
 impl LayerState {
+    /// `input_region="auto"`: recomputes the region from the drawn shapes after a layout and
+    /// sends it if it changed. While something animates the new region is joined to the
+    /// last one, so input never lands outside what is visible; it snaps to the exact
+    /// region once the animation ends.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn update_auto_region(
+        &self,
+        tree: &RefCell<engine_core::Tree>,
+        root: engine_core::NodeId,
+        bounds: (f64, f64),
+        animating: bool,
+    ) {
+        use engine_platform::layer_config::MAX_REGION_RECTS;
+        let mut rects = tree.borrow().input_region(root, bounds, MAX_REGION_RECTS);
+        let last = self
+            .config
+            .borrow()
+            .input_region
+            .clone()
+            .unwrap_or_default();
+        if animating {
+            for r in &last {
+                if !rects.contains(r) {
+                    rects.push(*r);
+                }
+            }
+            if rects.len() > MAX_REGION_RECTS {
+                let (x0, y0) = rects
+                    .iter()
+                    .fold((i32::MAX, i32::MAX), |a, r| (a.0.min(r.0), a.1.min(r.1)));
+                let (x1, y1) = rects.iter().fold((i32::MIN, i32::MIN), |a, r| {
+                    (a.0.max(r.0 + r.2), a.1.max(r.1 + r.3))
+                });
+                rects = vec![(x0, y0, x1 - x0, y1 - y0)];
+            }
+        }
+        if rects == last {
+            return;
+        }
+        self.config.borrow_mut().input_region = Some(rects.clone());
+        if let (Some(controller), Some(id)) = (self.controller.borrow().as_ref(), self.id.get()) {
+            controller.set_input_region(id, Some(rects));
+        }
+    }
+
     fn new(config: LayerConfig, warnings: Vec<(String, String)>) -> Self {
         Self {
             config: RefCell::new(config),
             scale: Cell::new(1.0),
             id: Cell::new(None),
             last_configure: Cell::new(None),
+            auto_region: Cell::new(false),
             closed_reason: RefCell::new(None),
             pending_warnings: RefCell::new(warnings),
             #[cfg(target_os = "linux")]
@@ -197,6 +246,76 @@ fn edge_name(bit: u8) -> &'static str {
     }
 }
 
+/// `input_region`: `None` (the whole surface), `[]` (nothing), or rectangles
+/// `[(x, y, width, height), ...]` in logical pixels.
+fn extract_region(value: &Bound<'_, PyAny>) -> PyResult<Region> {
+    if value.is_none() {
+        return Ok(Region::Rects(None));
+    }
+    if let Ok(text) = value.cast::<PyString>() {
+        return if text == "auto" {
+            Ok(Region::Auto)
+        } else {
+            Err(PyValueError::new_err(format!(
+                "LayerWindow input_region: {:?} is not a region; use None, [], \"auto\" or a \
+                 list of (x, y, width, height) rectangles",
+                text.to_string()
+            )))
+        };
+    }
+    let bad = || {
+        PyValueError::new_err(
+            "LayerWindow input_region: must be None, [], \"auto\" or a list of \
+             (x, y, width, height) rectangles",
+        )
+    };
+    // Each rectangle may be a tuple or a list of four numbers.
+    let rows: Vec<Vec<f64>> = value.extract().map_err(|_| bad())?;
+    let rects: Vec<(f64, f64, f64, f64)> = rows
+        .into_iter()
+        .map(|r| match r[..] {
+            [x, y, w, h] => Ok((x, y, w, h)),
+            _ => Err(bad()),
+        })
+        .collect::<PyResult<_>>()?;
+    engine_platform::layer_config::region_from_floats(&rects)
+        .map(|r| Region::Rects(Some(r)))
+        .map_err(|e| value_error(&e))
+}
+
+/// What `input_region` was asked to be.
+#[derive(Clone, PartialEq)]
+enum Region {
+    /// `None` (the whole surface), `[]` or rectangles.
+    Rects(Option<Vec<engine_platform::layer_config::Rect>>),
+    /// `"auto"`: follows what is drawn.
+    Auto,
+}
+
+/// The region after an `input_region` and/or `click_through` was given: `click_through`
+/// is an alias for `input_region=[]`, and the two must not disagree.
+fn resolve_region(
+    current: Region,
+    input_region: Option<&Bound<'_, PyAny>>,
+    click_through: Option<bool>,
+) -> PyResult<Region> {
+    let region = match input_region {
+        Some(value) => extract_region(value)?,
+        None => current.clone(),
+    };
+    let nothing = region == Region::Rects(Some(Vec::new()));
+    match (click_through, input_region.is_some()) {
+        (Some(through), true) if through != nothing => Err(PyValueError::new_err(
+            "LayerWindow click_through and input_region disagree: click_through=True is \
+             input_region=[]",
+        )),
+        (Some(true), false) => Ok(Region::Rects(Some(Vec::new()))),
+        // Clearing the alias gives the whole surface back, not a stale empty region.
+        (Some(false), false) if nothing => Ok(Region::Rects(None)),
+        _ => Ok(region),
+    }
+}
+
 /// A layer window's logical size before a compositor assigns one.
 fn headless_size(config: &LayerConfig) -> (u32, u32) {
     (
@@ -242,7 +361,9 @@ impl PyLayerWindow {
         exclusive_edge = None,
         margin = None,
         keyboard = "none",
-        output = None
+        output = None,
+        input_region = None,
+        click_through = None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -255,6 +376,8 @@ impl PyLayerWindow {
         margin: Option<&Bound<'_, PyAny>>,
         keyboard: &str,
         output: Option<&Bound<'_, PyAny>>,
+        input_region: Option<&Bound<'_, PyAny>>,
+        click_through: Option<bool>,
     ) -> PyResult<PyClassInitializer<Self>> {
         match availability() {
             Availability::Unsupported(why) => return Err(UnsupportedPlatform::new_err(why)),
@@ -276,6 +399,15 @@ impl PyLayerWindow {
                 .unwrap_or((0, 0, 0, 0)),
             keyboard: parse_keyboard(keyboard)?,
             output: output.map(extract_output).transpose()?.flatten(),
+            input_region: None,
+        };
+        let region = resolve_region(Region::Rects(None), input_region, click_through)?;
+        let mut config = config;
+        let auto = region == Region::Auto;
+        config.input_region = match region {
+            Region::Rects(rects) => rects,
+            // Nothing takes input until the first layout says what is drawn.
+            Region::Auto => Some(Vec::new()),
         };
         if config.exclusive_edge.is_some() {
             return Err(PyValueError::new_err(
@@ -291,7 +423,9 @@ impl PyLayerWindow {
         // a rounded or floating bar needs no background rectangle.
         handles.dpi_scaling.set(true);
         handles.transparent.set(true);
-        handles.layer = Some(Rc::new(LayerState::new(config, warnings)));
+        let layer = LayerState::new(config, warnings);
+        layer.auto_region.set(auto);
+        handles.layer = Some(Rc::new(layer));
         handles.tree.borrow_mut().set_window_drag_allowed(false);
         Ok(PyClassInitializer::from(base).add_subclass(Self))
     }
@@ -310,6 +444,9 @@ impl PyLayerWindow {
             .expect("a LayerWindow has layer state");
         let mut config = state.config.borrow().clone();
         let rest = PyDict::new(py);
+        let mut region_given = None;
+        let mut auto_now = None;
+        let mut through_given = None;
         if let Some(props) = props {
             for (name, value) in props.iter() {
                 let name: String = name.extract()?;
@@ -333,6 +470,12 @@ impl PyLayerWindow {
                         config.exclusive_edge = None;
                     }
                     "margin" => config.margin = extract_margin(&value)?,
+                    "input_region" => region_given = Some(value),
+                    "click_through" => {
+                        through_given = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err("LayerWindow click_through: must be a bool")
+                        })?);
+                    }
                     "keyboard" => {
                         let name: String = value.extract().map_err(|_| {
                             PyValueError::new_err("LayerWindow keyboard: must be a str")
@@ -355,6 +498,19 @@ impl PyLayerWindow {
                 }
             }
         }
+        if region_given.is_some() || through_given.is_some() {
+            let current = if state.auto_region.get() {
+                Region::Auto
+            } else {
+                Region::Rects(config.input_region.clone())
+            };
+            let region = resolve_region(current, region_given.as_ref(), through_given)?;
+            auto_now = Some(region == Region::Auto);
+            config.input_region = match region {
+                Region::Rects(rects) => rects,
+                Region::Auto => Some(Vec::new()),
+            };
+        }
         let warnings = warnings_of(&config)?;
         // The shared keys first: Window.set is itself all-or-nothing, so an error
         // here leaves the layer settings alone too.
@@ -365,9 +521,16 @@ impl PyLayerWindow {
             p.keys()
                 .iter()
                 .filter_map(|k| k.extract::<String>().ok())
-                .any(|k| LIVE.contains(&k.as_str()))
+                .any(|k| LIVE.contains(&k.as_str()) || k == "click_through")
         });
         if layer_keys_given {
+            if let Some(auto) = auto_now {
+                state.auto_region.set(auto);
+                // An auto region starts empty; the next layout fills it in.
+                if auto {
+                    base.handles.tree.borrow_mut().mark_dirty();
+                }
+            }
             *state.config.borrow_mut() = config.clone();
             #[cfg(target_os = "linux")]
             if let (Some(controller), Some(id)) =
@@ -425,6 +588,19 @@ impl PyLayerWindow {
                 .into_any()
                 .unbind(),
             "output" => config.output.clone().into_pyobject(py)?.into_any().unbind(),
+            "input_region" if state.auto_region.get() => {
+                "auto".into_pyobject(py)?.into_any().unbind()
+            }
+            "input_region" => match &config.input_region {
+                None => py.None(),
+                Some(rects) => PyList::new(py, rects.iter().copied())?.into_any().unbind(),
+            },
+            "click_through" => (!state.auto_region.get()
+                && config.input_region.as_ref().is_some_and(Vec::is_empty))
+            .into_pyobject(py)?
+            .to_owned()
+            .into_any()
+            .unbind(),
             _ => {
                 drop(config);
                 base.get(name, py)?
