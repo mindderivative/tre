@@ -70,34 +70,41 @@ where
         }
     }
 
+    /// Starts the layer thread on `winit`'s `wl_display` if it is not running.
+    pub(crate) fn ensure_layer_host(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
+        if self.layer_host.is_some() {
+            return Ok(());
+        }
+        let display = match event_loop.display_handle().map(|h| h.as_raw()) {
+            Ok(RawDisplayHandle::Wayland(handle)) => handle.display,
+            _ => return Err("layer surfaces and output events need a Wayland session".into()),
+        };
+        let proxy = self.proxy.clone();
+        let host = LayerHost::start(display, move |event| {
+            proxy.send_event(PlatformEvent::Layer(event)).is_ok()
+        })
+        .map_err(|error| error.to_string())?;
+        self.layer_host = Some(host);
+        Ok(())
+    }
+
+    /// The loop is up: start the layer thread now if the host wants output events.
+    pub(crate) fn start_output_watch(&mut self, event_loop: &ActiveEventLoop) {
+        if self.layer_hooks.as_ref().is_some_and(|h| h.watch_outputs) {
+            // Not a Wayland session, or no layer shell: there are simply no output events.
+            let _ = self.ensure_layer_host(event_loop);
+        }
+    }
+
     /// `PlatformEvent::OpenLayer`: starts the layer thread if this is the first, and
     /// asks it for the surface.
     pub(crate) fn open_layer(&mut self, event_loop: &ActiveEventLoop, request: LayerRequest) {
         let n = self.next_layer;
         self.next_layer += 1;
         let id = window_id(n);
-        if self.layer_host.is_none() {
-            let display = match event_loop.display_handle().map(|h| h.as_raw()) {
-                Ok(RawDisplayHandle::Wayland(handle)) => handle.display,
-                _ => {
-                    self.notice(
-                        id,
-                        request.token,
-                        LayerNotice::Failed("layer surfaces need a Wayland session".into()),
-                    );
-                    return;
-                }
-            };
-            let proxy = self.proxy.clone();
-            match LayerHost::start(display, move |event| {
-                proxy.send_event(PlatformEvent::Layer(event)).is_ok()
-            }) {
-                Ok(host) => self.layer_host = Some(host),
-                Err(error) => {
-                    self.notice(id, request.token, LayerNotice::Failed(error.to_string()));
-                    return;
-                }
-            }
+        if let Err(message) = self.ensure_layer_host(event_loop) {
+            self.notice(id, request.token, LayerNotice::Failed(message));
+            return;
         }
         let controller = self
             .layer_host
@@ -225,6 +232,11 @@ where
                     if let Some(layer) = self.layers.get_mut(&wid) {
                         layer.needs_frame = true;
                     }
+                }
+            }
+            LayerEvent::Output(event) => {
+                if let Some(hooks) = &mut self.layer_hooks {
+                    (hooks.on_output)(event);
                 }
             }
             LayerEvent::OutputChanged { id, name } => {

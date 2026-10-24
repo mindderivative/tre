@@ -162,6 +162,19 @@ fn extract_margin(value: &Bound<'_, PyAny>) -> PyResult<(i32, i32, i32, i32)> {
     })
 }
 
+/// `output`: an `Output`, its connector name, or `None`.
+fn extract_output(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+    if let Ok(output) = value.extract::<PyRef<'_, crate::outputs::PyOutput>>() {
+        return Ok(Some(output.info.name.clone()));
+    }
+    value.extract::<String>().map(Some).map_err(|_| {
+        PyValueError::new_err("LayerWindow output: must be an Output, a connector name, or None")
+    })
+}
+
 fn extract_zone(value: &Bound<'_, PyAny>) -> PyResult<i32> {
     value.extract::<i32>().map_err(|_| {
         PyValueError::new_err(
@@ -237,7 +250,7 @@ impl PyLayerWindow {
         exclusive_edge: Option<&Bound<'_, PyAny>>,
         margin: Option<&Bound<'_, PyAny>>,
         keyboard: &str,
-        output: Option<String>,
+        output: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         match availability() {
             Availability::Unsupported(why) => return Err(UnsupportedPlatform::new_err(why)),
@@ -258,7 +271,7 @@ impl PyLayerWindow {
                 .transpose()?
                 .unwrap_or((0, 0, 0, 0)),
             keyboard: parse_keyboard(keyboard)?,
-            output,
+            output: output.map(extract_output).transpose()?.flatten(),
         };
         if config.exclusive_edge.is_some() {
             return Err(PyValueError::new_err(

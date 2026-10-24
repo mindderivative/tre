@@ -14,6 +14,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | [`TimerHandle`](#timerhandle) | Cancels a timer set with `Window.after` or `Window.every`. |
 | [`Window`](#window) | Owns a node tree and its size and title; creates nodes, shows layers, docks panels. |
 | [`LayerWindow`](#layerwindow) | A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surface). |
+| [`Output`](#output) | A screen the compositor has: its connector name, position, size, scale and rotation. |
 | [`Node`](#node) | A handle to one node in a window's tree: properties, animation, events, structure. |
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
 | [`Painter`](#painter) | The drawing surface a canvas node's `draw` callback receives. |
@@ -36,7 +37,11 @@ Opens and drives one or more windows together in one blocking `run()`.
 | Method | Description |
 | --- | --- |
 | `add_window(window: Window) -> None` | Adds a window to open when `run()` is called. |
+| `off(event: Literal['output_added', 'output_removed', 'output_updated']) -> None` | Removes the handler for an output event. |
+| `on(event, handler) -> None` | Registers `handler(output)` for a screen being plugged in, removed, or moved, resized, rescaled or rotated. |
+| `outputs() -> list[Output]` | The screens the compositor has, top to bottom and left to right, read now (so it works before `run()`). |
 | `run(max_frames: int \| None=None) -> None` | Opens every added window and runs the event loop until they all close, or `max_frames`. |
+| `simulate(event: Literal['output_added', 'output_removed', 'output_updated'], **fields: Any) -> None` | Delivers an output event as the compositor would, for tests with no display: `app.simulate("output_added", name="DP-2"… |
 | `thread_handle() -> LoopHandle` | A thread-safe handle to this `App`'s event loop. |
 
 **Events:** none.
@@ -190,7 +195,7 @@ A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surfa
 
 **Inherits:** [`Window`](#window) → [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [LayerWindow reference](../reference/layer-window.md)
 
-**Constructor:** `LayerWindow(namespace: str, *, layer: Literal['background', 'bottom', 'top', 'overlay']=..., anchor: str | Sequence[str] | None=..., size: tuple[int, int] | None=..., exclusive_zone: int | None=..., exclusive_edge: None=..., margin: int | tuple[int, int, int, int] | None=..., keyboard: Literal['none', 'on_demand', 'exclusive']=..., output: str | None=...)`
+**Constructor:** `LayerWindow(namespace: str, *, layer: Literal['background', 'bottom', 'top', 'overlay']=..., anchor: str | Sequence[str] | None=..., size: tuple[int, int] | None=..., exclusive_zone: int | None=..., exclusive_edge: None=..., margin: int | tuple[int, int, int, int] | None=..., keyboard: Literal['none', 'on_demand', 'exclusive']=..., output: str | Output | None=...)`
 
 **Methods:**
 
@@ -199,6 +204,27 @@ A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surfa
 | `close() -> None` | Closes the surface on the loop's next turn: `close_requested` first (a listener may cancel it with `event.cancel()`), then… |
 | `get(name: str) -> Any` | Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`, `exclusive_edge`, `margin`, `keyboard`… |
 | `set(**props: Any) -> None` | Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`, `margin`, `keyboard`) in one commit, with the keys… |
+
+**Events:** none.
+
+## Output { #output }
+
+A screen the compositor has: its connector name, position, size, scale and rotation.
+
+**Inherits:** [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [Output reference](../reference/outputs.md)
+
+**Properties:**
+
+| Property | Type | Description |
+| --- | --- | --- |
+| `name` | `str` | The connector name (`"DP-1"`, `"HDMI-A-1"`): stable across runs. |
+| `description` | `str` | The compositor's description (make, model, serial). |
+| `x` | `int` | The output's left edge in the desktop's logical layout. |
+| `y` | `int` | The output's top edge in the desktop's logical layout. |
+| `width` | `int` | The logical width, in pixels. |
+| `height` | `int` | The logical height, in pixels. |
+| `scale_factor` | `float` | Physical over logical pixels: 1.5 on a 1.5x output. |
+| `transform` | `str` | `"normal"`, `"90"`, `"180"`, `"270"`, or one of those after `"flipped_"`. |
 
 **Events:** none.
 

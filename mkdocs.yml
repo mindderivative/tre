@@ -76,6 +76,7 @@ nav:
       - Events and listeners: reference/events.md
       - Layers: reference/layers.md
       - LayerWindow: reference/layer-window.md
+      - Output: reference/outputs.md
       - Painter: reference/painter.md
       - Shader: reference/shader.md
   - Architecture: architecture.md

@@ -45,6 +45,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `scroll_keys.py` | A scroll view driven by keys and focus, with the `scroll` event |
 | `docking.py` | Docked panels dragged between zones |
 | `two_windows.py` | One `App` driving two windows |
+| `outputs.py` | `App.outputs()` and the output events: one bar per screen, following hot-plug; headless-safe |
 | `layer_bar.py` | A `LayerWindow`: a bar the compositor places at the top edge, reserving 32 px, with a clock; headless-safe, `--watch` keeps it up |
 | `custom_titlebar.py` | An undecorated window drawing its own title bar: a drag region, minimize/maximize/close, a resize border, and room for macOS's traffic lights; `--watch` keeps it open, `--menu` adds the OS's window menu |
 | `shader_shine.py` | Shining text: an effect shader over a text node, driven by `frame.time` (WGSL in `shaders/shine.wgsl`) |

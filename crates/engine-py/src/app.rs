@@ -70,6 +70,8 @@ pub struct AppState {
     /// M87: callables queued from other threads via `LoopHandle`,
     /// drained at the top of every frame -- see `thread_handle.rs`.
     calls: CallQueue,
+    /// 0.5.7 (#202): listeners for `output_added`, `output_removed` and `output_updated`.
+    output_listeners: crate::outputs::OutputListeners,
 }
 
 /// One registered window's data, extracted once (up front, while the
@@ -677,6 +679,7 @@ impl App {
             windows: RefCell::new(Vec::new()),
             live: Rc::new(RefCell::new(None)),
             calls: CallQueue::default(),
+            output_listeners: Default::default(),
         }))
     }
 
@@ -687,6 +690,93 @@ impl App {
     /// `run()`. Every handle from one `App` shares the same queue.
     fn thread_handle(&self) -> LoopHandle {
         LoopHandle::new(self.calls.clone())
+    }
+
+    /// 0.5.7 (#202): the screens the compositor has, top to bottom and left to right: name,
+    /// position and size (logical pixels), scale and rotation. Read now, so it works
+    /// before `run()`; empty where the platform cannot say (not Wayland).
+    fn outputs(&self, py: Python<'_>) -> PyResult<Vec<Py<crate::outputs::PyOutput>>> {
+        #[cfg(target_os = "linux")]
+        let found = engine_platform::layer::outputs();
+        #[cfg(not(target_os = "linux"))]
+        let found: Vec<engine_platform::outputs::OutputInfo> = Vec::new();
+        found
+            .into_iter()
+            .map(|info| Py::new(py, crate::outputs::PyOutput::new(info)))
+            .collect()
+    }
+
+    /// 0.5.7 (#202): registers `handler(output)` for `output_added`, `output_removed` or
+    /// `output_updated` (a screen was plugged in, removed, or moved, resized or rescaled).
+    /// One handler per event; a second replaces the first. Outputs that exist when the
+    /// app starts are not "added": read them with `outputs()`.
+    fn on(&self, py: Python<'_>, event: &str, handler: Py<PyAny>) -> PyResult<()> {
+        let name = crate::outputs::EVENTS
+            .iter()
+            .copied()
+            .find(|e| *e == event)
+            .ok_or_else(|| crate::outputs::unknown_event(event))?;
+        let wants = crate::dispatch::wants_event(py, &handler)?;
+        self.output_listeners
+            .borrow_mut()
+            .insert(name, (handler, wants));
+        #[cfg(target_os = "linux")]
+        if let Some(live) = self.live.borrow().as_ref() {
+            live.waker.watch_outputs();
+        }
+        Ok(())
+    }
+
+    /// 0.5.7 (#202): removes the handler for an output event.
+    fn off(&self, event: &str) -> PyResult<()> {
+        let name = crate::outputs::EVENTS
+            .iter()
+            .copied()
+            .find(|e| *e == event)
+            .ok_or_else(|| crate::outputs::unknown_event(event))?;
+        self.output_listeners.borrow_mut().remove(name);
+        Ok(())
+    }
+
+    /// 0.5.7 (#202): delivers an output event as the compositor would, for tests with no
+    /// display: `app.simulate("output_added", name="DP-2", width=2560, height=1440)`.
+    /// Fields: `name` (required), `description`, `x`, `y`, `width`, `height`,
+    /// `scale_factor`, `transform`.
+    #[pyo3(signature = (event, **fields))]
+    fn simulate(
+        &self,
+        py: Python<'_>,
+        event: &str,
+        fields: Option<&Bound<'_, pyo3::types::PyDict>>,
+    ) -> PyResult<()> {
+        let name = crate::outputs::EVENTS
+            .iter()
+            .copied()
+            .find(|e| *e == event)
+            .ok_or_else(|| crate::outputs::unknown_event(event))?;
+        let info = crate::outputs::simulated(fields)?;
+        crate::outputs::deliver(&self.output_listeners, py, name, info);
+        Ok(())
+    }
+
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        if !self.0.is_owner() {
+            return Ok(());
+        }
+        for (handler, _) in self.output_listeners.borrow().values() {
+            visit.call(handler)?;
+        }
+        for window in self.windows.borrow().iter() {
+            visit.call(window)?;
+        }
+        Ok(())
+    }
+
+    fn __clear__(&self) {
+        if !self.0.is_owner() {
+            return;
+        }
+        self.output_listeners.borrow_mut().clear();
     }
 
     /// Registers `window` to be opened the next time `run()` is called
@@ -892,6 +982,8 @@ impl App {
             let created_error = startup_error_for_layer.clone();
             let notice_setups = setups_for_layer;
             let notice_error = startup_error_for_layer;
+            let output_listeners_for_hook = self.output_listeners.clone();
+            let output_listeners_for_watch = self.output_listeners.clone();
             Some(LayerHooks {
                 on_created: Box::new(
                     move |window_id: WindowId, token: u64, info: LayerSurfaceInfo| {
@@ -1025,6 +1117,18 @@ impl App {
                         });
                     },
                 ),
+                on_output: Box::new(move |event| {
+                    use engine_platform::outputs::OutputEvent;
+                    let (name, info) = match event {
+                        OutputEvent::Added(info) => ("output_added", info),
+                        OutputEvent::Updated(info) => ("output_updated", info),
+                        OutputEvent::Removed(info) => ("output_removed", info),
+                    };
+                    Python::attach(|py| {
+                        crate::outputs::deliver(&output_listeners_for_hook, py, name, info);
+                    });
+                }),
+                watch_outputs: !output_listeners_for_watch.borrow().is_empty(),
                 on_shutdown: Box::new(move || {
                     // Drop the layer windows' GPU state (and so their `wgpu` surfaces) now.
                     let mut runtimes = shutdown_runtimes.borrow_mut();

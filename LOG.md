@@ -14,6 +14,17 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #202, outputs as objects (2026-10-19)
+
+Phase 3 of #195. `tre.Output` (frozen: name, description, x, y, width, height, scale_factor,
+transform; equal and hashable by name), `App.outputs()`, and the events `output_added`,
+`output_removed`, `output_updated` through `App.on` / `App.off`. Position and size are logical;
+`scale_factor` is the effective mode-over-logical ratio. `outputs()` takes a fresh short-lived
+connection each call (not a live list). Output events come from the layer thread, so they need
+a compositor with the layer shell; outputs present at start are not "added". `App.simulate`
+drives the handlers headless. `examples/outputs.py` runs on both a real session and headless.
+Verified: `tools/verify.sh --cross` passes (1219 tests); live on KWin (HDMI-A-1, DP-1).
+
 ### #198, `LayerWindow` (2026-10-19)
 
 Phase 2 of #195 (TRE-REQ-001 from Tesserae Shell), built on the spike's verdict (go on I2):

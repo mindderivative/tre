@@ -64,6 +64,7 @@ use winit::window::CursorIcon;
 
 use crate::layer_config::{Anchors, KeyboardMode, LayerConfig, LayerKind};
 use crate::layer_keys::{self, Keymap};
+use crate::outputs::{OutputEvent, OutputInfo, effective_scale, transform_name};
 
 /// A pointer to the process's `wl_display`, or to one of its `wl_surface`s: what a
 /// `wgpu` surface is made from. Moved between threads, used on none but to build one.
@@ -111,6 +112,11 @@ pub struct LayerHooks {
     pub on_created: Box<dyn FnMut(winit::window::WindowId, u64, LayerSurfaceInfo) -> bool>,
     /// `(id, token, notice)`.
     pub on_notice: Box<dyn FnMut(winit::window::WindowId, u64, LayerNotice)>,
+    /// An output appeared, changed or went (only when `watch_outputs` is set, or a layer
+    /// window has made the layer thread start).
+    pub on_output: Box<dyn FnMut(OutputEvent)>,
+    /// Start the layer thread at once, to report outputs, even with no layer window.
+    pub watch_outputs: bool,
     /// The loop is ending: drop every GPU surface made from a layer surface now, while
     /// the Wayland connection is still alive (it is gone once the loop returns).
     pub on_shutdown: Box<dyn FnMut()>,
@@ -160,6 +166,9 @@ pub enum LayerEvent {
     Input { id: u64, event: InputEvent },
     /// The surface entered the output with this connector name.
     OutputChanged { id: u64, name: String },
+    /// An output appeared, changed or went away (not sent for the ones that existed when
+    /// the layer thread started).
+    Output(OutputEvent),
 }
 
 /// Why the layer side could not start.
@@ -330,6 +339,99 @@ fn has_layer_shell(globals: &GlobalList) -> bool {
         .with_list(|list| list.iter().any(|g| g.interface == "zwlr_layer_shell_v1"))
 }
 
+fn transform_value(transform: wl_output::Transform) -> u32 {
+    use wl_output::Transform as T;
+    match transform {
+        T::Normal => 0,
+        T::_90 => 1,
+        T::_180 => 2,
+        T::_270 => 3,
+        T::Flipped => 4,
+        T::Flipped90 => 5,
+        T::Flipped180 => 6,
+        T::Flipped270 => 7,
+        _ => 0,
+    }
+}
+
+/// One output as plain data; `None` until the compositor has told us its name.
+fn output_info(outputs: &OutputState, output: &wl_output::WlOutput) -> Option<OutputInfo> {
+    let info = outputs.info(output)?;
+    let name = info.name.clone()?;
+    let transform = transform_name(transform_value(info.transform));
+    let (x, y) = info.logical_position.unwrap_or(info.location);
+    let mode = info.modes.iter().find(|m| m.current).map(|m| m.dimensions);
+    let (width, height) = info
+        .logical_size
+        .or(mode)
+        .map_or((0, 0), |(w, h)| (w.max(0) as u32, h.max(0) as u32));
+    Some(OutputInfo {
+        name,
+        description: info.description.clone().unwrap_or_default(),
+        x,
+        y,
+        width,
+        height,
+        scale_factor: effective_scale(mode, info.logical_size, transform, info.scale_factor),
+        transform: transform.to_string(),
+    })
+}
+
+/// The outputs this session's compositor has, read now on a connection of its own, in
+/// order of position (top to bottom, left to right). Empty off Wayland, and where the
+/// compositor does not report names (`wl_output` before version 4, with no xdg-output).
+pub fn outputs() -> Vec<OutputInfo> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return Vec::new();
+    }
+    let Ok(conn) = Connection::connect_to_env() else {
+        return Vec::new();
+    };
+    let Ok((globals, mut queue)) = registry_queue_init::<OutputProbe>(&conn) else {
+        return Vec::new();
+    };
+    let qh = queue.handle();
+    let mut probe = OutputProbe {
+        registry: RegistryState::new(&globals),
+        outputs: OutputState::new(&globals, &qh),
+    };
+    // The globals, then each output's events (and its xdg-output's).
+    let _ = queue.roundtrip(&mut probe);
+    let _ = queue.roundtrip(&mut probe);
+    let mut found: Vec<OutputInfo> = probe
+        .outputs
+        .outputs()
+        .filter_map(|o| output_info(&probe.outputs, &o))
+        .collect();
+    found.sort_by(|a, b| (a.y, a.x, &a.name).cmp(&(b.y, b.x, &b.name)));
+    found
+}
+
+/// A throwaway state to read the outputs with.
+struct OutputProbe {
+    registry: RegistryState,
+    outputs: OutputState,
+}
+
+impl OutputHandler for OutputProbe {
+    fn output_state(&mut self) -> &mut OutputState {
+        &mut self.outputs
+    }
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+}
+
+impl ProvidesRegistryState for OutputProbe {
+    fn registry(&mut self) -> &mut RegistryState {
+        &mut self.registry
+    }
+    registry_handlers![OutputState];
+}
+
+delegate_output!(OutputProbe);
+delegate_registry!(OutputProbe);
+
 // ---- the layer thread ----
 
 /// Local user data for the objects this module dispatches itself, so the impls do not
@@ -379,10 +481,32 @@ struct State {
     repeat_delay: Duration,
     repeat_interval: Option<Duration>,
     touch_positions: HashMap<i32, Point>,
+    /// The outputs as last reported, so a removal can say which one went.
+    known_outputs: HashMap<ObjectId, OutputInfo>,
+    /// Set once the initial roundtrips are done: outputs that exist at start are not news.
+    outputs_ready: bool,
     alive: bool,
 }
 
 impl State {
+    /// An output's data arrived or changed: report it once it has a name and a change.
+    fn output_seen(&mut self, output: &wl_output::WlOutput, new: bool) {
+        let Some(info) = output_info(&self.outputs, output) else {
+            return;
+        };
+        let previous = self.known_outputs.insert(output.id(), info.clone());
+        if !self.outputs_ready || previous.as_ref() == Some(&info) {
+            return;
+        }
+        let _ = new;
+        let event = if previous.is_none() {
+            OutputEvent::Added(info)
+        } else {
+            OutputEvent::Updated(info)
+        };
+        self.emit(LayerEvent::Output(event));
+    }
+
     fn emit(&mut self, event: LayerEvent) {
         if !(self.on_event)(event) {
             self.alive = false;
@@ -688,9 +812,29 @@ impl OutputHandler for State {
     fn output_state(&mut self) -> &mut OutputState {
         &mut self.outputs
     }
-    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
-    fn update_output(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
-    fn output_destroyed(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_output::WlOutput) {}
+    fn new_output(&mut self, _: &Connection, _: &QueueHandle<Self>, output: wl_output::WlOutput) {
+        self.output_seen(&output, true);
+    }
+    fn update_output(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
+    ) {
+        self.output_seen(&output, false);
+    }
+    fn output_destroyed(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        output: wl_output::WlOutput,
+    ) {
+        if let Some(info) = self.known_outputs.remove(&output.id())
+            && self.outputs_ready
+        {
+            self.emit(LayerEvent::Output(OutputEvent::Removed(info)));
+        }
+    }
 }
 
 impl LayerShellHandler for State {
@@ -1222,11 +1366,20 @@ fn run(
         repeat_delay: Duration::from_millis(600),
         repeat_interval: Some(Duration::from_millis(40)),
         touch_positions: HashMap::new(),
+        known_outputs: HashMap::new(),
+        outputs_ready: false,
         alive: true,
     };
     // Learn the outputs and seats before anything is asked of them.
     let _ = queue.roundtrip(&mut state);
     let _ = queue.roundtrip(&mut state);
+    let existing: Vec<wl_output::WlOutput> = state.outputs.outputs().collect();
+    for output in existing {
+        if let Some(info) = output_info(&state.outputs, &output) {
+            state.known_outputs.insert(output.id(), info);
+        }
+    }
+    state.outputs_ready = true;
     let _ = ready.send(Ok(()));
 
     let mut wake = wake;

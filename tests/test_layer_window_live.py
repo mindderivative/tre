@@ -360,3 +360,52 @@ def test_a_bar_moved_off_the_screen_by_a_negative_margin_gets_no_pointer_events(
     drive(name, steps)
     events = child.events(until="closed", timeout=15)
     assert not [e for e in events if e["kind"] in ("enter", "click")], events
+
+
+# ---- outputs (0.5.7, #202) ----
+
+
+def test_outputs_agree_with_what_the_compositor_reports():
+    expected = outputs()
+    got = tre.App().outputs()
+    assert {o.name for o in got} == set(expected)
+    for o in got:
+        x, y, width, height = expected[o.name]
+        assert (o.x, o.y) == (x, y)
+        assert o.width > 0 and o.height > 0 and o.scale_factor >= 1.0
+    # Top to bottom, then left to right.
+    assert [(o.y, o.x) for o in got] == sorted((o.y, o.x) for o in got)
+
+
+def test_a_surface_bound_by_an_output_object_opens_on_that_output(children):
+    name = list(outputs())[-1]
+    child = children(
+        "import json, os, threading, time\n"
+        "from tre import App, LayerWindow\n"
+        f"app = App(); out = [o for o in app.outputs() if o.name == {name!r}][0]\n"
+        "bar = LayerWindow('tre-test-bar', anchor=('top','left','right'), size=(0, 24), exclusive_zone=24, output=out)\n"
+        "bar.on('output_changed', lambda e: print(json.dumps({'kind': 'output', 'name': e.output}), flush=True))\n"
+        "app.add_window(bar); h = app.thread_handle()\n"
+        "threading.Thread(target=lambda: (time.sleep(3), h.call_soon(bar.close)), daemon=True).start()\n"
+        "app.run()\n"
+        "print(json.dumps({'kind': 'done'}), flush=True)\n"
+    )
+    events = child.events(until="done", timeout=20)
+    assert {"kind": "output", "name": name} in events, events
+
+
+def test_watching_outputs_changes_nothing_at_start_and_a_run_still_ends_cleanly(children):
+    # The outputs that exist when the app starts are not "added"; with a listener the layer
+    # thread starts at once, even with no layer window.
+    child = children(
+        "import json, os, threading, time\n"
+        "from tre import App, Window\n"
+        "app = App(); seen = []\n"
+        "for e in ('output_added', 'output_removed', 'output_updated'):\n"
+        "    app.on(e, lambda o, e=e: seen.append((e, o.name)))\n"
+        "w = Window(width=100, height=60); app.add_window(w)\n"
+        "app.run(max_frames=90)\n"
+        "print(json.dumps({'kind': 'done', 'seen': seen}), flush=True)\n"
+    )
+    events = child.events(until="done", timeout=30)
+    assert events[-1] == {"kind": "done", "seen": []}, events

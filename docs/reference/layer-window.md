@@ -40,7 +40,7 @@ margin=0, keyboard="none", output=None)`**
 | `exclusive_zone` | Pixels to reserve along the anchored edge, so maximised windows stop short of it. `0` reserves none; `-1` ignores other surfaces' zones and takes the whole output. A positive zone counts only for a surface anchored to one edge, or to one edge and both edges across it (a bar anchored `"top"`, `"left"`, `"right"`); with any other `anchor` the compositor treats it as `0`, and a `warning` event says so. |
 | `margin` | `(top, right, bottom, left)` in logical pixels, or one number for all four. Negative is accepted and moves the surface past the screen edge. |
 | `keyboard` | `"none"`: never gets key events. `"on_demand"`: gets them when the user focuses it (a click). `"exclusive"`: takes the keyboard on opening, and nothing else gets keys until it closes. |
-| `output` | A connector name (`"DP-1"`, `"HDMI-A-1"`; `wayland-info -i wl_output` lists them) to bind it to. `None` lets the compositor choose, and it chooses differently from run to run, so a surface meant for one screen names it. Constructor only. |
+| `output` | An [`Output`](outputs.md) (from `App.outputs()`) or a connector name (`"DP-1"`, `"HDMI-A-1"`) to bind it to. `None` lets the compositor choose, and it chooses differently from run to run, so a surface meant for one screen names it. Constructor only. |
 
 `exclusive_edge` (the edge a corner-anchored surface's zone is for) needs layer-shell
 protocol version 5, which this build does not bind yet; passing it raises `ValueError`.
@@ -112,7 +112,7 @@ new `LayerWindow` for a new output.
 
 ## Not yet
 
-Outputs as objects (`app.outputs()`, hot-plug events), `input_region` (so a transparent
+`input_region` (so a transparent
 surface can let clicks through), animating a margin, dragging a surface by its margin,
 and `PopupWindow` are later parts of the same work (issue #195). Until `input_region`
 exists a surface takes pointer input over its whole area, so a full-screen transparent

@@ -56,14 +56,26 @@ widgets and wallpapers under windows.
 ## Several screens
 
 Leave `output` as `None` and the compositor picks one, and picks differently from run to
-run. A shell that wants a bar on each screen makes one `LayerWindow` per connector name:
+run. A shell that wants a bar on each screen reads the list and makes one `LayerWindow` per
+[`Output`](../reference/outputs.md), and follows screens being plugged in and out:
 
 ```python
-for name in ("DP-1", "HDMI-A-1"):
-    app.add_window(make_bar(output=name))
+bars = {}
+
+def add_bar(out):
+    bar = make_bar(output=out)       # LayerWindow(..., output=out)
+    bars[out.name] = bar
+    app.add_window(bar)
+
+for out in app.outputs():            # the screens as they are now, before run()
+    add_bar(out)
+app.on("output_added", add_bar)
+app.on("output_removed", lambda out: bars.pop(out.name, None))   # its bar closes itself
+app.run()
 ```
 
-`wayland-info -i wl_output` (or `kscreen-doctor -o`) lists the names. A name that is not
+A bar bound to a screen that is unplugged is closed by the compositor and fires `closed` with
+reason `"output_removed"`. `output=` also takes a connector name (`"DP-1"`); a name that is not
 there makes `App.run()` raise `RuntimeError` listing the ones that are. Each bar's
 `output_changed` event gives the name the compositor put it on.
 
@@ -102,6 +114,6 @@ whether to skip.
 
 A transparent surface that lets clicks through to the window below needs an input region
 (`input_region`), which is not built, so a full-screen overlay would block the desktop; a
-screen frame (a painter surface plus reservers) waits for it. Outputs as objects, margin
+screen frame (a painter surface plus reservers) waits for it. Margin
 animation and drag, and popups that leave the bar's own surface (a tray menu hanging below
 a 32 px bar) are the rest of the work tracked in issue #195.
