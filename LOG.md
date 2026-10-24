@@ -14,6 +14,21 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### KWin versions of the region, drag and menu live tests (2026-10-24)
+
+The `input_region`, `drag_margin` and overlay-menu live tests now also run on KWin, through
+`/dev/uinput` (`TRE_LIVE_INPUT=1`, moves the real pointer): `tests/uinput_device.py` has a
+`Pointer` with the same interface as `wlr_pointer.Pointer` (and Escape), the tests pick the
+backend by compositor, the window below is maximised (KWin floats a new window small), and the
+drag targets are computed from the output's size. 12 of the 14 ran green on the first KWin run;
+`[]` click-through failed once and passed on every rerun (the window below was not ready; the
+test now waits a second). Real bug found: **a `drag_margin` drag did nothing on KWin**, because
+an absolute pointer (a tablet, a VM's, a remote desktop's, a uinput absolute device) sends no
+relative motion, and the drag only listened to it when the protocol exists. The drag now uses the
+surface-local position until relative motion actually arrives. Still sway-only (they read pixels
+with `grim` or need its output commands): transparent pixels, paste, unplug, 1.5x scale, margin
+animation, the bottom-bar flip.
+
 ### #206, popups: the overlay route (6a, 2026-10-23)
 
 Phase 6 of #195, stage 6a: a menu for a bar's button on a transparent full-screen overlay

@@ -357,6 +357,36 @@ def _on_sway(name):
         pytest.skip("the session under test is not the sway that SWAYSOCK names")
 
 
+def _sway_has(name):
+    """Whether `name` is an output of the sway that SWAYSOCK names (never skips)."""
+    import shutil
+    if not (shutil.which("swaymsg") and os.environ.get("SWAYSOCK")):
+        return False
+    text = subprocess.run(["swaymsg", "-t", "get_outputs", "-r"], capture_output=True, text=True, timeout=10).stdout
+    try:
+        return name in {o["name"] for o in json.loads(text)}
+    except ValueError:
+        return False
+
+
+def _input_pointer(name):
+    """A virtual pointer for the session under test: a wlroots virtual pointer on a headless
+    sway, or `/dev/uinput` on KWin (with `TRE_LIVE_INPUT=1`; it moves the real pointer)."""
+    sys.path.insert(0, os.path.dirname(__file__))
+    layout = outputs().values()
+    width = max(ox + ow for (ox, _, ow, _) in layout)
+    height = max(oy + oh for (_, oy, _, oh) in layout)
+    if _sway_has(name):
+        import wlr_pointer
+        if not wlr_pointer.available():
+            pytest.skip("needs pywayland (pip install pywayland) for a virtual pointer")
+        return wlr_pointer.Pointer(os.environ)
+    if LIVE_INPUT:
+        import uinput_device
+        return uinput_device.Pointer(width, height)
+    pytest.skip("needs a headless sway (SWAYSOCK) or TRE_LIVE_INPUT=1 on KWin")
+
+
 def test_a_transparent_bar_shows_the_desktop_behind_it(children):
     import shutil
     if not shutil.which("grim"):
@@ -444,6 +474,7 @@ def say(kind, **kw):
 behind = Window(width=200, height=100, title="tre-test-behind")
 behind.root.set(fill=(255, 0, 0, 255))
 behind.root.on("click", lambda e: say("window_click"))
+behind.maximize()  # a compositor that floats it (KWin) would leave it small
 app.add_window(behind)
 overlay = LayerWindow("tre-test-overlay", layer="overlay", anchor=("top", "bottom", "left", "right"),
                       size=(0, 0), exclusive_zone=0, output=args["output"], input_region=args["region"])
@@ -475,13 +506,8 @@ def test_input_region_decides_who_gets_the_click(children, region, inside, outsi
 
 
 def _routed(children, region, inside, outside, points, nodes=()):
-    sys.path.insert(0, os.path.dirname(__file__))
-    import wlr_pointer
-    if not wlr_pointer.available():
-        pytest.skip("needs pywayland (pip install pywayland) for a virtual pointer")
     name = next(iter(outputs()))
-    _on_sway(name)
-    pointer = wlr_pointer.Pointer(os.environ)
+    pointer = _input_pointer(name)
     try:
         _region_clicks(children, pointer, name, region, [inside, outside], points, nodes)
     finally:
@@ -493,6 +519,7 @@ def _region_clicks(children, pointer, name, region, expected, points, nodes):
         REGION, REGION_ARGS=json.dumps({"output": name, "region": region, "nodes": list(nodes), "seconds": 9})
     )
     child.events(until="ready", timeout=20)
+    time.sleep(1.0)  # a floating compositor (KWin) takes a moment to maximise the window below
     x0, y0, _, _ = outputs()[name]
     layout = outputs().values()
     layout_width = max(ox + ow for (ox, _, ow, _) in layout)
@@ -515,8 +542,9 @@ def test_auto_region_follows_a_circle_not_its_box(children):
 
 def test_a_screen_frame_takes_clicks_on_its_ring_and_lets_the_interior_through(children):
     # Four bars round the edge of the output: the ring is the layer's, the interior is not.
-    ring = [(0, 0, 1280, 30, 0), (0, 690, 1280, 30, 0), (0, 0, 30, 720, 0), (1250, 0, 30, 720, 0)]
-    _routed(children, "auto", "layer_click", "window_click", [(640, 12), (640, 360)], nodes=ring)
+    _, _, w, h = outputs()[next(iter(outputs()))]
+    ring = [(0, 0, w, 30, 0), (0, h - 30, w, 30, 0), (0, 0, 30, h, 0), (w - 30, 0, 30, h, 0)]
+    _routed(children, "auto", "layer_click", "window_click", [(w // 2, 12), (w // 2, h // 2)], nodes=ring)
 
 
 def test_a_margin_animation_moves_the_surface_smoothly_and_ends_on_time(children):
@@ -583,33 +611,26 @@ app.run()
 """
 
 
-@pytest.mark.parametrize(
-    "drag_to, expected",
-    [
-        # Inside the output: the margins follow the pointer exactly.
-        ((350, 280), (250, 0, 0, 300)),
-        # Toward the far corner, past what the surface can reach: stops with it on the output.
-        ((1279, 719), (660, 0, 0, 1080)),
-        # Toward the near corner: never negative.
-        ((0, 0), (0, 0, 0, 0)),
-    ],
-)
-def test_drag_margin_moves_the_surface_with_the_pointer_and_stops_at_the_output_edge(children, drag_to, expected):
-    sys.path.insert(0, os.path.dirname(__file__))
-    import wlr_pointer
-    if not wlr_pointer.available():
-        pytest.skip("needs pywayland (pip install pywayland) for a virtual pointer")
+@pytest.mark.parametrize("where", ["inside", "far", "near"])
+def test_drag_margin_moves_the_surface_with_the_pointer_and_stops_at_the_output_edge(children, where):
     name = next(iter(outputs()))
-    _on_sway(name)
-    x0, y0, _, _ = outputs()[name]
+    x0, y0, out_w, out_h = outputs()[name]
+    start = (150, 130)  # inside the 200x60 bar at margin (100, 0, 0, 100): x 100..300, y 100..160
+    drag_to, expected = {
+        # Inside the output: the margins follow the pointer exactly.
+        "inside": ((350, 280), (250, 0, 0, 300)),
+        # Toward the far corner, past what the surface can reach: stops with it on the output.
+        "far": ((out_w - 1, out_h - 1), (out_h - 60, 0, 0, out_w - 200)),
+        # Toward the near corner: never negative.
+        "near": ((0, 0), (0, 0, 0, 0)),
+    }[where]
+    pointer = _input_pointer(name)
     layout = outputs().values()
     width = max(ox + ow for (ox, _, ow, _) in layout)
     height = max(oy + oh for (_, oy, _, oh) in layout)
-    pointer = wlr_pointer.Pointer(os.environ)
     try:
         child = children(DRAG % name)
         child.events(until="ready", timeout=20)
-        start = (150, 130)  # inside the bar: x 100..300, y 100..160
         pointer.move(x0 + start[0], y0 + start[1], width, height)
         pointer.press()
         steps = 20
@@ -633,35 +654,32 @@ def test_drag_margin_moves_the_surface_with_the_pointer_and_stops_at_the_output_
 MENU_CHILD = os.path.join(os.path.dirname(__file__), "data", "overlay_menu.py")
 
 
-def _menu_session(children, bar_anchor, steps, seconds=16, extra=None):
-    """Runs the overlay-menu prototype on sway and `steps(pointer, go, events)` against it."""
-    sys.path.insert(0, os.path.dirname(__file__))
-    import wlr_pointer
-    if not wlr_pointer.available():
-        pytest.skip("needs pywayland (pip install pywayland) for a virtual pointer")
+def _menu_session(children, bar_anchor, steps, seconds=16, extra=None, needs_input=True):
+    """Runs the overlay-menu prototype and `steps(pointer, go, kinds, seen, out_h)` against it,
+    with a virtual pointer (`None` when `needs_input` is false)."""
     name = next(iter(outputs()))
-    _on_sway(name)
     x0, y0, out_w, out_h = outputs()[name]
     layout = outputs().values()
     width = max(ox + ow for (ox, _, ow, _) in layout)
     height = max(oy + oh for (_, oy, _, oh) in layout)
+    pointer = _input_pointer(name) if needs_input else None
     arguments = {"output": name, "bar_anchor": bar_anchor, "output_height": out_h, "seconds": seconds, **(extra or {})}
-    child = children(open(MENU_CHILD).read(), MENU_ARGS=json.dumps(arguments))
-    child.events(until="ready", timeout=20)
-    pointer = wlr_pointer.Pointer(os.environ)
-    seen = []
-
-    def go(x, y):
-        pointer.move(x0 + x, y0 + y, width, height)
-
-    def kinds(timeout=3):
-        seen.extend(child.events(timeout=timeout))
-        return [e["kind"] for e in seen]
-
     try:
+        child = children(open(MENU_CHILD).read(), MENU_ARGS=json.dumps(arguments))
+        child.events(until="ready", timeout=20)
+        seen = []
+
+        def go(x, y):
+            pointer.move(x0 + x, y0 + y, width, height)
+
+        def kinds(timeout=3):
+            seen.extend(child.events(timeout=timeout))
+            return [e["kind"] for e in seen]
+
         steps(pointer, go, kinds, seen, out_h)
     finally:
-        pointer.close()
+        if pointer is not None:
+            pointer.close()
 
 
 def _open_menu(pointer, go, kinds, out_h, bar_anchor):
@@ -684,7 +702,7 @@ def test_an_overlay_menu_closes_on_outside_click_escape_and_item(children, how):
             # The dismissing press is the menu's: it does not reach the window below.
             assert "window_click" not in got
         elif how == "escape":
-            subprocess.run(["wtype", "-s", "300", "-k", "Escape"], timeout=20)
+            pointer.escape()
             got = kinds(4)
             assert "dismissed" in got and "closed" in got, got
         else:
@@ -709,6 +727,7 @@ def test_a_menu_from_a_bottom_bar_opens_upward(children):
     import shutil
     if not shutil.which("grim"):
         pytest.skip("needs grim to read pixels")
+    _on_sway(next(iter(outputs())))  # reads the screen with grim: a wlroots compositor only
 
     def steps(pointer, go, kinds, seen, out_h):
         _open_menu(pointer, go, kinds, out_h, ["bottom", "left", "right"])
@@ -750,7 +769,7 @@ def test_an_open_menu_draws_no_frames_while_nothing_moves(children):
         idle = next(e for e in seen if e["kind"] == "idle_frames")
         assert idle["frames"] == 0, idle
 
-    _menu_session(children, ["top", "left", "right"], steps, seconds=14, extra={"probe": True})
+    _menu_session(children, ["top", "left", "right"], steps, seconds=14, extra={"probe": True}, needs_input=False)
 
 
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):
