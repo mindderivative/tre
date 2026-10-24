@@ -14,6 +14,24 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #201, exclusive_edge: tre binds the layer shell itself (2026-10-24)
+
+`LayerWindow(exclusive_edge=...)` and `set(exclusive_edge=...)` now work: a corner-anchored surface
+reserves its `exclusive_zone` on the edge it names (a clock at the top right with
+`exclusive_edge="top"` shortens a maximised window; `"right"` narrows it). Option (a): tre binds
+`zwlr_layer_shell_v1` at version 5 itself and makes its own `zwlr_layer_surface_v1`
+(`layer_surface.rs`, on the `wayland-protocols-wlr` 0.3.12 already in the lock), replacing the
+toolkit's `LayerShell`, `LayerSurface`, `LayerShellHandler` and `delegate_layer!` (the toolkit
+shared with `winit` binds only up to 4): the bind, the `set_*` requests, the `ack_configure`
+before the app hears of a `configure`, destroy on drop. A v4 compositor still opens the surface
+and a `warning` event says the edge is ignored. The protocol cannot clear an edge, so
+`set(exclusive_edge=None)` on a surface that has one raises. Live: sway (32 passed, 3 skipped,
+the corner reserves on the named edge and nothing without one) and KWin (26 passed, 9 skipped).
+**KWin 6.8.1 advertises v5 and accepts `set_exclusive_edge` (no error, the surface maps) but does
+not reserve space for a corner surface**: a maximised window keeps its size. A bar (one edge, or
+three) reserves fine on KWin as before, so the shell's corner widgets that must reserve space need
+a wlroots compositor, or a bar-shaped surface, on KDE for now.
+
 ### KWin versions of the region, drag and menu live tests (2026-10-24)
 
 The `input_region`, `drag_margin` and overlay-menu live tests now also run on KWin, through

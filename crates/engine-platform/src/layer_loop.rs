@@ -245,6 +245,12 @@ where
                     self.notice(wid, token, LayerNotice::MarginMoved(margin));
                 }
             }
+            LayerEvent::Warning { id, key, message } => {
+                let wid = window_id(id);
+                if let Some(token) = self.layers.get(&wid).map(|l| l.token) {
+                    self.notice(wid, token, LayerNotice::Warning(key, message));
+                }
+            }
             LayerEvent::OutputChanged { id, name } => {
                 let wid = window_id(id);
                 if let Some(token) = self.layers.get(&wid).map(|l| l.token) {

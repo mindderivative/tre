@@ -54,13 +54,15 @@ use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
 use smithay_client_toolkit::seat::touch::TouchHandler;
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
-use smithay_client_toolkit::shell::WaylandSurface;
-use smithay_client_toolkit::shell::wlr_layer::{
-    Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
-    LayerSurfaceConfigure,
+use crate::layer_surface::{
+    Anchor, KeyboardInteractivity, Layer, LayerData, LayerShell, LayerSurface,
+};
+use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::ZwlrLayerShellV1;
+use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
+    self, ZwlrLayerSurfaceV1,
 };
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_layer, delegate_output, delegate_pointer,
+    delegate_compositor, delegate_output, delegate_pointer,
     delegate_registry, delegate_relative_pointer, delegate_seat, delegate_touch, registry_handlers,
 };
 use wayland_backend::client::Backend;
@@ -110,6 +112,8 @@ pub enum LayerNotice {
     Failed(String),
     /// A margin drag ended: the final `(top, right, bottom, left)`.
     MarginMoved((i32, i32, i32, i32)),
+    /// A setting the compositor cannot take: `(key, message)`.
+    Warning(&'static str, String),
 }
 
 /// The host's side of the loop for layer surfaces.
@@ -179,6 +183,12 @@ pub enum LayerEvent {
     MarginMoved {
         id: u64,
         margin: (i32, i32, i32, i32),
+    },
+    /// A setting this compositor cannot take (an older layer shell): the surface opens anyway.
+    Warning {
+        id: u64,
+        key: &'static str,
+        message: String,
     },
 }
 
@@ -483,6 +493,8 @@ struct Surf {
     size: (u32, u32),
     scale: f64,
     announced: bool,
+    /// The app has been told this compositor cannot take `exclusive_edge`.
+    edge_warned: bool,
     /// The shape the app last asked for, applied whenever the pointer enters.
     cursor: CursorIcon,
 }
@@ -601,18 +613,7 @@ impl State {
             LayerKind::Top => Layer::Top,
             LayerKind::Overlay => Layer::Overlay,
         });
-        let mut anchor = Anchor::empty();
-        for (bit, flag) in [
-            (Anchors::TOP, Anchor::TOP),
-            (Anchors::BOTTOM, Anchor::BOTTOM),
-            (Anchors::LEFT, Anchor::LEFT),
-            (Anchors::RIGHT, Anchor::RIGHT),
-        ] {
-            if config.anchor.contains(bit) {
-                anchor |= flag;
-            }
-        }
-        layer.set_anchor(anchor);
+        layer.set_anchor(anchor_flags(config.anchor.0));
         layer.set_size(config.size.0, config.size.1);
         layer.set_exclusive_zone(config.exclusive_zone);
         layer.set_margin(
@@ -621,6 +622,16 @@ impl State {
             config.margin.2,
             config.margin.3,
         );
+        // The edge a corner's zone is for. The protocol cannot clear it once set, and the
+        // app is told, once, when the compositor is too old to take it (layer-shell v4).
+        let mut warn_edge = false;
+        if let Some(edge) = config.exclusive_edge
+            && !layer.set_exclusive_edge(anchor_flags(edge))
+            && !surf.edge_warned
+        {
+            surf.edge_warned = true;
+            warn_edge = true;
+        }
         layer.set_keyboard_interactivity(match config.keyboard {
             KeyboardMode::None => KeyboardInteractivity::None,
             KeyboardMode::OnDemand => KeyboardInteractivity::OnDemand,
@@ -629,6 +640,15 @@ impl State {
         set_region(&self.compositor, &surf.surface, &config.input_region);
         surf.config = config.clone();
         layer.commit();
+        if warn_edge {
+            self.emit(LayerEvent::Warning {
+                id,
+                key: "exclusive_edge",
+                message: "this compositor offers zwlr_layer_shell_v1 below version 5, which \
+                          has no exclusive edge: the setting is ignored"
+                    .into(),
+            });
+        }
     }
 
     /// Emits `Closed` for each surface the compositor closed. A surface bound to an output
@@ -695,9 +715,9 @@ impl State {
         let surface = self.compositor.create_surface(qh);
         let layer = self.layer_shell.create_layer_surface(
             qh,
-            surface.clone(),
+            &surface,
             Layer::Top,
-            Some(config.namespace.clone()),
+            &config.namespace,
             output.as_ref(),
         );
         let fractional = self
@@ -721,6 +741,7 @@ impl State {
                 size: (0, 0),
                 scale: 1.0,
                 announced: false,
+                edge_warned: false,
                 cursor: CursorIcon::Default,
             },
         );
@@ -1123,35 +1144,29 @@ impl RelativePointerHandler for State {
     }
 }
 
-impl LayerShellHandler for State {
-    fn closed(&mut self, _: &Connection, _: &QueueHandle<Self>, layer: &LayerSurface) {
-        let id = self
-            .surfaces
+impl State {
+    fn id_of_layer_surface(&self, surface: &wl_surface::WlSurface) -> Option<u64> {
+        self.surfaces
             .iter()
-            .find(|(_, s)| s.layer.wl_surface() == layer.wl_surface())
-            .map(|(id, _)| *id);
-        let Some(id) = id else { return };
+            .find(|(_, s)| s.layer.wl_surface() == surface)
+            .map(|(id, _)| *id)
+    }
+
+    /// The compositor closed the surface (an output went away, say).
+    fn layer_closed(&mut self, surface: &wl_surface::WlSurface) {
+        let Some(id) = self.id_of_layer_surface(surface) else {
+            return;
+        };
         // The reason waits for the output's fate: `closed` comes before the removal.
         self.closing.push(id);
     }
 
-    fn configure(
-        &mut self,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-        layer: &LayerSurface,
-        configure: LayerSurfaceConfigure,
-        _: u32,
-    ) {
-        let id = self
-            .surfaces
-            .iter()
-            .find(|(_, s)| s.layer.wl_surface() == layer.wl_surface())
-            .map(|(id, _)| *id);
-        let Some(id) = id else { return };
-        let (width, height) = configure.new_size;
+    /// The compositor sized the surface (`0` on an axis: its choice, so the size it asked for).
+    fn layer_configured(&mut self, surface: &wl_surface::WlSurface, width: u32, height: u32) {
+        let Some(id) = self.id_of_layer_surface(surface) else {
+            return;
+        };
         if let Some(surf) = self.surfaces.get_mut(&id) {
-            // 0 means "your choice": the size the surface asked for.
             surf.size = (
                 if width == 0 {
                     surf.config.size.0
@@ -1167,6 +1182,60 @@ impl LayerShellHandler for State {
         }
         self.announce(id, true);
     }
+}
+
+impl Dispatch<ZwlrLayerShellV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZwlrLayerShellV1,
+        _: <ZwlrLayerShellV1 as smithay_client_toolkit::reexports::client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // The layer shell global has no events.
+    }
+}
+
+impl Dispatch<ZwlrLayerSurfaceV1, LayerData> for State {
+    fn event(
+        state: &mut Self,
+        proxy: &ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        data: &LayerData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwlr_layer_surface_v1::Event::Configure {
+                serial,
+                width,
+                height,
+            } => {
+                // Acknowledged before the app hears of it, as the protocol needs.
+                proxy.ack_configure(serial);
+                state.layer_configured(&data.surface, width, height);
+            }
+            zwlr_layer_surface_v1::Event::Closed => state.layer_closed(&data.surface),
+            _ => {}
+        }
+    }
+}
+
+/// `Anchors` bits (this crate's) as the protocol's anchor flags.
+fn anchor_flags(bits: u8) -> Anchor {
+    let mut anchor = Anchor::empty();
+    for (bit, flag) in [
+        (Anchors::TOP, Anchor::Top),
+        (Anchors::BOTTOM, Anchor::Bottom),
+        (Anchors::LEFT, Anchor::Left),
+        (Anchors::RIGHT, Anchor::Right),
+    ] {
+        if bits & bit == bit {
+            anchor |= flag;
+        }
+    }
+    anchor
 }
 
 impl SeatHandler for State {
@@ -1416,7 +1485,6 @@ delegate_seat!(State);
 delegate_pointer!(State);
 delegate_relative_pointer!(State);
 delegate_touch!(State);
-delegate_layer!(State);
 delegate_registry!(State);
 
 impl Dispatch<WpFractionalScaleManagerV1, Plain> for State {

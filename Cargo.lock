@@ -929,6 +929,7 @@ dependencies = [
  "smithay-client-toolkit",
  "taffy",
  "wayland-backend",
+ "wayland-protocols-wlr",
  "windows-sys 0.52.0",
  "winit",
  "xkbcommon-dl",

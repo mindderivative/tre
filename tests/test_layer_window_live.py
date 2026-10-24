@@ -43,6 +43,7 @@ for spec in args["bars"]:
         anchor=tuple(spec.get("anchor", ("top", "left", "right"))),
         size=tuple(spec.get("size", (0, 32))),
         exclusive_zone=spec.get("zone", 32),
+        exclusive_edge=spec.get("edge"),
         margin=tuple(spec.get("margin", (0, 0, 0, 0))),
         keyboard=spec.get("keyboard", "none"),
         output=spec.get("output"),
@@ -114,6 +115,26 @@ def drive():
         box.append(w.get("height")); done.set()
     handle.call_soon(read); done.wait(5)
     print(box[0], flush=True)
+    os._exit(0)
+threading.Thread(target=drive, daemon=True).start()
+app.run()
+"""
+
+
+MAXIMISED_SIZE = """
+import os, threading, time
+from tre import App, Window
+w = Window(width=400, height=300, title="tre-test-maximised")
+app = App(); app.add_window(w); handle = app.thread_handle()
+def drive():
+    time.sleep(1.0)
+    handle.call_soon(w.maximize)
+    time.sleep(2.0)
+    box = []; done = threading.Event()
+    def read():
+        box.append((w.get("height"), w.get("width"))); done.set()
+    handle.call_soon(read); done.wait(5)
+    print(box[0][0], box[0][1], flush=True)
     os._exit(0)
 threading.Thread(target=drive, daemon=True).start()
 app.run()
@@ -263,6 +284,50 @@ def test_the_exclusive_zone_shortens_a_maximised_window_by_the_zone(children):
     time.sleep(1.0)
     with_zone = maximised_height(children)
     assert without - with_zone == 40, (without, with_zone)
+
+
+@pytest.mark.parametrize(
+    "edge, expected",
+    [
+        ("top", "shorter"),  # a corner clock reserving from the top shortens a maximised window
+        ("right", "narrower"),  # reserving from the right narrows it instead
+        (None, "same"),  # a corner with no edge reserves nothing
+    ],
+)
+def test_a_corner_surface_reserves_space_on_the_edge_it_names(children, edge, expected):
+    name = next(iter(outputs()))
+    spec = dict(output=name, anchor=("top", "right"), size=(120, 28), zone=28)
+    if edge:
+        spec["edge"] = edge
+    if not _sway_has(name):
+        # KWin 6.8.1 advertises layer-shell v5 and accepts the request (no protocol error, the
+        # surface maps), but does not reserve space for a corner surface; a wlroots compositor
+        # does. So here: the surface opens with the edge, and the measurement is sway's.
+        child = bar_child(children, spec, seconds=6)
+        assert child.events(until="configure"), "the surface opens with an exclusive_edge"
+        pytest.skip("KWin accepts exclusive_edge but does not reserve space for a corner surface")
+
+    def maximised_size():
+        child = children(MAXIMISED_SIZE)
+        height, width = (int(float(v)) for v in child.line(timeout=20).split())
+        return width, height
+
+    plain = bar_child(children, dict(spec, zone=0), seconds=14)
+    plain.events(until="configure")
+    time.sleep(1.0)
+    base = maximised_size()
+    plain.close()
+    child = bar_child(children, spec, seconds=14)
+    child.events(until="configure")
+    time.sleep(1.0)
+    got = maximised_size()
+    child.close()
+    if expected == "shorter":
+        assert (base[0] - got[0], base[1] - got[1]) == (0, 28), (base, got)
+    elif expected == "narrower":
+        assert (base[0] - got[0], base[1] - got[1]) == (28, 0), (base, got)
+    else:
+        assert got == base, (base, got)
 
 
 def test_an_idle_bar_draws_no_frames(children):
@@ -524,6 +589,10 @@ def _region_clicks(children, pointer, name, region, expected, points, nodes):
     layout = outputs().values()
     layout_width = max(ox + ow for (ox, _, ow, _) in layout)
     layout_height = max(oy + oh for (_, oy, _, oh) in layout)
+    # Hover first: a compositor that floats the window needs a pointer motion over the new
+    # surfaces before a press lands where it should.
+    pointer.move(x0 + points[0][0], y0 + points[0][1], layout_width, layout_height)
+    time.sleep(0.7)
     for (x, y) in points:
         pointer.move(x0 + x, y0 + y, layout_width, layout_height)
         pointer.click()

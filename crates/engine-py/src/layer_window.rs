@@ -476,12 +476,6 @@ impl PyLayerWindow {
             // Nothing takes input until the first layout says what is drawn.
             Region::Auto => Some(Vec::new()),
         };
-        if config.exclusive_edge.is_some() {
-            return Err(PyValueError::new_err(
-                "LayerWindow exclusive_edge: not supported yet (it needs layer-shell protocol \
-                 version 5, which this build does not bind)",
-            ));
-        }
         let warnings = warnings_of(&config)?;
         let (width, height) = headless_size(&config);
         let mut base = PyWindow::construct(width, height, namespace, false, 0.0, 0.0)?;
@@ -531,13 +525,16 @@ impl PyLayerWindow {
                     "size" => config.size = extract_size(&value)?,
                     "exclusive_zone" => config.exclusive_zone = extract_zone(&value)?,
                     "exclusive_edge" => {
-                        if !value.is_none() {
+                        let edge = extract_edge("exclusive_edge", &value)?;
+                        // The protocol has no request that clears an edge once it is set.
+                        if edge.is_none() && state.config.borrow().exclusive_edge.is_some() {
                             return Err(PyValueError::new_err(
-                                "LayerWindow exclusive_edge: not supported yet (it needs \
-                                 layer-shell protocol version 5)",
+                                "LayerWindow exclusive_edge: cannot be cleared once set (the \
+                                 protocol has no request for it); move it to another anchored \
+                                 edge, or make a new LayerWindow",
                             ));
                         }
-                        config.exclusive_edge = None;
+                        config.exclusive_edge = edge;
                     }
                     "margin" => {
                         config.margin = extract_margin(&value)?;

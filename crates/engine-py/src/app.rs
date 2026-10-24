@@ -1110,6 +1110,17 @@ impl App {
                                         },
                                     );
                                 }
+                                LayerNotice::Warning(key, message) => {
+                                    listeners::deliver_window(
+                                        &handles.window_listeners,
+                                        py,
+                                        WindowEventType::Warning,
+                                        |e| {
+                                            e.key = Some(key.to_string());
+                                            e.message = Some(message.clone());
+                                        },
+                                    );
+                                }
                                 LayerNotice::MarginMoved(margin) => {
                                     if let Some(layer) = &handles.layer {
                                         // The drag moved the surface; the window's own record

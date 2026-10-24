@@ -103,9 +103,61 @@ def test_a_namespace_is_required_and_not_empty():
         LayerWindow("", anchor="top", size=(10, 10))
 
 
-def test_exclusive_edge_is_refused_until_the_protocol_version_it_needs_is_bound():
+def corner(**overrides):
+    settings = dict(anchor=("top", "right"), size=(120, 28), exclusive_zone=28)
+    settings.update(overrides)
+    return LayerWindow("tesserae-shell.clock", **settings)
+
+
+def test_exclusive_edge_names_which_edge_of_a_corner_the_zone_is_for():
+    w = corner(exclusive_edge="top")
+    assert w.get("exclusive_edge") == "top"
+    w.set(exclusive_edge="right")
+    assert w.get("exclusive_edge") == "right"
+
+
+def test_exclusive_edge_must_be_an_anchored_edge():
     with pytest.raises(ValueError, match="exclusive_edge"):
-        bar(exclusive_edge="top")
+        corner(exclusive_edge="bottom")
+    w = corner(exclusive_edge="top")
+    with pytest.raises(ValueError, match="exclusive_edge"):
+        w.set(exclusive_edge="left")
+    assert w.get("exclusive_edge") == "top"
+    with pytest.raises(ValueError, match="edge"):
+        corner(exclusive_edge="middle")
+    with pytest.raises(ValueError, match="edge"):
+        corner(exclusive_edge=3)
+
+
+def test_an_edge_once_set_cannot_be_cleared_because_the_protocol_cannot():
+    w = corner(exclusive_edge="top")
+    with pytest.raises(ValueError, match="cannot be cleared"):
+        w.set(exclusive_edge=None)
+    assert w.get("exclusive_edge") == "top"
+    # A surface that never had one may be given None (a no-op).
+    none = corner()
+    none.set(exclusive_edge=None)
+    assert none.get("exclusive_edge") is None
+
+
+def test_an_edge_and_a_bar_need_no_exclusive_edge_but_may_give_the_one_they_have():
+    w = bar(exclusive_edge="top")  # a bar anchored top, left and right
+    assert w.get("exclusive_edge") == "top"
+    one = LayerWindow("tesserae-shell.dock", anchor="bottom", size=(300, 40), exclusive_zone=40,
+                      exclusive_edge="bottom")
+    assert one.get("exclusive_edge") == "bottom"
+
+
+def test_a_corner_with_an_edge_has_no_zone_warning_and_one_without_has():
+    seen = []
+    w = corner()
+    w.on("warning", lambda e: seen.append(e.key))
+    w.set(exclusive_zone=29)  # re-validates: no edge, a corner, a zone
+    assert seen == ["exclusive_zone"]
+    seen.clear()
+    w.set(exclusive_edge="right")
+    w.set(exclusive_zone=30)
+    assert seen == []
 
 
 def test_set_changes_the_layer_settings_together_or_not_at_all():
