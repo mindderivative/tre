@@ -162,8 +162,13 @@ listener, or one holding the pointer capture, met before the drag node, is an or
   clipboard shortcuts, and key repeat from the compositor's own rate; copy and paste go through the
   compositor's data-control protocol, so they work on a session with no X server); touch where the
   seat has it; the cursor shape a node asks for. Text arrives as typed (compose and dead
-  keys work through the keymap); input-method (IME) preedit is not wired for layer
-  surfaces yet. A click on a bar does not focus another window's keyboard: with
+  keys work through the keymap); an **input method** (CJK composition, a candidate window) works
+  too, through `zwp_text_input_v3`: while a text input of the surface has keyboard focus the
+  input method is enabled, the candidate window is placed at the caret, a password field says
+  so, and the node gets `compose_start`, `compose_update` and `compose_end` and the committed
+  text as `input` and `change`, as in an ordinary window. It needs a compositor with the
+  text-input protocol (KWin, sway) and an input method running; otherwise the surface types
+  through the keymap alone. The surface needs keyboard focus (`"on_demand"` or `"exclusive"`). A click on a bar does not focus another window's keyboard: with
   `"on_demand"` the bar keeps keys until the user clicks elsewhere.
 - **Idle costs nothing.** A surface draws only when something changed, and an idle bar
   wakes the loop for nothing but its own timers.

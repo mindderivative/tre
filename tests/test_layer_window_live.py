@@ -841,6 +841,99 @@ def test_an_open_menu_draws_no_frames_while_nothing_moves(children):
     _menu_session(children, ["top", "left", "right"], steps, seconds=14, extra={"probe": True}, needs_input=False)
 
 
+IME_CHILD = """
+import json, os, threading, time
+from tre import App, LayerWindow
+app = App()
+def say(kind, **kw):
+    print(json.dumps({"kind": kind, **kw}), flush=True)
+bar = LayerWindow("ime-test", anchor=("top", "left", "right"), size=(0, 40), exclusive_zone=40,
+                  keyboard="exclusive", output=%r)
+bar.root.set(fill=(30, 30, 30, 255))
+field = bar.create("text_input", width=400, height=30, focusable=True, obscured=%s)
+bar.root.add_child(field)
+field.on("compose_start", lambda e: say("compose_start", text=e.text))
+field.on("compose_update", lambda e: say("compose_update", text=e.text))
+field.on("compose_end", lambda e: say("compose_end"))
+field.on("change", lambda e: say("change", text=field.get("text")))
+field.focus()
+app.add_window(bar)
+threading.Thread(target=lambda: (time.sleep(2.0), say("ready"), time.sleep(14), os._exit(0)), daemon=True).start()
+app.run()
+"""
+
+
+def _ime_session(children, obscured=False):
+    sys.path.insert(0, os.path.dirname(__file__))
+    import wlr_input_method
+    if not wlr_input_method.available():
+        pytest.skip("needs pywayland and the wayland-protocols text-input XML for a stand-in input method")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    method = wlr_input_method.InputMethod(os.environ)
+    child = children(IME_CHILD % (name, "True" if obscured else "False"))
+    child.events(until="ready", timeout=20)
+    return method, child
+
+
+def test_an_input_method_composes_and_commits_into_a_layer_window_text_input(children):
+    method, child = _ime_session(children)
+    try:
+        assert method.wait_for("activated", timeout=10), "the focused text input enables the input method"
+        method.send("preedit かな")
+        seen = child.events(until="compose_update", timeout=8)
+        update = [e for e in seen if e["kind"] in ("compose_start", "compose_update")]
+        assert update and update[-1]["text"] == "かな", seen
+        method.send("commit 漢字")
+        seen = child.events(until="change", timeout=8)
+        kinds = [e["kind"] for e in seen]
+        assert "compose_end" in kinds, seen
+        change = next(e for e in seen if e["kind"] == "change")
+        assert change["text"] == "漢字", seen
+    finally:
+        method.close()
+
+
+def test_the_preview_is_replaced_and_then_cleared(children):
+    method, child = _ime_session(children)
+    try:
+        assert method.wait_for("activated", timeout=10)
+        method.send("preedit k")
+        child.events(until="compose_update", timeout=8)
+        method.send("preedit ka")
+        seen = child.events(until="compose_update", timeout=8)
+        assert any(e["kind"] == "compose_update" and e["text"] == "ka" for e in seen), seen
+        method.send("clear")
+        seen = child.events(until="compose_end", timeout=8)
+        assert any(e["kind"] == "compose_end" for e in seen), seen
+    finally:
+        method.close()
+
+
+def test_a_password_field_tells_the_input_method_not_to_learn_from_it(children):
+    method, child = _ime_session(children, obscured=True)
+    try:
+        seen = method.wait_for("activated", timeout=10)
+        assert seen, "the focused text input enables the input method"
+        content = [line.split() for line in seen if line.startswith("content_type")]
+        assert content, seen
+        hint, purpose = int(content[-1][1]), int(content[-1][2])
+        assert purpose == 8, "purpose password"  # zwp_text_input_v3 content_purpose.password
+        assert hint & 0x80, "hint sensitive_data"
+    finally:
+        method.close()
+
+
+def test_a_plain_field_is_a_normal_text_input(children):
+    method, child = _ime_session(children)
+    try:
+        seen = method.wait_for("activated", timeout=10)
+        content = [line.split() for line in seen or [] if line.startswith("content_type")]
+        assert content and int(content[-1][2]) == 0 and not int(content[-1][1]) & 0x80, seen
+    finally:
+        method.close()
+
+
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):
     names = list(outputs())
     bars = [dict(output=n) for n in names]

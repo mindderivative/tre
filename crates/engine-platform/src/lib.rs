@@ -84,6 +84,8 @@ pub mod cursors;
 pub mod layer;
 pub mod layer_config;
 #[cfg(target_os = "linux")]
+mod layer_ime;
+#[cfg(target_os = "linux")]
 mod layer_keys;
 #[cfg(target_os = "linux")]
 mod layer_loop;
