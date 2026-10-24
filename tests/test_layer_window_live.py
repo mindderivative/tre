@@ -516,6 +516,117 @@ def test_a_screen_frame_takes_clicks_on_its_ring_and_lets_the_interior_through(c
     _routed(children, "auto", "layer_click", "window_click", [(640, 12), (640, 360)], nodes=ring)
 
 
+def test_a_margin_animation_moves_the_surface_smoothly_and_ends_on_time(children):
+    import shutil
+    if not shutil.which("grim"):
+        pytest.skip("needs grim to read pixels")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    code = """
+import json, os, threading, time
+from tre import App, LayerWindow
+app = App()
+bar = LayerWindow("anim-test", anchor=("top", "left"), size=(200, 40), exclusive_zone=0, output=%r)
+bar.root.set(fill=(200, 100, 50, 255))
+app.add_window(bar)
+handle = app.thread_handle()
+def go():
+    time.sleep(2.0)
+    print(json.dumps({"kind": "start"}), flush=True)
+    handle.call_soon(lambda: bar.animate("margin_top", 300, 800,
+                     on_complete=lambda: print(json.dumps({"kind": "done"}), flush=True)))
+    time.sleep(3)
+    os._exit(0)
+threading.Thread(target=go, daemon=True).start()
+app.run()
+""" % name
+    child = children(code)
+    child.events(until="start", timeout=20)
+    x0, y0, _, _ = outputs()[name]
+
+    def top():
+        shot = subprocess.run(["grim", "-t", "ppm", "-o", name, "-"], capture_output=True, timeout=20).stdout
+        header, rest = shot.split(b"\n255\n", 1)
+        width, height = (int(v) for v in header.split()[1:3])
+        for y in range(height):
+            i = (y * width + 10) * 3
+            if tuple(rest[i : i + 3]) == (200, 100, 50):
+                return y
+        return None
+
+    seen, began = [], time.time()
+    while time.time() - began < 2.0:
+        seen.append(top())
+    positions = [y for y in seen if y is not None]
+    assert positions[-1] == 300, positions[-5:]
+    assert positions == sorted(positions), "the bar only moves one way"
+    middle = {y for y in positions if 0 < y < 300}
+    assert len(middle) >= 5, f"a smooth slide has many steps, saw {sorted(middle)}"
+    assert child.events(until="done", timeout=5)
+
+
+DRAG = """
+import json, os, threading, time
+from tre import App, LayerWindow
+app = App()
+bar = LayerWindow("drag-test", anchor=("top", "left"), size=(200, 60), exclusive_zone=0, output=%r,
+                  margin=(100, 0, 0, 100))
+bar.root.set(fill=(200, 100, 50, 255), window_region="drag_margin")
+bar.on("moved", lambda e: print(json.dumps({"kind": "moved", "margin": list(e.margin)}), flush=True))
+app.add_window(bar)
+threading.Thread(target=lambda: (time.sleep(2.5), print(json.dumps({"kind": "ready"}), flush=True),
+                                 time.sleep(7), os._exit(0)), daemon=True).start()
+app.run()
+"""
+
+
+@pytest.mark.parametrize(
+    "drag_to, expected",
+    [
+        # Inside the output: the margins follow the pointer exactly.
+        ((350, 280), (250, 0, 0, 300)),
+        # Toward the far corner, past what the surface can reach: stops with it on the output.
+        ((1279, 719), (660, 0, 0, 1080)),
+        # Toward the near corner: never negative.
+        ((0, 0), (0, 0, 0, 0)),
+    ],
+)
+def test_drag_margin_moves_the_surface_with_the_pointer_and_stops_at_the_output_edge(children, drag_to, expected):
+    sys.path.insert(0, os.path.dirname(__file__))
+    import wlr_pointer
+    if not wlr_pointer.available():
+        pytest.skip("needs pywayland (pip install pywayland) for a virtual pointer")
+    name = next(iter(outputs()))
+    _on_sway(name)
+    x0, y0, _, _ = outputs()[name]
+    layout = outputs().values()
+    width = max(ox + ow for (ox, _, ow, _) in layout)
+    height = max(oy + oh for (_, oy, _, oh) in layout)
+    pointer = wlr_pointer.Pointer(os.environ)
+    try:
+        child = children(DRAG % name)
+        child.events(until="ready", timeout=20)
+        start = (150, 130)  # inside the bar: x 100..300, y 100..160
+        pointer.move(x0 + start[0], y0 + start[1], width, height)
+        pointer.press()
+        steps = 20
+        for i in range(1, steps + 1):
+            pointer.move(
+                x0 + round(start[0] + (drag_to[0] - start[0]) * i / steps),
+                y0 + round(start[1] + (drag_to[1] - start[1]) * i / steps),
+                width, height,
+            )
+            time.sleep(0.03)
+        pointer.release()
+        events = child.events(until="moved", timeout=10)
+    finally:
+        pointer.close()
+    moved = [e for e in events if e["kind"] == "moved"]
+    assert len(moved) == 1, events
+    got = tuple(moved[0]["margin"])
+    assert all(abs(a - b) <= 2 for a, b in zip(got, expected)), (got, expected)
+
+
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):
     names = list(outputs())
     bars = [dict(output=n) for n in names]

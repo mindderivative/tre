@@ -330,3 +330,197 @@ def test_auto_is_a_region_that_follows_what_is_drawn():
 def test_a_rectangle_may_be_a_list_as_well_as_a_tuple():
     w = bar(input_region=[[0, 0, 10, 10], (5, 5, 2, 2)])
     assert w.get("input_region") == [(0, 0, 10, 10), (5, 5, 2, 2)]
+
+
+# ---- margin animation (#205) ----
+
+
+def margins(w):
+    return w.get("margin")
+
+
+def test_a_margin_animates_with_the_clock_and_ends_exactly():
+    w = bar(margin=(0, 0, 0, 0))
+    done = []
+    w.animate("margin_top", -32, 200, on_complete=lambda: done.append(1))
+    assert margins(w) == (0, 0, 0, 0)
+    w.advance(100)
+    assert margins(w)[0] == -16  # linear, half way
+    assert done == []
+    w.advance(100)
+    assert margins(w) == (-32, 0, 0, 0)
+    assert done == [1]
+    w.advance(500)
+    assert done == [1], "on_complete is called once"
+
+
+def test_the_four_margins_animate_independently():
+    w = bar(margin=(0, 0, 0, 0))
+    w.animate("margin_top", 10, 100)
+    w.animate("margin_right", 20, 200)
+    w.animate("margin_bottom", 30, 100)
+    w.animate("margin_left", 40, 400)
+    w.advance(100)
+    assert margins(w) == (10, 10, 30, 10)
+    w.advance(300)
+    assert margins(w) == (10, 20, 30, 40)
+
+
+def test_an_easing_curve_applies():
+    w = bar(margin=(0, 0, 0, 0))
+    w.animate("margin_left", 100, 100, easing=(0.42, 0, 1, 1))  # ease-in
+    w.advance(50)
+    assert 0 < margins(w)[3] < 50
+    w.advance(50)
+    assert margins(w)[3] == 100
+    w.animate("margin_left", 0, 100, easing="spring")
+    w.advance(5000)
+    assert margins(w)[3] == 0
+
+
+def test_retargeting_starts_from_where_it_is_and_cancels_the_first_callback():
+    w = bar(margin=(0, 0, 0, 0))
+    first, second = [], []
+    w.animate("margin_top", 100, 100, on_complete=lambda: first.append(1))
+    w.advance(50)
+    here = margins(w)[0]
+    assert here == 50
+    w.animate("margin_top", 0, 100, on_complete=lambda: second.append(1))
+    w.advance(1)
+    assert margins(w)[0] <= here
+    w.advance(100)
+    assert margins(w)[0] == 0
+    assert first == [] and second == [1]
+
+
+def test_set_margin_cancels_a_running_animation_with_no_callback():
+    w = bar(margin=(0, 0, 0, 0))
+    seen, done = [], []
+    w.root.on("animation_end", lambda e: seen.append((e.property, e.finished)))
+    w.animate("margin_top", 100, 100, on_complete=lambda: done.append(1))
+    w.advance(30)
+    w.set(margin=(5, 5, 5, 5))
+    assert margins(w) == (5, 5, 5, 5)
+    w.advance(500)
+    assert margins(w) == (5, 5, 5, 5)
+    assert done == []
+    assert ("margin_top", False) in seen
+
+
+def test_animate_reports_its_end_as_an_animation_end_event():
+    w = bar(margin=(0, 0, 0, 0))
+    seen = []
+    w.root.on("animation_end", lambda e: seen.append((e.property, e.finished)))
+    w.animate("margin_bottom", 8, 50)
+    w.advance(60)
+    assert seen == [("margin_bottom", True)]
+
+
+def test_zero_duration_snaps_on_the_next_tick():
+    w = bar(margin=(0, 0, 0, 0))
+    w.animate("margin_top", 7)
+    w.advance(1)
+    assert margins(w)[0] == 7
+
+
+@pytest.mark.parametrize(
+    "args, message",
+    [
+        (("margin", 5), "only the margins"),
+        (("size", 5), "only the margins"),
+        (("margin_top", "far"), "must be a number"),
+        (("margin_top", float("nan")), "finite"),
+        (("margin_top", float("inf")), "finite"),
+    ],
+)
+def test_a_bad_margin_animation_raises_and_changes_nothing(args, message):
+    w = bar(margin=(1, 2, 3, 4))
+    with pytest.raises(ValueError, match=message):
+        w.animate(*args)
+    assert margins(w) == (1, 2, 3, 4)
+
+
+def test_a_bad_easing_or_callback_raises():
+    w = bar()
+    with pytest.raises(ValueError):
+        w.animate("margin_top", 5, 100, easing="bounce")
+    with pytest.raises(ValueError, match="callable"):
+        w.animate("margin_top", 5, 100, on_complete=7)
+
+
+def test_two_windows_animating_together_stay_in_step():
+    a, b = bar(margin=(0, 0, 0, 0)), bar(margin=(0, 0, 0, 0))
+    a.animate("margin_top", 100, 100)
+    b.animate("margin_top", 100, 100)
+    a.advance(40)
+    b.advance(40)
+    assert margins(a) == margins(b) == (40, 0, 0, 0)
+
+
+# ---- window_region="drag_margin" (#205) ----
+
+
+def test_drag_margin_is_a_layer_window_region_and_reads_back():
+    w = bar()
+    node = w.create("box", width=40, height=20)
+    w.root.add_child(node)
+    node.set(window_region="drag_margin")
+    assert node.get("window_region") == "drag_margin"
+    node.set(window_region=None)
+    assert node.get("window_region") is None
+
+
+def test_an_ordinary_window_refuses_drag_margin():
+    w = Window(width=100, height=100)
+    node = w.create("box", width=40, height=20)
+    w.root.add_child(node)
+    with pytest.raises(ValueError, match="LayerWindow"):
+        node.set(window_region="drag_margin")
+
+
+def test_a_layer_window_still_refuses_drag_and_names_the_choices_for_a_bad_value():
+    w = bar()
+    node = w.create("box", width=40, height=20)
+    w.root.add_child(node)
+    with pytest.raises(ValueError, match="LayerWindow"):
+        node.set(window_region="drag")
+    with pytest.raises(ValueError, match="drag_margin"):
+        node.set(window_region="slide")
+
+
+def _press(w, x, y):
+    w.simulate("pointer_move", x=x, y=y)
+    w.simulate("pointer_down", x=x, y=y)
+    w.simulate("pointer_up", x=x, y=y)
+
+
+def test_an_interactive_child_of_a_drag_margin_node_is_not_a_drag_handle():
+    w = bar(size=(300, 40), anchor=("top", "left"))
+    handle = w.create("box", width=200, height=30, fill=(1, 2, 3, 255))
+    handle.set(window_region="drag_margin")
+    button = w.create("box", width=40, height=20, fill=(9, 9, 9, 255))
+    handle.add_child(button)
+    w.root.add_child(handle)
+    seen = []
+    button.on("click", lambda e: seen.append("click"))
+    handle.on("pointer_cancel", lambda e: seen.append("cancel"))
+    button.on("pointer_cancel", lambda e: seen.append("cancel"))
+    _press(w, 10, 10)  # on the button: its own click wins
+    assert seen == ["click"]
+
+
+def test_a_non_interactive_drag_margin_node_cancels_the_press():
+    w = bar(size=(300, 40), anchor=("top", "left"))
+    handle = w.create("box", width=100, height=30, fill=(1, 2, 3, 255))
+    handle.set(window_region="drag_margin")
+    w.root.add_child(handle)
+    seen = []
+    handle.on("pointer_cancel", lambda e: seen.append("cancel"))
+    handle.on("pointer_down", lambda e: seen.append("down"))
+    _press(w, 20, 10)
+    assert seen == ["down", "cancel"]
+
+
+def test_moved_is_a_window_event():
+    w = bar()
+    w.on("moved", lambda e: None)

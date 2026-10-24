@@ -239,6 +239,12 @@ where
                     (hooks.on_output)(event);
                 }
             }
+            LayerEvent::MarginMoved { id, margin } => {
+                let wid = window_id(id);
+                if let Some(token) = self.layers.get(&wid).map(|l| l.token) {
+                    self.notice(wid, token, LayerNotice::MarginMoved(margin));
+                }
+            }
             LayerEvent::OutputChanged { id, name } => {
                 let wid = window_id(id);
                 if let Some(token) = self.layers.get(&wid).map(|l| l.token) {

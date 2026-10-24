@@ -21,6 +21,8 @@ use pyo3::types::{PyAny, PyDict, PyList, PyString, PyTuple};
 
 use crate::listeners::{self, WindowEventType};
 use crate::window::PyWindow;
+use engine_core::{Animated, CompletionHandle, MotionCurve};
+use std::time::{Duration, Instant};
 
 pyo3::create_exception!(
     tre,
@@ -80,6 +82,9 @@ pub(crate) struct LayerState {
     pub(crate) last_configure: Cell<Option<(f64, f64)>>,
     /// `input_region="auto"`: the region follows the drawn shapes, recomputed after layout.
     pub(crate) auto_region: Cell<bool>,
+    /// The four margins `(top, right, bottom, left)` as animated numbers: what `animate`
+    /// moves and `set(margin=...)` snaps. The surface gets the rounded values.
+    pub(crate) motion: RefCell<[Animated<f64>; 4]>,
     /// Why the surface closed: `"compositor"`, `"output_removed"` or `"app"`.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(crate) closed_reason: RefCell<Option<&'static str>>,
@@ -91,6 +96,67 @@ pub(crate) struct LayerState {
 }
 
 impl LayerState {
+    /// Makes the margin motion hold `margin` at rest, cancelling any running animation (a
+    /// cancelled one ends with `finished=False` and never calls `on_complete`).
+    pub(crate) fn snap_margin(&self, margin: (i32, i32, i32, i32), now: Instant) {
+        let values = [margin.0, margin.1, margin.2, margin.3];
+        for (field, value) in self.motion.borrow_mut().iter_mut().zip(values) {
+            let value = f64::from(value);
+            field.animate_to(value, Duration::ZERO, MotionCurve::Linear, now);
+            field.active = None;
+            field.current = value;
+        }
+    }
+
+    /// Starts or retargets one margin's animation, from its current value.
+    pub(crate) fn animate_margin(
+        &self,
+        index: usize,
+        to: f64,
+        duration: Duration,
+        curve: MotionCurve,
+        now: Instant,
+        handle: CompletionHandle,
+    ) {
+        self.motion.borrow_mut()[index]
+            .animate_to_with_completion(to, duration, curve, now, handle);
+    }
+
+    /// Advances the margins to `now`, pushing finished animations' handles onto
+    /// `completed`; when the rounded margin changed, sends it to the surface (one cheap
+    /// commit). Returns whether any margin is still moving.
+    pub(crate) fn tick_margins(&self, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool {
+        let mut motion = self.motion.borrow_mut();
+        let mut active = false;
+        let mut before = [0.0; 4];
+        for (i, field) in motion.iter().enumerate() {
+            before[i] = field.current;
+        }
+        for field in motion.iter_mut() {
+            active |= field.tick(now, completed);
+        }
+        let moved = motion.iter().zip(before).any(|(f, b)| f.current != b);
+        if moved {
+            let round = |v: f64| v.round() as i32;
+            let margin = (
+                round(motion[0].current),
+                round(motion[1].current),
+                round(motion[2].current),
+                round(motion[3].current),
+            );
+            let mut config = self.config.borrow_mut();
+            if config.margin != margin {
+                config.margin = margin;
+                #[cfg(target_os = "linux")]
+                if let (Some(controller), Some(id)) =
+                    (self.controller.borrow().as_ref(), self.id.get())
+                {
+                    controller.set_margin(id, margin);
+                }
+            }
+        }
+        active
+    }
     /// `input_region="auto"`: recomputes the region from the drawn shapes after a layout and
     /// sends it if it changed. While something animates the new region is joined to the
     /// last one, so input never lands outside what is visible; it snaps to the exact
@@ -143,6 +209,7 @@ impl LayerState {
             id: Cell::new(None),
             last_configure: Cell::new(None),
             auto_region: Cell::new(false),
+            motion: RefCell::new([0, 1, 2, 3].map(|_| Animated::new(0.0))),
             closed_reason: RefCell::new(None),
             pending_warnings: RefCell::new(warnings),
             #[cfg(target_os = "linux")]
@@ -425,8 +492,10 @@ impl PyLayerWindow {
         handles.transparent.set(true);
         let layer = LayerState::new(config, warnings);
         layer.auto_region.set(auto);
+        layer.snap_margin(layer.config.borrow().margin, Instant::now());
         handles.layer = Some(Rc::new(layer));
         handles.tree.borrow_mut().set_window_drag_allowed(false);
+        handles.tree.borrow_mut().set_margin_drag_allowed(true);
         Ok(PyClassInitializer::from(base).add_subclass(Self))
     }
 
@@ -445,6 +514,7 @@ impl PyLayerWindow {
         let mut config = state.config.borrow().clone();
         let rest = PyDict::new(py);
         let mut region_given = None;
+        let mut margin_given = false;
         let mut auto_now = None;
         let mut through_given = None;
         if let Some(props) = props {
@@ -469,7 +539,10 @@ impl PyLayerWindow {
                         }
                         config.exclusive_edge = None;
                     }
-                    "margin" => config.margin = extract_margin(&value)?,
+                    "margin" => {
+                        config.margin = extract_margin(&value)?;
+                        margin_given = true;
+                    }
                     "input_region" => region_given = Some(value),
                     "click_through" => {
                         through_given = Some(value.extract::<bool>().map_err(|_| {
@@ -532,6 +605,11 @@ impl PyLayerWindow {
                 }
             }
             *state.config.borrow_mut() = config.clone();
+            if margin_given {
+                // A step change cancels a running margin animation.
+                state.snap_margin(config.margin, crate::clock::now(&base.handles.tree));
+                base.handles.tree.borrow_mut().mark_dirty();
+            }
             #[cfg(target_os = "linux")]
             if let (Some(controller), Some(id)) =
                 (state.controller.borrow().as_ref(), state.id.get())
@@ -606,6 +684,68 @@ impl PyLayerWindow {
                 base.get(name, py)?
             }
         })
+    }
+
+    /// Animates one margin to `to` pixels from where it is now: `property` is `"margin_top"`,
+    /// `"margin_right"`, `"margin_bottom"` or `"margin_left"`. Same `duration_ms`, `easing`
+    /// (linear, a cubic bezier, or a spring) and `on_complete` as `Node.animate`. The engine
+    /// runs it, one cheap commit per step, with no Python until `on_complete`;
+    /// `advance(ms)` runs it headless. `set(margin=...)` while it runs cancels it
+    /// (`animation_end` with `finished=False`, no `on_complete`).
+    #[pyo3(signature = (property, to, duration_ms=0, easing=None, on_complete=None))]
+    fn animate(
+        slf: &Bound<'_, Self>,
+        property: &str,
+        to: &Bound<'_, PyAny>,
+        duration_ms: u64,
+        easing: Option<Bound<'_, PyAny>>,
+        on_complete: Option<Py<PyAny>>,
+    ) -> PyResult<()> {
+        const NAMES: [&str; 4] = ["margin_top", "margin_right", "margin_bottom", "margin_left"];
+        let Some(index) = NAMES.iter().position(|n| *n == property) else {
+            return Err(PyValueError::new_err(format!(
+                "LayerWindow.animate: {property:?} is not animatable here; only the margins are: {}",
+                NAMES.join(", ")
+            )));
+        };
+        let value: f64 = to.extract().map_err(|_| {
+            PyValueError::new_err(format!(
+                "LayerWindow.animate {property}: `to` must be a number"
+            ))
+        })?;
+        if !value.is_finite() || value.abs() > f64::from(i32::MAX / 2) {
+            return Err(PyValueError::new_err(format!(
+                "LayerWindow.animate {property}: `to` must be a finite number of pixels"
+            )));
+        }
+        if let Some(callback) = &on_complete
+            && !callback.bind(slf.py()).is_callable()
+        {
+            return Err(PyValueError::new_err(
+                "LayerWindow.animate: on_complete must be callable",
+            ));
+        }
+        let duration = Duration::from_millis(duration_ms);
+        let curve = crate::node::parse_easing(easing.as_ref(), duration)?;
+        let base = slf.as_super().borrow();
+        let state = base
+            .handles
+            .layer
+            .clone()
+            .expect("a LayerWindow has layer state");
+        let now = crate::clock::now(&base.handles.tree);
+        let handle = base.handles.completions.borrow_mut().register(
+            on_complete,
+            base.handles.root,
+            property,
+        );
+        state.animate_margin(index, value, duration, curve, now, handle);
+        // A running loop picks the animation up on its next pass.
+        base.handles.tree.borrow_mut().mark_dirty();
+        if let Some(waker) = base.handles.waker.borrow().as_ref() {
+            waker.wake();
+        }
+        Ok(())
     }
 
     /// Closes the surface: `close_requested` first (a listener may cancel it with

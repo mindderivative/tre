@@ -1521,7 +1521,10 @@ impl PyWindow {
             }
         }
         let now = clock::advance(&tree, target.saturating_duration_since(clock::now(&tree)));
-        let (_, completed) = tree.borrow_mut().tick_all(now);
+        let (_, mut completed) = tree.borrow_mut().tick_all(now);
+        if let Some(layer) = &self.handles.layer {
+            layer.tick_margins(now, &mut completed);
+        }
         crate::caret::update_blink(&tree, now, &self.handles.alarm);
         let ctx = NodeContext {
             tree: &tree,

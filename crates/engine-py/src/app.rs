@@ -1110,6 +1110,23 @@ impl App {
                                         },
                                     );
                                 }
+                                LayerNotice::MarginMoved(margin) => {
+                                    if let Some(layer) = &handles.layer {
+                                        // The drag moved the surface; the window's own record
+                                        // and motion follow it, so a later `set()` or animation
+                                        // starts from where the surface is.
+                                        layer.config.borrow_mut().margin = margin;
+                                        layer.snap_margin(margin, crate::clock::now(&handles.tree));
+                                    }
+                                    listeners::deliver_window(
+                                        &handles.window_listeners,
+                                        py,
+                                        WindowEventType::Moved,
+                                        |e| {
+                                            e.margin = Some(margin);
+                                        },
+                                    );
+                                }
                                 LayerNotice::Failed(message) => {
                                     tracing::error!(%message, "a layer window could not be opened");
                                     if (token as usize) < initial_windows {
@@ -1265,8 +1282,17 @@ impl App {
 
                 // 0.5.4 (#116): this pass's start, for the frame statistics.
                 let frame_began = Instant::now();
-                let now = crate::clock::now(&runtime.handles.tree);
-                let (any_active, completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                let now = crate::clock::frame_now(&runtime.handles.tree);
+                let (any_active, mut completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                // 0.5.7 (#205): a layer surface's margins animate on the same clock. They
+                // draw nothing, so the loop is woken by the alarm at about 120 Hz, not kept
+                // spinning.
+                if let Some(layer) = &runtime.handles.layer
+                    && layer.tick_margins(now, &mut completed)
+                    && let Some(alarm) = runtime.handles.alarm.borrow().as_ref()
+                {
+                    alarm.arm(now + std::time::Duration::from_millis(8));
+                }
                 // 0.5.6 (#163): the timers that came due, then the loop's alarm
                 // for the next one.
                 crate::timers::run_due(&runtime.handles.timers, now, py);

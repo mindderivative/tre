@@ -63,6 +63,14 @@ class Pointer:
         self._send(f"abs {x} {y} {layout_width} {layout_height}")
         time.sleep(0.1)
 
+    def press(self):
+        self._send("down")
+        time.sleep(0.1)
+
+    def release(self):
+        self._send("up")
+        time.sleep(0.1)
+
     def click(self):
         self._send("click")
         time.sleep(0.1)
@@ -106,6 +114,12 @@ def _helper(root):  # pragma: no cover - runs in the child process
         if parts and parts[0] == "abs":
             x, y, w, h = (int(v) for v in parts[1:5])
             pointer.motion_absolute(now(), x, y, w, h)
+            pointer.frame()
+        elif parts and parts[0] == "down":
+            pointer.button(now(), BTN_LEFT, 1)
+            pointer.frame()
+        elif parts and parts[0] == "up":
+            pointer.button(now(), BTN_LEFT, 0)
             pointer.frame()
         elif parts and parts[0] == "click":
             pointer.button(now(), BTN_LEFT, 1)

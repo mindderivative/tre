@@ -192,6 +192,9 @@ class Event:
     """`output_changed`: the output's connector name. (`closed` on a `LayerWindow` sets
     `reason`: `"compositor"`, `"output_removed"` or `"app"`; `warning` sets `key`, the
     setting, and `message`.)"""
+    margin: tuple[int, int, int, int] | None
+    """`moved` on a `LayerWindow`: the final `(top, right, bottom, left)` after a
+    `window_region="drag_margin"` drag."""
     total_x: float | None
     """`pan`, `pinch`: how far the gesture has moved in all."""
     total_y: float | None
@@ -850,7 +853,9 @@ class LayerWindow(Window):
 
     Events: `configure` (`width`, `height`, logical), `closed` (`event.reason`:
     `"compositor"`, `"output_removed"` or `"app"`), `output_changed` (`event.output`) and
-    `warning` (`event.key`, `event.message`: a zone the protocol would ignore), besides the
+    `warning` (`event.key`, `event.message`: a zone the protocol would ignore), `moved`
+    (`event.margin`: the final `(top, right, bottom, left)` after a `window_region="drag_margin"`
+    drag), besides the
     window events that apply (`resize`, `close_requested`, `scale_factor`, ...).
     """
 
@@ -878,6 +883,21 @@ class LayerWindow(Window):
         `min_height`, `icon`, `x`, `y`, `always_on_top`, `resizable`, `skip_taskbar`,
         `blur_behind`) and for `namespace` and `output`, which only the constructor
         takes."""
+        ...
+    def animate(
+        self,
+        property: Literal["margin_top", "margin_right", "margin_bottom", "margin_left"],
+        to: float,
+        duration_ms: int = 0,
+        easing: str | tuple[float, float, float, float] | tuple[str, float] | None = None,
+        on_complete: Callable[[], object] | None = None,
+    ) -> None:
+        """Moves one margin to `to` pixels from where it is now, in the engine: one small
+        commit per step and no Python until `on_complete` (called once). Same `duration_ms`,
+        `easing` and `on_complete` as `Node.animate`; the root gets `animation_end`.
+        Retargeting starts from the current value; `set(margin=...)` cancels. Only the four
+        margins animate (a surface's size and `exclusive_zone` are step changes), anything
+        else raises `ValueError`. `advance(ms)` runs it headless."""
         ...
     def get(self, name: str) -> Any:
         """Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`,

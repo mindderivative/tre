@@ -179,6 +179,7 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `close_requested` | — | The user asked to close; `event.cancel()` keeps it open. |
 | `closed` | `reason` (a `LayerWindow`) | The window closed. |
 | `configure`, `output_changed`, `warning` | `width`, `height` / `output` / `key`, `message` | A `LayerWindow`: the compositor sized it / it entered an output / a setting the protocol ignores. |
+| `moved` | `margin` | A `LayerWindow`: a `window_region="drag_margin"` drag ended; the final `(top, right, bottom, left)`. |
 | `dock_target`, `dock_drop` | `side`, `panel` | A docking drag moved into a zone / ended. |
 | `maximized`, `active` | `maximized`, `active` | The window was maximized or restored / gained or lost focus. |
 | `titlebar_inset` | `titlebar_inset` | The OS controls' area over the content changed. |
@@ -201,6 +202,7 @@ A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surfa
 
 | Method | Description |
 | --- | --- |
+| `animate(property, to, duration_ms, easing, on_complete) -> None` | Moves one margin to `to` pixels from where it is now, in the engine: one small commit per step and no Python until `on_complete`… |
 | `close() -> None` | Closes the surface on the loop's next turn: `close_requested` first (a listener may cancel it with `event.cancel()`), then… |
 | `get(name: str) -> Any` | Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`, `exclusive_edge`, `margin`, `keyboard`… |
 | `set(**props: Any) -> None` | Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`, `margin`, `keyboard`, `input_region`… |
@@ -460,6 +462,7 @@ What a listener receives when it takes one argument; never constructed directly.
 | `rotation_delta` | `float \| None` |  |
 | `direction` | `str \| None` |  |
 | `output` | `str \| None` |  |
+| `margin` | `tuple[int, int, int, int] \| None` |  |
 | `total_x` | `float \| None` |  |
 | `total_y` | `float \| None` |  |
 | `velocity_x` | `float \| None` |  |

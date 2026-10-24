@@ -14,6 +14,32 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #205, margin animation and `drag_margin` (2026-10-20)
+
+Phase 5 of #195: stage 5a, margin animation; stage 5b below.
+
+Stage 5a: `LayerWindow.animate("margin_top" | "margin_right" |
+"margin_bottom" | "margin_left", to, duration_ms, easing, on_complete)`. The four margins are
+`Animated<f64>` values ticked in the window's frame pass; a changed rounded margin goes to the
+layer thread as a margin-only command (one cheap commit, no other property re-sent). The loop
+is woken by its alarm every 8 ms while a margin moves (no spinning, no buffer drawn). Same
+easing and `on_complete` as `Node.animate`, `animation_end` on the root, retargeting from the
+current value, `set(margin=...)` cancels and snaps, `advance(ms)` runs it headless. Frame passes
+now tick to the instant the loop turn began (`engine_platform::turn_instant`), so windows
+animating together read one time. Live on headless sway (read back with `grim`): a 0 to 300 px
+slide in 800 ms is smooth (about 6 px per 16 ms), monotonic, and `on_complete` lands on time.
+
+Stage 5b, `window_region="drag_margin"`: a primary press on such a node of a `LayerWindow` (same
+exclusions as `"drag"`) tells the layer thread to follow the pointer. The deltas come from
+`zwp_relative_pointer_v1` (exact however the surface lags; sctk already has the binding), or
+from the surface-local position when the compositor lacks it (can overshoot a little). The
+anchored edges' margins change, clamped to the output, one margin-only commit per input
+frame, no Python; on release `moved` carries the final `margin` and the window's own margin
+record and animation state follow it. A running margin animation stops where it is when a drag
+starts. `drag_margin` raises on an ordinary window; `"drag"` still raises on a layer window.
+Live on headless sway with a virtual pointer: the margins follow a drag exactly, and stop at the
+far and near output edges. The surface-local fallback is not run live (sway has the protocol).
+
 ### #204, `LayerWindow.input_region` (2026-10-20)
 
 Phase 4 of #195. `input_region` (constructor and `set()`): `None` (whole surface), `[]`

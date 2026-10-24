@@ -310,10 +310,12 @@ pub(crate) enum WindowEventType {
     OutputChanged,
     /// 0.5.7 (#198): a setting the protocol accepts but ignores.
     Warning,
+    /// 0.5.7 (#205): a margin drag ended; `margin` is the final `(top, right, bottom, left)`.
+    Moved,
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 22] = [
+    const ALL: [WindowEventType; 23] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -336,6 +338,7 @@ impl WindowEventType {
         Self::Configure,
         Self::OutputChanged,
         Self::Warning,
+        Self::Moved,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -362,6 +365,7 @@ impl WindowEventType {
             Self::Configure => "configure",
             Self::OutputChanged => "output_changed",
             Self::Warning => "warning",
+            Self::Moved => "moved",
         }
     }
 

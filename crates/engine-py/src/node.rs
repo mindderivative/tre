@@ -600,7 +600,10 @@ impl Node {
 /// M95: `animate`'s `easing` -- `None` or `"linear"`, or a cubic bezier
 /// `(x1, y1, x2, y2)` with `x1` and `x2` in `0.0..=1.0`, as CSS
 /// `cubic-bezier()` takes them.
-fn parse_easing(easing: Option<&Bound<'_, PyAny>>, duration: Duration) -> PyResult<MotionCurve> {
+pub(crate) fn parse_easing(
+    easing: Option<&Bound<'_, PyAny>>,
+    duration: Duration,
+) -> PyResult<MotionCurve> {
     let expected = "easing must be \"linear\", \"spring\", (\"spring\", bounce) with bounce from \
                     -1 to 1 (exclusive), or a cubic bezier (x1, y1, x2, y2) with x1 and x2 \
                     from 0.0 to 1.0";
