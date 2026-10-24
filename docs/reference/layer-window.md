@@ -37,14 +37,29 @@ margin=0, keyboard="none", output=None, input_region=None)`**
 | `layer` | Where it stacks: `"background"`, `"bottom"`, `"top"` or `"overlay"`. Windows sit between `"bottom"` and `"top"`; a fullscreen window may cover `"top"`. |
 | `anchor` | The edges it is attached to: a sequence of `"top"`, `"bottom"`, `"left"`, `"right"` (or one name). Nothing anchored floats, centred by the compositor. |
 | `size` | `(width, height)` in logical pixels. A `0` stretches between the two edges anchored on that axis, so a `0` width needs `"left"` and `"right"` in `anchor`, and a `0` height needs `"top"` and `"bottom"`. |
-| `exclusive_zone` | Pixels to reserve along the anchored edge, so maximised windows stop short of it. `0` reserves none; `-1` ignores other surfaces' zones and takes the whole output. A positive zone counts only for a surface anchored to one edge, or to one edge and both edges across it (a bar anchored `"top"`, `"left"`, `"right"`); with any other `anchor` the compositor treats it as `0`, and a `warning` event says so. |
+| `exclusive_zone` | Pixels to reserve along the anchored edge (for a corner, the `exclusive_edge`), so maximised windows stop short of it. `0` reserves none; `-1` ignores other surfaces' zones and takes the whole output. A positive zone counts only for a surface anchored to one edge, or to one edge and both edges across it (a bar anchored `"top"`, `"left"`, `"right"`); with any other `anchor` the compositor treats it as `0`, and a `warning` event says so. |
 | `margin` | `(top, right, bottom, left)` in logical pixels, or one number for all four. Negative is accepted and moves the surface past the screen edge. |
 | `keyboard` | `"none"`: never gets key events. `"on_demand"`: gets them when the user focuses it (a click). `"exclusive"`: takes the keyboard on opening, and nothing else gets keys until it closes. |
 | `output` | An [`Output`](outputs.md) (from `App.outputs()`) or a connector name (`"DP-1"`, `"HDMI-A-1"`) to bind it to. `None` picks the output at position (0, 0), or the first by name if none is there, the same on every run (the compositor's own choice alternates). A surface meant for another screen names it. Constructor only. |
 | `input_region` | Where the compositor delivers pointer and touch input. `None`: the whole surface. `[]`: nothing, so clicks fall through to the window below. A list of `(x, y, width, height)` rectangles in logical pixels from the surface's top-left, rounded outward, at most 256: input lands only inside them. Live through `set()`. `click_through=True` is `input_region=[]` on a `LayerWindow` (and `False` gives the whole surface back); giving both with different meanings raises `ValueError`. `"auto"`: the union of the shapes of drawn, hit-testable nodes (a box with a fill, gradient or border; any image, path, svg, canvas, text field or terminal; a selectable or linked text), with a box's rounded corners and a canvas's circle hit shape counted. A transparent root or a node with `hit_testable=False` adds nothing, so clicks there fall through. It follows layout, transforms and animation: while something animates it only grows, then snaps to the exact shape. A shape is cut into horizontal bands of 2 px or more (at most 256 rectangles, coarser if a shape needs more); it may cover a pixel or two beyond a curve, never less. The region reaches the compositor with a commit of its own, so an idle surface needs no frame. |
 
-`exclusive_edge` (the edge a corner-anchored surface's zone is for) needs layer-shell
-protocol version 5, which this build does not bind yet; passing it raises `ValueError`.
+**`exclusive_edge`** says which edge a corner-anchored surface's `exclusive_zone` is for: a clock
+in the top-right corner (`anchor=("top", "right")`) that reserves 28 pixels from the top takes
+`exclusive_edge="top"`; with `"right"` it reserves them from the right instead. Without it a
+corner surface reserves nothing (the compositor cannot tell which of the two edges was meant, and
+a `warning` event says so). It must be one of the anchored edges. A surface anchored to one edge,
+or to one edge and both edges across it (a bar), needs none: the compositor deduces it, and giving
+the same edge is allowed. It is live through `set()`; the protocol has no request that clears an
+edge once set, so `set(exclusive_edge=None)` on a surface that has one raises `ValueError` (move it
+to the other edge, or make a new window). It needs layer-shell version 5 (KWin and recent wlroots
+compositors have it); on a compositor with version 4 the surface still opens and a `warning` event
+(`key` `"exclusive_edge"`) says the edge is ignored. tre binds the layer shell itself, at the
+highest version the compositor offers.
+
+**Compositor support.** sway (wlroots) reserves the zone on the named edge of a corner surface.
+KDE's KWin 6.8.1 offers version 5 and accepts the request, but does not reserve space for a
+corner surface (a maximised window keeps its size); on KWin make the reserving surface a bar
+(one edge, or three) for now.
 
 **`set(**props)`** changes `layer`, `anchor`, `size`, `exclusive_zone`, `margin` and
 `keyboard` live, in one commit, and the keys `Window.set` has that mean something to a

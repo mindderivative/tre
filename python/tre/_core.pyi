@@ -834,7 +834,10 @@ class LayerWindow(Window):
     `"left"`, `"right"`). `size` is `(width, height)` in logical pixels; a 0 stretches
     between the two edges anchored on that axis, which must both be in `anchor`.
     `exclusive_zone` is how many pixels to reserve along the anchored edge (0 reserves
-    none, -1 ignores other surfaces' zones). `margin` is `(top, right, bottom, left)`, or
+    none, -1 ignores other surfaces' zones). `exclusive_edge` is which anchored edge a
+    corner-anchored surface's zone is for (`anchor=("top", "right")` with `exclusive_edge="top"`
+    reserves from the top); it needs layer-shell version 5 (older: a `warning`, the edge
+    ignored) and cannot be cleared once set. `margin` is `(top, right, bottom, left)`, or
     one number for all four; a negative margin is accepted. `keyboard` is `"none"`,
     `"on_demand"` or `"exclusive"`. `output` is an `Output` (from `App.outputs()`) or a connector name such as
     `"DP-1"`; `None` picks the output at (0, 0), or the first by name, the same on every run.
@@ -867,7 +870,7 @@ class LayerWindow(Window):
         anchor: str | Sequence[str] | None = ...,
         size: tuple[int, int] | None = ...,
         exclusive_zone: int | None = ...,
-        exclusive_edge: None = ...,
+        exclusive_edge: Literal["top", "bottom", "left", "right"] | None = ...,
         margin: int | tuple[int, int, int, int] | None = ...,
         keyboard: Literal["none", "on_demand", "exclusive"] = ...,
         output: str | Output | None = ...,

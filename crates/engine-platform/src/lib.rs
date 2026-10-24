@@ -87,6 +87,8 @@ pub mod layer_config;
 mod layer_keys;
 #[cfg(target_os = "linux")]
 mod layer_loop;
+#[cfg(target_os = "linux")]
+mod layer_surface;
 pub mod outputs;
 #[cfg(target_os = "linux")]
 pub use layer_loop::window_id as layer_window_id;
