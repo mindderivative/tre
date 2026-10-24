@@ -153,5 +153,5 @@ listener, or one holding the pointer capture, met before the drag node, is an or
 
 ## Not yet
 
-`PopupWindow` is a later part of the same work (issue #195). AccessKit (screen reader) support for layer
+`PopupWindow` (a compositor popup) is a later part; menus from a bar work today with an overlay `LayerWindow`, see [Menus from a bar](../guide/menus-from-a-bar.md) of the same work (issue #195). AccessKit (screen reader) support for layer
 surfaces has not been checked.

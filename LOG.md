@@ -14,6 +14,22 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #206, popups: the overlay route (6a, 2026-10-23)
+
+Phase 6 of #195, stage 6a: a menu for a bar's button on a transparent full-screen overlay
+`LayerWindow` (`input_region="auto"`, `keyboard="exclusive"`) with `show_layer` menus, mapped
+only while the menu is open. No new API; one engine change: while a dismissible or modal layer
+is open `input_region="auto"` takes the whole surface, since otherwise the outside click that
+dismisses a menu fell through to the window below and the menu never closed
+(`Tree::has_input_grab`). Live on headless sway (virtual pointer, `wtype`): dismiss on outside
+click (consumed, not passed on), on Escape, item click, flip above a bottom bar, a submenu, a
+click reaching the window below when no menu is open, and an open menu draws 0 idle frames.
+Measured: about 212 MB VRAM per mapped window on a 720p output and about 333 MB on 4K (about
+210 MB is a fixed per-window cost, the rest scales with pixels), released on close; the menu is on
+screen about 140 ms after the click on 4K. Verdict: the overlay route works and `PopupWindow` is
+not needed yet, if the overlay is created on demand. Guide: `docs/guide/menus-from-a-bar.md`;
+example: `examples/layer_menu.py`.
+
 ### #205, margin animation and `drag_margin` (2026-10-20)
 
 Phase 5 of #195: stage 5a, margin animation; stage 5b below.
