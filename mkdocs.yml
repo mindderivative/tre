@@ -95,6 +95,7 @@ nav:
       - Layer surface spike: design/layer-surface-spike.md
       - LayerWindow design: design/layer-window.md
       - LayerWindow hand-off to the shell: design/layer-window-shell-handoff.md
+      - GPU memory per window: design/vram-per-window.md
       - Performance baseline: design/performance-baseline.md
   - Contributing: contributing.md
 

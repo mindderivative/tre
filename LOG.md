@@ -14,6 +14,20 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #207, why a small window holds about 210 MB of VRAM (research, 2026-10-25)
+
+Measured per process from `/proc/<pid>/fdinfo`: a 200 x 100 window 211 MiB VRAM and 73 MiB GTT, each
+extra window about 193 MiB more. tre allocates under 1 MiB of it; the rest is `wgpu`'s allocator,
+which on `request_device` reserves 192 MiB (device blocks of at least 128 MiB, host-visible ones
+of 64 MiB; `MemoryHints::Performance`, the default) and tre makes a device per window. With
+`MemoryHints::MemoryUsage` the same window is 31 MiB (a bar 18, two windows 44, a 4K overlay 177)
+and a 900-box animated scene's frame time is unchanged (15.2 to 15.3 ms mean over three runs each).
+At 4K the part that scales with pixels is the driver's four swapchain images plus tre's
+persistent target (about 19 bytes a pixel); `desired_maximum_frame_latency` and the present modes
+do not change it. One GPU (an AMD integrated GPU, RADV); other hardware unmeasured. Throwaway edits
+and the probe program were reverted; kept: `tools/vram_probe.py` and `docs/design/vram-per-window.md`.
+Findings are filed as Backlog issues; nothing built.
+
 ### #195 closed; the hand-off for Tesserae Shell (2026-10-25)
 
 All six phases of #195 and the follow-ups #199, #200 and #201 are done and on `main`.
