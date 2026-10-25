@@ -918,6 +918,7 @@ name = "engine-platform"
 version = "0.5.7"
 dependencies = [
  "accesskit",
+ "accesskit_unix",
  "accesskit_winit",
  "engine-core",
  "libc",

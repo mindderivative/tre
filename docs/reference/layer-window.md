@@ -174,7 +174,20 @@ listener, or one holding the pointer capture, met before the drag node, is an or
   wakes the loop for nothing but its own timers.
 - It shares the loop, and one `App`, with ordinary windows.
 
+## Accessibility
+
+A layer surface is published to screen readers like a window (0.5.7). Linux has no toolkit-wide
+accessibility layer to hook, so tre gives each surface an AT-SPI adapter of its own (AccessKit's
+`accesskit_unix`, the backend a window's adapter wraps): the surface appears as one more window of
+the application, its nodes carry the `role`, `label` and state you set on them, the tree follows the
+nodes as they change, a screen reader's action on a node (a click, a focus) reaches the app as the
+usual `a11y_action` and activation events, and keyboard focus entering or leaving the surface tells
+the reader whether the window is active. Nothing is built until a screen reader asks. Under Wayland
+an application cannot know where its surfaces are on screen, so the reader gets the tree but no
+screen position for a layer surface. See [Accessibility](../guide/accessibility.md) for what a node
+should declare.
+
 ## Not yet
 
-`PopupWindow` (a compositor popup) is a later part; menus from a bar work today with an overlay `LayerWindow`, see [Menus from a bar](../guide/menus-from-a-bar.md) of the same work (issue #195). AccessKit (screen reader) support for layer
-surfaces has not been checked.
+`PopupWindow` (a compositor popup) is a later part of the same work (issue #195); menus from a bar
+work today with an overlay `LayerWindow`, see [Menus from a bar](../guide/menus-from-a-bar.md).

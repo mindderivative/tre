@@ -15,3 +15,6 @@ mkdocs-material>=9.5  # 9.7.7
 # Optional: a virtual pointer for the live input-region tests on a headless sway
 # (tests/wlr_pointer.py); they skip without it.
 # pywayland>=0.4
+
+# Optional: a private AT-SPI bus for the screen-reader live tests (tests/atspi_env.py); they skip without it.
+# dbus-fast>=2

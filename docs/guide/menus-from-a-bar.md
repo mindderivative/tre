@@ -68,8 +68,9 @@ it on demand.
   receive no input until the menu closes (the dismissing click included).
 - **One overlay per output.** A menu belongs to the output of the bar that opened it
   (`output=bar.get("output")`).
-- A screen reader sees one extra surface while the menu is open. AccessKit support for layer
-  surfaces has not been checked.
+- A screen reader sees the overlay as one more window of the application while the menu is open
+  (see [accessibility on layer surfaces](../reference/layer-window.md#accessibility)); the menu's
+  nodes are in it like any other nodes.
 
 If any of these matters for the shell, a real `PopupWindow` (an `xdg_popup` parented to the layer
 surface) is the follow-up; it is a larger piece of platform work, tracked in issue #206.

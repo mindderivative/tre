@@ -574,7 +574,13 @@ def _routed(children, region, inside, outside, points, nodes=()):
     name = next(iter(outputs()))
     pointer = _input_pointer(name)
     try:
-        _region_clicks(children, pointer, name, region, [inside, outside], points, nodes)
+        # KWin floats and maximises the window below a moment after it opens, and a click that
+        # lands before that is lost now and then (about one run in twenty): one fresh attempt
+        # is allowed. A click routed to the wrong place fails both.
+        try:
+            _region_clicks(children, pointer, name, region, [inside, outside], points, nodes)
+        except AssertionError:
+            _region_clicks(children, pointer, name, region, [inside, outside], points, nodes)
     finally:
         pointer.close()
 
@@ -932,6 +938,89 @@ def test_a_plain_field_is_a_normal_text_input(children):
         assert content and int(content[-1][2]) == 0 and not int(content[-1][1]) & 0x80, seen
     finally:
         method.close()
+
+
+A11Y_CHILD = """
+import json, os, threading, time
+from tre import App, LayerWindow
+app = App()
+bar = LayerWindow("a11y-test", anchor=("top", "left", "right"), size=(0, 40), exclusive_zone=40, output=%r)
+bar.root.set(fill=(30, 30, 30, 255))
+button = bar.create("box", width=80, height=28, fill=(232, 180, 76, 255), role="button", label="Save",
+                    focusable=True)
+button.on("click", lambda e: print(json.dumps({"kind": "clicked"}), flush=True))
+bar.root.add_child(button)
+app.add_window(bar)
+handle = app.thread_handle()
+# Later the button's label changes: what a screen reader sees must follow.
+threading.Thread(target=lambda: (time.sleep(10.0), handle.call_soon(lambda: button.set(label="Saved"))),
+                 daemon=True).start()
+threading.Thread(target=lambda: (time.sleep(2.0), print(json.dumps({"kind": "ready"}), flush=True),
+                                 time.sleep(24), os._exit(0)), daemon=True).start()
+app.run()
+"""
+
+PUSH_BUTTON = 43  # ATSPI_ROLE_PUSH_BUTTON
+
+
+@pytest.fixture
+def screen_reader():
+    """A private AT-SPI environment (no part of the real desktop's accessibility is touched)."""
+    sys.path.insert(0, os.path.dirname(__file__))
+    import atspi_env
+    if not atspi_env.available():
+        pytest.skip("needs dbus-daemon, busctl, at-spi2-registryd and dbus-fast (pip install dbus-fast)")
+    env = atspi_env.AtspiEnvironment()
+    yield env
+    env.close()
+
+
+def _bar_as_a_screen_reader_sees_it(children, env):
+    name = next(iter(outputs()))
+    child = children(A11Y_CHILD % name, DBUS_SESSION_BUS_ADDRESS=env.session)
+    child.events(until="ready", timeout=20)
+    env.enable()
+    root = ("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root")
+    deadline = time.time() + 12
+    while time.time() < deadline:
+        for destination, path in env.children(*root):
+            nodes = env.tree(destination, path)
+            if any(node[2] == "Save" for node in nodes):
+                return child, nodes
+        time.sleep(0.5)
+    return child, []
+
+
+def test_a_bar_appears_to_a_screen_reader_with_its_labelled_button(children, screen_reader):
+    _, nodes = _bar_as_a_screen_reader_sees_it(children, screen_reader)
+    assert nodes, "the application, its bar window and the button are published on the a11y bus"
+    save = next(node for node in nodes if node[2] == "Save")
+    assert save[1] == PUSH_BUTTON, save
+    assert save[0] == 2, "the button sits under the bar's window, under the application"
+
+
+def test_a_screen_reader_can_click_a_bars_button(children, screen_reader):
+    child, nodes = _bar_as_a_screen_reader_sees_it(children, screen_reader)
+    save = next((node for node in nodes if node[2] == "Save"), None)
+    assert save, "the button is published"
+    assert screen_reader.do_action(save[3], save[4]), "the screen reader's action was accepted"
+    events = child.events(until="clicked", timeout=8)
+    assert any(e["kind"] == "clicked" for e in events), events
+
+
+def test_what_a_screen_reader_sees_follows_the_bar(children, screen_reader):
+    _, nodes = _bar_as_a_screen_reader_sees_it(children, screen_reader)
+    assert any(node[2] == "Save" for node in nodes)
+    root = ("org.a11y.atspi.Registry", "/org/a11y/atspi/accessible/root")
+    deadline = time.time() + 15
+    seen = []
+    while time.time() < deadline:
+        for destination, path in screen_reader.children(*root):
+            seen = [node[2] for node in screen_reader.tree(destination, path)]
+        if "Saved" in seen:
+            break
+        time.sleep(0.5)
+    assert "Saved" in seen and "Save" not in seen, seen
 
 
 def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):

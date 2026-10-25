@@ -3,7 +3,9 @@
 Every frame, Tesserae Engine builds an [AccessKit](https://github.com/AccessKit/accesskit)
 tree from the node tree and hands it to the platform's screen reader. What
 a node tells assistive technology is what you set on it: Tesserae Engine knows boxes
-and paths, not buttons and switches, so a widget declares what it is.
+and paths, not buttons and switches, so a widget declares what it is. A `LayerWindow` (a bar, a
+panel, an overlay menu) is published the same way, as one more window of the application; see
+[the LayerWindow reference](../reference/layer-window.md#accessibility).
 
 ## Role, name, and state
 
