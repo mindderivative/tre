@@ -299,14 +299,6 @@ def test_a_corner_surface_reserves_space_on_the_edge_it_names(children, edge, ex
     spec = dict(output=name, anchor=("top", "right"), size=(120, 28), zone=28)
     if edge:
         spec["edge"] = edge
-    if not _sway_has(name):
-        # KWin 6.8.1 advertises layer-shell v5 and accepts the request (no protocol error, the
-        # surface maps), but does not reserve space for a corner surface; a wlroots compositor
-        # does. So here: the surface opens with the edge, and the measurement is sway's.
-        child = bar_child(children, spec, seconds=6)
-        assert child.events(until="configure"), "the surface opens with an exclusive_edge"
-        pytest.skip("KWin accepts exclusive_edge but does not reserve space for a corner surface")
-
     def maximised_size():
         child = children(MAXIMISED_SIZE)
         height, width = (int(float(v)) for v in child.line(timeout=20).split())

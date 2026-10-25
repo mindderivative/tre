@@ -76,10 +76,13 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 
 ## Compositor facts
 
-- **KWin 6.8.1 does not reserve space for a corner-anchored surface**, even with `exclusive_edge`
-  (it accepts the request and ignores it). Bars (one edge, or three) reserve fine. On KDE a
-  corner widget that must reserve space has to be bar-shaped for now; sway reserves correctly. It
-  is worth reporting to KDE.
+- **Corner reservation works on KWin 6.8.1 and on sway** (corrected 2026-10-25). The first
+  hand-off said KWin ignored `exclusive_edge` for a corner surface. That was wrong: with a
+  `("top", "right")` surface, `exclusive_zone=28` and `exclusive_edge="top"`, a maximised window
+  on KWin shrinks by 28 px (1012 to 984) at 1, 3 and 6 seconds; with `"right"` it narrows
+  instead; with no edge nothing is reserved. The earlier "no reservation" reading is not
+  reproduced and its cause is unknown (a timing or set-up fault in the first test run is the
+  likeliest, not a KWin gap). Do not report it to KDE. The live test now runs on KWin.
 - Negative margins are accepted and honoured on KWin (the spike).
 - Output removal closes a bar with `closed` reason `"output_removed"` (live-tested on sway).
 - A headless sway with no keyboard device gives no window keyboard focus (the tests add a virtual

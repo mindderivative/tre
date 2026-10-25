@@ -56,10 +56,9 @@ compositors have it); on a compositor with version 4 the surface still opens and
 (`key` `"exclusive_edge"`) says the edge is ignored. tre binds the layer shell itself, at the
 highest version the compositor offers.
 
-**Compositor support.** sway (wlroots) reserves the zone on the named edge of a corner surface.
-KDE's KWin 6.8.1 offers version 5 and accepts the request, but does not reserve space for a
-corner surface (a maximised window keeps its size); on KWin make the reserving surface a bar
-(one edge, or three) for now.
+**Compositor support.** sway (wlroots) and KDE's KWin 6.8.1 (version 5) both reserve the zone on
+the named edge of a corner surface, and reserve nothing for a corner surface with no edge (checked
+live on both, 2026-10-25).
 
 **`set(**props)`** changes `layer`, `anchor`, `size`, `exclusive_zone`, `margin` and
 `keyboard` live, in one commit, and the keys `Window.set` has that mean something to a

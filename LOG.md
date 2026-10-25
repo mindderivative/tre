@@ -14,6 +14,16 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### KWin corner reservation re-checked (2026-10-25)
+
+The Tesserae Shell ADR/request note listed "KWin shows no reservation for a corner surface" as
+unresolved, with a late-measurement candidate. Re-run on the real KWin 6.8.1 session: a
+`("top","right")` 120x28 surface with `exclusive_zone=28` and `exclusive_edge="top"` shortens a
+maximised window from 1012 to 984 px, the same at 1, 3 and 6 s after the surface maps; the
+`"right"` edge and no-edge cases of `test_a_corner_surface_reserves_space_on_the_edge_it_names`
+also pass. The KWin skip is removed from that test, and the reference and hand-off no longer say
+KWin lacks it. Cause of the first reading not found.
+
 ### Hand-off corrected (2026-10-25)
 
 `docs/design/layer-window-shell-handoff.md` now says `PopupWindow` (#223) and small GPU memory
@@ -121,10 +131,8 @@ before the app hears of a `configure`, destroy on drop. A v4 compositor still op
 and a `warning` event says the edge is ignored. The protocol cannot clear an edge, so
 `set(exclusive_edge=None)` on a surface that has one raises. Live: sway (32 passed, 3 skipped,
 the corner reserves on the named edge and nothing without one) and KWin (26 passed, 9 skipped).
-**KWin 6.8.1 advertises v5 and accepts `set_exclusive_edge` (no error, the surface maps) but does
-not reserve space for a corner surface**: a maximised window keeps its size. A bar (one edge, or
-three) reserves fine on KWin as before, so the shell's corner widgets that must reserve space need
-a wlroots compositor, or a bar-shaped surface, on KDE for now.
+**(Corrected 2026-10-25: KWin 6.8.1 does reserve for a corner surface, see the entry below; the
+"no reservation" reading made here was wrong.)**
 
 ### KWin versions of the region, drag and menu live tests (2026-10-24)
 
