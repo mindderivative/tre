@@ -1,8 +1,10 @@
 # LayerWindow: what shipped for Tesserae Shell (TRE-REQ-001)
 
-A hand-off for the Tesserae Shell side, written when issue #195 closed (2026-10-25). It says
-what is on tre's `main` now, how each acceptance criterion of the request stands, what differs
-from the request, and what was not tested. Everything here is on `main` and **unreleased**: the
+A hand-off for the Tesserae Shell side, written when issue #195 closed (2026-10-25) and
+**corrected the same day** after the VRAM research (#207): `PopupWindow` (#223) and small GPU memory
+blocks (#219) were added, and the overlay route for menus is no longer the recommendation. It says
+what is in tre now (`PopupWindow` and #219 are on their own branches until merged to `main`), how each acceptance criterion of the request stands, what differs
+from the request, and what was not tested. Everything here is **unreleased**: the
 last release is 0.5.7; the next version number is not chosen. The reference is
 [LayerWindow](../reference/layer-window.md) and [Outputs](../reference/outputs.md); the guides are
 [Bars and panels](../guide/bars-and-panels.md) and [Menus from a bar](../guide/menus-from-a-bar.md).
@@ -27,17 +29,28 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 - **Patterns:** a bar (one edge, or three, reserving space); a screen frame (a painter surface
   plus 1 px reservers, with `input_region="auto"` for the ring); a movable widget
   (`window_region="drag_margin"`, then save the `moved` margin); a slide-in panel
-  (`animate("margin_top", -32, 200)`); a menu or flyout from a bar (a transparent overlay
-  `LayerWindow` created when the menu opens and closed on dismiss).
+  (`animate("margin_top", -32, 200)`); a menu or flyout from a bar (a **`PopupWindow`**, below).
+- **`PopupWindow`** (#223), a `Window` subclass whose Wayland role is `xdg_popup`, parented to a
+  `LayerWindow` or to another `PopupWindow` (a submenu): `size`, `anchor_rect` (the button, in the
+  parent's coordinates), `anchor`, `gravity`, `constraint_adjustment`, `offset`, `grab`. The
+  compositor places it and flips or slides it to stay on screen; `configure` reports the final
+  `x`, `y`. With `grab=True` a click outside the application, or Escape, closes it with `closed`
+  reason `"dismissed"`. A click on another window of the same application reaches that window (the
+  protocol's rule), so a menu that should close on it listens and calls `close()`. It costs a bar's
+  worth of memory, not an output's. See [`PopupWindow`](../reference/layer-window.md#popupwindow).
+- **Small GPU memory blocks** (#219): a window's device asks for small blocks by default, so a
+  window holds tens of MiB of video memory, not 210. `TRE_GPU_MEMORY=performance` restores the old
+  blocks. See [App](../reference/app.md) and [VRAM per window](vram-per-window.md).
 
 ## How it differs from the request
 
-- **No `PopupWindow`.** Menus use the overlay route (decided with the maintainer on #206): a
-  full-screen transparent `LayerWindow` on the `overlay` layer with `input_region="auto"` and
-  `keyboard="exclusive"`, showing the menu with `show_layer`. It handles dismissal on an outside
-  click (consumed, not passed on) and Escape, flipping at an edge, submenus and tooltips. It costs
-  memory while mapped (below), so create it on demand. The engine flips a menu inside the output
-  but does not know other panels' reserved areas, which a compositor popup would.
+- **`PopupWindow` is built (#223), after a first hand-off that said it was not.** Menus first went
+  the overlay route (#206): a full-screen transparent `LayerWindow` on the `overlay` layer with
+  `input_region="auto"` and `keyboard="exclusive"`, showing the menu with `show_layer`. It works
+  and is kept (it is the only route to the engine's own `show_layer` layers and tooltips across a
+  whole output), but it is **not the efficient way to build a menu**: it maps an output-sized
+  surface, and the engine flips the menu inside the output without knowing other panels' reserved
+  areas. Build menus with `PopupWindow`; keep the overlay for what needs it.
 - **`layer=` keeps its name** (decided on #195). If the shell needs its own name for it, use
   `shell_layer=` on the shell's side.
 - **`output=None` is deterministic:** the output at position (0, 0), else the first by name (the
@@ -63,10 +76,13 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 
 ## Compositor facts
 
-- **KWin 6.8.1 does not reserve space for a corner-anchored surface**, even with `exclusive_edge`
-  (it accepts the request and ignores it). Bars (one edge, or three) reserve fine. On KDE a
-  corner widget that must reserve space has to be bar-shaped for now; sway reserves correctly. It
-  is worth reporting to KDE.
+- **Corner reservation works on KWin 6.8.1 and on sway** (corrected 2026-10-25). The first
+  hand-off said KWin ignored `exclusive_edge` for a corner surface. That was wrong: with a
+  `("top", "right")` surface, `exclusive_zone=28` and `exclusive_edge="top"`, a maximised window
+  on KWin shrinks by 28 px (1012 to 984) at 1, 3 and 6 seconds; with `"right"` it narrows
+  instead; with no edge nothing is reserved. The earlier "no reservation" reading is not
+  reproduced and its cause is unknown (a timing or set-up fault in the first test run is the
+  likeliest, not a KWin gap). Do not report it to KDE. The live test now runs on KWin.
 - Negative margins are accepted and honoured on KWin (the spike).
 - Output removal closes a bar with `closed` reason `"output_removed"` (live-tested on sway).
 - A headless sway with no keyboard device gives no window keyboard focus (the tests add a virtual
@@ -94,7 +110,7 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 | Fade-out close keeps the surface mapped until the animation ends | Built (`close_requested` can be cancelled), not tested as a sequence |
 | `reduced_motion` on a `LayerWindow` | Not checked |
 | `on_demand` gets keys, `"none"` never does | Met on KWin (real injected keys) |
-| `PopupWindow` opens, flips, dismisses | Replaced by the overlay route: dismissal on outside click and Escape met on KWin and sway; the flip at the bottom edge met on sway |
+| `PopupWindow` opens, flips, dismisses | Met on sway (headless, with live tests): placement, flip above a bottom bar, outside-click dismissal, item click, submenu. **Not run on KWin**; Escape dismissal was not checked on a keyboard-less headless sway. The overlay route (dismissal on outside click and Escape on KWin and sway) remains as the alternative |
 | Crisp text at 1.0 and 1.5 scale | The surface follows 1.5x (`scale_factor` reads 1.5 on sway); crispness was not inspected |
 | `supports("layer_shell")` false and `UnsupportedPlatform` without the protocol | Met by the availability rule in headless tests; GNOME's Mutter was not run |
 
@@ -111,11 +127,11 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 
 ## Costs and limits to plan around
 
-- **Each tre window holds about 210 MB of VRAM before it draws anything**, plus about 16 bytes per
-  pixel (measured on an AMD RADV GPU: about 212 MB for a full-screen overlay at 720p, 333 MB at 4K).
-  It is released when the window closes. A bar per output plus overlays adds up, so create
-  overlays on demand (the menu appears about 140 ms after the click on 4K). The fixed part is
-  tre's, tracked as a research issue (#207).
+- **Video memory.** The research (#207) found the fixed cost was wgpu's 128 MiB device blocks, not
+  the window. With the small blocks now default (#219) a window holds tens of MiB, plus about 16
+  bytes per pixel (a full-screen overlay at 4K holds about 120 MB more than at 720p). Measured on an
+  AMD RADV GPU only. A popup, being menu-sized, costs a bar's worth. Each window still has its own
+  GPU device; sharing one across windows is a separate, larger item in the research page.
 - Wayland cannot commit two surfaces atomically, so surfaces animating together can differ by up
   to a frame on screen.
 - Under Wayland an application cannot know where its surfaces are on screen, so a screen reader
@@ -139,8 +155,11 @@ layer-shell compositor.
 | `input_region`, hit testing and `corner_radius` | #204 | #211 |
 | Margin animation, `drag_margin` | #205 | #212 |
 | Menus from a bar (the overlay route) | #206 | #213 |
+| VRAM per window (research) | #207 | on branch `vram-research-207` |
+| Small GPU memory blocks | #219 | on branch `gpu-memory-hints-219` |
+| `PopupWindow` | #223 | on branch `popup-window-223` |
 | KWin versions of the region, drag and menu tests | | #214 |
 | `exclusive_edge` | #201 | #215 |
 | IME | #199 | #216 |
 | Screen readers | #200 | #217 |
-| VRAM per window (research, open) | #207 | |
+
