@@ -273,6 +273,8 @@ impl GpuState {
             label: Some("engine-py app device"),
             // 0.5.4 (#135): timestamp queries, where the adapter has them.
             required_features: adapter.features() & engine_render::gpu_timer_features(),
+            // 0.5.7 (#219): small memory blocks; the default reservation was 192 MiB a window.
+            memory_hints: crate::gpu_memory::memory_hints(),
             ..Default::default()
         }))
         .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
