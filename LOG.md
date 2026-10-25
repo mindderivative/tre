@@ -14,6 +14,15 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #195 closed; the hand-off for Tesserae Shell (2026-10-25)
+
+All six phases of #195 and the follow-ups #199, #200 and #201 are done and on `main`.
+`docs/design/layer-window-shell-handoff.md` is the hand-off for the shell side: what shipped,
+how each of the request's acceptance criteria stands (met, replaced, not tested), what differs
+from the request, the compositor facts (KWin 6.8.1 does not reserve space for a corner surface),
+the costs, and what was never tested. It also adds a live hot-plug test (`output_added`,
+`output_updated` and `output_removed` fire on sway).
+
 ### #200, AccessKit tree for layer surfaces (2026-10-25)
 
 A layer surface is now published to screen readers. `accesskit_winit` needs a `winit` window, so
