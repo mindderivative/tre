@@ -120,6 +120,55 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.8
+
+Nothing was removed or renamed. Layer surfaces need a Wayland compositor with the layer shell;
+elsewhere `tre.supports("layer_shell")` is `False` and `LayerWindow(...)` raises `UnsupportedPlatform`.
+
+### Added
+
+- `LayerWindow`: a window the compositor places, for a bar, a panel, a dock or an OSD. It extends
+  `Window`, takes `layer`, `anchor`, `size`, `exclusive_zone`, `exclusive_edge`, `margin`, `keyboard`
+  and `output`, and has keyboard, IME and screen-reader support. See [LayerWindow](reference/layer-window.md)
+  and [Bars and panels](guide/bars-and-panels.md).
+- `input_region` (and `click_through`) decides which parts of a layer surface take clicks; `"auto"`
+  follows the shapes drawn. `LayerWindow.animate("margin_top", ...)` slides a surface in the engine,
+  and `window_region="drag_margin"` lets the engine move one by its margins.
+- `PopupWindow`: a menu the compositor places beside a rectangle of its parent, with the grab,
+  flipping and dismissal the protocol gives. See [Menus from a bar](guide/menus-from-a-bar.md).
+- `App.outputs()` and the `output_added`, `output_removed` and `output_updated` events: screens as
+  `Output` objects. See [Outputs](reference/outputs.md).
+- Touch: `rotate` and `swipe` events, and `touch_slop` and `touch_target_slop` on the window.
+- `frame_stats()["memory"]`: the window's allocated and reserved GPU memory, block count and largest
+  allocations.
+
+### Fixed
+
+- Pasting into a window on a Wayland session with no X server did nothing; the clipboard now goes
+  through the compositor.
+- The OS reduced-motion and contrast preferences never sent a live change on a desktop whose portal
+  only has GNOME's older keys (`enable-animations`, `high-contrast`); they do now.
+
+### Behavior changes
+
+- **Hit testing follows rounded corners in every window.** A click in a corner a `corner_radius`
+  clips away no longer hits the node (masks and `clip_children` are still ignored). It is what lets
+  `input_region="auto"` and the node agree on who gets a click.
+- **A window holds much less GPU memory by default.** Devices ask for small memory blocks, so a
+  small window drops from about 210 MiB to about 30 MiB of video memory on the machine measured
+  (AMD, RADV). Set `TRE_GPU_MEMORY=performance` before the app starts to get the old reservation back.
+- **`partial_redraw=False` keeps no frame.** A window that redraws in full no longer holds the extra
+  frame partial redraw copies from (a 2400 x 1400 window: 54 to 38 MiB). `window.set(partial_redraw=...)`
+  makes or drops it while the window is open.
+- The wheel carries seven more Rust crates (`wl-clipboard-rs`, `os_pipe`, `tree_magic_mini`,
+  `petgraph`, `nom`, `hashbrown`, `foldhash`), pulled in by Wayland clipboard support.
+
+### Not checked on real hardware
+
+Touch, non-AMD GPUs, Orca, GNOME (it has no layer shell), labwc, and Windows and macOS (layer surfaces
+are Linux-only). See the [hand-off note](design/layer-window-shell-handoff.md) for the layer-surface
+results per compositor.
+
 ## 0.5.7
 
 ### Added
