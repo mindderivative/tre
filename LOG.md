@@ -14,6 +14,26 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #200, AccessKit tree for layer surfaces (2026-10-25)
+
+A layer surface is now published to screen readers. `accesskit_winit` needs a `winit` window, so
+each layer surface gets an `accesskit_unix::Adapter` of its own (Linux-only dependency, already in
+the lock through `winit`, same features); the spike's question, whether the adapter assumes a
+toplevel, is answered: it does not, and a bar appears as one more window of the application. The
+adapter's handlers run on another thread, so they only post a `PlatformEvent::LayerAccess` and the
+loop thread answers: `request_initial_tree` returns `None` and the loop calls `update_if_active`
+with `build_access_update` (the closure windows use, keyed by the layer's minted id; held back
+until the surface is open), the tree is refreshed after each layer frame, an `ActionRequest` goes
+to `on_access_action` and asks for a frame, and the layer thread's keyboard focus event feeds
+`update_window_focus_state`. Verified through AT-SPI with no change to the desktop's accessibility
+settings: `tests/atspi_env.py` builds a private environment (two throwaway `dbus-daemon`s with no
+service directories, a stand-in `org.a11y.Bus` made with `dbus-fast`, the real `at-spi2-registryd`)
+and `busctl` plays the screen reader: the application, the bar's window and a `Save` push button
+(role 43) appear, a `DoAction` click reaches the app, and a changed label shows up. Passes on sway
+and KWin. Not tested: the window-focus state (a headless sway has no keyboard focus without a
+virtual keyboard), a real screen reader (Orca), and screen positions (Wayland gives an application
+none). The bar's window node has no name yet.
+
 ### #199, input-method (IME) preedit on layer surfaces (2026-10-24)
 
 A `LayerWindow`'s text input now works with an input method. The layer thread binds

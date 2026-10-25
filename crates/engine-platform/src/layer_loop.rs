@@ -41,6 +41,8 @@ pub(crate) struct PerLayer {
     animating: bool,
     frame: u32,
     max_frames: Option<u32>,
+    /// The accessibility adapter for this surface (see `layer_access`).
+    access: accesskit_unix::Adapter,
 }
 
 /// A logical size at `scale`, in physical pixels.
@@ -124,8 +126,42 @@ where
                 animating: false,
                 frame: 0,
                 max_frames: request.max_frames,
+                access: crate::layer_access::adapter(self.proxy.clone(), id),
             },
         );
+    }
+
+    /// `PlatformEvent::LayerAccess`: a screen reader connected to, or acted on, a surface.
+    pub(crate) fn layer_access_event(
+        &mut self,
+        window: WindowId,
+        event: crate::layer_access::LayerAccessEvent,
+    ) {
+        use crate::layer_access::LayerAccessEvent;
+        let Self {
+            layers,
+            build_access_update,
+            on_access_action,
+            ..
+        } = self;
+        let Some(layer) = layers.get_mut(&window) else {
+            return;
+        };
+        match event {
+            // Before the surface is open there are no nodes to describe; the update after it
+            // opens answers the connection.
+            LayerAccessEvent::InitialTree => {
+                if layer.opened {
+                    layer
+                        .access
+                        .update_if_active(|| build_access_update(window));
+                }
+            }
+            LayerAccessEvent::Action(request) => {
+                on_access_action(window, request);
+                layer.needs_frame = true;
+            }
+        }
     }
 
     /// `PlatformEvent::Layer`: one thing the layer thread reports.
@@ -197,6 +233,10 @@ where
                         layer.opened = true;
                         layer.needs_frame = true;
                         layer.animating = true;
+                        // A screen reader that connected before the surface opened is waiting.
+                        layer
+                            .access
+                            .update_if_active(|| (self.build_access_update)(wid));
                     }
                 } else {
                     controller.destroy(id);
@@ -228,6 +268,11 @@ where
             LayerEvent::Input { id, event } => {
                 let wid = window_id(id);
                 if self.layers.get(&wid).is_some_and(|l| l.opened) {
+                    if let (InputEvent::Focused { focused }, Some(layer)) =
+                        (&event, self.layers.get_mut(&wid))
+                    {
+                        layer.access.update_window_focus_state(*focused);
+                    }
                     (self.on_input)(wid, event);
                     if let Some(layer) = self.layers.get_mut(&wid) {
                         layer.needs_frame = true;
@@ -286,6 +331,10 @@ where
             let Some(layer) = self.layers.get_mut(&wid) else {
                 continue;
             };
+            // What a screen reader sees follows what was just drawn, as for a window.
+            layer
+                .access
+                .update_if_active(|| (self.build_access_update)(wid));
             layer.frame += 1;
             layer.animating = still || layer.max_frames.is_some();
             layer.needs_frame = layer.animating;

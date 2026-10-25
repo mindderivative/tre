@@ -82,6 +82,8 @@ pub mod appearance;
 pub mod cursors;
 #[cfg(target_os = "linux")]
 pub mod layer;
+#[cfg(target_os = "linux")]
+mod layer_access;
 pub mod layer_config;
 #[cfg(target_os = "linux")]
 mod layer_ime;
@@ -472,6 +474,9 @@ enum PlatformEvent {
     /// 0.5.7 (#198): something the layer thread has to say.
     #[cfg(target_os = "linux")]
     Layer(layer::LayerEvent),
+    /// 0.5.7 (#200): a screen reader connected to, or acted on, a layer surface.
+    #[cfg(target_os = "linux")]
+    LayerAccess(WindowId, layer_access::LayerAccessEvent),
     /// 0.5.7 (#202): start reporting output changes (`EventLoopWaker::watch_outputs`).
     #[cfg(target_os = "linux")]
     WatchOutputs,
@@ -1195,6 +1200,8 @@ where
             PlatformEvent::OpenLayer(request) => self.open_layer(event_loop, request),
             #[cfg(target_os = "linux")]
             PlatformEvent::Layer(event) => self.layer_event(event_loop, event),
+            #[cfg(target_os = "linux")]
+            PlatformEvent::LayerAccess(window, event) => self.layer_access_event(window, event),
             #[cfg(target_os = "linux")]
             PlatformEvent::WatchOutputs => {
                 if let Some(hooks) = &mut self.layer_hooks {
