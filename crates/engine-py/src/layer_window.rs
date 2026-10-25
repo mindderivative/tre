@@ -93,9 +93,30 @@ pub(crate) struct LayerState {
     pub(crate) pending_warnings: RefCell<Vec<(String, String)>>,
     #[cfg(target_os = "linux")]
     pub(crate) controller: RefCell<Option<engine_platform::layer::LayerController>>,
+    /// Set for a `PopupWindow`: what it hangs off and how it is placed.
+    pub(crate) popup: Option<PopupSpec>,
+    /// Where the compositor last placed a popup, in its parent's coordinates (logical px).
+    pub(crate) popup_position: Cell<Option<(i32, i32)>>,
+}
+
+/// A `PopupWindow`'s placement, and the parent it hangs off.
+pub(crate) struct PopupSpec {
+    pub(crate) parent: Rc<LayerState>,
+    pub(crate) config: engine_platform::layer_config::PopupConfig,
 }
 
 impl LayerState {
+    /// The state of a `PopupWindow`: the layer settings are unused, the `popup` field is filled in.
+    pub(crate) fn new_popup() -> Self {
+        Self::new(
+            LayerConfig {
+                namespace: "popup".into(),
+                ..LayerConfig::default()
+            },
+            Vec::new(),
+        )
+    }
+
     /// Makes the margin motion hold `margin` at rest, cancelling any running animation (a
     /// cancelled one ends with `finished=False` and never calls `on_complete`).
     pub(crate) fn snap_margin(&self, margin: (i32, i32, i32, i32), now: Instant) {
@@ -202,7 +223,7 @@ impl LayerState {
         }
     }
 
-    fn new(config: LayerConfig, warnings: Vec<(String, String)>) -> Self {
+    pub(crate) fn new(config: LayerConfig, warnings: Vec<(String, String)>) -> Self {
         Self {
             config: RefCell::new(config),
             scale: Cell::new(1.0),
@@ -210,6 +231,8 @@ impl LayerState {
             last_configure: Cell::new(None),
             auto_region: Cell::new(false),
             motion: RefCell::new([0, 1, 2, 3].map(|_| Animated::new(0.0))),
+            popup: None,
+            popup_position: Cell::new(None),
             closed_reason: RefCell::new(None),
             pending_warnings: RefCell::new(warnings),
             #[cfg(target_os = "linux")]

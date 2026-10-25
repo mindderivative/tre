@@ -113,7 +113,10 @@ where
             .as_ref()
             .expect("the host was just started")
             .controller();
-        controller.create(n, request.config);
+        match request.popup {
+            Some(popup) => controller.create_popup(n, popup),
+            None => controller.create(n, request.config),
+        }
         self.layers.insert(
             id,
             PerLayer {
@@ -282,6 +285,12 @@ where
             LayerEvent::Output(event) => {
                 if let Some(hooks) = &mut self.layer_hooks {
                     (hooks.on_output)(event);
+                }
+            }
+            LayerEvent::PopupPlaced { id, x, y } => {
+                let wid = window_id(id);
+                if let Some(token) = self.layers.get(&wid).map(|l| l.token) {
+                    self.notice(wid, token, LayerNotice::PopupPlaced(x, y));
                 }
             }
             LayerEvent::MarginMoved { id, margin } => {

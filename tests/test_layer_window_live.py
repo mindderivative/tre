@@ -762,7 +762,7 @@ def test_drag_margin_moves_the_surface_with_the_pointer_and_stops_at_the_output_
 MENU_CHILD = os.path.join(os.path.dirname(__file__), "data", "overlay_menu.py")
 
 
-def _menu_session(children, bar_anchor, steps, seconds=16, extra=None, needs_input=True):
+def _menu_session(children, bar_anchor, steps, seconds=16, extra=None, needs_input=True, child_file=MENU_CHILD):
     """Runs the overlay-menu prototype and `steps(pointer, go, kinds, seen, out_h)` against it,
     with a virtual pointer (`None` when `needs_input` is false)."""
     name = next(iter(outputs()))
@@ -773,7 +773,7 @@ def _menu_session(children, bar_anchor, steps, seconds=16, extra=None, needs_inp
     pointer = _input_pointer(name) if needs_input else None
     arguments = {"output": name, "bar_anchor": bar_anchor, "output_height": out_h, "seconds": seconds, **(extra or {})}
     try:
-        child = children(open(MENU_CHILD).read(), MENU_ARGS=json.dumps(arguments))
+        child = children(open(child_file).read(), MENU_ARGS=json.dumps(arguments))
         child.events(until="ready", timeout=20)
         seen = []
 
@@ -866,6 +866,72 @@ def test_hovering_an_item_opens_a_submenu_and_it_takes_clicks(children):
         assert "item" in got, got
 
     _menu_session(children, ["top", "left", "right"], steps)
+
+
+POPUP_CHILD = os.path.join(os.path.dirname(__file__), "data", "popup_menu.py")
+
+
+def _popup_session(children, bar_anchor, steps, **extra):
+    _menu_session(children, bar_anchor, steps, child_file=POPUP_CHILD, **extra)
+
+
+def test_a_popup_window_opens_below_the_button_and_reports_where_it_landed(children):
+    def steps(pointer, go, kinds, seen, out_h):
+        _open_menu(pointer, go, kinds, out_h, ["top", "left", "right"])
+        kinds()
+        conf = [e for e in seen if e["kind"] == "configure" and e["menu"] == "menu"]
+        assert conf, seen
+        assert (conf[-1]["x"], conf[-1]["y"]) == (100, 32), conf[-1]
+        assert (conf[-1]["width"], conf[-1]["height"]) == (160, 90), conf[-1]
+
+    _popup_session(children, ["top", "left", "right"], steps)
+
+
+def test_a_popup_from_a_bottom_bar_flips_above_the_button(children):
+    def steps(pointer, go, kinds, seen, out_h):
+        _open_menu(pointer, go, kinds, out_h, ["bottom", "left", "right"])
+        kinds()
+        conf = [e for e in seen if e["kind"] == "configure" and e["menu"] == "menu"]
+        assert conf and conf[-1]["y"] < 0, conf
+
+    _popup_session(children, ["bottom", "left", "right"], steps)
+
+
+def test_a_click_outside_the_client_dismisses_a_grabbed_popup(children):
+    def steps(pointer, go, kinds, seen, out_h):
+        _open_menu(pointer, go, kinds, out_h, ["top", "left", "right"])
+        go(1000, 600)  # the bare desktop: no surface of this client is there
+        pointer.click()
+        kinds(4)
+        closed = [e for e in seen if e["kind"] == "closed" and e["menu"] == "menu"]
+        assert closed and closed[-1]["reason"] == "dismissed", seen
+
+    _popup_session(children, ["top", "left", "right"], steps, extra={"no_window": True})
+
+
+def test_a_click_on_a_popup_item_reaches_it(children):
+    def steps(pointer, go, kinds, seen, out_h):
+        _open_menu(pointer, go, kinds, out_h, ["top", "left", "right"])
+        go(120, 32 + 20)  # item A: popup origin (100, 32) plus the item's offset
+        pointer.click()
+        assert "item" in kinds(3), seen
+        assert any(e.get("name") == "A" for e in seen if e["kind"] == "item"), seen
+
+    _popup_session(children, ["top", "left", "right"], steps, extra={"no_window": True})
+
+
+def test_a_popup_can_hang_off_another_popup(children):
+    def steps(pointer, go, kinds, seen, out_h):
+        _open_menu(pointer, go, kinds, out_h, ["top", "left", "right"])
+        go(120, 32 + 56)  # item B opens the submenu
+        pointer.click()
+        time.sleep(0.8)
+        kinds()
+        subs = [e for e in seen if e["kind"] == "configure" and e["menu"] == "submenu"]
+        assert subs, seen
+        assert subs[-1]["x"] >= 0 and subs[-1]["width"] == 120, subs[-1]
+
+    _popup_session(children, ["top", "left", "right"], steps, extra={"no_window": True})
 
 
 def test_an_open_menu_draws_no_frames_while_nothing_moves(children):

@@ -187,7 +187,50 @@ an application cannot know where its surfaces are on screen, so the reader gets 
 screen position for a layer surface. See [Accessibility](../guide/accessibility.md) for what a node
 should declare.
 
+## `PopupWindow`
+
+A menu or flyout the compositor places next to a rectangle of its parent: a window whose Wayland
+role is `xdg_popup`, parented to a `LayerWindow` (a tray menu off a bar) or to another
+`PopupWindow` (a submenu). It is menu-sized, so it costs a bar's worth of memory, not an output's,
+and the compositor, which knows the screen edges and other panels' reserved areas, flips and slides
+it to stay on screen (0.5.7, #223).
+
+```python
+menu = PopupWindow(bar, size=(180, 120), anchor_rect=(100, 0, 60, 32),
+                   anchor="bottom_left", gravity="bottom_right",
+                   constraint_adjustment=("flip_y", "slide_x"))
+menu.root.set(fill=(0x2B, 0x29, 0x30, 0xFF))
+menu.on("closed", lambda e: print(e.reason))   # "dismissed" on an outside click or Escape
+app.add_window(menu)                           # from a click handler, with `bar` already open
+```
+
+| Argument | Meaning |
+|---|---|
+| `parent` | An open `LayerWindow` or `PopupWindow`. Otherwise `closed` arrives with reason `"failed"`. |
+| `size` | `(width, height)` in logical pixels, fixed for the popup's life. |
+| `anchor_rect` | `(x, y, width, height)` in the parent's coordinates: the rectangle to hang off (the button). |
+| `anchor`, `gravity` | The point on that rectangle the popup attaches to, and the direction it extends: `"none"`, `"top"`, `"bottom"`, `"left"`, `"right"`, `"top_left"`, `"bottom_left"`, `"top_right"`, `"bottom_right"`. |
+| `constraint_adjustment` | What the compositor may do to keep it on screen: `"slide_x"`, `"slide_y"`, `"flip_x"`, `"flip_y"`, `"resize_x"`, `"resize_y"`. A name or a sequence; the default is `("flip_y", "slide_x")`, and `()` asks for none. |
+| `offset` | A fixed `(x, y)` shift after placement. |
+| `grab` | `True` (the default) gives the popup the pointer and keyboard. |
+
+**Where it landed.** `configure` carries `width`, `height` and, for a popup, `x` and `y`: where the
+compositor put it, in its parent's coordinates, after any flip or slide (`y` is negative when a
+bottom bar's menu flipped above it). `popup.get("position")` reads the same, or `None` until placed.
+
+**Dismissal.** With `grab=True`, a click outside the application, or Escape, ends the popup:
+`closed` with reason `"dismissed"`, and the click is the popup's. A click on **another window of
+the same application** is delivered to that window as usual (that is the protocol's rule for a
+grab), so a menu that should close on it listens for the click and calls `close()`. Closing a
+popup closes the submenus hanging off it.
+
+The popup is a window like any other: its nodes, events, listeners, animation and input method
+work as in a `LayerWindow`. Its own settings cannot be changed after it is made. Errors raise
+`ValueError` before anything is sent; `UnsupportedPlatform` where there is no Wayland compositor
+with the layer shell.
+
+See [Menus from a bar](../guide/menus-from-a-bar.md).
+
 ## Not yet
 
-`PopupWindow` (a compositor popup) is a later part of the same work (issue #195); menus from a bar
-work today with an overlay `LayerWindow`, see [Menus from a bar](../guide/menus-from-a-bar.md).
+Nothing in the `LayerWindow` and `PopupWindow` plan is outstanding.

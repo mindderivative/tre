@@ -146,9 +146,19 @@ fn layer_request(
     max_frames: Option<u32>,
 ) -> Option<engine_platform::layer::LayerRequest> {
     let layer = setup.handles.layer.as_ref()?;
+    // A popup names the surface it hangs off by the number the layer thread gave it; a parent
+    // that is not open has none, and the thread answers that the popup cannot be made.
+    let popup = layer
+        .popup
+        .as_ref()
+        .map(|spec| engine_platform::layer_config::PopupConfig {
+            parent: spec.parent.id.get().unwrap_or(u64::MAX),
+            ..spec.config.clone()
+        });
     Some(engine_platform::layer::LayerRequest {
         token: index as u64,
         config: layer.config.borrow().clone(),
+        popup,
         max_frames,
     })
 }
@@ -1060,6 +1070,11 @@ impl App {
                                 |e| {
                                     e.width = Some(width);
                                     e.height = Some(height);
+                                    // A popup: where the compositor put it, in its parent.
+                                    if let Some((x, y)) = layer.popup_position.get() {
+                                        e.x = Some(f64::from(x));
+                                        e.y = Some(f64::from(y));
+                                    }
                                 },
                             );
                             for (key, message) in layer.pending_warnings.take() {
@@ -1099,6 +1114,9 @@ impl App {
                                                 "output_removed"
                                             }
                                             engine_platform::layer::CloseReason::App => "app",
+                                            engine_platform::layer::CloseReason::Dismissed => {
+                                                "dismissed"
+                                            }
                                         });
                                     }
                                 }
@@ -1111,6 +1129,11 @@ impl App {
                                             e.output = Some(name.clone());
                                         },
                                     );
+                                }
+                                LayerNotice::PopupPlaced(x, y) => {
+                                    if let Some(layer) = &handles.layer {
+                                        layer.popup_position.set(Some((x, y)));
+                                    }
                                 }
                                 LayerNotice::Warning(key, message) => {
                                     listeners::deliver_window(
@@ -1142,6 +1165,21 @@ impl App {
                                 }
                                 LayerNotice::Failed(message) => {
                                     tracing::error!(%message, "a layer window could not be opened");
+                                    // A popup is made at run time, from a handler: tell its window.
+                                    if let Some(layer) = &handles.layer
+                                        && layer.popup.is_some()
+                                    {
+                                        *layer.closed_reason.borrow_mut() = Some("failed");
+                                        listeners::deliver_window(
+                                            &handles.window_listeners,
+                                            py,
+                                            WindowEventType::Closed,
+                                            |e| {
+                                                e.reason = Some("failed".into());
+                                                e.message = Some(message.clone());
+                                            },
+                                        );
+                                    }
                                     if (token as usize) < initial_windows {
                                         *notice_error.borrow_mut() =
                                             Some(format!("LayerWindow: {message}"));
@@ -2023,6 +2061,15 @@ impl App {
                                 |e| {
                                     e.width = Some(f64::from(width));
                                     e.height = Some(f64::from(height));
+                                    if let Some((x, y)) = runtime
+                                        .handles
+                                        .layer
+                                        .as_ref()
+                                        .and_then(|l| l.popup_position.get())
+                                    {
+                                        e.x = Some(f64::from(x));
+                                        e.y = Some(f64::from(y));
+                                    }
                                 },
                             );
                         }

@@ -912,6 +912,67 @@ class LayerWindow(Window):
         ...
 
 @final
+class PopupWindow(Window):
+    """(0.5.7) A menu or flyout the compositor places next to a rectangle of its parent: a window whose
+    Wayland role is `xdg_popup`, parented to a `LayerWindow` (a tray menu off a 32 px bar) or to another
+    `PopupWindow` (a submenu). It is menu-sized, so it costs about a bar's worth of memory, not a whole
+    output's, and the compositor flips and slides it to stay on screen.
+
+    ```python
+    menu = PopupWindow(bar, size=(180, 120), anchor_rect=(100, 0, 60, 32),
+                       anchor="bottom_left", gravity="bottom_right",
+                       constraint_adjustment=("flip_y", "slide_x"))
+    menu.root.set(fill=(0x2B, 0x29, 0x30, 0xFF))
+    menu.on("closed", lambda e: print(e.reason))   # "dismissed" on an outside click or Escape
+    app.add_window(menu)       # from a click handler, with `bar` already open
+    ```
+
+    `parent` must be a `LayerWindow` or `PopupWindow` that is open when the popup is added to the app;
+    otherwise `closed` arrives with reason `"failed"`. `size` is `(width, height)` in logical pixels,
+    fixed for the popup's life. `anchor_rect` is `(x, y, width, height)` in the parent's coordinates;
+    `anchor` is the point on that rectangle the popup attaches to and `gravity` the direction it
+    extends (`"none"`, `"top"`, `"bottom"`, `"left"`, `"right"`, `"top_left"`, `"bottom_left"`,
+    `"top_right"`, `"bottom_right"`). `constraint_adjustment` is what the compositor may do to keep it
+    on screen: `"slide_x"`, `"slide_y"`, `"flip_x"`, `"flip_y"`, `"resize_x"`, `"resize_y"` (a name or a
+    sequence; the default is `("flip_y", "slide_x")`, and `()` asks for none). `offset` is a fixed `(x, y)` shift after
+    placement. `grab=True` (the default) gives the popup the pointer and keyboard, so a click outside
+    it or Escape ends it with `closed`, reason `"dismissed"`; the click is the popup's, not the
+    window's below.
+
+    The popup is a window like any other: its nodes, events, listeners, animation and input method
+    work as in a `LayerWindow`. `configure` reports `width`, `height` and, for a popup, `x` and `y`:
+    where the compositor put it, in its parent's coordinates, after any flip or slide. Errors raise
+    `ValueError` before anything is sent; `UnsupportedPlatform` where there is no Wayland compositor
+    with the layer shell. The popup's own settings cannot be changed after it is made."""
+
+    def __new__(
+        cls,
+        parent: LayerWindow | PopupWindow,
+        *,
+        size: tuple[int, int],
+        anchor_rect: tuple[int, int, int, int],
+        anchor: Literal["none", "top", "bottom", "left", "right", "top_left", "bottom_left", "top_right", "bottom_right"] = ...,
+        gravity: Literal["none", "top", "bottom", "left", "right", "top_left", "bottom_left", "top_right", "bottom_right"] = ...,
+        constraint_adjustment: str | Sequence[str] | None = ...,
+        offset: tuple[int, int] | None = ...,
+        grab: bool = ...,
+    ) -> PopupWindow: ...
+    def set(self, **props: Any) -> None:
+        """Sets the window keys a popup shares (`touch_slop`, `partial_redraw`, ...). The popup's own
+        settings can only be given to the constructor, and the keys that mean nothing to a popup
+        (`title`, `decorations`, `x`, `y`, ...) raise `ValueError`."""
+        ...
+    def get(self, name: str) -> Any:
+        """Reads `size`, `anchor_rect`, `anchor`, `gravity`, `constraint_adjustment`, `offset`,
+        `grab`, `position` (where the compositor placed it, in the parent's coordinates, or `None`
+        until it has) or anything `Window.get` reads."""
+        ...
+    def close(self) -> None:
+        """Closes the popup on the loop's next turn: `close_requested` first, then `closed` with
+        reason `"app"`."""
+        ...
+
+@final
 class Output:
     """(0.5.7) A screen the compositor has. Read-only; two `Output`s are equal when their
     connector names are. Get them from `App.outputs()` or an output event's handler;

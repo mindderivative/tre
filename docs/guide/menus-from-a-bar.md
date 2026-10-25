@@ -1,9 +1,42 @@
 # Menus from a bar
 
 A bar is 32 pixels tall, and `show_layer` draws inside its own window's bounds, so a menu for
-a button on the bar needs a surface of its own. The pattern that works today needs no new
-API: **a second `LayerWindow`, transparent and covering the output, that exists only while
-the menu is open** (0.5.7). `examples/layer_menu.py` is the whole thing.
+a button on the bar needs a surface of its own. The way to get one is **a `PopupWindow`**: a
+compositor popup (`xdg_popup`) hanging off the bar, sized to the menu, placed by the compositor
+beside the button and flipped above it when the bar is at the bottom edge (0.5.7, #223).
+
+```python
+def open_menu(e=None):
+    menu = PopupWindow(bar, size=(160, 90), anchor_rect=(100, 0, 60, 32),   # the button, in bar coordinates
+                       anchor="bottom_left", gravity="bottom_right",
+                       constraint_adjustment=("flip_y", "slide_x"))
+    menu.root.set(fill=(30, 140, 90, 255))
+    item = menu.create("box", width=148, height=30, x=6, y=6, position="absolute")
+    item.on("click", lambda e: (run_action(), menu.close()))
+    menu.root.add_child(item)
+    menu.on("closed", lambda e: print(e.reason))    # "dismissed" on an outside click or Escape
+    app.add_window(menu)
+```
+
+- A click outside the application, or Escape, closes the popup with `closed`, reason
+  `"dismissed"`; no overlay is needed to catch it. A click on another window of the same
+  application is delivered to that window instead, so listen for it and `close()` the menu.
+- A **submenu** is a `PopupWindow` whose parent is the menu: `PopupWindow(menu, ...,
+  anchor_rect=<the item>, anchor="top_right", gravity="bottom_right",
+  constraint_adjustment=("flip_x", "slide_y"))`. Closing the menu closes its submenus.
+- `configure` carries the popup's final `x`, `y` in the parent's coordinates, so a flip is visible
+  to the app.
+- It costs a bar's worth of memory (tens of MiB with the default small GPU blocks, #219), not an
+  output's. `tests/data/popup_menu.py` is a complete bar with a menu and a submenu.
+
+See the [`PopupWindow` reference](../reference/layer-window.md#popupwindow) for every argument.
+
+## The overlay route
+
+Before `PopupWindow` a menu was drawn on **a second `LayerWindow`, transparent and covering the
+output, that exists only while the menu is open**. It still works, and is the thing to reach for
+when the menu must be drawn by the engine's own `show_layer` (one layer system with tooltips and
+dismissible layers) or span several outputs. `examples/layer_menu.py` is the whole thing.
 
 ```python
 def show(e=None):
@@ -61,7 +94,7 @@ it on demand.
 
 ## What it does not do
 
-- **It is not a compositor popup.** A menu from an `xdg_popup` is placed by the compositor,
+- **It is not a compositor popup.** A `PopupWindow` is placed by the compositor,
   which knows the screen edges and other panels' reserved areas; here the engine flips the menu
   inside the output, which does not know where another panel's zone is.
 - **It covers the output while open.** Other surfaces below it keep drawing and updating, but
@@ -72,5 +105,4 @@ it on demand.
   (see [accessibility on layer surfaces](../reference/layer-window.md#accessibility)); the menu's
   nodes are in it like any other nodes.
 
-If any of these matters for the shell, a real `PopupWindow` (an `xdg_popup` parented to the layer
-surface) is the follow-up; it is a larger piece of platform work, tracked in issue #206.
+If any of these matters, use a `PopupWindow` instead (above).

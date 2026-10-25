@@ -43,6 +43,7 @@ CLASS_DESCRIPTIONS = {
     "Shader": "WGSL that paints a node (a fill) or transforms its rendered content (an effect).",
     "ShaderError": "A shader's source or names are wrong, positioned in the WGSL you gave.",
     "LayerWindow": "A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surface).",
+    "PopupWindow": "A menu or flyout the compositor places beside a rectangle of its parent (a Wayland xdg_popup).",
     "Output": "A screen the compositor has: its connector name, position, size, scale and rotation.",
     "UnsupportedPlatform": "Raised where a feature needs a platform this process is not on (a `LayerWindow` without a layer shell).",
 }
@@ -50,6 +51,7 @@ GUIDE = {
     "App": "reference/app.md",
     "Window": "reference/window.md",
     "LayerWindow": "reference/layer-window.md",
+    "PopupWindow": "reference/layer-window.md#popupwindow",
     "Output": "reference/outputs.md",
     "UnsupportedPlatform": "reference/layer-window.md#errors",
     "Node": "reference/node.md",
@@ -63,6 +65,10 @@ GUIDE = {
     "TimerHandle": "reference/window.md#timers-056",
 }
 BASES = {
+    "PopupWindow": [
+        ("Window", "#window"),
+        ("object", PYDOC + "functions.html#object"),
+    ],
     "LayerWindow": [
         ("Window", "#window"),
         ("object", PYDOC + "functions.html#object"),
@@ -418,7 +424,7 @@ def main() -> int:
     tree = ast.parse(STUB.read_text())
     classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
     funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef)]
-    order = ["App", "LoopHandle", "StatsHandle", "TimerHandle", "Window", "LayerWindow", "Output", "Node", "Event", "Painter", "Gradient", "CursorImage", "Shader", "ShaderError", "UnsupportedPlatform"]
+    order = ["App", "LoopHandle", "StatsHandle", "TimerHandle", "Window", "LayerWindow", "PopupWindow", "Output", "Node", "Event", "Painter", "Gradient", "CursorImage", "Shader", "ShaderError", "UnsupportedPlatform"]
     missing = set(classes) - set(order)
     if missing:
         print(f"classes not in the page order: {sorted(missing)}", file=sys.stderr)
