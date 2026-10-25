@@ -435,6 +435,19 @@ print(f"{r['fps']:.0f} fps, {r['cpu_ms']['p95']:.2f} ms cpu at p95, "
       f"{r['redraws']['partial']} of {r['count']} frames partial")
 ```
 
+`memory` (0.5.7, #222) is what the window's GPU device holds, read from `wgpu`'s allocator
+when you call `frame_stats()` (not every frame): `allocated_bytes` (buffers and textures in
+use), `reserved_bytes` (blocks taken from the driver, which is what the process holds),
+`blocks`, and `largest`, the five biggest allocations as `{"name", "bytes"}`. It is `None`
+before `App.run()` opens the window and on a backend that cannot report. A `reserved_bytes`
+far above `allocated_bytes` is the allocator's block size, not a leak
+([VRAM per window](../design/vram-per-window.md)).
+
+```python
+m = window.frame_stats()["memory"]
+if m: print(f"{m['allocated_bytes'] / 2**20:.1f} MiB used of {m['reserved_bytes'] / 2**20:.0f} MiB reserved")
+```
+
 Read the stages with the display in mind: with vsync on (the default, see
 `present_mode`), `acquire_ms` is the loop waiting for the next refresh, so a frame's
 `total_ms` is near the refresh interval even when `cpu_ms` is a small part of it.

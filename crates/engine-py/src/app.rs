@@ -1020,6 +1020,8 @@ impl App {
                                     return false;
                                 }
                             };
+                            crate::frame_stats::lock(&handles.frame_stats)
+                                .set_device(gpu.device.clone());
                             handles.transparent_active.set(Some(gpu.transparent_active));
                             handles
                                 .surface_partial
@@ -1228,6 +1230,7 @@ impl App {
                         return false;
                     }
                 };
+                crate::frame_stats::lock(&setup.handles.frame_stats).set_device(gpu.device.clone());
                 setup
                     .handles
                     .transparent_active
