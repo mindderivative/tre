@@ -212,6 +212,125 @@ impl Default for LayerConfig {
     }
 }
 
+/// A point on a rectangle, or the direction a popup extends from one (`xdg_positioner`'s anchor
+/// and gravity share these nine values).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PopupEdge {
+    None,
+    Top,
+    Bottom,
+    Left,
+    Right,
+    TopLeft,
+    BottomLeft,
+    TopRight,
+    BottomRight,
+}
+
+impl PopupEdge {
+    pub const NAMES: [&'static str; 9] = [
+        "none",
+        "top",
+        "bottom",
+        "left",
+        "right",
+        "top_left",
+        "bottom_left",
+        "top_right",
+        "bottom_right",
+    ];
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Some(match name {
+            "none" => Self::None,
+            "top" => Self::Top,
+            "bottom" => Self::Bottom,
+            "left" => Self::Left,
+            "right" => Self::Right,
+            "top_left" => Self::TopLeft,
+            "bottom_left" => Self::BottomLeft,
+            "top_right" => Self::TopRight,
+            "bottom_right" => Self::BottomRight,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        Self::NAMES[self as usize]
+    }
+}
+
+/// How the compositor may move a popup that would leave the screen (`xdg_positioner`'s
+/// constraint adjustment, as bits).
+pub mod adjust {
+    pub const SLIDE_X: u32 = 1;
+    pub const SLIDE_Y: u32 = 2;
+    pub const FLIP_X: u32 = 4;
+    pub const FLIP_Y: u32 = 8;
+    pub const RESIZE_X: u32 = 16;
+    pub const RESIZE_Y: u32 = 32;
+    pub const NAMES: [(&str, u32); 6] = [
+        ("slide_x", SLIDE_X),
+        ("slide_y", SLIDE_Y),
+        ("flip_x", FLIP_X),
+        ("flip_y", FLIP_Y),
+        ("resize_x", RESIZE_X),
+        ("resize_y", RESIZE_Y),
+    ];
+
+    /// The bit for one adjustment name.
+    pub fn parse(name: &str) -> Option<u32> {
+        NAMES.iter().find(|(n, _)| *n == name).map(|(_, bit)| *bit)
+    }
+
+    /// The names of the bits set, in a fixed order.
+    pub fn names(bits: u32) -> Vec<&'static str> {
+        NAMES
+            .iter()
+            .filter(|(_, bit)| bits & bit != 0)
+            .map(|(n, _)| *n)
+            .collect()
+    }
+}
+
+/// A popup (`xdg_popup`) parented to a layer surface or to another popup.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PopupConfig {
+    /// The parent surface's number (the layer thread's id for it).
+    pub parent: u64,
+    /// `(width, height)` in logical pixels: the positioner needs it before the popup exists.
+    pub size: (u32, u32),
+    /// A rectangle in the parent's surface coordinates the popup is placed against.
+    pub anchor_rect: (i32, i32, i32, i32),
+    /// The point on that rectangle the popup attaches to.
+    pub anchor: PopupEdge,
+    /// The direction the popup extends from that point.
+    pub gravity: PopupEdge,
+    /// What the compositor may do to keep it on screen (`adjust` bits).
+    pub adjustments: u32,
+    /// A fixed shift after placement, in logical pixels.
+    pub offset: (i32, i32),
+    /// Whether the popup grabs the keyboard and pointer, so an outside click or Escape ends it.
+    pub grab: bool,
+}
+
+impl PopupConfig {
+    /// Refuses what the protocol would answer with a fatal error, naming the key.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.size.0 == 0 || self.size.1 == 0 {
+            return Err(error("size", "must be a width and a height above 0"));
+        }
+        let (_, _, w, h) = self.anchor_rect;
+        if w < 0 || h < 0 {
+            return Err(error(
+                "anchor_rect",
+                "needs a width and a height of 0 or more",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Why a configuration was refused: the Python-level key, and what is wrong.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfigError {
@@ -493,5 +612,50 @@ mod tests {
         assert!(region_from_floats(&vec![(0.0, 0.0, 1.0, 1.0); MAX_REGION_RECTS + 1]).is_err());
         assert!(region_from_floats(&vec![(0.0, 0.0, 1.0, 1.0); MAX_REGION_RECTS]).is_ok());
         assert_eq!(region_from_floats(&[]).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn popup_edges_and_adjustments_parse_by_name() {
+        for name in PopupEdge::NAMES {
+            assert_eq!(PopupEdge::parse(name).map(PopupEdge::name), Some(name));
+        }
+        assert_eq!(PopupEdge::parse("middle"), None);
+        assert_eq!(adjust::parse("flip_y"), Some(adjust::FLIP_Y));
+        assert_eq!(adjust::parse("wobble"), None);
+        assert_eq!(
+            adjust::names(adjust::SLIDE_X | adjust::FLIP_Y),
+            vec!["slide_x", "flip_y"]
+        );
+    }
+
+    #[test]
+    fn a_popup_needs_a_size_and_a_sane_anchor_rectangle() {
+        let ok = PopupConfig {
+            parent: 1,
+            size: (100, 50),
+            anchor_rect: (0, 0, 10, 10),
+            anchor: PopupEdge::BottomLeft,
+            gravity: PopupEdge::BottomRight,
+            adjustments: adjust::FLIP_Y,
+            offset: (0, 0),
+            grab: true,
+        };
+        assert!(ok.validate().is_ok());
+        assert!(
+            PopupConfig {
+                size: (0, 50),
+                ..ok.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            PopupConfig {
+                anchor_rect: (0, 0, -1, 4),
+                ..ok
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

@@ -14,6 +14,21 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #223, `PopupWindow` (2026-10-25)
+
+A window whose role is `xdg_popup`, parented to a `LayerWindow` (through
+`zwlr_layer_surface_v1.get_popup`) or to another `PopupWindow`. The layer thread's `Role` enum is
+`Layer | Popup{parent}`; the popup's `xdg_positioner` takes size, anchor rect, anchor, gravity,
+constraint adjustment and offset; `grab` uses the serial of the last press/key/touch. `configure`
+carries `x`, `y` (the compositor's placement after any flip), a dismissed popup closes with reason
+`"dismissed"`, a missing or closed parent with `"failed"`. sctk's `delegate_xdg_shell!` wants a
+`WindowHandler`, so `XdgWmBase` and the decoration manager have manual `Dispatch` impls.
+
+Found while testing: the grab dismisses on a click outside the *client*, not on another surface of
+the same client (that is the protocol), so a headless test that clicks on the app's own backdrop
+window sees no `popup_done`. The live tests click the bare desktop. Verified on headless sway
+(placement, flip above a bottom bar, outside-click dismissal, item click, submenu); not yet on KWin.
+
 ### #219, small GPU memory blocks by default (2026-10-25)
 
 A window's device (and the headless snapshot device) now asks `wgpu` for `MemoryHints::MemoryUsage`

@@ -30,6 +30,7 @@ mod node_kind_props;
 mod node_layout;
 mod node_props;
 mod outputs;
+mod popup_window;
 mod scale;
 mod shader;
 mod shaper;
@@ -56,6 +57,7 @@ pub use event::Event;
 pub use layer_window::PyLayerWindow;
 pub use node::Node;
 pub use outputs::PyOutput;
+pub use popup_window::PyPopupWindow;
 pub use shader::Shader;
 pub use thread_handle::LoopHandle;
 pub use window::PyWindow;
@@ -68,6 +70,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<App>()?;
     m.add_class::<PyWindow>()?;
     m.add_class::<PyLayerWindow>()?;
+    m.add_class::<PyPopupWindow>()?;
     m.add_class::<PyOutput>()?;
     m.add(
         "UnsupportedPlatform",

@@ -72,10 +72,6 @@ pub(crate) struct LayerSurface {
 }
 
 impl LayerSurface {
-    pub(crate) fn wl_surface(&self) -> &wl_surface::WlSurface {
-        &self.surface
-    }
-
     pub(crate) fn set_layer(&self, layer: Layer) {
         self.proxy.set_layer(layer);
     }
@@ -109,6 +105,14 @@ impl LayerSurface {
         }
         self.proxy.set_exclusive_edge(edge);
         true
+    }
+
+    /// Parents an `xdg_popup` (made with a null xdg parent) to this surface. Before its first commit.
+    pub(crate) fn get_popup(
+        &self,
+        popup: &smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_popup::XdgPopup,
+    ) {
+        self.proxy.get_popup(popup);
     }
 
     pub(crate) fn commit(&self) {

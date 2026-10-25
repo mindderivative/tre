@@ -59,6 +59,14 @@ use smithay_client_toolkit::reexports::protocols::wp::text_input::zv3::client::{
     zwp_text_input_manager_v3::ZwpTextInputManagerV3,
     zwp_text_input_v3::{self, ContentHint, ContentPurpose, ZwpTextInputV3},
 };
+use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_positioner::{
+    Anchor as PositionerAnchor, ConstraintAdjustment, Gravity as PositionerGravity,
+};
+use smithay_client_toolkit::shell::xdg::popup::{Popup, PopupConfigure, PopupHandler};
+use smithay_client_toolkit::shell::xdg::{XdgPositioner, XdgShell};
+use smithay_client_toolkit::globals::GlobalData;
+use smithay_client_toolkit::reexports::protocols::xdg::decoration::zv1::client::zxdg_decoration_manager_v1::ZxdgDecorationManagerV1;
+use smithay_client_toolkit::reexports::protocols::xdg::shell::client::xdg_wm_base::{self, XdgWmBase};
 use crate::layer_surface::{
     Anchor, KeyboardInteractivity, Layer, LayerData, LayerShell, LayerSurface,
 };
@@ -67,13 +75,15 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
     self, ZwlrLayerSurfaceV1,
 };
 use smithay_client_toolkit::{
-    delegate_compositor, delegate_output, delegate_pointer,
+    delegate_compositor, delegate_output, delegate_pointer, delegate_xdg_popup,
     delegate_registry, delegate_relative_pointer, delegate_seat, delegate_touch, registry_handlers,
 };
 use wayland_backend::client::Backend;
 use winit::window::CursorIcon;
 
-use crate::layer_config::{Anchors, KeyboardMode, LayerConfig, LayerKind};
+use crate::layer_config::{
+    Anchors, KeyboardMode, LayerConfig, LayerKind, PopupConfig, PopupEdge, adjust,
+};
 use crate::layer_keys::{self, Keymap};
 use crate::outputs::{OutputEvent, OutputInfo, effective_scale, transform_name};
 
@@ -91,6 +101,8 @@ pub struct LayerRequest {
     /// Which registered window this is; handed back in the hooks.
     pub token: u64,
     pub config: LayerConfig,
+    /// A popup, not a layer surface: `config` is then unused.
+    pub popup: Option<PopupConfig>,
     /// Auto-exit after this many frames (a self-asserting demo or test), as a window's.
     pub max_frames: Option<u32>,
 }
@@ -117,6 +129,8 @@ pub enum LayerNotice {
     Failed(String),
     /// A margin drag ended: the final `(top, right, bottom, left)`.
     MarginMoved((i32, i32, i32, i32)),
+    /// Where the compositor placed a popup (parent coordinates, logical px).
+    PopupPlaced(i32, i32),
     /// A setting the compositor cannot take: `(key, message)`.
     Warning(&'static str, String),
 }
@@ -146,6 +160,8 @@ pub enum CloseReason {
     OutputRemoved,
     /// The app closed it.
     App,
+    /// A popup the compositor ended: an outside click, Escape, or its parent going away.
+    Dismissed,
 }
 
 /// What the layer thread tells the loop.
@@ -189,6 +205,8 @@ pub enum LayerEvent {
         id: u64,
         margin: (i32, i32, i32, i32),
     },
+    /// Where the compositor placed a popup, in its parent's surface coordinates (logical px).
+    PopupPlaced { id: u64, x: i32, y: i32 },
     /// A setting this compositor cannot take (an older layer shell): the surface opens anyway.
     Warning {
         id: u64,
@@ -216,6 +234,7 @@ impl std::error::Error for LayerError {}
 
 enum Command {
     Create(u64, LayerConfig),
+    CreatePopup(u64, PopupConfig),
     Update(u64, LayerConfig),
     Cursor(u64, CursorIcon),
     InputRegion(u64, Option<Vec<crate::layer_config::Rect>>),
@@ -259,6 +278,11 @@ impl LayerController {
     /// Applies `config` to the surface `id` in one commit.
     pub fn update(&self, id: u64, config: LayerConfig) {
         self.send(Command::Update(id, config));
+    }
+
+    /// Makes the popup surface `id` from `config`; its events follow. The parent must be open.
+    pub fn create_popup(&self, id: u64, config: PopupConfig) {
+        self.send(Command::CreatePopup(id, config));
     }
 
     /// Sets the pointer's shape over the surface.
@@ -505,8 +529,27 @@ delegate_registry!(OutputProbe);
 struct FracData(u64);
 struct Plain;
 
+/// What a surface of the layer thread is: a layer surface, or a popup parented to one.
+enum Role {
+    Layer(LayerSurface),
+    Popup {
+        popup: Popup,
+        /// The surface this popup hangs off.
+        parent: u64,
+    },
+}
+
+impl Role {
+    fn layer(&self) -> Option<&LayerSurface> {
+        match self {
+            Role::Layer(layer) => Some(layer),
+            Role::Popup { .. } => None,
+        }
+    }
+}
+
 struct Surf {
-    layer: LayerSurface,
+    role: Role,
     config: LayerConfig,
     surface: wl_surface::WlSurface,
     viewport: Option<WpViewport>,
@@ -564,6 +607,11 @@ struct State {
     /// The surface-local position of the pointer, logical pixels, from its last event.
     pointer_local: (f64, f64),
     drag: Option<MarginDrag>,
+    /// `xdg_wm_base`, for popups (none: this compositor cannot make one).
+    xdg_shell: Option<XdgShell>,
+    /// The serial of the last pointer press, key press or touch on one of our surfaces: what a
+    /// popup's grab has to name.
+    last_serial: u32,
     /// `zwp_text_input_v3`, when the compositor has it: one object for the seat.
     text_input_manager: Option<ZwpTextInputManagerV3>,
     text_input: Option<ZwpTextInputV3>,
@@ -641,7 +689,9 @@ impl State {
         let Some(surf) = self.surfaces.get_mut(&id) else {
             return;
         };
-        let layer = &surf.layer;
+        let Some(layer) = surf.role.layer() else {
+            return;
+        };
         layer.set_layer(match config.layer {
             LayerKind::Background => Layer::Background,
             LayerKind::Bottom => Layer::Bottom,
@@ -691,12 +741,18 @@ impl State {
     /// removal has been read, so the caller roundtrips first.
     fn settle_closed(&mut self) {
         for id in std::mem::take(&mut self.closing) {
+            let popup = self
+                .surfaces
+                .get(&id)
+                .is_some_and(|s| matches!(s.role, Role::Popup { .. }));
             let output_gone = self.surfaces.get(&id).is_some_and(|s| {
                 s.output
                     .as_ref()
                     .is_some_and(|o| self.outputs.info(o).is_none())
             });
-            let reason = if output_gone {
+            let reason = if popup {
+                CloseReason::Dismissed
+            } else if output_gone {
                 CloseReason::OutputRemoved
             } else {
                 CloseReason::Compositor
@@ -767,7 +823,7 @@ impl State {
         self.surfaces.insert(
             id,
             Surf {
-                layer,
+                role: Role::Layer(layer),
                 config: config.clone(),
                 surface: surface.clone(),
                 viewport,
@@ -791,12 +847,136 @@ impl State {
         });
     }
 
+    /// Makes a popup: an `xdg_popup` parented to the layer surface or popup `config.parent`,
+    /// placed by the compositor from the positioner, with a grab when asked. Its `Created`
+    /// event follows at once and its size and position come with the first configure.
+    fn create_popup(&mut self, qh: &QueueHandle<Self>, id: u64, config: PopupConfig) {
+        let fail = |state: &mut Self, message: &str| {
+            state.emit(LayerEvent::Failed {
+                id,
+                message: message.to_string(),
+            });
+        };
+        let Some(xdg) = &self.xdg_shell else {
+            return fail(
+                self,
+                "this compositor has no xdg_wm_base, so it cannot place a popup",
+            );
+        };
+        let Some(parent) = self.surfaces.get(&config.parent) else {
+            return fail(
+                self,
+                "the popup's parent is not open (a popup needs its parent mapped first)",
+            );
+        };
+        let Ok(positioner) = XdgPositioner::new(xdg) else {
+            return fail(self, "this compositor would not make an xdg_positioner");
+        };
+        let (width, height) = (config.size.0 as i32, config.size.1 as i32);
+        positioner.set_size(width, height);
+        let (x, y, w, h) = config.anchor_rect;
+        positioner.set_anchor_rect(x, y, w, h);
+        positioner.set_anchor(positioner_anchor(config.anchor));
+        positioner.set_gravity(positioner_gravity(config.gravity));
+        let mut bits = ConstraintAdjustment::None;
+        for (flag, bit) in [
+            (adjust::SLIDE_X, ConstraintAdjustment::SlideX),
+            (adjust::SLIDE_Y, ConstraintAdjustment::SlideY),
+            (adjust::FLIP_X, ConstraintAdjustment::FlipX),
+            (adjust::FLIP_Y, ConstraintAdjustment::FlipY),
+            (adjust::RESIZE_X, ConstraintAdjustment::ResizeX),
+            (adjust::RESIZE_Y, ConstraintAdjustment::ResizeY),
+        ] {
+            if config.adjustments & flag != 0 {
+                bits |= bit;
+            }
+        }
+        positioner.set_constraint_adjustment(bits);
+        positioner.set_offset(config.offset.0, config.offset.1);
+
+        let surface = self.compositor.create_surface(qh);
+        // A layer parent is named through `get_popup`, so its xdg parent is null here.
+        let popup = match &parent.role {
+            Role::Layer(_) => Popup::from_surface(None, &positioner, qh, surface.clone(), xdg),
+            Role::Popup { popup, .. } => Popup::from_surface(
+                Some(popup.xdg_surface()),
+                &positioner,
+                qh,
+                surface.clone(),
+                xdg,
+            ),
+        };
+        let Ok(popup) = popup else {
+            return fail(self, "this compositor would not make the popup surface");
+        };
+        if let Role::Layer(layer) = &parent.role {
+            layer.get_popup(popup.xdg_popup());
+        }
+        let parent_output = parent.output.clone();
+        if config.grab
+            && let Some(seat) = self.seats.seats().next()
+        {
+            popup.xdg_popup().grab(&seat, self.last_serial);
+        }
+        popup.xdg_surface().set_window_geometry(0, 0, width, height);
+        let fractional = self
+            .fractional_manager
+            .as_ref()
+            .map(|m| m.get_fractional_scale(&surface, qh, FracData(id)));
+        let viewport = self
+            .viewporter
+            .as_ref()
+            .map(|v| v.get_viewport(&surface, qh, Plain));
+        self.by_surface.insert(surface.id(), id);
+        self.surfaces.insert(
+            id,
+            Surf {
+                role: Role::Popup {
+                    popup,
+                    parent: config.parent,
+                },
+                config: LayerConfig {
+                    size: config.size,
+                    ..LayerConfig::default()
+                },
+                surface: surface.clone(),
+                viewport,
+                fractional,
+                output: parent_output,
+                size: (0, 0),
+                scale: 1.0,
+                announced: false,
+                edge_warned: false,
+                ime: None,
+                cursor: CursorIcon::Default,
+            },
+        );
+        surface.commit();
+        self.emit(LayerEvent::Created {
+            id,
+            display: self.display,
+            surface: RawPtr(
+                NonNull::new(surface.id().as_ptr().cast::<c_void>()).expect("a live wl_surface"),
+            ),
+        });
+    }
+
     fn destroy(&mut self, id: u64) {
         if self.drag.as_ref().is_some_and(|d| d.id == id) {
             self.drag = None;
         }
         if self.ime_focus == Some(id) {
             self.ime_lost_focus();
+        }
+        // A popup must be gone before the surface it hangs off.
+        let children: Vec<u64> = self
+            .surfaces
+            .iter()
+            .filter(|(_, s)| matches!(&s.role, Role::Popup { parent, .. } if *parent == id))
+            .map(|(child, _)| *child)
+            .collect();
+        for child in children {
+            self.destroy(child);
         }
         if let Some(surf) = self.surfaces.remove(&id) {
             self.by_surface.remove(&surf.surface.id());
@@ -813,7 +993,7 @@ impl State {
             if let Some(fractional) = surf.fractional {
                 fractional.destroy();
             }
-            drop(surf.layer);
+            drop(surf.role);
             surf.surface.destroy();
         }
     }
@@ -1074,11 +1254,12 @@ impl State {
             return;
         }
         let id = drag.id;
-        if let Some(surf) = self.surfaces.get_mut(&id) {
-            surf.layer
-                .set_margin(margin.0, margin.1, margin.2, margin.3);
+        if let Some(surf) = self.surfaces.get_mut(&id)
+            && let Some(layer) = surf.role.layer()
+        {
+            layer.set_margin(margin.0, margin.1, margin.2, margin.3);
             surf.config.margin = margin;
-            surf.layer.commit();
+            layer.commit();
         }
         if let Some(drag) = &mut self.drag {
             drag.current = margin;
@@ -1187,7 +1368,7 @@ impl State {
     fn id_of_layer_surface(&self, surface: &wl_surface::WlSurface) -> Option<u64> {
         self.surfaces
             .iter()
-            .find(|(_, s)| s.layer.wl_surface() == surface)
+            .find(|(_, s)| &s.surface == surface)
             .map(|(id, _)| *id)
     }
 
@@ -1257,6 +1438,94 @@ impl Dispatch<ZwlrLayerSurfaceV1, LayerData> for State {
             }
             zwlr_layer_surface_v1::Event::Closed => state.layer_closed(&data.surface),
             _ => {}
+        }
+    }
+}
+
+fn positioner_anchor(edge: PopupEdge) -> PositionerAnchor {
+    match edge {
+        PopupEdge::None => PositionerAnchor::None,
+        PopupEdge::Top => PositionerAnchor::Top,
+        PopupEdge::Bottom => PositionerAnchor::Bottom,
+        PopupEdge::Left => PositionerAnchor::Left,
+        PopupEdge::Right => PositionerAnchor::Right,
+        PopupEdge::TopLeft => PositionerAnchor::TopLeft,
+        PopupEdge::BottomLeft => PositionerAnchor::BottomLeft,
+        PopupEdge::TopRight => PositionerAnchor::TopRight,
+        PopupEdge::BottomRight => PositionerAnchor::BottomRight,
+    }
+}
+
+fn positioner_gravity(edge: PopupEdge) -> PositionerGravity {
+    match edge {
+        PopupEdge::None => PositionerGravity::None,
+        PopupEdge::Top => PositionerGravity::Top,
+        PopupEdge::Bottom => PositionerGravity::Bottom,
+        PopupEdge::Left => PositionerGravity::Left,
+        PopupEdge::Right => PositionerGravity::Right,
+        PopupEdge::TopLeft => PositionerGravity::TopLeft,
+        PopupEdge::BottomLeft => PositionerGravity::BottomLeft,
+        PopupEdge::TopRight => PositionerGravity::TopRight,
+        PopupEdge::BottomRight => PositionerGravity::BottomRight,
+    }
+}
+
+impl Dispatch<XdgWmBase, GlobalData> for State {
+    fn event(
+        _: &mut Self,
+        wm_base: &XdgWmBase,
+        event: xdg_wm_base::Event,
+        _: &GlobalData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let xdg_wm_base::Event::Ping { serial } = event {
+            wm_base.pong(serial);
+        }
+    }
+}
+
+impl Dispatch<ZxdgDecorationManagerV1, GlobalData> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZxdgDecorationManagerV1,
+        _: <ZxdgDecorationManagerV1 as smithay_client_toolkit::reexports::client::Proxy>::Event,
+        _: &GlobalData,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // Bound only because the toolkit's `XdgShell::bind` asks for it: popups have no frame.
+    }
+}
+
+impl PopupHandler for State {
+    fn configure(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        popup: &Popup,
+        config: PopupConfigure,
+    ) {
+        let Some(id) = self.id_of_layer_surface(popup.wl_surface()) else {
+            return;
+        };
+        if let Some(surf) = self.surfaces.get_mut(&id) {
+            surf.size = (config.width.max(1) as u32, config.height.max(1) as u32);
+        }
+        // Where the compositor put it, in the parent's coordinates: before the size, so the
+        // app hears both together.
+        self.emit(LayerEvent::PopupPlaced {
+            id,
+            x: config.position.0,
+            y: config.position.1,
+        });
+        self.announce(id, true);
+    }
+
+    fn done(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup) {
+        if let Some(id) = self.id_of_layer_surface(popup.wl_surface()) {
+            // The compositor ended it: an outside click, Escape, or its parent going away.
+            self.closing.push(id);
         }
     }
 }
@@ -1497,7 +1766,8 @@ impl PointerHandler for State {
                     }
                     self.input(id, InputEvent::PointerMoved { position });
                 }
-                PointerEventKind::Press { button, .. } => {
+                PointerEventKind::Press { button, serial, .. } => {
+                    self.last_serial = serial;
                     if let Some(button) = button_of(button) {
                         self.input(id, InputEvent::PointerPressed { position, button });
                     }
@@ -1542,12 +1812,13 @@ impl TouchHandler for State {
         _: &Connection,
         _: &QueueHandle<Self>,
         _: &wl_touch::WlTouch,
-        _: u32,
+        serial: u32,
         _: u32,
         surface: wl_surface::WlSurface,
         id: i32,
         position: (f64, f64),
     ) {
+        self.last_serial = serial;
         let Some(surface_id) = self.id_of(&surface) else {
             return;
         };
@@ -1654,6 +1925,7 @@ delegate_output!(State);
 delegate_seat!(State);
 delegate_pointer!(State);
 delegate_relative_pointer!(State);
+delegate_xdg_popup!(State);
 delegate_touch!(State);
 delegate_registry!(State);
 
@@ -1766,8 +2038,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, Plain> for State {
             wl_keyboard::Event::Key {
                 key,
                 state: key_state,
+                serial,
                 ..
             } => {
+                state.last_serial = serial;
                 let pressed = key_state == WEnum::Value(wl_keyboard::KeyState::Pressed);
                 state.key(key, pressed, false);
                 if pressed {
@@ -1899,6 +2173,8 @@ fn run(
         relative_pointer: None,
         pointer_local: (0.0, 0.0),
         drag: None,
+        xdg_shell: XdgShell::bind(&globals, &qh).ok(),
+        last_serial: 0,
         text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
         text_input: None,
         ime_focus: None,
@@ -1933,6 +2209,7 @@ fn run(
         while let Ok(command) = commands.try_recv() {
             match command {
                 Command::Create(id, config) => state.create(&qh, id, config),
+                Command::CreatePopup(id, config) => state.create_popup(&qh, id, config),
                 Command::Update(id, config) => state.apply(id, &config),
                 Command::Cursor(id, icon) => {
                     if let Some(surf) = state.surfaces.get_mut(&id) {
@@ -1961,11 +2238,12 @@ fn run(
                     }
                 }
                 Command::Margin(id, margin) => {
-                    if let Some(surf) = state.surfaces.get_mut(&id) {
-                        surf.layer
-                            .set_margin(margin.0, margin.1, margin.2, margin.3);
+                    if let Some(surf) = state.surfaces.get_mut(&id)
+                        && let Some(layer) = surf.role.layer()
+                    {
+                        layer.set_margin(margin.0, margin.1, margin.2, margin.3);
                         surf.config.margin = margin;
-                        surf.layer.commit();
+                        layer.commit();
                     }
                 }
                 Command::Destroy(id) => state.destroy(id),

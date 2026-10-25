@@ -14,6 +14,7 @@ A quick reference to everything `import tre` gives you: each class with its prop
 | [`TimerHandle`](#timerhandle) | Cancels a timer set with `Window.after` or `Window.every`. |
 | [`Window`](#window) | Owns a node tree and its size and title; creates nodes, shows layers, docks panels. |
 | [`LayerWindow`](#layerwindow) | A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surface). |
+| [`PopupWindow`](#popupwindow) | A menu or flyout the compositor places beside a rectangle of its parent (a Wayland xdg_popup). |
 | [`Output`](#output) | A screen the compositor has: its connector name, position, size, scale and rotation. |
 | [`Node`](#node) | A handle to one node in a window's tree: properties, animation, events, structure. |
 | [`Event`](#event) | What a listener receives when it takes one argument; never constructed directly. |
@@ -206,6 +207,24 @@ A window the compositor places: a bar, panel, dock or OSD (a Wayland layer surfa
 | `close() -> None` | Closes the surface on the loop's next turn: `close_requested` first (a listener may cancel it with `event.cancel()`), then… |
 | `get(name: str) -> Any` | Reads a layer setting (`namespace`, `layer`, `anchor`, `size`, `exclusive_zone`, `exclusive_edge`, `margin`, `keyboard`… |
 | `set(**props: Any) -> None` | Sets properties; the layer ones (`layer`, `anchor`, `size`, `exclusive_zone`, `margin`, `keyboard`, `input_region`… |
+
+**Events:** none.
+
+## PopupWindow { #popupwindow }
+
+A menu or flyout the compositor places beside a rectangle of its parent (a Wayland xdg_popup).
+
+**Inherits:** [`Window`](#window) → [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [PopupWindow reference](../reference/layer-window.md#popupwindow)
+
+**Constructor:** `PopupWindow(parent: LayerWindow | PopupWindow, *, size: tuple[int, int], anchor_rect: tuple[int, int, int, int], anchor: Literal['none', 'top', 'bottom', 'left', 'right', 'top_left', 'bottom_left', 'top_right', 'bottom_right']=..., gravity: Literal['none', 'top', 'bottom', 'left', 'right', 'top_left', 'bottom_left', 'top_right', 'bottom_right']=..., constraint_adjustment: str | Sequence[str] | None=..., offset: tuple[int, int] | None=..., grab: bool=...)`
+
+**Methods:**
+
+| Method | Description |
+| --- | --- |
+| `close() -> None` | Closes the popup on the loop's next turn: `close_requested` first, then `closed` with reason `"app"`. |
+| `get(name: str) -> Any` | Reads `size`, `anchor_rect`, `anchor`, `gravity`, `constraint_adjustment`, `offset`, `grab`, `position` (where the compositor… |
+| `set(**props: Any) -> None` | Sets the window keys a popup shares (`touch_slop`, `partial_redraw`, ...). |
 
 **Events:** none.
 
