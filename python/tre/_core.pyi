@@ -703,7 +703,10 @@ class Window:
         the GPU), a frame's `gpu_ms` (measured on one frame in sixteen and read back a few
         frames later, so `None` for the rest) and `recent["gpu_ms"]` (their mean), and `profile`: with
         `window.set(profile_nodes=True)`, the last frame's scene-building time by
-        node kind and its slowest nodes (else `None`)."""
+        node kind and its slowest nodes (else `None`). (0.5.7) `memory`: the device's
+        video memory, from the allocator when this is called -- `allocated_bytes`,
+        `reserved_bytes`, `blocks` and `largest` (the five biggest allocations as
+        `{"name", "bytes"}`); `None` before the window opens or where the backend cannot say."""
         ...
     def stats_handle(self) -> StatsHandle:
         """(0.5.4) A handle any thread can use to read this window's frame

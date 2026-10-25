@@ -126,6 +126,43 @@ pub(crate) struct FrameStats {
     /// 0.5.4 (#135): a trace being written, and why one stopped on its own.
     trace: Option<crate::trace::Trace>,
     trace_error: Option<String>,
+    /// 0.5.7 (#222): the window's device, so a read can ask its allocator how much
+    /// video memory is in use. Kept across a reset; the report is made on the read,
+    /// not per frame.
+    device: Option<wgpu::Device>,
+}
+
+/// 0.5.7 (#222): what a window's device holds, from `wgpu`'s allocator report.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GpuMemory {
+    /// Bytes handed out to buffers and textures.
+    pub(crate) allocated: u64,
+    /// Bytes reserved from the driver in blocks (this is what the process holds).
+    pub(crate) reserved: u64,
+    /// How many blocks make up `reserved`.
+    pub(crate) blocks: usize,
+    /// The biggest allocations by size, name and bytes.
+    pub(crate) largest: Vec<(String, u64)>,
+}
+
+/// How many of the biggest allocations are named.
+const LARGEST: usize = 5;
+
+impl GpuMemory {
+    pub(crate) fn from_report(report: &wgpu::AllocatorReport) -> Self {
+        let mut sorted: Vec<_> = report.allocations.iter().collect();
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.size));
+        Self {
+            allocated: report.total_allocated_bytes,
+            reserved: report.total_reserved_bytes,
+            blocks: report.blocks.len(),
+            largest: sorted
+                .into_iter()
+                .take(LARGEST)
+                .map(|a| (a.name.clone(), a.size))
+                .collect(),
+        }
+    }
 }
 
 fn ms(d: Duration) -> f64 {
@@ -184,8 +221,20 @@ impl FrameStats {
             // A trace goes on across a reset of the numbers.
             trace: self.trace.take(),
             trace_error: self.trace_error.take(),
+            device: self.device.take(),
             ..Self::default()
         };
+    }
+
+    pub(crate) fn set_device(&mut self, device: wgpu::Device) {
+        self.device = Some(device);
+    }
+
+    /// The device's memory now, where the backend reports it (Vulkan, and not
+    /// every other backend), else `None`.
+    pub(crate) fn memory(&self) -> Option<GpuMemory> {
+        let report = self.device.as_ref()?.generate_allocator_report()?;
+        Some(GpuMemory::from_report(&report))
     }
 
     pub(crate) fn set_gpu_timing(&mut self, available: bool) {
@@ -372,6 +421,24 @@ pub(crate) fn stats_dict<'py>(py: Python<'py>, stats: &FrameStats) -> PyResult<B
     d.set_item("skipped", stats.skipped())?;
     d.set_item("gpu_timing", stats.gpu_timing())?;
     d.set_item("profile", py.None())?;
+    match stats.memory() {
+        Some(m) => {
+            let mem = PyDict::new(py);
+            mem.set_item("allocated_bytes", m.allocated)?;
+            mem.set_item("reserved_bytes", m.reserved)?;
+            mem.set_item("blocks", m.blocks)?;
+            let largest = pyo3::types::PyList::empty(py);
+            for (name, size) in m.largest {
+                let item = PyDict::new(py);
+                item.set_item("name", name)?;
+                item.set_item("bytes", size)?;
+                largest.append(item)?;
+            }
+            mem.set_item("largest", largest)?;
+            d.set_item("memory", mem)?;
+        }
+        None => d.set_item("memory", py.None())?,
+    }
     match stats.last() {
         Some(last) => d.set_item("last", record_dict(py, last)?)?,
         None => d.set_item("last", py.None())?,
