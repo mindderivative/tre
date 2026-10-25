@@ -12,11 +12,14 @@ Three tiers (`.github/workflows/ci.yml` runs the one this picks):
            agent-doc consistency checks. No Rust, no Python tests.
   partial  code changed: the standard run. Builds and tests what the change reaches: the changed
            crates and every crate that depends on them (dev-dependencies included), clippy for the
-           same, and the Python tests that cover the change (see below). Linux only.
+           same, the Python tests that cover the change (see below), and the examples that use what
+           changed (they name it, or share a word with the file's name) plus three broad ones.
+           Linux only.
   full     a release (the workspace version in Cargo.toml moved), a build-config change that can
            break another platform (Cargo.lock, rust-toolchain.toml, the root Cargo.toml, the CI
            workflow itself), the `full-ci` label, or a manual run: everything, on Linux, Windows and
-           macOS, plus the MSRV check, the examples and the docs build.
+           macOS, plus the MSRV check, every example and the docs build. The docs tier runs no
+           examples.
 
 Which Python tests a partial run takes. The crates are layered (engine-core is under engine-render
 and engine-platform, which are under engine-py, the Python surface). A change to a lower crate reaches
@@ -57,11 +60,23 @@ SMOKE_TESTS = [
     "tests/test_structure.py",
     "tests/test_snapshot.py",
 ]
+# Always taken, with the examples that relate to the change, when engine or Python code changed:
+# broad scripts that exercise layout, animation and most node kinds.
+SMOKE_EXAMPLES = ["examples/showcase.py", "examples/layout.py", "examples/animation.py"]
 ALL_IF_OVER = 0.40  # a partial pick bigger than this share of the suite runs the whole suite
 
 # The crates under engine-py: a change to one reaches Python only indirectly.
 LOWER_CRATES = {"engine-core", "engine-render", "engine-platform"}
 PY_CRATE = "engine-py"
+
+
+@dataclass
+class Selection:
+    """What `select_tests` found for a set of changed files."""
+    tests: list[str]
+    unmatched: list[str]  # Rust or Python sources no test names
+    suite: int  # how many test files there are
+    examples: list[str] = field(default_factory=list)  # examples that use what changed
 
 
 @dataclass
@@ -180,6 +195,11 @@ def decide(
     py_changed = [f for f in files if f.startswith("python/") or f in ("pyproject.toml",)]
     test_changed = [f for f in files if f.startswith("tests/")]
     plan.examples = sorted(f for f in files if f.startswith("examples/") and f.endswith(".py"))
+    code_changed = bool(crates) or bool(py_changed)
+    picked = select_tests(files) if select_tests and (code_changed or test_changed or plan.examples) else None
+    if picked is not None and code_changed:
+        plan.examples = sorted(set(plan.examples) | set(picked.examples) | set(SMOKE_EXAMPLES))
+    plan.examples = [e for e in plan.examples if (ROOT / e).exists()]  # not one the PR deleted
     plan.typecheck = bool(py_changed) or PY_CRATE in crates
     plan.build_ext = bool(PY_CRATE in affected or py_changed or test_changed)
 
@@ -192,30 +212,30 @@ def decide(
         plan.pytest_scope = "all"
         plan.why_pytest = f"{', '.join(lower)} sits under engine-py, so its effects reach Python indirectly"
     elif PY_CRATE in crates or py_changed or test_changed or tool_tests:
-        picked = select_tests(files) if select_tests else None
+        if picked is None and select_tests:
+            picked = select_tests(files)
         if picked is None:
             plan.pytest_scope, plan.why_pytest = "all", "the tests could not be selected"
         else:
-            tests, unmatched, suite = picked
-            if unmatched:
+            if picked.unmatched:
                 plan.pytest_scope = "all"
-                plan.why_pytest = "no test names " + ", ".join(unmatched[:3]) + (" ..." if len(unmatched) > 3 else "")
+                plan.why_pytest = "no test names " + ", ".join(picked.unmatched[:3]) + (" ..." if len(picked.unmatched) > 3 else "")
             else:
-                chosen = sorted(set(tests) | set(SMOKE_TESTS))
-                if len(chosen) > ALL_IF_OVER * suite:
+                chosen = sorted(set(picked.tests) | set(SMOKE_TESTS))
+                if len(chosen) > ALL_IF_OVER * picked.suite:
                     plan.pytest_scope = "all"
-                    plan.why_pytest = f"{len(chosen)} of {suite} test files picked"
+                    plan.why_pytest = f"{len(chosen)} of {picked.suite} test files picked"
                 else:
                     plan.pytest_scope = "selected"
                     plan.pytest_files = chosen
-                    plan.why_pytest = f"{len(chosen)} of {suite} test files: those that name what changed, plus the smoke set"
+                    plan.why_pytest = f"{len(chosen)} of {picked.suite} test files: those that name what changed, plus the smoke set"
     # Anything that runs Python needs the built extension.
     plan.build_ext = plan.build_ext or plan.pytest_scope != "none" or bool(plan.examples)
     return plan
 
 
 def select_with_tests_for(files: list[str]):
-    """(test files, Rust sources no test names, size of the suite) from tools/tests_for.py."""
+    """A `Selection` from tools/tests_for.py: test files, sources no test names, related examples."""
     try:
         import tests_for
     except Exception:
@@ -227,7 +247,7 @@ def select_with_tests_for(files: list[str]):
         mine = ROOT / "tests" / f"test_{Path(f).stem}.py"
         if f.startswith("tools/") and f.endswith(".py") and mine.exists():
             tests.add(str(mine.relative_to(ROOT)))
-    return sorted(tests), list(found.unmatched), suite
+    return Selection(sorted(tests), list(found.unmatched), suite, sorted(found.examples))
 
 
 def render(plan: Plan) -> str:
@@ -240,7 +260,8 @@ def render(plan: Plan) -> str:
         ]
         if plan.pytest_files:
             lines.append("  " + " ".join(plan.pytest_files))
-        lines.append(f"mypy + stubtest: {plan.typecheck}; docs build: {plan.run_docs}; examples: {' '.join(plan.examples) or 'none'}")
+        lines.append(f"mypy + stubtest: {plan.typecheck}; docs build: {plan.run_docs}")
+        lines.append(f"examples ({len(plan.examples)}): {' '.join(plan.examples) or 'none'}")
     return "\n".join(lines)
 
 

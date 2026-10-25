@@ -25,7 +25,9 @@ the changed crates and every crate that depends on them, dev-dependencies counte
 mypy, stubtest and the Python tests that cover the change, or the whole suite when a lower crate changed or a file
 is named by no test; Linux only) and **full** (the workspace version moved, `Cargo.lock`, `rust-toolchain.toml`,
 the root `Cargo.toml` or `ci.yml` changed, the `full-ci` label, or a manual run: the old jobs unchanged, on
-Linux, Windows and macOS, plus MSRV, examples and the docs build). A `CI result` job passes when every job
+Linux, Windows and macOS, plus MSRV, examples and the docs build). A partial run also runs the examples that relate to the change (they name what changed, or share a word with the
+changed file's name) plus `showcase.py`, `layout.py` and `animation.py`; the full tier runs all of them and the docs
+tier none. A `CI result` job passes when every job
 that ran passed. Not asked for, so say if you disagree: the build-config files send a change to the full tier
 (a dependency bump can break Windows or the MSRV without a line of Rust changing), a PR label can force full, and
 a PR's older run is cancelled when it is pushed again. Tested: 35 planner tests (`tests/test_ci_plan.py`), the

@@ -40,3 +40,14 @@ def test_a_source_file_no_test_names_is_reported_as_unmatched():
 def test_prose_and_scripts_map_to_no_tests():
     found = tests_for.plan(["docs/guide/text.md", "tools/status.sh"])
     assert not found.pytest and not found.cargo and not found.unmatched
+
+
+def test_a_changed_source_gets_the_examples_that_use_it():
+    found = tests_for.plan(["crates/engine-core/src/gradient.rs"])
+    assert "examples/gradients.py" in found.examples
+    found = tests_for.plan(["crates/engine-py/src/layer_window.rs"])
+    assert {"examples/layer_bar.py", "examples/popup_menu.py"} <= set(found.examples)
+
+
+def test_a_changed_example_is_itself_an_example_to_run():
+    assert tests_for.plan(["examples/slider.py"]).examples == {"examples/slider.py": "changed"}

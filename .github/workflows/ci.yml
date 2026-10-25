@@ -63,10 +63,11 @@ name: CI
 # "CI tiers"):
 #   docs     only documentation changed: build the site strictly, check the generated API page.
 #   partial  code changed (the standard run): the changed crates and every crate that depends on them
-#            (clippy and tests), and the Python tests that cover the change. Linux only.
+#            (clippy and tests), the Python tests that cover the change, and the examples that use
+#            what changed. Linux only.
 #   full     a release (the workspace version moved), a build-config change (Cargo.lock, the
 #            toolchain, the root Cargo.toml, this file), the `full-ci` label, or a manual run:
-#            everything, on Linux, Windows and macOS, plus the MSRV check and the examples.
+#            everything, on Linux, Windows and macOS, plus the MSRV check and every example.
 # `CI result` is the one job to look at (or require): it fails if any job that ran failed, and
 # passes when the tier's jobs passed and the others were skipped by design.
 
@@ -239,7 +240,7 @@ jobs:
         env:
           TRE_DAMAGE_VERIFY: "1"
 
-      - name: Run the changed examples
+      - name: Run the examples that relate to the change (and the broad ones)
         if: needs.plan.outputs.examples != ''
         run: |
           for example in ${{ needs.plan.outputs.examples }}; do
