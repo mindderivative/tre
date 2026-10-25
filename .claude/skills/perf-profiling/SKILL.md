@@ -14,10 +14,13 @@ tre has no separate benchmark crate. Its measurements are `#[ignore]`d tests tha
 | Frame cost by stage (update, tick, layout, prepare, draw, gpu) across scene kinds, 1920x1080 | `crates/engine-render/tests/baseline.rs` | `cargo test -p engine-render --test baseline --release -- --ignored --nocapture --test-threads=1` (`BASELINE_FILTER=text` narrows it) |
 | What partial redraw saves (small, full, idle workloads) | `tests/partial_redraw_bench.rs` | `cargo test -p engine-render --test partial_redraw_bench --release -- --ignored --nocapture` |
 | Scene, damage and frame budget costs | `scene_cost.rs`, `damage_cost.rs`, `frame_budget.rs` | `cargo test -p engine-render --test <name> --release -- --nocapture` (check each file for `#[ignore]`) |
-| Allocator totals, GPU memory | `frame_stats()` in Python (#222); `TRE_GPU_MEMORY`; `tools/vram_probe.py` | see `docs/design/vram-per-window.md` |
+| A running window's frames: stages (`tick`, `layout`, `prepare`, `acquire`, `draw`, `present`), `fps`, `cpu_ms`, `gpu_ms`, and redraws that were `nothing`, `full` or `partial` | `window.frame_stats()` (`recent`, `last`); `reset=True` clears the history; `stats_handle()` reads it from another thread | `docs/reference/window.md`, "frame_stats" |
+| Video memory: `allocated_bytes`, `reserved_bytes`, `blocks`, `largest` | `frame_stats()["memory"]` (#222); `tools/vram_probe.py` | `docs/design/vram-per-window.md` |
+| Which node kinds and nodes cost the most to build | `window.set(profile_nodes=True)`, then `frame_stats()["profile"]` | |
+| A timeline of every frame, with GPU time on its own track | `window.start_trace(path)` ... `stop_trace()`, opened at ui.perfetto.dev | |
 | Idle CPU and wake-ups on a real window | `/proc` sampling, method in `docs/design/performance-baseline.md` | |
 
-Switches: `TRE_DAMAGE_FULL=1` turns the damage shortcut off (to compare timings); `TRE_DAMAGE_VERIFY=1` makes it check itself and is **slow, never use it when timing**; `TRE_TEST_FORCE_FALLBACK=1` selects the software adapter.
+Switches: `TRE_DAMAGE_FULL=1` turns the damage shortcut off (to compare timings); `TRE_GPU_MEMORY=performance` brings back the old, larger GPU memory blocks (a setting to compare against, not a measurement: the default is small blocks, #219); `TRE_DAMAGE_VERIFY=1` makes it check itself and is **slow, never use it when timing**; `TRE_TEST_FORCE_FALLBACK=1` selects the software adapter.
 
 ## Method
 
@@ -29,6 +32,8 @@ Switches: `TRE_DAMAGE_FULL=1` turns the damage shortcut off (to compare timings)
 6. **Split the cost.** Say which stage moved (prepare, draw, gpu), not only the total. A CPU-side win can be invisible when the GPU is the bottleneck, and the reverse.
 7. **Both adapters when you can.** Software rendering (lavapipe) and a real GPU have different bottlenecks. A gain on one is not a gain on the other until measured.
 8. **Check output did not change.** Run the pixel tests. Faster but different is a feature change, not an optimisation (see `research-mode`'s "do not").
+
+Read frame times with the display in mind: with vsync on (the default) `acquire_ms` is the loop waiting for the next refresh, so `total_ms` sits near the refresh interval even when little work is done. Judge the app's own cost by `cpu_ms`.
 
 ## When there is no number for it yet
 

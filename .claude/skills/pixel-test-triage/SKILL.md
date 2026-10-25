@@ -32,7 +32,7 @@ Also run it once with `TRE_DAMAGE_VERIFY=1`, which makes the damage tracker chec
 | fails | fails | Engine or renderer change. Go to step 3. |
 | passes | fails | CI will fail. Software rasteriser difference or a real bug the GPU hides. |
 | fails | passes | A driver or hardware difference. Say which GPU, and do not "fix" it by loosening the test. |
-| flaky | | Suspect timing: a missing wait for the GPU, a reused target, or a thread race. Re-run 10 times before drawing conclusions. |
+| flaky | | Suspect timing: a missing wait for the GPU, a reused target, or a thread race. Re-run enough times to expect several failures (a 1-in-6 flake needs about 20 runs, not 10), then compare the failure rate with and without `TRE_DAMAGE_VERIFY=1` and on each adapter. |
 
 ## 3. Classify the change
 
@@ -51,6 +51,8 @@ The root `Cargo.toml` pins `vello_gpu`, `vello_common` and `glifo` to one upstre
 3. Decide with the user whether to accept the new output (update the expected value in the test, with a comment saying which revision changed it and why), report it upstream, or hold the bump.
 
 Re-run the full pixel suite after any bump, not just the test that failed.
+
+If the test, branch or version the user names does not exist in the checkout, say so and ask which one is meant; do not invent a test or a cause.
 
 ## 5. Report
 

@@ -11,7 +11,7 @@ The release process is written in `docs/contributing.md` ("Branches and releases
 
 ## 1. Pre-flight (read-only)
 
-- On the release branch (`0.5.x`, cut from `main`), with a clean `git status`.
+- On the release branch (`0.5.x`, cut from `main`), with a clean `git status`. If the branch or version the user names is not there, or the version in `Cargo.toml` is still the previous release, say so and ask which branch holds the work before planning anything else.
 - Every issue in the release is in **In review** or **Done** on the GitHub project, each with a comment of what was checked and what was not.
 - Open issues that are held for hardware (#47, #48, #91, #118, #132-#134, #158 at last count) are listed in the release notes as not verified, not silently dropped.
 - Check the version is free: PyPI never accepts the same version twice (`pip index versions tesserae-engine`, or the project page).

@@ -14,6 +14,15 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### Project skills reviewed and revised (2026-10-25)
+
+The three skills added in `71adab8` (`pixel-test-triage`, `release-checklist`, `perf-profiling`)
+were reviewed and revised. `perf-profiling` now lists the live measurements (`frame_stats()` stages
+and `memory`, `profile_nodes`, `start_trace`), `TRE_GPU_MEMORY=performance` as a comparison setting,
+and that `acquire_ms` under vsync is waiting, not work. `pixel-test-triage` sizes flaky re-runs by
+failure rate (about 20 for a 1-in-6 flake) and says to report a test, branch or version that does not
+exist. `release-checklist` pre-flight asks when the named branch or version is missing.
+
 ### KWin corner reservation re-checked (2026-10-25)
 
 The Tesserae Shell ADR/request note listed "KWin shows no reservation for a corner surface" as
