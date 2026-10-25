@@ -27,7 +27,7 @@ def open_menu(e=None):
 - `configure` carries the popup's final `x`, `y` in the parent's coordinates, so a flip is visible
   to the app.
 - It costs a bar's worth of memory (tens of MiB with the default small GPU blocks, #219), not an
-  output's. `tests/data/popup_menu.py` is a complete bar with a menu and a submenu.
+  output's. `examples/popup_menu.py` is a complete bar with a menu and a submenu.
 
 See the [`PopupWindow` reference](../reference/layer-window.md#popupwindow) for every argument.
 

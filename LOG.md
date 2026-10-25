@@ -16,6 +16,20 @@ position), #220 (one wgpu device for all windows).
 
 ## 0.5.8 (released 2026-10-25)
 
+### Documentation gaps closed after the release (2026-10-25)
+
+Found by checking each docs page for the new features after 0.5.8 shipped. Added: `examples/popup_menu.py`
+(a menu and a submenu as `PopupWindow`s; headless-safe, and run on a private headless sway), listed in
+`docs/examples.md` and linked from the menus guide in place of the old pointer to `tests/data`; an
+`exclusive_edge` section in the bars guide; a note in `installation.md` on what layer surfaces need (a
+Wayland compositor with the layer shell; the wheel loads `libwayland-client` and `libxkbcommon` at run
+time, checked with `readelf` and `strings` on the PyPI wheel) and the wheel example now names 0.5.8; a
+"Layer surfaces and popups" section in `architecture.md`; a line each in `README.md` and `docs/index.md`;
+a "Helper scripts" table in `contributing.md`. Fixed a stale claim in the bars guide that margin animation
+was not built. `tools/gen_rust_api.py` now also documents the public items of `engine-platform`'s `layer`,
+`layer_config` and `outputs` modules (it listed only crate-root re-exports), and drops a type listed twice.
+`docs/api/rust.md` regenerated. `mkdocs build --strict` passes.
+
 ### The release pass (2026-10-25)
 
 The shell gaps the hand-off listed were closed where they could be: `PopupWindow` was run on KWin 6.8.1

@@ -4,7 +4,7 @@
 
 A quick reference to the public Rust API of the engine's crates: every type with its fields or variants, methods, what it implements, and the events it takes or produces. The [Python API](python.md) is a thin layer over these. For the design see [Architecture](../architecture.md); for full signatures and examples build rustdoc with `cargo doc --workspace --no-deps --open`.
 
-Rust has no class inheritance. Where a class would list its parents, each type here lists the **traits it implements** (linked), and a `Deref` to another type where one exists. Items are the ones each crate re-exports at its root.
+Rust has no class inheritance. Where a class would list its parents, each type here lists the **traits it implements** (linked), and a `Deref` to another type where one exists. Items are the ones each crate re-exports at its root, plus the public items of `engine-platform`'s `layer`, `layer_config` and `outputs` modules.
 
 | Crate | Role |
 | --- | --- |
@@ -2161,6 +2161,46 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 
 The `winit` event loop, window creation, platform input translation and the accessibility adapter.
 
+### Anchors { #anchors }
+
+*struct.* The screen edges a surface is anchored to, as the protocol's bit field.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `0` | `u8` |  |
+
+| Method | Description |
+| --- | --- |
+| `fn can_reserve(self) -> bool` | Whether the protocol gives a positive exclusive zone to this anchor set: one edge alone, or one edge with both edges across it (a bar anchored top… |
+| `fn contains(self, edge: u8) -> bool` |  |
+| `fn edge(name: &str) -> Option<u8>` |  |
+| `fn is_empty(self) -> bool` |  |
+| `fn names(self) -> Vec<&'static str>` | The edge names set, in the order top, bottom, left, right. |
+
+### ConfigError { #configerror }
+
+*struct.* Why a configuration was refused: the Python-level key, and what is wrong.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html), [`Display`](https://doc.rust-lang.org/std/fmt/trait.Display.html), [`Error`](https://doc.rust-lang.org/std/error/trait.Error.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `key` | `&'static str` |  |
+| `message` | `String` |  |
+
+### ConfigWarning { #configwarning }
+
+*struct.* Something the protocol accepts but that probably is not what was meant.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `key` | `&'static str` |  |
+| `message` | `String` |  |
+
 ### EventLoopWaker { #eventloopwaker }
 
 *struct.* A thread-safe handle that background code uses to wake or steer the event loop.
@@ -2187,6 +2227,58 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `release` | `Box<dyn FnMut()>` | Called just before the loop goes to wait, to release the host's lock. |
 | `reacquire` | `Box<dyn FnMut()>` | Called right after the loop wakes, to take the host's lock back. |
 
+### ImeInfo { #imeinfo }
+
+*struct.* What the input method needs to know about the focused text input of a layer surface.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `area` | `(i32, i32, i32, i32)` | The caret's box `(x, y, width, height)` in surface-local logical pixels, where the input method puts its candidate window. |
+| `password` | `bool` | A password field: the input method should not learn or suggest from it. |
+
+### LayerConfig { #layerconfig }
+
+*struct.* Everything that makes a layer surface what it is.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html), [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `namespace` | `String` | What the surface is for (`"tesserae-shell.bar"`): the protocol's namespace. |
+| `layer` | `LayerKind` |  |
+| `anchor` | `Anchors` |  |
+| `size` | `(u32, u32)` | `(width, height)` in logical pixels; 0 on an axis stretches between the two edges anchored on it. |
+| `exclusive_zone` | `i32` | Pixels to reserve along the anchored edge; 0 reserves none; -1 ignores other surfaces' zones. |
+| `exclusive_edge` | `Option<u8>` | For a surface anchored to a corner: which edge its positive zone is for. |
+| `margin` | `(i32, i32, i32, i32)` | `(top, right, bottom, left)`, in logical pixels. |
+| `keyboard` | `KeyboardMode` |  |
+| `output` | `Option<String>` | A connector name (`"DP-1"`); `None` lets the compositor choose. |
+| `input_region` | `Option<Vec<Rect>>` | Where the compositor delivers pointer and touch input, as `(x, y, width, height)` rectangles in logical pixels from the surface's top-left. |
+
+| Method | Description |
+| --- | --- |
+| `fn validate(&self) -> Result<Vec<ConfigWarning>, ConfigError>` | Refuses what the protocol would answer with a fatal error, naming the key; for what it accepts but ignores, returns a warning. |
+
+### LayerController { #layercontroller }
+
+*struct.* A handle that sends requests to the layer thread; cheap to clone.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html)
+
+| Method | Description |
+| --- | --- |
+| `fn begin_margin_drag(&self, id: u64)` | Starts moving the surface by its margins with the pointer, which must be pressed on it: the layer thread follows the pointer and ends the drag on… |
+| `fn create(&self, id: u64, config: LayerConfig)` | Makes the surface `id` from `config`; its events follow. |
+| `fn create_popup(&self, id: u64, config: PopupConfig)` | Makes the popup surface `id` from `config`; its events follow. |
+| `fn destroy(&self, id: u64)` | Destroys the surface; the `wgpu` surface must be dropped first. |
+| `fn set_cursor(&self, id: u64, icon: CursorIcon)` | Sets the pointer's shape over the surface. |
+| `fn set_ime(&self, id: u64, info: Option<ImeInfo>)` | Tells the input method about the surface's focused text input (`None`: none has focus): the layer thread enables text input for the surface, places… |
+| `fn set_input_region(&self, id: u64, region: Option<Vec<Rect>>)` | Sets only the input region (`None`: the whole surface) and applies it at once, with a commit of its own: an idle surface draws no frame to carry it. |
+| `fn set_margin(&self, id: u64, margin: (i32, i32, i32, i32))` | Sets only the margin `(top, right, bottom, left)` and commits it at once: one cheap commit per animation step, with no other property re-sent. |
+| `fn update(&self, id: u64, config: LayerConfig)` | Applies `config` to the surface `id` in one commit. |
+
 ### LayerHooks { #layerhooks }
 
 *struct.* The host's side of the loop for layer surfaces.
@@ -2198,6 +2290,91 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `on_output` | `Box<dyn FnMut(OutputEvent)>` | An output appeared, changed or went (only when `watch_outputs` is set, or a layer window has made the layer thread start). |
 | `watch_outputs` | `bool` | Start the layer thread at once, to report outputs, even with no layer window. |
 | `on_shutdown` | `Box<dyn FnMut()>` | The loop is ending: drop every GPU surface made from a layer surface now, while the Wayland connection is still alive (it is gone once the loop… |
+
+### LayerHost { #layerhost }
+
+*struct.* The layer thread and its connection.
+
+**Implements:** [`Drop`](https://doc.rust-lang.org/std/ops/trait.Drop.html)
+
+| Method | Description |
+| --- | --- |
+| `fn controller(&self) -> LayerController` |  |
+| `fn display(&self) -> RawPtr` |  |
+| `fn start(display: NonNull<c_void>, on_event: impl Fn(LayerEvent) -> bool + Send + 'static) -> Result<Self, LayerError>` | Starts the layer thread on `winit`'s `wl_display`. |
+
+### LayerRequest { #layerrequest }
+
+*struct.* A request to open a layer surface: what `engine-py` hands the loop.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `token` | `u64` | Which registered window this is; handed back in the hooks. |
+| `config` | `LayerConfig` |  |
+| `popup` | `Option<PopupConfig>` | A popup, not a layer surface: `config` is then unused. |
+| `max_frames` | `Option<u32>` | Auto-exit after this many frames (a self-asserting demo or test), as a window's. |
+
+### LayerSurfaceInfo { #layersurfaceinfo }
+
+*struct.* What a host needs to draw a layer surface once the compositor has sized it.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | `u64` |  |
+| `display` | `RawPtr` |  |
+| `surface` | `RawPtr` |  |
+| `width` | `u32` | The buffer's size in physical pixels (`logical * scale`). |
+| `height` | `u32` |  |
+| `scale` | `f64` |  |
+| `controller` | `LayerController` | For `update`, `set_cursor` and `destroy`. |
+
+### OutputInfo { #outputinfo }
+
+*struct.* One output, as of the moment it was read.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | `String` | The connector name (`"DP-1"`, `"HDMI-A-1"`): stable across runs, unlike the compositor's own numbering. |
+| `description` | `String` |  |
+| `x` | `i32` | The output's top-left in the desktop's logical layout. |
+| `y` | `i32` |  |
+| `width` | `u32` | The output's logical size. |
+| `height` | `u32` |  |
+| `scale_factor` | `f64` | Physical over logical pixels. |
+| `transform` | `String` | `"normal"`, `"90"`, `"180"`, `"270"`, or one of those with `"flipped_"` before it. |
+
+### PopupConfig { #popupconfig }
+
+*struct.* A popup (`xdg_popup`) parented to a layer surface or to another popup.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `parent` | `u64` | The parent surface's number (the layer thread's id for it). |
+| `size` | `(u32, u32)` | `(width, height)` in logical pixels: the positioner needs it before the popup exists. |
+| `anchor_rect` | `(i32, i32, i32, i32)` | A rectangle in the parent's surface coordinates the popup is placed against. |
+| `anchor` | `PopupEdge` | The point on that rectangle the popup attaches to. |
+| `gravity` | `PopupEdge` | The direction the popup extends from that point. |
+| `adjustments` | `u32` | What the compositor may do to keep it on screen (`adjust` bits). |
+| `offset` | `(i32, i32)` | A fixed shift after placement, in logical pixels. |
+| `grab` | `bool` | Whether the popup grabs the keyboard and pointer, so an outside click or Escape ends it. |
+
+| Method | Description |
+| --- | --- |
+| `fn validate(&self) -> Result<(), ConfigError>` | Refuses what the protocol would answer with a fatal error, naming the key. |
+
+### RawPtr { #rawptr }
+
+*struct.* A pointer to the process's `wl_display`, or to one of its `wl_surface`s: what a `wgpu` surface is made from.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `0` | `NonNull<c_void>` |  |
 
 ### WindowConfig { #windowconfig }
 
@@ -2252,6 +2429,146 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `config` | `WindowConfig` | The configuration for the window to open. |
 | `token` | `u64` | A caller-chosen number passed back when the window is created. |
 
+### Availability { #availability }
+
+*enum.* Whether layer surfaces can be made here.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Supported` |  | The compositor offers `zwlr_layer_shell_v1`. |
+| `Headless` |  | No display at all (a CI run): a layer window can be built and driven with `simulate`, `advance` and `snapshot`, but not opened. |
+| `Unsupported` | `(String)` | A display with no layer shell (X11, GNOME's Mutter, Windows, macOS); the string says why. |
+
+### CloseReason { #closereason }
+
+*enum.* Why a layer surface ended.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Compositor` |  | The compositor closed it. |
+| `OutputRemoved` |  | The output it was bound to went away. |
+| `App` |  | The app closed it. |
+| `Dismissed` |  | A popup the compositor ended: an outside click, Escape, or its parent going away. |
+
+### KeyboardMode { #keyboardmode }
+
+*enum.* How the surface takes the keyboard.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `None` |  | Never: it gets no key events. |
+| `OnDemand` |  | Whenever the user focuses it (a click, say). |
+| `Exclusive` |  | At once, and no other surface gets keys until it lets go. |
+
+| Method | Description |
+| --- | --- |
+| `fn name(self) -> &'static str` |  |
+| `fn parse(name: &str) -> Option<Self>` |  |
+
+### LayerError { #layererror }
+
+*enum.* Why the layer side could not start.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html), [`Display`](https://doc.rust-lang.org/std/fmt/trait.Display.html), [`Error`](https://doc.rust-lang.org/std/error/trait.Error.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Unsupported` | `(String)` | Not a Wayland session, or the compositor has no layer shell. |
+
+### LayerEvent { #layerevent }
+
+*enum.* What the layer thread tells the loop.
+
+**Implements:** [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Created` | `{ id: u64, display: RawPtr, surface: RawPtr }` | The surface exists: build its `wgpu` surface from `display` and `surface`. |
+| `Configure` | `{ id: u64, width: u32, height: u32, scale: f64 }` | The compositor assigned a size (`width` x `height`, logical pixels) and the surface's scale is `scale`: the buffer is `width * scale` by `height *… |
+| `Rescale` | `{ id: u64, width: u32, height: u32, scale: f64 }` | The surface's scale changed with the size staying the same. |
+| `Closed` | `{ id: u64, reason: CloseReason }` | The surface is gone. |
+| `Failed` | `{ id: u64, message: String }` | The surface could not be made (an output name that matches nothing, say). |
+| `Input` | `{ id: u64, event: InputEvent }` | Input for the surface, in physical pixels like the `winit` path's. |
+| `OutputChanged` | `{ id: u64, name: String }` | The surface entered the output with this connector name. |
+| `Output` | `(OutputEvent)` | An output appeared, changed or went away (not sent for the ones that existed when the layer thread started). |
+| `MarginMoved` | `{ id: u64, margin: (i32, i32, i32, i32) }` | A margin drag the engine ran ended; `margin` is `(top, right, bottom, left)`. |
+| `PopupPlaced` | `{ id: u64, x: i32, y: i32 }` | Where the compositor placed a popup, in its parent's surface coordinates (logical px). |
+| `Warning` | `{ id: u64, key: &'static str, message: String }` | A setting this compositor cannot take (an older layer shell): the surface opens anyway. |
+
+### LayerKind { #layerkind }
+
+*enum.* The stacking layer: what the surface sits above and below.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Background` |  |  |
+| `Bottom` |  |  |
+| `Top` |  |  |
+| `Overlay` |  |  |
+
+| Method | Description |
+| --- | --- |
+| `fn name(self) -> &'static str` |  |
+| `fn parse(name: &str) -> Option<Self>` |  |
+
+### LayerNotice { #layernotice }
+
+*enum.* Something that happened to a layer surface that is not input or a frame.
+
+**Implements:** [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Closed` | `(CloseReason)` |  |
+| `OutputChanged` | `(String)` |  |
+| `Failed` | `(String)` | It could not be made. |
+| `MarginMoved` | `((i32, i32, i32, i32))` | A margin drag ended: the final `(top, right, bottom, left)`. |
+| `PopupPlaced` | `(i32, i32)` | Where the compositor placed a popup (parent coordinates, logical px). |
+| `Warning` | `(&'static str, String)` | A setting the compositor cannot take: `(key, message)`. |
+
+### OutputEvent { #outputevent }
+
+*enum.* What changed in the set of outputs.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Added` | `(OutputInfo)` |  |
+| `Updated` | `(OutputInfo)` | Moved, resized, rescaled or rotated. |
+| `Removed` | `(OutputInfo)` |  |
+
+### PopupEdge { #popupedge }
+
+*enum.* A point on a rectangle, or the direction a popup extends from one (`xdg_positioner`'s anchor and gravity share these nine values).
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `None` |  |  |
+| `Top` |  |  |
+| `Bottom` |  |  |
+| `Left` |  |  |
+| `Right` |  |  |
+| `TopLeft` |  |  |
+| `BottomLeft` |  |  |
+| `TopRight` |  |  |
+| `BottomRight` |  |  |
+
+| Method | Description |
+| --- | --- |
+| `fn name(self) -> &'static str` |  |
+| `fn parse(name: &str) -> Option<Self>` |  |
+
 ### WindowLifecycle { #windowlifecycle }
 
 *enum.* A change in a window's life that the loop reports to the app.
@@ -2269,10 +2586,24 @@ The `winit` event loop, window creation, platform input translation and the acce
 
 | Function | Description |
 | --- | --- |
+| `fn availability() -> Availability` | Where this process stands on layer surfaces. |
+| `fn default_output(outputs: &[(String, i32, i32)]) -> Option<usize>` | Which output a surface with no `output` goes to, given each output's `(name, x, y)`: the one at (0, 0), else the first by name. |
 | `fn double_click_time() -> Duration` | Returns the longest gap between two presses that still counts as a double-click. |
+| `fn effective_scale(mode: Option<(i32, i32)>, logical: Option<(i32, i32)>, transform: &str, integer_scale: i32) -> f64` | The effective scale: the current mode's physical size over the logical size, rounded to 1/120 (the unit the fractional-scale protocol speaks), so… |
 | `fn layer_window_id(n: u64) -> WindowId` | The `WindowId` the loop uses for layer surface number `n`. |
+| `fn outputs() -> Vec<OutputInfo>` | The outputs this session's compositor has, read now on a connection of its own, in order of position (top to bottom, left to right). |
+| `fn parse_anchor<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Anchors, ConfigError>` | The edge names the Python layer accepts for `anchor` and `exclusive_edge`. |
 | `fn platform_name(window: Option<&Window>) -> &'static str` | Returns the windowing system the window runs on, such as wayland, x11, windows or macos. |
+| `fn region_from_floats(rects: &[(f64, f64, f64, f64)]) -> Result<Vec<Rect>, ConfigError>` | Explicit rectangles as given (floats, logical pixels) to whole-pixel ones, rounded outward so a rectangle never shrinks: a click on a pixel the app… |
 | `fn run_windowed<F, A>(config: WindowConfig, on_frame: F, build_access_update: A) -> Result<(), EventLoopError>` | Runs an event loop for a single window that calls a per-frame callback. |
 | `fn run_windowed_multi<C, F, A, S, N, X, L>(on_window_created: C, on_frame: F, build_access_update: A, on_input: N, on_access_action: X, on_lifecycle: L, setup: S) -> Result<(), EventLoopError>` | Runs an event loop that manages any number of windows through callbacks. |
 | `fn run_windowed_multi_with<C, F, A, S, N, X, L>(on_window_created: C, on_frame: F, build_access_update: A, on_input: N, on_access_action: X, on_lifecycle: L, setup: S, idle: Option<IdleHooks>, layers: Option<LayerHooks>) -> Result<(), EventLoopError>` | Runs the multi-window loop with optional hooks around its idle wait. |
+| `fn supported() -> bool` | Whether this session's compositor offers `zwlr_layer_shell_v1`: `false` off Wayland, on X11, and on a compositor without it (GNOME's). |
+| `fn transform_name(value: u32) -> &'static str` | The names the Python layer shows for a Wayland transform, by its protocol value (`wl_output.transform`: 0 normal, 1 to 3 rotations, 4 flipped, 5 to… |
 | `fn turn_instant() -> Instant` | The instant the loop's current turn began, or the real clock off the loop (headless). |
+
+### Constants (engine-platform) { #constants-engine-platform }
+
+| Constant | Type | Description |
+| --- | --- | --- |
+| `MAX_REGION_RECTS` | `usize` | The most rectangles one input region may have. |

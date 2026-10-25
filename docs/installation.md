@@ -12,6 +12,15 @@ install a pre-built wheel, or build one yourself from source.
 - Linux (x86_64), macOS (arm64), or Windows (x64); other platforms build
   from source
 
+!!! note "Bars, panels and popups"
+    `LayerWindow` and `PopupWindow` need a Linux Wayland session whose compositor has the
+    layer shell: KDE's KWin and the wlroots compositors do (tested on KWin 6.8 and sway 1.12).
+    GNOME's Mutter does not, and neither do X11, Windows or macOS; there `LayerWindow(...)`
+    raises `tre.UnsupportedPlatform`, and `tre.supports("layer_shell")` is `False`. Nothing
+    extra is installed with the wheel: it loads the system's `libwayland-client` and
+    `libxkbcommon` at run time, which a Wayland desktop already has. Pasting on Wayland works
+    without XWayland (0.5.8).
+
 ## Option 1: install from PyPI
 
 ```bash
@@ -71,7 +80,7 @@ Download the wheel matching your platform and interpreter from the
 and install it directly:
 
 ```bash
-pip install ./tesserae_engine-0.4.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+pip install ./tesserae_engine-0.5.8-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
 Releases up to `v0.3.5.1` name their files `tre-<version>-...`; they

@@ -4,7 +4,7 @@
 
 Tesserae Engine (imported as `tre`) gives Python the building blocks of a desktop UI — nodes, flexbox
 and grid layout, paint, animation, input and events, text, accessibility, layers,
-and threading — and renders them on the GPU, redrawing only what changed, with
+and threading — and, on Wayland, bars, panels and menus placed by the compositor — and renders them on the GPU, redrawing only what changed, with
 [`vello_gpu`](https://github.com/linebender/vello), laid out by
 [`taffy`](https://github.com/DioxusLabs/taffy), shaped by
 [`parley`](https://github.com/linebender/parley), and exposed to screen

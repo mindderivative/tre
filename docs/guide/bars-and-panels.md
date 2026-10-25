@@ -53,6 +53,24 @@ zone the protocol would ignore raises no error: a `warning` event says so.
 above everything, fullscreen windows included; `"bottom"` and `"background"` are for
 widgets and wallpapers under windows.
 
+## A clock in a corner: `exclusive_edge`
+
+A surface anchored to one edge (or to one edge and both edges across it) reserves space on
+that edge. A surface in a *corner* is anchored to two edges, and the compositor cannot tell
+which one `exclusive_zone` is meant for, so it reserves nothing unless you name the edge:
+
+```python
+clock = LayerWindow("example.clock", anchor=("top", "right"), size=(120, 28),
+                    exclusive_zone=28, exclusive_edge="top")   # maximised windows stop below it
+```
+
+Without `exclusive_edge` the same window floats over the corner and reserves nothing, and a
+`warning` event says so. The edge must be one of the anchored ones, can be changed with `set()`
+but not cleared once set, and needs layer-shell version 5 (KWin and recent wlroots compositors
+have it; on version 4 the surface still opens and a `warning` event says the edge is ignored).
+The [reference](../reference/layer-window.md) has the details and what was checked on which
+compositor.
+
 ## Several screens
 
 Leave `output` as `None` and the compositor picks one, and picks differently from run to
@@ -89,9 +107,14 @@ bar.set(margin=(-32, 0, 0, 0), exclusive_zone=0)   # slide it off the top edge (
 bar.set(margin=0, exclusive_zone=32)         # and back
 ```
 
-A margin takes effect as a step; animating it (and the surface's own size) is not built
-yet. Animating what is *inside* the surface (a node's `opacity`, `translate_y`, a width)
-works as in any window and costs no protocol traffic.
+A margin set this way takes effect as a step. To slide the surface, animate the margin in
+the engine: `bar.animate("margin_top", -32, duration_ms=300, on_complete=bar.close)` moves it
+with one small commit per step and no Python until `on_complete`, and `set(margin=...)`
+cancels it. The surface's own size and `exclusive_zone` are step changes only. Animating what
+is *inside* the surface (a node's `opacity`, `translate_y`, a width) works as in any window and
+costs no protocol traffic. See the [`LayerWindow` reference](../reference/layer-window.md) for
+`animate` and for `window_region="drag_margin"`, which lets the user drag a surface by its
+margins.
 
 ## The keyboard
 
@@ -110,9 +133,10 @@ they are testable the same way. Where there is a display but no layer shell the
 constructor raises `UnsupportedPlatform`; `tre.supports("layer_shell")` tells a test
 whether to skip.
 
-## What is not there yet
+## Related
 
 A menu or flyout that leaves the bar's own surface is a `PopupWindow`, a compositor popup
-parented to the bar: see [Menus from a bar](menus-from-a-bar.md). A screen frame (a painter surface plus reservers)
-uses `input_region`, which is built; margin animation and drag are built too (see the
+parented to the bar: see [Menus from a bar](menus-from-a-bar.md). Nothing in the plan for
+`LayerWindow` is outstanding: `input_region` (for a screen frame, a painter surface plus
+reservers), margin animation and `drag_margin` are all built (see the
 [LayerWindow reference](../reference/layer-window.md)).

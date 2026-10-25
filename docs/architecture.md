@@ -9,7 +9,7 @@ in the repository root.
 ```
 engine-py        PyO3 classes, the per-frame loop, listeners, callbacks
    │
-   ├── engine-platform   winit event loop, input translation, AccessKit adapter
+   ├── engine-platform   winit event loop, input translation, AccessKit adapter, layer surfaces
    └── engine-render     scene building, damage tracking, persistent target, text
          │
          └── engine-core  node tree, Animated<T>, layout, dispatch, focus, layers
@@ -37,12 +37,28 @@ its Python surface is the one stability contract. `engine-platform` and
    re-checking only the nodes written to, so its cost follows the changes, not
    the size of the tree, and only the changed rects (at most four, or the whole window) are rendered into
    the window's persistent target, which is then copied to the screen.
-   `window.set(partial_redraw=False)` redraws in full, and
+   `window.set(partial_redraw=False)` redraws in full and keeps no such target, and
    `show_damage=True` tints what was redrawn. The **AccessKit** tree is
    built from the same node tree.
 
 When nothing changed and nothing animates, the loop sleeps until the next
 input or `call_soon`.
+
+## Layer surfaces and popups
+
+On Linux, a [`LayerWindow`](reference/layer-window.md) (a bar, panel or OSD) and a
+[`PopupWindow`](reference/layer-window.md#popupwindow) (a menu off a bar) are windows
+that `winit` cannot make, because their Wayland role is `zwlr_layer_shell_v1` or `xdg_popup`.
+`engine-platform` runs them on a **second Wayland event queue of winit's own connection**,
+dispatched on a thread of its own that hands events to the same loop through the event-loop
+proxy, so a layer surface is drawn, laid out, animated and made accessible by the same code
+as any window (`WindowRenderer` does not know which kind of window it draws into). The thread
+owns what the protocol makes it own: the surface's configure and close, outputs and their
+hot-plug, the keyboard (through `xkbcommon-dl`, loaded at run time), input methods
+(`zwp_text_input_v3`) and a per-surface AccessKit adapter. tre binds the layer shell itself,
+at the highest version the compositor offers. The design and what was measured are in
+[the LayerWindow design note](design/layer-window.md) and the
+[spike findings](design/layer-surface-spike.md).
 
 Each turn the loop also polls the GPU device. A GPU error becomes a
 `gpu_error` event instead of a panic, and a lost GPU fires `gpu_lost` and ends
