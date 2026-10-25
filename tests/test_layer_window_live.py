@@ -360,6 +360,39 @@ def sway_outputs():
         pytest.skip("SWAYSOCK does not reach a running sway")
 
 
+def test_output_hot_plug_fires_added_updated_and_removed(children):
+    name = next(iter(outputs()))
+    _on_sway(name)
+    before = sway_outputs()
+    code = """
+import json, os, threading, time
+from tre import App, LayerWindow
+app = App()
+say = lambda kind, **kw: print(json.dumps({"kind": kind, **kw}), flush=True)
+app.on("output_added", lambda o: say("added", name=o.name, width=o.width))
+app.on("output_updated", lambda o: say("updated", name=o.name, width=o.width))
+app.on("output_removed", lambda o: say("removed", name=o.name))
+bar = LayerWindow("hotplug", anchor=("top", "left", "right"), size=(0, 30), exclusive_zone=30, output=%r)
+bar.root.set(fill=(1, 2, 3, 255))
+app.add_window(bar)
+threading.Thread(target=lambda: (time.sleep(2.0), say("ready"), time.sleep(20), os._exit(0)), daemon=True).start()
+app.run()
+""" % name
+    child = children(code)
+    child.events(until="ready", timeout=20)
+    subprocess.run(["swaymsg", "create_output"], capture_output=True, timeout=10)
+    time.sleep(0.5)
+    (new,) = sway_outputs() - before
+    added = child.events(until="added", timeout=8)
+    assert any(e["kind"] == "added" and e["name"] == new for e in added), added
+    subprocess.run(["swaymsg", "output", new, "resolution", "1600x900"], capture_output=True, timeout=10)
+    changed = child.events(until="updated", timeout=8)
+    assert any(e["kind"] == "updated" and e["name"] == new and e["width"] == 1600 for e in changed), changed
+    subprocess.run(["swaymsg", "output", new, "unplug"], capture_output=True, timeout=10)
+    gone = child.events(until="removed", timeout=8)
+    assert any(e["kind"] == "removed" and e["name"] == new for e in gone), gone
+
+
 def test_a_bar_on_an_unplugged_output_closes_with_output_removed(children):
     before = sway_outputs()
     subprocess.run(["swaymsg", "create_output"], capture_output=True, timeout=10)
