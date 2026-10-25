@@ -27,6 +27,21 @@ name match; prints only), and `tools/generate_tracker_artifact.py` was removed a
 `build-tracker` skill's copy. Tested against the real repo and board, and against broken fixtures; `board.py --comment`
 was not exercised, since it posts publicly.
 
+### More helper tools (2026-10-25)
+
+Added to `tools/`: `with_adapter.sh` (pin RADV, llvmpipe or the wgpu fallback adapter for a command),
+`sway_live.sh` (a private headless sway for the live tests: starts it, exports `WAYLAND_DISPLAY` and
+`SWAYSOCK`, runs the command, exits sway by pid), `pr_chain.py` (status of a branch stack and its PRs;
+push, open, retarget with close/reopen for CI, wait, merge, cleanup, all dry-run unless `--yes`),
+`wrapup.py` (what LOG.md, docs, the board and the memory entity are behind on, plus a draft memory
+line), and `graphify_refresh.sh` (runs `graphify update .` only when a source file is newer than the
+graph; registered as a `Stop` hook in `.claude/settings.json`). `board.py` gained `create` (an issue into
+Backlog or Ready). Checked: `sway_live.sh` ran two real live tests on sway with `with_adapter.sh lvp`
+and left no sway behind; `pr_chain.py status` and every dry run against the real repo; `wrapup.py` on
+this branch; the hook's check and rebuild by hand. Not run: `pr_chain.py` with `--yes`, and `board.py
+create` without `--dry-run`, because both would write to the public repo. The `Stop` hook itself has not
+yet been seen to fire in a session.
+
 ### Project skills reviewed and revised (2026-10-25)
 
 The three skills added in `71adab8` (`pixel-test-triage`, `release-checklist`, `perf-profiling`)

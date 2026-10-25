@@ -3,10 +3,14 @@
 
     python3 tools/board.py status [--all]          # open cards by column (--all adds Done)
     python3 tools/board.py move N COLUMN [--comment TEXT] [--approved] [--dry-run]
+    python3 tools/board.py create TITLE (--body TEXT | --body-file FILE) [--label L]... [--column COLUMN] [--dry-run]
 
 COLUMN is Backlog, Ready, "In progress", "In review" or Done (case does not matter). Done is the
 user's to approve, so moving to Done needs --approved. --comment posts TEXT on issue or PR N.
-Needs `gh` logged in with the `project` scope.
+`create` opens an issue on the repo and puts it on the board (default column Backlog). Anything but
+Backlog or Ready is refused: a card only reaches In progress, In review or Done by `move`. Issues are
+public, so use --dry-run first to see what would be filed. Needs `gh` logged in with the `project`
+scope.
 """
 import argparse
 import json
@@ -15,6 +19,7 @@ import sys
 
 OWNER = "mindderivative"
 PROJECT = "3"
+REPO = f"{OWNER}/tre"
 
 
 def gh(*args):
@@ -54,6 +59,37 @@ def status(show_done):
     return 0
 
 
+def set_status(item_id, field_id, option):
+    project_id = project_json("view")["id"]
+    gh("project", "item-edit", "--id", item_id, "--project-id", project_id,
+       "--field-id", field_id, "--single-select-option-id", option["id"])
+
+
+def create(title, body, labels, column, dry_run):
+    field_id, options = columns()
+    option = options.get(column.lower())
+    if option is None:
+        sys.exit(f"unknown column {column!r}; choose from: {', '.join(o['name'] for o in options.values())}")
+    if option["name"] not in ("Backlog", "Ready"):
+        sys.exit("create files cards in Backlog or Ready only; use `move` for the other columns")
+    if not title.strip() or not body.strip():
+        sys.exit("an issue needs a title and a body")
+    print(f"issue on {REPO}: {title}")
+    print(f"  labels: {', '.join(labels) or '(none)'}   column: {option['name']}   body: {len(body)} chars")
+    if dry_run:
+        print("dry run: nothing filed")
+        return 0
+    cmd = ["issue", "create", "-R", REPO, "--title", title, "--body", body]
+    for label in labels:
+        cmd += ["--label", label]
+    url = gh(*cmd).strip().splitlines()[-1]
+    print(f"filed {url}")
+    added = json.loads(gh("project", "item-add", PROJECT, "--owner", OWNER, "--url", url, "--format", "json"))
+    set_status(added["id"], field_id, option)
+    print(f"on the board in {option['name']}")
+    return 0
+
+
 def move(number, column, comment, approved, dry_run):
     field_id, options = columns()
     option = options.get(column.lower())
@@ -68,11 +104,9 @@ def move(number, column, comment, approved, dry_run):
     if dry_run:
         print("dry run: nothing changed")
         return 0
-    project_id = project_json("view")["id"]
-    gh("project", "item-edit", "--id", card["id"], "--project-id", project_id,
-       "--field-id", field_id, "--single-select-option-id", option["id"])
+    set_status(card["id"], field_id, option)
     if comment:
-        gh("issue", "comment", str(number), "--body", comment)
+        gh("issue", "comment", str(number), "-R", REPO, "--body", comment)
         print("comment posted")
     print("moved")
     return 0
@@ -89,9 +123,20 @@ def main(argv=None):
     m.add_argument("--comment")
     m.add_argument("--approved", action="store_true")
     m.add_argument("--dry-run", action="store_true")
+    c = sub.add_parser("create")
+    c.add_argument("title")
+    body = c.add_mutually_exclusive_group(required=True)
+    body.add_argument("--body")
+    body.add_argument("--body-file")
+    c.add_argument("--label", action="append", default=[])
+    c.add_argument("--column", default="Backlog")
+    c.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
     if args.cmd == "status":
         return status(args.all)
+    if args.cmd == "create":
+        text = args.body if args.body is not None else sys.stdin.read() if args.body_file == "-" else open(args.body_file).read()
+        return create(args.title, text, args.label, args.column, args.dry_run)
     return move(args.number, args.column, args.comment, args.approved, args.dry_run)
 
 
