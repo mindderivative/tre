@@ -15,6 +15,13 @@ maintainer's own, copied here so they survive a lost machine.
   `tools/generate_tracker_artifact.py`). `tre` used it up to 0.4; from 0.5.0 progress is
   tracked on the GitHub project instead (see `docs/contributing.md`), so it is kept for
   reference and for the archived trackers (`BUILD_TRACKER_ARCHIVE_*.md`).
+- **`pixel-test-triage`**: what to do when a headless GPU pixel test fails or changes after
+  a renderer bump (`vello_gpu`, `wgpu`, ...) or between GPUs: reproduce on a real and the
+  software adapter, classify the change, never loosen an assertion without the cause.
+- **`release-checklist`**: the ordered release steps (version, `tools/verify.sh --cross`,
+  docs, commit) and which steps (push, PR, merge, tag, PyPI approval) wait for the user.
+- **`perf-profiling`**: how to use the existing benchmarks fairly (release build, fixed
+  conditions, repeats, per-stage split) and how to report a before/after.
 
 ## Commands
 
