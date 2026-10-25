@@ -1,4 +1,4 @@
-//! 0.5.7 (#199): `zwp_text_input_v3` events for a layer surface, applied the way the protocol
+//! 0.5.8 (#199): `zwp_text_input_v3` events for a layer surface, applied the way the protocol
 //! says: nothing takes effect until `done`.
 //!
 //! The input method sends `preedit_string`, `commit_string` and `delete_surrounding_text` as a

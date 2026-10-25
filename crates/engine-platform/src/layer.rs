@@ -1,4 +1,4 @@
-//! 0.5.7 (#198): layer surfaces (`zwlr_layer_shell_v1`) beside `winit`'s windows.
+//! 0.5.8 (#198): layer surfaces (`zwlr_layer_shell_v1`) beside `winit`'s windows.
 //!
 //! `winit` has no layer-shell role, so a layer surface is made on a second event
 //! queue of the Wayland connection `winit` already owns (`design/layer-surface-spike.md`

@@ -7894,7 +7894,7 @@ mod access_states_0_5_6 {
     }
 }
 
-// ---- 0.5.7 (#204): hit testing follows corner_radius, and the input region ----
+// ---- 0.5.8 (#204): hit testing follows corner_radius, and the input region ----
 
 /// A root `size` x `size`, with no paint (alpha 0), holding the boxes `placed` adds.
 fn region_scene(size: f32) -> (Tree, NodeId) {

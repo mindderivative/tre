@@ -1,4 +1,4 @@
-//! 0.5.7 (#198): a layer surface's keyboard, through `xkbcommon-dl`.
+//! 0.5.8 (#198): a layer surface's keyboard, through `xkbcommon-dl`.
 //!
 //! Wayland sends the keyboard layout as an xkb keymap in a file descriptor and the key
 //! codes raw; turning a code into a symbol and the text it types is xkbcommon's job.

@@ -1,4 +1,4 @@
-"""0.5.7 (#134): the OS reduced-motion and contrast preferences, end to end through
+"""0.5.8 (#134): the OS reduced-motion and contrast preferences, end to end through
 a stand-in settings portal on a private D-Bus, so the live-change path is checked
 without touching the desktop's own settings.
 

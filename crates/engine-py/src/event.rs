@@ -192,21 +192,21 @@ pub struct Event {
     /// 0.5.4: `pinch`: `scale` over the previous event's, the step to apply.
     #[pyo3(get)]
     pub(crate) scale_delta: Option<f64>,
-    /// 0.5.7 (#132): `rotate`: the angle the fingers have turned, in radians,
+    /// 0.5.8 (#132): `rotate`: the angle the fingers have turned, in radians,
     /// positive clockwise on the screen.
     #[pyo3(get)]
     pub(crate) rotation: Option<f64>,
-    /// 0.5.7 (#132): `rotate`: the turn since the last event, in radians.
+    /// 0.5.8 (#132): `rotate`: the turn since the last event, in radians.
     #[pyo3(get)]
     pub(crate) rotation_delta: Option<f64>,
-    /// 0.5.7 (#132): `swipe`: `"left"`, `"right"`, `"up"` or `"down"`.
+    /// 0.5.8 (#132): `swipe`: `"left"`, `"right"`, `"up"` or `"down"`.
     #[pyo3(get)]
     pub(crate) direction: Option<String>,
-    /// 0.5.7 (#198): `output_changed`: the output's connector name. (`closed` on a layer
+    /// 0.5.8 (#198): `output_changed`: the output's connector name. (`closed` on a layer
     /// window reuses `reason`; `warning` reuses `key` for the setting and `message`.)
     #[pyo3(get)]
     pub(crate) output: Option<String>,
-    /// 0.5.7 (#205): `moved`: the surface's margin `(top, right, bottom, left)` after a drag.
+    /// 0.5.8 (#205): `moved`: the surface's margin `(top, right, bottom, left)` after a drag.
     #[pyo3(get)]
     pub(crate) margin: Option<(i32, i32, i32, i32)>,
     /// 0.5.4: `pan`/`pinch`: how far the gesture has moved in all.

@@ -254,7 +254,7 @@ const SETTABLE: &str = "title, partial_redraw, show_damage, profile_nodes, glyph
     dpi_scaling, transparent, blur_behind, click_through, x, y, always_on_top, resizable, skip_taskbar, \
     touch_slop, touch_target_slop";
 
-/// 0.5.7 (#132): a distance in layout pixels, zero or more.
+/// 0.5.8 (#132): a distance in layout pixels, zero or more.
 fn extract_distance(name: &str, value: &Bound<'_, PyAny>) -> PyResult<f64> {
     value
         .extract::<f64>()
@@ -935,7 +935,7 @@ impl PyWindow {
             *self.title.borrow_mut() = title;
         }
         if let Some(on) = partial_redraw {
-            // 0.5.7 (#221): a change takes or gives back the kept frame on the next
+            // 0.5.8 (#221): a change takes or gives back the kept frame on the next
             // frame, so an idle window is woken to make it.
             if self.handles.partial_redraw.replace(on) != on {
                 self.handles.tree.borrow_mut().mark_dirty();

@@ -3,7 +3,7 @@
 A bar is 32 pixels tall, and `show_layer` draws inside its own window's bounds, so a menu for
 a button on the bar needs a surface of its own. The way to get one is **a `PopupWindow`**: a
 compositor popup (`xdg_popup`) hanging off the bar, sized to the menu, placed by the compositor
-beside the button and flipped above it when the bar is at the bottom edge (0.5.7, #223).
+beside the button and flipped above it when the bar is at the bottom edge (0.5.8, #223).
 
 ```python
 def open_menu(e=None):

@@ -1,4 +1,4 @@
-"""0.5.7 (#202): `Output`, `App.outputs()`, and the output events.
+"""0.5.8 (#202): `Output`, `App.outputs()`, and the output events.
 
 Needs no compositor: handlers are exercised with `App.simulate`, and a real listing is
 compared with `wayland-info` in `test_layer_window_live.py`.

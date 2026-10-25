@@ -1,18 +1,35 @@
-# LOG — Branch `0.5.x`: custom windowing to 0.5.7
+# LOG — Branch `0.5.x`: custom windowing to 0.5.8
 
 ## Status
 
-**0.5.7 released (2026-10-17, PR #185, tag `v0.5.7`, PyPI `tesserae-engine==0.5.7`).**
-0.5.6 was released 2026-10-09 (PR #167, tag `v0.5.6`).
+**0.5.8 in preparation (branch `0.5.8`, 2026-10-25): LayerWindow for Tesserae Shell and the work around it.**
+Version bumped, the "0.5.7" stamps on this work re-stamped to 0.5.8, `docs/migrating-0.5.md` has the
+0.5.8 section. Not yet pushed, merged or tagged.
+0.5.7 was released 2026-10-17 (PR #185, tag `v0.5.7`, PyPI `tesserae-engine==0.5.7`);
+0.5.6 on 2026-10-09 (PR #167, tag `v0.5.6`).
 Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 `BUILD_TRACKER_ARCHIVE_*.md` files are the pre-GitHub trackers). Open
-issues: #47, #48 (macOS and Windows title bars on hardware), #91 (WGSL on
-real GPUs: the Linux half is done; Windows, macOS and a video input are held),
-#118 (baseline on Mac, Windows, low-end hardware), #132-#134 (touch, OS file
-drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
-`wp_fifo_v1` barriers after a resize).
+issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
+position), #220 (one wgpu device for all windows).
 
-## After 0.5.7 (unreleased)
+## 0.5.8 (release prep, 2026-10-25)
+
+### The release pass (2026-10-25)
+
+The shell gaps the hand-off listed were closed where they could be: `PopupWindow` was run on KWin 6.8.1
+(placement, outside-click dismissal, item click, submenu, and the flip above a bottom bar; that last
+test needed `TRE_LIVE_BOTTOM_INSET=40` because the desktop's Plasma panel sits under a bottom bar), a
+live test now covers a cancelled `close_requested` that slides the bar out and then closes it (KWin and
+sway), and a headless test covers `reduced_motion` and `high_contrast` on a `LayerWindow`. Not
+closable here, and written into the hand-off as untested: transparency and paste on KWin (their tools,
+`grim` and `wtype`, are wlroots-only), Orca, a real input method, text crispness at 1.5x. The 143
+"0.5.7" stamps on work that landed after the tag were re-stamped to 0.5.8 with
+`tools/restamp_version.py` (134 lines changed; only lines naming an issue that was not in 0.5.7, or in
+the docs and stub; PLAN.md and LOG.md untouched). The version moved to 0.5.8 in `Cargo.toml`,
+`pyproject.toml` and the four `Cargo.lock` entries; the 0.5.8 section of `docs/migrating-0.5.md` and the
+hand-off were brought up to date.
+
+## After 0.5.7, in order (now 0.5.8)
 
 ### Helper tools for the agent (2026-10-25)
 

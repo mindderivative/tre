@@ -138,7 +138,7 @@ impl WindowRenderer {
         self.target.is_some()
     }
 
-    /// 0.5.7 (#221): keeps the frame or lets it go, live. The kept target is the
+    /// 0.5.8 (#221): keeps the frame or lets it go, live. The kept target is the
     /// size of the window (32 MiB at 3840 x 2160) and only partial redraw uses it,
     /// so a window that redraws in full gives it back; turning partial redraw on
     /// again makes a new one and draws the next frame in full. Returns whether

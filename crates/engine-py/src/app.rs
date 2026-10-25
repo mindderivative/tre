@@ -70,7 +70,7 @@ pub struct AppState {
     /// M87: callables queued from other threads via `LoopHandle`,
     /// drained at the top of every frame -- see `thread_handle.rs`.
     calls: CallQueue,
-    /// 0.5.7 (#202): listeners for `output_added`, `output_removed` and `output_updated`.
+    /// 0.5.8 (#202): listeners for `output_added`, `output_removed` and `output_updated`.
     output_listeners: crate::outputs::OutputListeners,
 }
 
@@ -137,7 +137,7 @@ fn window_request(setup: &WindowSetup, index: usize, max_frames: Option<u32>) ->
     }
 }
 
-/// 0.5.7 (#198): the request that opens `setup`'s layer surface, `None` for an ordinary
+/// 0.5.8 (#198): the request that opens `setup`'s layer surface, `None` for an ordinary
 /// window; `index` is its token.
 #[cfg(target_os = "linux")]
 fn layer_request(
@@ -176,7 +176,7 @@ fn attach_waker(setup: &WindowSetup, waker: &EventLoopWaker, alarm: &Arc<crate::
     *setup.handles.waker.borrow_mut() = Some(waker.clone());
 }
 
-/// 0.5.7 (#198): what a `wgpu` surface is made from: a `winit` window, or (a layer
+/// 0.5.8 (#198): what a `wgpu` surface is made from: a `winit` window, or (a layer
 /// surface, which has none) the raw Wayland display and surface pointers.
 enum SurfaceSource {
     Window(Arc<Window>),
@@ -239,7 +239,7 @@ struct GpuState {
     /// 0.5.1 (#65): this device's health: its lost and error handlers, and
     /// the stall watchdog. Installed the moment the device exists.
     watch: GpuWatch,
-    /// 0.5.7 (#221): whether the surface can be copied into, so a kept frame
+    /// 0.5.8 (#221): whether the surface can be copied into, so a kept frame
     /// can be made when partial redraw is switched on after the window opened.
     copyable: bool,
     /// 0.5.4 (#101): how the swapchain paces frames, and the modes this
@@ -287,7 +287,7 @@ impl GpuState {
             label: Some("engine-py app device"),
             // 0.5.4 (#135): timestamp queries, where the adapter has them.
             required_features: adapter.features() & engine_render::gpu_timer_features(),
-            // 0.5.7 (#219): small memory blocks; the default reservation was 192 MiB a window.
+            // 0.5.8 (#219): small memory blocks; the default reservation was 192 MiB a window.
             memory_hints: crate::gpu_memory::memory_hints(),
             ..Default::default()
         }))
@@ -343,7 +343,7 @@ impl GpuState {
             }
         }
         surface.configure(&device, &config);
-        // 0.5.7 (#221): the kept frame is only made for a window that redraws partially.
+        // 0.5.8 (#221): the kept frame is only made for a window that redraws partially.
         let renderer = WindowRenderer::new(
             &device,
             config.format,
@@ -716,7 +716,7 @@ impl App {
         LoopHandle::new(self.calls.clone())
     }
 
-    /// 0.5.7 (#202): the screens the compositor has, top to bottom and left to right: name,
+    /// 0.5.8 (#202): the screens the compositor has, top to bottom and left to right: name,
     /// position and size (logical pixels), scale and rotation. Read now, so it works
     /// before `run()`; empty where the platform cannot say (not Wayland).
     fn outputs(&self, py: Python<'_>) -> PyResult<Vec<Py<crate::outputs::PyOutput>>> {
@@ -730,7 +730,7 @@ impl App {
             .collect()
     }
 
-    /// 0.5.7 (#202): registers `handler(output)` for `output_added`, `output_removed` or
+    /// 0.5.8 (#202): registers `handler(output)` for `output_added`, `output_removed` or
     /// `output_updated` (a screen was plugged in, removed, or moved, resized or rescaled).
     /// One handler per event; a second replaces the first. Outputs that exist when the
     /// app starts are not "added": read them with `outputs()`.
@@ -751,7 +751,7 @@ impl App {
         Ok(())
     }
 
-    /// 0.5.7 (#202): removes the handler for an output event.
+    /// 0.5.8 (#202): removes the handler for an output event.
     fn off(&self, event: &str) -> PyResult<()> {
         let name = crate::outputs::EVENTS
             .iter()
@@ -762,7 +762,7 @@ impl App {
         Ok(())
     }
 
-    /// 0.5.7 (#202): delivers an output event as the compositor would, for tests with no
+    /// 0.5.8 (#202): delivers an output event as the compositor would, for tests with no
     /// display: `app.simulate("output_added", name="DP-2", width=2560, height=1440)`.
     /// Fields: `name` (required), `description`, `x`, `y`, `width`, `height`,
     /// `scale_factor`, `transform`.
@@ -992,7 +992,7 @@ impl App {
                 }
             }),
         };
-        // 0.5.7 (#198): layer surfaces (`LayerWindow`). They have no `winit` window, so the
+        // 0.5.8 (#198): layer surfaces (`LayerWindow`). They have no `winit` window, so the
         // platform loop hands the host the raw Wayland pointers once the compositor has
         // sized one; everything after that (frames, input, close) goes through the same
         // callbacks as a window's. Python is taken with `attach`: the loop holds the GIL
@@ -1347,7 +1347,7 @@ impl App {
                 let frame_began = Instant::now();
                 let now = crate::clock::frame_now(&runtime.handles.tree);
                 let (any_active, mut completed) = runtime.handles.tree.borrow_mut().tick_all(now);
-                // 0.5.7 (#205): a layer surface's margins animate on the same clock. They
+                // 0.5.8 (#205): a layer surface's margins animate on the same clock. They
                 // draw nothing, so the loop is woken by the alarm at about 120 Hz, not kept
                 // spinning.
                 if let Some(layer) = &runtime.handles.layer
@@ -1515,7 +1515,7 @@ impl App {
                     &runtime.handles.tree,
                     &runtime.handles.svg_font_generation,
                 );
-                // 0.5.7 (#221): `partial_redraw` takes the kept frame (a window's
+                // 0.5.8 (#221): `partial_redraw` takes the kept frame (a window's
                 // worth of video memory) or gives it back, live.
                 let kept_changed = runtime.gpu.copyable
                     && runtime.gpu.renderer.set_persistent(
@@ -1559,7 +1559,7 @@ impl App {
                     py,
                 );
 
-                // 0.5.7 (#204): an `input_region="auto"` surface follows what is drawn.
+                // 0.5.8 (#204): an `input_region="auto"` surface follows what is drawn.
                 #[cfg(target_os = "linux")]
                 if let Some(layer) = &runtime.handles.layer
                     && layer.auto_region.get()
@@ -1611,7 +1611,7 @@ impl App {
                             winit::window::ImePurpose::Normal
                         });
                     }
-                    // 0.5.7 (#199): a layer surface has no `winit` window; its input method is
+                    // 0.5.8 (#199): a layer surface has no `winit` window; its input method is
                     // told through the layer thread, in surface-local logical pixels.
                     #[cfg(target_os = "linux")]
                     if let Some(layer) = &runtime.handles.layer

@@ -1,4 +1,4 @@
-"""A stand-in for the XDG settings portal on a private session bus (0.5.7, #134).
+"""A stand-in for the XDG settings portal on a private session bus (0.5.8, #134).
 
 Run by tests/test_os_preferences_live.py with DBUS_SESSION_BUS_ADDRESS pointing at
 a throwaway `dbus-daemon`, so nothing on the user's desktop is touched. Serves

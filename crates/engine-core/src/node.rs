@@ -1689,7 +1689,7 @@ pub enum WindowRegion {
     /// A press here, or inside, never moves the window.
     NoDrag,
     /// A press here, or on a non-interactive node inside, moves a layer surface by its
-    /// margins (0.5.7, #205). Only a `LayerWindow`'s nodes may have it.
+    /// margins (0.5.8, #205). Only a `LayerWindow`'s nodes may have it.
     DragMargin,
 }
 

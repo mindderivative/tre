@@ -1,4 +1,4 @@
-"""0.5.7 (#132): rotation and swipe gestures, the touch slop, and the touch-target hit slop.
+"""0.5.8 (#132): rotation and swipe gestures, the touch slop, and the touch-target hit slop.
 
 No touch hardware needed: `window.simulate("touch_start", ...)` delivers the same
 `InputEvent::Touch` the platform does, and `window.advance` moves the clock. The

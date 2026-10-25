@@ -655,7 +655,7 @@ fn window_drag(
     end_press(ctx, io, target, position, py);
 }
 
-/// 0.5.7 (#205): a primary press on a `window_region="drag_margin"` node of a `LayerWindow`
+/// 0.5.8 (#205): a primary press on a `window_region="drag_margin"` node of a `LayerWindow`
 /// starts moving the surface by its margins. The engine follows the pointer from here (the
 /// layer thread, one commit per input frame) and sends `moved` on release, so Python is not
 /// in the pointer-move loop. The press ends as a window drag's does, with `pointer_cancel`.
@@ -688,7 +688,7 @@ fn margin_drag(
     end_press(ctx, io, target, position, py);
 }
 
-/// 0.5.7 (#205): `starts_window_drag`'s rule for `"drag_margin"`: walking up from the pressed
+/// 0.5.8 (#205): `starts_window_drag`'s rule for `"drag_margin"`: walking up from the pressed
 /// node, a `drag_margin` node starts the drag, a `"none"` one does not, and neither does an
 /// interactive node (focusable, text input, terminal, with a `click` listener, or holding the
 /// pointer capture) met first.

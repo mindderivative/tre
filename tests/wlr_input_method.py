@@ -1,4 +1,4 @@
-"""A stand-in input method (IME) for live tests on a headless sway (0.5.7, #199).
+"""A stand-in input method (IME) for live tests on a headless sway (0.5.8, #199).
 
 No input method is installed on the dev machine, and wiring a real one into KDE would change
 the desktop's input settings. sway implements `zwp_text_input_v3` (what a client talks to) and

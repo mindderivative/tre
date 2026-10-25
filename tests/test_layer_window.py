@@ -1,4 +1,4 @@
-"""0.5.7 (#198): `LayerWindow`, a window whose Wayland role is a layer surface.
+"""0.5.8 (#198): `LayerWindow`, a window whose Wayland role is a layer surface.
 
 These need no compositor: a `LayerWindow` is built and driven headless, like a `Window`
 (`simulate`, `advance`, `snapshot`), with no display in the environment. What a
@@ -226,6 +226,20 @@ def test_the_layer_window_events_are_registrable():
         w.on(name, lambda e: None)
     with pytest.raises(ValueError, match="unknown window event"):
         w.on("opened", lambda e: None)
+
+
+def test_the_os_preferences_reach_a_layer_window_like_a_windows():
+    """The shell honours reduce-motion on its bars: the read and the events are `Window`'s."""
+    w = bar()
+    assert w.get("reduced_motion") in (True, False, None)
+    assert w.get("high_contrast") in (True, False, None)
+    heard = []
+    w.on("reduced_motion", lambda e: heard.append(("motion", e.reduced_motion)))
+    w.on("high_contrast", lambda e: heard.append(("contrast", e.high_contrast)))
+    w.simulate("reduced_motion", value=True)
+    w.simulate("high_contrast", value=True)
+    w.simulate("reduced_motion", value=False)
+    assert heard == [("motion", True), ("contrast", True), ("motion", False)]
 
 
 def test_close_before_the_window_opens_does_nothing():

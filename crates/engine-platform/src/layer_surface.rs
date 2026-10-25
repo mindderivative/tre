@@ -1,4 +1,4 @@
-//! 0.5.7 (#201): tre's own `zwlr_layer_shell_v1` binding, at version 5.
+//! 0.5.8 (#201): tre's own `zwlr_layer_shell_v1` binding, at version 5.
 //!
 //! `smithay-client-toolkit` 0.19 (the copy `winit` shares) binds the layer shell only up to
 //! version 4, and `set_exclusive_edge` (a corner-anchored surface's zone is for one of its

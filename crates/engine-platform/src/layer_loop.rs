@@ -1,4 +1,4 @@
-//! 0.5.7 (#198): layer surfaces inside the `winit` event loop.
+//! 0.5.8 (#198): layer surfaces inside the `winit` event loop.
 //!
 //! The layer thread (`layer`) reports through a callback that posts
 //! `PlatformEvent::Layer`; the loop handles those here, on its own thread, where the

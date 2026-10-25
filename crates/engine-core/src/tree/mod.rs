@@ -72,10 +72,10 @@ pub enum LayoutAnimError {
 
 pub struct Tree {
     nodes: Nodes,
-    /// 0.5.7 (#198): whether a node may be a window drag region. `false` for the tree
+    /// 0.5.8 (#198): whether a node may be a window drag region. `false` for the tree
     /// of a layer surface, which the compositor places: there is no window to move.
     window_drag_allowed: bool,
-    /// 0.5.7 (#205): whether `window_region="drag_margin"` may be set: only on a layer
+    /// 0.5.8 (#205): whether `window_region="drag_margin"` may be set: only on a layer
     /// surface's tree.
     margin_drag_allowed: bool,
     /// 0.5.4 (#125): counts the times taffy computed a layout, so a consumer
@@ -206,7 +206,7 @@ fn rect_contains(layout: &Layout, local_point: Point) -> bool {
 }
 
 impl Tree {
-    /// 0.5.7 (#198): the tree of a layer surface refuses `window_region="drag"`.
+    /// 0.5.8 (#198): the tree of a layer surface refuses `window_region="drag"`.
     pub fn set_window_drag_allowed(&mut self, allowed: bool) {
         self.window_drag_allowed = allowed;
     }

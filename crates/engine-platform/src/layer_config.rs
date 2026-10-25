@@ -1,4 +1,4 @@
-//! 0.5.7 (#198): a layer surface's settings and the rules the protocol puts on them.
+//! 0.5.8 (#198): a layer surface's settings and the rules the protocol puts on them.
 //!
 //! Pure data and validation, with no Wayland in it, so the rules are checked (and
 //! the Python errors raised) on every platform and without a compositor. The

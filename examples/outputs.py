@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Screens (0.5.7): list the outputs and make one bar per screen, following hot-plug.
+"""Screens (0.5.8): list the outputs and make one bar per screen, following hot-plug.
 
 `App.outputs()` reads the compositor's screens now, before `run()`; `app.on("output_added" ...)`
 follows them being plugged in and out. A `LayerWindow(output=out)` is placed on that screen. On a

@@ -1,6 +1,6 @@
 # Bars and panels
 
-A `LayerWindow` (0.5.7) is how an app makes a bar, a panel, a dock or an OSD: a window the
+A `LayerWindow` (0.5.8) is how an app makes a bar, a panel, a dock or an OSD: a window the
 compositor places at a screen edge, above or below ordinary windows, optionally reserving
 space so maximised windows stop short of it. It works only on a Wayland compositor that has
 the layer shell (KDE's KWin and the wlroots compositors do; GNOME's Mutter, X11, Windows

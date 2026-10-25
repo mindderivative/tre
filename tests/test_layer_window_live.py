@@ -1,4 +1,4 @@
-"""0.5.7 (#198): a `LayerWindow` on a real compositor.
+"""0.5.8 (#198): a `LayerWindow` on a real compositor.
 
 Needs a Wayland session whose compositor has the layer shell (KDE's KWin, wlroots');
 skips without one. A bar is mapped on the desktop for a few seconds per test and
@@ -28,6 +28,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 LIVE_INPUT = os.environ.get("TRE_LIVE_INPUT") == "1" and os.access("/dev/uinput", os.W_OK)
+# A desktop panel on the bottom edge (KDE's, say) sits below a bottom layer bar, which the compositor
+# stacks above the panel's reserved strip. Set this to the panel's height so the pointer clicks the bar.
+BOTTOM_INSET = int(os.environ.get("TRE_LIVE_BOTTOM_INSET", "0"))
 
 BAR = """
 import json, os, sys, threading, time
@@ -96,6 +99,45 @@ def stats():
 
 threading.Thread(target=control, daemon=True).start()
 threading.Thread(target=stats, daemon=True).start()
+print(json.dumps({"kind": "start"}), flush=True)
+app.run()
+print(json.dumps({"kind": "done"}), flush=True)
+"""
+
+SLIDE_OUT_CLOSE = """
+import json, os, threading, time
+from tre import App, LayerWindow
+
+app = App()
+bar = LayerWindow("tre-test-bar", anchor=("top", "left", "right"), size=(0, 32), exclusive_zone=32)
+bar.root.set(fill=(0x67, 0x50, 0xA4, 0xFF))
+state = {"leaving": False}
+start = {}
+
+def say(kind, **kw):
+    print(json.dumps({"kind": kind, "t": round(time.monotonic() - start.get("t", time.monotonic()), 3), **kw}), flush=True)
+
+def on_close_requested(e):
+    if state["leaving"]:
+        return
+    state["leaving"] = True
+    e.cancel()
+    say("close_requested")
+    bar.animate("margin_top", -32, duration_ms=400, on_complete=lambda: (say("slid_out"), bar.close()))
+
+bar.on("close_requested", on_close_requested)
+bar.on("closed", lambda e: say("closed", reason=e.reason))
+app.add_window(bar)
+handle = app.thread_handle()
+
+def control():
+    time.sleep(2.0)
+    start["t"] = time.monotonic()
+    handle.call_soon(bar.close)
+    time.sleep(4.0)
+    os._exit(0)
+
+threading.Thread(target=control, daemon=True).start()
 print(json.dumps({"kind": "start"}), flush=True)
 app.run()
 print(json.dumps({"kind": "done"}), flush=True)
@@ -254,6 +296,17 @@ def test_a_bar_is_sized_by_the_compositor_reports_its_output_and_closes_cleanly(
     assert (configure["width"], configure["height"]) == (width, 32)
     assert {"kind": "output", "name": name} in events
     assert {"kind": "closed", "reason": "app"} in events
+
+
+def test_a_cancelled_close_can_slide_the_bar_out_and_then_close_it(children):
+    """The shell's fade-out: `close_requested` is cancelled, the margin animates, `on_complete` closes."""
+    events = children(SLIDE_OUT_CLOSE).events(until="done")
+    kinds = [e["kind"] for e in events]
+    assert kinds == ["start", "close_requested", "slid_out", "closed", "done"], events
+    at = {e["kind"]: e["t"] for e in events if "t" in e}
+    assert at["slid_out"] - at["close_requested"] >= 0.3, "the surface stayed up for the animation"
+    assert at["closed"] - at["slid_out"] < 0.5
+    assert next(e for e in events if e["kind"] == "closed")["reason"] == "app"
 
 
 def test_an_output_that_does_not_exist_raises_from_run(children):
@@ -783,7 +836,7 @@ def _menu_session(children, bar_anchor, steps, seconds=16, extra=None, needs_inp
 
 
 def _open_menu(pointer, go, kinds, out_h, bar_anchor):
-    go(130, 16 if bar_anchor[0] == "top" else out_h - 16)
+    go(130, 16 if bar_anchor[0] == "top" else out_h - BOTTOM_INSET - 16)
     pointer.click()
     time.sleep(0.2)
     assert "opened" in kinds(), "clicking the bar's button opens the menu"
@@ -1216,7 +1269,7 @@ def test_a_bar_moved_off_the_screen_by_a_negative_margin_gets_no_pointer_events(
     assert not [e for e in events if e["kind"] in ("enter", "click")], events
 
 
-# ---- outputs (0.5.7, #202) ----
+# ---- outputs (0.5.8, #202) ----
 
 
 def test_outputs_agree_with_what_the_compositor_reports():

@@ -12,7 +12,7 @@ to draw its own; see [Window controls and state](#window-controls-and-state).
 window = Window(width=640, height=400, title="Inbox")
 ```
 
-A bar, panel or dock that the compositor places is a [`LayerWindow`](layer-window.md) (0.5.7), a
+A bar, panel or dock that the compositor places is a [`LayerWindow`](layer-window.md) (0.5.8), a
 `Window` with a different Wayland role.
 
 ## Nodes
@@ -232,7 +232,7 @@ and (0.5.1) `gpu_lost`, `gpu_error` and `gpu_stalled`; see
 frame. By default (`True`) each frame redraws only the parts of the window
 that changed, and a frame where nothing visible changed draws nothing.
 The pixels are the same either way; the switch is there for measuring and
-for ruling partial redraw out when chasing a rendering bug. (0.5.7) Partial
+for ruling partial redraw out when chasing a rendering bug. (0.5.8) Partial
 redraw needs a kept copy of the last frame, as big as the window (4 bytes a pixel:
 32 MiB at 3840 x 2160, 16 MiB measured for 2400 x 1400). A window opened with
 `partial_redraw=False` never makes it, which is the cheap choice for a large surface
@@ -442,7 +442,7 @@ print(f"{r['fps']:.0f} fps, {r['cpu_ms']['p95']:.2f} ms cpu at p95, "
       f"{r['redraws']['partial']} of {r['count']} frames partial")
 ```
 
-`memory` (0.5.7, #222) is what the window's GPU device holds, read from `wgpu`'s allocator
+`memory` (0.5.8, #222) is what the window's GPU device holds, read from `wgpu`'s allocator
 when you call `frame_stats()` (not every frame): `allocated_bytes` (buffers and textures in
 use), `reserved_bytes` (blocks taken from the driver, which is what the process holds),
 `blocks`, and `largest`, the five biggest allocations as `{"name", "bytes"}`. It is `None`

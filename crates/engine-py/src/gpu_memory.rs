@@ -1,4 +1,4 @@
-//! 0.5.7 (#219): how much memory `wgpu` may reserve per GPU device.
+//! 0.5.8 (#219): how much memory `wgpu` may reserve per GPU device.
 //!
 //! `wgpu`'s default (`MemoryHints::Performance`) makes device memory blocks of at least 128 MiB
 //! (host-visible ones 64 MiB) the moment a device exists, whatever is then put in them; tre makes

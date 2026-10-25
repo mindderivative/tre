@@ -1,11 +1,11 @@
 # LayerWindow: what shipped for Tesserae Shell (TRE-REQ-001)
 
-A hand-off for the Tesserae Shell side, written when issue #195 closed (2026-10-25) and
-**corrected the same day** after the VRAM research (#207): `PopupWindow` (#223) and small GPU memory
-blocks (#219) were added, and the overlay route for menus is no longer the recommendation. It says
-what is in tre now (`PopupWindow` and #219 are on their own branches until merged to `main`), how each acceptance criterion of the request stands, what differs
-from the request, and what was not tested. Everything here is **unreleased**: the
-last release is 0.5.7; the next version number is not chosen. The reference is
+A hand-off for the Tesserae Shell side, written when issue #195 closed (2026-10-25),
+**corrected the same day** after the VRAM research (#207) (`PopupWindow` (#223) and small GPU memory
+blocks (#219) were added, and the overlay route for menus is no longer the recommendation), and
+brought up to date for the release. It says what is in tre, how each acceptance criterion of the
+request stands, what differs from the request, and what was not tested. Everything here shipped in
+**0.5.8** (0.5.7 had none of it). The reference is
 [LayerWindow](../reference/layer-window.md) and [Outputs](../reference/outputs.md); the guides are
 [Bars and panels](../guide/bars-and-panels.md) and [Menus from a bar](../guide/menus-from-a-bar.md).
 
@@ -95,10 +95,10 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 | Bar on KWin; a maximised window does not overlap | Met, live on KWin 6.8.1 (the request names 6.7) and sway |
 | `set()` of zone or anchor in one commit, no wrong-size configure | One commit by construction; the absence of a wrong-size configure was not measured |
 | Bad `size` raises before any request | Met (headless) |
-| Unplug fires `closed` `"output_removed"`; the app continues | Met on sway with a real unplug; KWin not run |
+| Unplug fires `closed` `"output_removed"`; the app continues | Met on sway with a real unplug; KWin not run (it needs a second output to remove) |
 | `output=None` binds the same output every run | Met on KWin and sway |
-| Transparent bar over the desktop | Met on sway (pixels read back); KWin not run |
-| Paste into a focused text field | Met on sway, with no X server; KWin not run |
+| Transparent bar over the desktop | Met on sway (pixels read back); not run on KWin, because the test reads pixels with `grim`, a wlroots-only tool |
+| Paste into a focused text field | Met on sway, with no X server; not run on KWin, because the test types with `wtype`, a wlroots-only tool |
 | `outputs()` and hot-plug events | Met (KWin and sway for `outputs()`; added, updated and removed fire on sway) |
 | `input_region=[]` passes clicks through | Met on KWin and sway |
 | `"auto"` with a circle: inside hits, the box corner passes | Met on KWin and sway |
@@ -107,10 +107,10 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 | `animate("margin_top", ...)` runs in the engine; `advance(200)` finishes it headless | Met (headless; live slide on sway; the live check used a positive slide) |
 | Two layer windows animating read the same timestamp | Met (`turn_instant`; headless test) |
 | `animation_end` fires with frame callbacks stopped | Not tested; clock-driven by design, with an 8 ms alarm |
-| Fade-out close keeps the surface mapped until the animation ends | Built (`close_requested` can be cancelled), not tested as a sequence |
-| `reduced_motion` on a `LayerWindow` | Not checked |
+| Fade-out close keeps the surface mapped until the animation ends | Met on KWin and sway as a sequence: `close_requested` cancelled, the margin animates for its 400 ms, `on_complete` closes, and `closed` follows with reason `"app"`. That the surface stayed mapped is read from the order and timing of the events, not from a screenshot |
+| `reduced_motion` on a `LayerWindow` | Met headless: the read and the event are `Window`'s. A live portal change on a layer surface was not run |
 | `on_demand` gets keys, `"none"` never does | Met on KWin (real injected keys) |
-| `PopupWindow` opens, flips, dismisses | Met on sway (headless, with live tests): placement, flip above a bottom bar, outside-click dismissal, item click, submenu. **Not run on KWin**; Escape dismissal was not checked on a keyboard-less headless sway. The overlay route (dismissal on outside click and Escape on KWin and sway) remains as the alternative |
+| `PopupWindow` opens, flips, dismisses | Met on sway (headless, with live tests): placement, flip above a bottom bar, outside-click dismissal, item click, submenu. Also met on KWin 6.8.1 (placement, outside-click dismissal, item click, submenu, and the flip above a bottom bar once the test is told the Plasma panel's height, `TRE_LIVE_BOTTOM_INSET=40`). Escape dismissal of a popup was not checked on either. The overlay route (dismissal on outside click and Escape on KWin and sway) remains as the alternative |
 | Crisp text at 1.0 and 1.5 scale | The surface follows 1.5x (`scale_factor` reads 1.5 on sway); crispness was not inspected |
 | `supports("layer_shell")` false and `UnsupportedPlatform` without the protocol | Met by the availability rule in headless tests; GNOME's Mutter was not run |
 
@@ -142,7 +142,8 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 
 Touch (no hardware); non-AMD GPUs; labwc and other wlroots compositors besides sway; GNOME
 (there is no layer shell); Windows and macOS (layer surfaces are Linux-only); a real v4-only
-layer-shell compositor.
+layer-shell compositor; Orca (the screen reader) and a real input method (fcitx5, ibus); whether text
+is crisp at 1.5x scale; that a `set()` of zone and anchor never causes a wrong-size configure.
 
 ## Where each part is
 
@@ -155,10 +156,12 @@ layer-shell compositor.
 | `input_region`, hit testing and `corner_radius` | #204 | #211 |
 | Margin animation, `drag_margin` | #205 | #212 |
 | Menus from a bar (the overlay route) | #206 | #213 |
-| VRAM per window (research) | #207 | on branch `vram-research-207` |
-| Small GPU memory blocks | #219 | on branch `gpu-memory-hints-219` |
-| `PopupWindow` | #223 | on branch `popup-window-223` |
+| VRAM per window (research) | #207 | #224 |
+| Small GPU memory blocks | #219 | #225 |
+| `PopupWindow` | #223 | #226 |
 | KWin versions of the region, drag and menu tests | | #214 |
+| Allocator totals in `frame_stats()` | #222 | #228 |
+| No kept frame for a window that redraws in full | #221 | #229 |
 | `exclusive_edge` | #201 | #215 |
 | IME | #199 | #216 |
 | Screen readers | #200 | #217 |

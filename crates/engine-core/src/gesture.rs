@@ -36,10 +36,10 @@ pub enum GestureKind {
     Pan,
     /// Two fingers moving together or apart (and, with them, across).
     Pinch,
-    /// 0.5.7 (#132): two fingers turning about their midpoint, once past the
+    /// 0.5.8 (#132): two fingers turning about their midpoint, once past the
     /// rotation slop. Comes with the pinch the same fingers make.
     Rotate,
-    /// 0.5.7 (#132): a pan that lifted fast and far enough to be a flick in one
+    /// 0.5.8 (#132): a pan that lifted fast and far enough to be a flick in one
     /// direction. Comes just after the pan's own `Ended`.
     Swipe { direction: SwipeDirection },
 }
@@ -135,10 +135,10 @@ pub struct GestureConfig {
     /// double tap.
     pub double_tap_gap: Duration,
     pub double_tap_distance: f64,
-    /// 0.5.7 (#132): how far two fingers have to turn, in radians, before it is
+    /// 0.5.8 (#132): how far two fingers have to turn, in radians, before it is
     /// a rotation (about 7 degrees): less is the wobble of a pinch.
     pub rotate_slop: f64,
-    /// 0.5.7 (#132): a pan is a swipe if it lifts at least this fast, in pixels
+    /// 0.5.8 (#132): a pan is a swipe if it lifts at least this fast, in pixels
     /// a second, ...
     pub swipe_velocity: f64,
     /// ... and has travelled at least this far, in pixels.
@@ -229,7 +229,7 @@ enum State {
         start_distance: f64,
         last_scale: f64,
         began: bool,
-        /// 0.5.7 (#132): the line between the fingers last time, the turn so
+        /// 0.5.8 (#132): the line between the fingers last time, the turn so
         /// far, and whether it has passed the slop (a rotation has begun).
         last_angle: f64,
         rotation: f64,
@@ -272,7 +272,7 @@ impl GestureRecognizer {
         }
     }
 
-    /// 0.5.7 (#132): the distance, in layout pixels, a touch may wander and still
+    /// 0.5.8 (#132): the distance, in layout pixels, a touch may wander and still
     /// be a tap or a long press. Takes effect with the next touch.
     pub fn set_slop(&mut self, slop: f64) {
         self.config.slop = slop.max(0.0);
@@ -432,7 +432,7 @@ impl GestureRecognizer {
                         gesture.velocity = release_velocity(&samples, now);
                     }
                     let mut out = vec![gesture];
-                    // 0.5.7 (#132): a fast, long enough lift is also a swipe.
+                    // 0.5.8 (#132): a fast, long enough lift is also a swipe.
                     if ended
                         && gesture.velocity.hypot() >= self.config.swipe_velocity
                         && (position - origin).hypot() >= self.config.swipe_distance
@@ -554,7 +554,7 @@ impl GestureRecognizer {
                         } else {
                             1.0
                         };
-                        // 0.5.7 (#132): the turn of the line between the fingers.
+                        // 0.5.8 (#132): the turn of the line between the fingers.
                         let now_angle = angle(a.position, b.position);
                         let step = angle_step(last_angle, now_angle);
                         let rotation = rotation + step;
@@ -955,7 +955,7 @@ mod tests {
         assert!(r.is_active());
     }
 
-    // --- 0.5.7 (#132): rotation and swipe
+    // --- 0.5.8 (#132): rotation and swipe
 
     /// Two fingers `r` apart about (100, 100) at `radians` (0 = the second to the right).
     fn pair(radians: f64, r: f64) -> (Point, Point) {

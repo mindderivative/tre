@@ -1,4 +1,4 @@
-"""0.5.7 (#219): a window's GPU device reserves small memory blocks, not 192 MiB.
+"""0.5.8 (#219): a window's GPU device reserves small memory blocks, not 192 MiB.
 
 `wgpu`'s default made device memory blocks of at least 128 MiB the moment a window's device
 existed, so a 200 x 100 window held about 210 MiB of video memory (`docs/design/vram-per-window.md`).

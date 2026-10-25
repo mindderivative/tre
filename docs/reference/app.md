@@ -64,7 +64,7 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 
 ## `outputs`
 
-**`outputs() -> list[Output]`** (0.5.7) — the screens the compositor has, top to bottom and left
+**`outputs() -> list[Output]`** (0.5.8) — the screens the compositor has, top to bottom and left
 to right, read now, so it works before `run()` (a shell decides how many bars to make first). Each
 is an [`Output`](outputs.md). The list is empty where the platform cannot say: on anything but
 Wayland, and where the compositor does not report connector names.
@@ -76,7 +76,7 @@ for out in app.outputs():
 
 ## `on`, `off` and `simulate`
 
-**`on(event, handler)`**, **`off(event)`**, **`simulate(event, **fields)`** (0.5.7) — listeners for
+**`on(event, handler)`**, **`off(event)`**, **`simulate(event, **fields)`** (0.5.8) — listeners for
 changes in the set of screens: `output_added`, `output_removed` and `output_updated`. A handler
 takes the [`Output`](outputs.md) (or nothing). There is one handler per event and a second `on`
 replaces it. See [Outputs](outputs.md#events). `simulate` delivers an event as the compositor
@@ -88,7 +88,7 @@ Each window makes its own GPU device, and a device asks the driver's allocator f
 blocks. tre asks for small blocks (8 to 64 MiB, 4 to 32 MiB for host-visible ones), so a small
 window holds a few tens of MiB of video memory (31 MiB for a 200 x 100 window on the machine it
 was measured on). `wgpu`'s own default reserves 192 MiB the moment a device exists, whatever is
-then put in it, and that was tre's behaviour before 0.5.7's follow-up (#219): **set
+then put in it, and that was tre's behaviour before 0.5.8's follow-up (#219): **set
 `TRE_GPU_MEMORY=performance` in the environment before the app starts to get it back** (any other
 value keeps the small blocks). A large image or a big window still gets the memory it needs
 either way; the setting only changes how much is reserved in advance. See

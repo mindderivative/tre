@@ -1,4 +1,4 @@
-"""A private AT-SPI environment for live tests of what a screen reader would see (0.5.7, #200).
+"""A private AT-SPI environment for live tests of what a screen reader would see (0.5.8, #200).
 
 It touches nothing of the real desktop: two throwaway `dbus-daemon`s with no service
 directories (so nothing is activated on them), a small stand-in for `org.a11y.Bus` on the
