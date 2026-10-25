@@ -14,6 +14,16 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### Helper tools for the agent (2026-10-25)
+
+Instructions moved to `AGENTS.md` (`CLAUDE.md` is `@AGENTS.md`). New in `tools/`: `check_agent_docs.py`
+(keeps `CLAUDE.md` an import; run by `verify.sh`), `graphify_agents.py` (applies `graphify claude
+install` to `AGENTS.md` and the hooks, after a graphify upgrade), `board.py` (board status, and card
+moves with a guard on Done), `check_version.py` (the version agrees in `Cargo.toml`, `pyproject.toml`
+and the four `Cargo.lock` entries; `--pypi` checks the version is free), and `status.sh` (one-screen
+state). Tested against the real repo and board, and against broken fixtures; `board.py --comment`
+was not exercised, since it posts publicly.
+
 ### Project skills reviewed and revised (2026-10-25)
 
 The three skills added in `71adab8` (`pixel-test-triage`, `release-checklist`, `perf-profiling`)
