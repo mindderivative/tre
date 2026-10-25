@@ -36,9 +36,9 @@ thumb.set(role="slider", label="Volume", value=0.4, value_min=0.0,
 | `focusable` | `bool` — focusable by Tab, click, and `focus()`; a click on a descendant focuses the nearest focusable ancestor |
 | `tab_index` | `int` — positive values come first in Tab order, ascending; then `0` in tree order; negative leaves the node out of Tab order but focusable by click and `focus()` |
 | `cursor` | the pointer shape over the node, inherited by descendants: `"default"`, `"pointer"`, `"text"`, `"grab"`, `"grabbing"`, `"move"`, `"not_allowed"`, `"wait"`, `"progress"`, `"crosshair"`, `"help"`, `"col_resize"`, `"row_resize"`, `"ew_resize"`, `"ns_resize"`, `"nesw_resize"`, `"nwse_resize"`, `"copy"`, `"cell"`, `"context_menu"`, `"zoom_in"`, `"zoom_out"`, `"all_scroll"`, or `None` |
-| `hit_testable` | `bool` — whether the node can be the target of pointer events. A box is hit inside its rounded corners (`corner_radius`, `corner_radii`), not in the clipped-away corner (0.5.7; before, the whole rectangle was hit) |
+| `hit_testable` | `bool` — whether the node can be the target of pointer events. A box is hit inside its rounded corners (`corner_radius`, `corner_radii`), not in the clipped-away corner (0.5.8; before, the whole rectangle was hit) |
 | `shader` | a [`Shader`](shader.md) or `None` (0.5.1) — WGSL that paints the node, or transforms its content |
-| `window_region` | `"drag"`, `"none"`, `"drag_margin"`, or `None` (0.5.0) — `"drag"` makes the node a title bar that moves the window; `"none"` keeps a node inside one from dragging; (0.5.7) `"drag_margin"`, on a `LayerWindow`'s nodes only, moves the surface by its margins ([Dragging a surface by its margin](layer-window.md#dragging-a-surface-by-its-margin)). See [Title bar and borders](window.md#title-bar-and-borders) |
+| `window_region` | `"drag"`, `"none"`, `"drag_margin"`, or `None` (0.5.0) — `"drag"` makes the node a title bar that moves the window; `"none"` keeps a node inside one from dragging; (0.5.8) `"drag_margin"`, on a `LayerWindow`'s nodes only, moves the surface by its margins ([Dragging a surface by its margin](layer-window.md#dragging-a-surface-by-its-margin)). See [Title bar and borders](window.md#title-bar-and-borders) |
 
 The actions assistive technology is offered follow from role and state:
 focusable nodes offer focus, button-like roles offer activation, a slider

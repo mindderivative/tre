@@ -1,4 +1,4 @@
-"""0.5.7 (#198): `LayerWindow`, a window whose Wayland role is a layer surface.
+"""0.5.8 (#198): `LayerWindow`, a window whose Wayland role is a layer surface.
 
 These need no compositor: a `LayerWindow` is built and driven headless, like a `Window`
 (`simulate`, `advance`, `snapshot`), with no display in the environment. What a

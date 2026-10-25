@@ -175,7 +175,7 @@ listener, or one holding the pointer capture, met before the drag node, is an or
 
 ## Accessibility
 
-A layer surface is published to screen readers like a window (0.5.7). Linux has no toolkit-wide
+A layer surface is published to screen readers like a window (0.5.8). Linux has no toolkit-wide
 accessibility layer to hook, so tre gives each surface an AT-SPI adapter of its own (AccessKit's
 `accesskit_unix`, the backend a window's adapter wraps): the surface appears as one more window of
 the application, its nodes carry the `role`, `label` and state you set on them, the tree follows the
@@ -192,7 +192,7 @@ A menu or flyout the compositor places next to a rectangle of its parent: a wind
 role is `xdg_popup`, parented to a `LayerWindow` (a tray menu off a bar) or to another
 `PopupWindow` (a submenu). It is menu-sized, so it costs a bar's worth of memory, not an output's,
 and the compositor, which knows the screen edges and other panels' reserved areas, flips and slides
-it to stay on screen (0.5.7, #223).
+it to stay on screen (0.5.8, #223).
 
 ```python
 menu = PopupWindow(bar, size=(180, 120), anchor_rect=(100, 0, 60, 32),

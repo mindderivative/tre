@@ -1,4 +1,4 @@
-//! 0.5.7 (#223): `PopupWindow`, a window whose Wayland role is `xdg_popup`, parented to a
+//! 0.5.8 (#223): `PopupWindow`, a window whose Wayland role is `xdg_popup`, parented to a
 //! `LayerWindow` (or to another popup): a menu or flyout that hangs off a thin bar.
 //!
 //! It is a layer-thread surface like a `LayerWindow` (so its GPU surface, scale, input, frames,

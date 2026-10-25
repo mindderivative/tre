@@ -31,8 +31,8 @@ listing the valid ones.
 | `long_press` | A touch held in place for half a second (0.5.4) | yes |
 | `pan` | One finger dragging past a small slop; `phase` is `"began"`, `"changed"`, `"ended"` or `"cancelled"` (0.5.4) | yes |
 | `pinch` | Two fingers moving together or apart, or a trackpad pinch; carries `scale` and `scale_delta` (0.5.4) | yes |
-| `rotate` | Two fingers turning about their midpoint, once past about 7 degrees; carries `rotation` and `rotation_delta` in radians (0.5.7) | yes |
-| `swipe` | A pan that lifted fast (600 px/s) and far (40 px) enough: `direction` is `"left"`, `"right"`, `"up"` or `"down"`, after the pan's own `ended` (0.5.7) | yes |
+| `rotate` | Two fingers turning about their midpoint, once past about 7 degrees; carries `rotation` and `rotation_delta` in radians (0.5.8) | yes |
+| `swipe` | A pan that lifted fast (600 px/s) and far (40 px) enough: `direction` is `"left"`, `"right"`, `"up"` or `"down"`, after the pan's own `ended` (0.5.8) | yes |
 | `key_down`, `key_up` | A key is pressed or released while the node, or a descendant, has focus (the root gets keys when nothing is focused) | yes |
 | `input` | Committed text arrives for the focused text field | yes |
 | `focus`, `unfocus` | A node gains or loses keyboard focus | yes |
@@ -121,7 +121,7 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `high_contrast` | The OS's increased-contrast preference changed (0.5.4) | `high_contrast` |
 | `scale_factor` | The window moved to a display with a different scale factor | `scale_factor` |
 | `close_requested` | The user asked to close the window; `event.cancel()` keeps it open | — |
-| `closed` | The window closed — by the user or by reaching `max_frames`. A [`LayerWindow`](layer-window.md) also says why (0.5.7) | `reason` on a `LayerWindow`: `"compositor"`, `"output_removed"` or `"app"` |
+| `closed` | The window closed — by the user or by reaching `max_frames`. A [`LayerWindow`](layer-window.md) also says why (0.5.8) | `reason` on a `LayerWindow`: `"compositor"`, `"output_removed"` or `"app"` |
 | `dock_target` | During a docking drag, the pointer moved into another dock zone, or out of every zone | `side` |
 | `file_hover` | Files are being dragged from the OS over the window (0.5.4); `paths` | — |
 | `file_hover_cancel` | The file drag left the window or was abandoned (0.5.4) | — |
@@ -130,9 +130,9 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `maximized` | The window was maximized or restored (0.5.0) | `maximized` |
 | `active` | The window gained or lost the OS's focus (0.5.0) | `active` |
 | `titlebar_inset` | The area the OS's window controls take over the content changed — macOS's traffic lights on an undecorated window, 0 in fullscreen (0.5.0) | `titlebar_inset` |
-| `configure` | A [`LayerWindow`](layer-window.md)'s surface was given a size by the compositor, first and on every change (0.5.7); `resize` fires too | `width`, `height` (logical) |
-| `output_changed` | A `LayerWindow`'s surface entered an output (0.5.7) | `output` (its connector name) |
-| `warning` | A `LayerWindow` setting the protocol accepts but ignores, such as an `exclusive_zone` its `anchor` cannot reserve (0.5.7) | `key` (the setting), `message` |
+| `configure` | A [`LayerWindow`](layer-window.md)'s surface was given a size by the compositor, first and on every change (0.5.8); `resize` fires too | `width`, `height` (logical) |
+| `output_changed` | A `LayerWindow`'s surface entered an output (0.5.8) | `output` (its connector name) |
+| `warning` | A `LayerWindow` setting the protocol accepts but ignores, such as an `exclusive_zone` its `anchor` cannot reserve (0.5.8) | `key` (the setting), `message` |
 | `gpu_lost` | The GPU was lost — a driver fault, or a hang the driver's own timeout caught — and the run is ending (0.5.1) | `reason` (`"unknown"` or `"destroyed"`), `message` |
 | `gpu_error` | The GPU reported an error; the draw that caused it was skipped. Once per distinct message (0.5.1) | `message` |
 | `gpu_stalled` | A submitted frame hasn't completed after `gpu_watchdog` seconds (0.5.1) | `seconds` |

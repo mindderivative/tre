@@ -4,13 +4,14 @@
     python3 -I tools/restamp_version.py --released v0.5.7 --old 0.5.7 --new 0.5.8          # dry run
     python3 -I tools/restamp_version.py --released v0.5.7 --old 0.5.7 --new 0.5.8 --apply  # write
 
-New code is stamped with the version it is expected to ship in ("0.5.7 (#198): ..."). When that
+New code is stamped with the version it is expected to ship in ("0.5.8 (#198): ..."). When that
 version has already been released and the work lands after the tag, every such stamp is one version
 behind. Only lines added since the tag are looked at, and a line is changed only when it names an
 issue (#N) that no stamp at the tag names: a stamp for an issue that really shipped in the release
 (#168, #176...) is left alone. A line that carries the old version and no issue number is listed for
-a person to decide, never changed. Generated pages (docs/api, site/), LOG.md and graphify-out/ are
-skipped; LOG.md keeps its history, and docs/api is regenerated.
+a person to decide, never changed, unless --also-unnumbered names its path (then it is changed when
+the version appears once on the line). Generated pages (docs/api, site/), LOG.md and graphify-out/ are
+skipped; LOG.md and PLAN.md keep their history, and docs/api is regenerated.
 """
 import argparse
 import re
@@ -20,7 +21,7 @@ from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SKIP = ("docs/api/", "site/", "graphify-out/", "target/", "LOG.md", ".git/")
+SKIP = ("docs/api/", "site/", "graphify-out/", "target/", "LOG.md", "PLAN.md", ".git/")
 
 
 def git(*args):
@@ -39,6 +40,8 @@ def main():
     ap.add_argument("--released", required=True, help="tag of the release the stamps wrongly name")
     ap.add_argument("--old", required=True)
     ap.add_argument("--new", required=True)
+    ap.add_argument("--also-unnumbered", nargs="*", default=[], metavar="PATH",
+                    help="path prefixes where a line with no issue number is re-stamped too (docs, the stub)")
     ap.add_argument("--apply", action="store_true")
     args = ap.parse_args()
     old = re.compile(re.escape(args.old) + r"(?![\d.]*\d)")
@@ -70,6 +73,11 @@ def main():
                 changes[path].append(number)
             elif named:
                 manual.append((path, number, text, "names an issue that shipped in " + args.released))
+            elif path.startswith(tuple(args.also_unnumbered)):
+                if len(old.findall(text)) > 1:
+                    manual.append((path, number, text, "carries the version twice: decide by hand"))
+                else:
+                    changes[path].append(number)
             else:
                 manual.append((path, number, text, "names no issue"))
 

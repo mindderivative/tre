@@ -1,4 +1,4 @@
-//! 0.5.7 (#200): a layer surface's accessibility tree, through `accesskit_unix`.
+//! 0.5.8 (#200): a layer surface's accessibility tree, through `accesskit_unix`.
 //!
 //! `accesskit_winit` needs a `winit` window, and a layer surface has none, so a bar was
 //! invisible to a screen reader. The Linux backend underneath, `accesskit_unix`, does not need

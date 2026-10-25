@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A menu that hangs off a thin bar (0.5.7, #206): the overlay-surface pattern.
+"""A menu that hangs off a thin bar (0.5.8, #206): the overlay-surface pattern.
 
 A bar is 32 px tall, and a `show_layer` menu draws inside its window's bounds, so a menu
 for a bar's button needs a surface of its own. The pattern: when the button is clicked, map

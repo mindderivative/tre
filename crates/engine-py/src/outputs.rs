@@ -1,4 +1,4 @@
-//! 0.5.7 (#202): `Output`, a screen the compositor has, and the `App` side of knowing
+//! 0.5.8 (#202): `Output`, a screen the compositor has, and the `App` side of knowing
 //! about them (`App.outputs()`, `App.on("output_added" ...)`, `App.simulate`).
 
 use std::hash::{Hash, Hasher};

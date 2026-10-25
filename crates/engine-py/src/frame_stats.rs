@@ -126,13 +126,13 @@ pub(crate) struct FrameStats {
     /// 0.5.4 (#135): a trace being written, and why one stopped on its own.
     trace: Option<crate::trace::Trace>,
     trace_error: Option<String>,
-    /// 0.5.7 (#222): the window's device, so a read can ask its allocator how much
+    /// 0.5.8 (#222): the window's device, so a read can ask its allocator how much
     /// video memory is in use. Kept across a reset; the report is made on the read,
     /// not per frame.
     device: Option<wgpu::Device>,
 }
 
-/// 0.5.7 (#222): what a window's device holds, from `wgpu`'s allocator report.
+/// 0.5.8 (#222): what a window's device holds, from `wgpu`'s allocator report.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GpuMemory {
     /// Bytes handed out to buffers and textures.

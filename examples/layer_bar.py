@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A bar (0.5.7): a `LayerWindow` is a window the compositor places, not the user.
+"""A bar (0.5.8): a `LayerWindow` is a window the compositor places, not the user.
 
 It anchors to the top edge, stretches across it, and reserves 32 pixels, so maximised
 windows stop below it. A swatch, a label and a clock: the clock is `bar.every(1000, ...)`

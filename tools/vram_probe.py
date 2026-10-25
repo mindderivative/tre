@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""How much GPU memory does a tre window hold? (0.5.7, #207)
+"""How much GPU memory does a tre window hold? (0.5.8, #207)
 
     python tools/vram_probe.py                 # a window, two windows, a bar, a full-screen overlay
     python tools/vram_probe.py --output DP-1   # the output the layer windows use (default: the first)

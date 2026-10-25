@@ -507,7 +507,7 @@ class Window:
         `partial_redraw`: `True` (the default) redraws only what changed
         each frame, `False` redraws the whole window every frame. A window
         whose surface can't be copied into always redraws in full, with a
-        warning logged, whatever this says. (0.5.7) `False` also keeps no
+        warning logged, whatever this says. (0.5.8) `False` also keeps no
         copy of the last frame, which is a window's worth of video memory
         (about 16 MiB for a 2400 x 1400 window, 32 MiB at 4K): set it before
         `App.run()` for a window that redraws all of itself anyway. (0.4.1) `show_damage`: `True`
@@ -516,7 +516,7 @@ class Window:
         the kept frame; off by default. (0.5.4) `profile_nodes`: `True` times each
         node the paint walk reaches, so `frame_stats()['profile']` can say where
         the scene-building time went; off by default (it costs two clock reads a
-        node). (0.5.7) `touch_slop`: how far, in layout pixels, a finger may wander and still be
+        node). (0.5.8) `touch_slop`: how far, in layout pixels, a finger may wander and still be
         a tap or a long press (default 10); `touch_target_slop`: how far from a node that
         listens for touches a touch still counts as on it (default 0, off). (0.5.4)
         `glyph_cache`: `True` draws text from a cache of rendered glyph
@@ -707,7 +707,7 @@ class Window:
         the GPU), a frame's `gpu_ms` (measured on one frame in sixteen and read back a few
         frames later, so `None` for the rest) and `recent["gpu_ms"]` (their mean), and `profile`: with
         `window.set(profile_nodes=True)`, the last frame's scene-building time by
-        node kind and its slowest nodes (else `None`). (0.5.7) `memory`: the device's
+        node kind and its slowest nodes (else `None`). (0.5.8) `memory`: the device's
         video memory, from the allocator when this is called -- `allocated_bytes`,
         `reserved_bytes`, `blocks` and `largest` (the five biggest allocations as
         `{"name", "bytes"}`); `None` before the window opens or where the backend cannot say."""
@@ -824,7 +824,7 @@ class Window:
 
 @final
 class LayerWindow(Window):
-    """(0.5.7) A window whose Wayland role is a layer surface: a bar, a panel, a dock or an
+    """(0.5.8) A window whose Wayland role is a layer surface: a bar, a panel, a dock or an
     OSD that the compositor places (an edge, a stacking layer, a size, margins) and that
     can reserve screen space. It is a `Window` in every way that makes sense (`root`,
     `create`, `show_layer`, `after`, `every`, `on`, `simulate`, `advance`, `snapshot`,
@@ -920,7 +920,7 @@ class LayerWindow(Window):
 
 @final
 class PopupWindow(Window):
-    """(0.5.7) A menu or flyout the compositor places next to a rectangle of its parent: a window whose
+    """(0.5.8) A menu or flyout the compositor places next to a rectangle of its parent: a window whose
     Wayland role is `xdg_popup`, parented to a `LayerWindow` (a tray menu off a 32 px bar) or to another
     `PopupWindow` (a submenu). It is menu-sized, so it costs about a bar's worth of memory, not a whole
     output's, and the compositor flips and slides it to stay on screen.
@@ -981,7 +981,7 @@ class PopupWindow(Window):
 
 @final
 class Output:
-    """(0.5.7) A screen the compositor has. Read-only; two `Output`s are equal when their
+    """(0.5.8) A screen the compositor has. Read-only; two `Output`s are equal when their
     connector names are. Get them from `App.outputs()` or an output event's handler;
     `LayerWindow(output=...)` takes one."""
 
@@ -1063,22 +1063,22 @@ class App:
         """
         ...
     def outputs(self) -> list[Output]:
-        """(0.5.7) The screens the compositor has, top to bottom and left to right, read
+        """(0.5.8) The screens the compositor has, top to bottom and left to right, read
         now (so it works before `run()`). Empty where the platform cannot say (not
         Wayland)."""
         ...
     def on(self, event: Literal["output_added", "output_removed", "output_updated"], handler: Callable[..., object]) -> None:
-        """(0.5.7) Registers `handler(output)` for a screen being plugged in, removed, or
+        """(0.5.8) Registers `handler(output)` for a screen being plugged in, removed, or
         moved, resized, rescaled or rotated. One handler per event; a second replaces
         the first. Outputs that exist when the app starts are not "added": read them
         with `outputs()`. Needs the compositor's layer shell (the events come from the
         same connection a `LayerWindow` uses)."""
         ...
     def off(self, event: Literal["output_added", "output_removed", "output_updated"]) -> None:
-        """(0.5.7) Removes the handler for an output event."""
+        """(0.5.8) Removes the handler for an output event."""
         ...
     def simulate(self, event: Literal["output_added", "output_removed", "output_updated"], **fields: Any) -> None:
-        """(0.5.7) Delivers an output event as the compositor would, for tests with no
+        """(0.5.8) Delivers an output event as the compositor would, for tests with no
         display: `app.simulate("output_added", name="DP-2", width=2560, height=1440)`.
         Fields: `name` (required), `description`, `x`, `y`, `width`, `height`,
         `scale_factor`, `transform`."""

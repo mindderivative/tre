@@ -1,4 +1,4 @@
-//! 0.5.7 (#202): the screens (outputs) the compositor has, as plain data.
+//! 0.5.8 (#202): the screens (outputs) the compositor has, as plain data.
 //!
 //! Positions and sizes are *logical* pixels in the desktop's layout (what a layer surface
 //! and a pointer position use); `scale_factor` is the ratio of physical to logical pixels

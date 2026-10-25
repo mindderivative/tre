@@ -1,4 +1,4 @@
-//! 0.5.7 (#204): the input region of a surface -- the places where a click lands on
+//! 0.5.8 (#204): the input region of a surface -- the places where a click lands on
 //! something drawn. A layer surface hands this to the compositor so a click anywhere else
 //! goes to the window below.
 //!

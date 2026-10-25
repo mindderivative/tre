@@ -204,7 +204,7 @@ pub(crate) struct WindowHandles {
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
-    /// 0.5.7 (#198): the layer surface's settings and state, for a `LayerWindow`; `None`
+    /// 0.5.8 (#198): the layer surface's settings and state, for a `LayerWindow`; `None`
     /// for an ordinary window.
     pub(crate) layer: Option<Rc<crate::layer_window::LayerState>>,
 }

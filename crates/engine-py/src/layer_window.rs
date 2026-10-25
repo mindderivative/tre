@@ -1,4 +1,4 @@
-//! 0.5.7 (#198): `LayerWindow`, a `Window` whose Wayland role is a layer surface.
+//! 0.5.8 (#198): `LayerWindow`, a `Window` whose Wayland role is a layer surface.
 //!
 //! A bar, panel, dock or OSD: the compositor places it (an edge, a stacking layer, a
 //! size, margins) and it can reserve screen space. It is a `Window` in every way that

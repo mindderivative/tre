@@ -1,4 +1,4 @@
-"""0.5.7 (#133): OS file drag and drop on X11, end to end: a real window, a real XDND
+"""0.5.8 (#133): OS file drag and drop on X11, end to end: a real window, a real XDND
 drag source (`tools/xdnd_source.py`, a separate X client), and the window's events.
 
 Needs an X display (XWayland counts) and libX11; skips without. The Wayland path is not

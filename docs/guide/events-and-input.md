@@ -67,7 +67,7 @@ A touch screen (0.5.4) delivers each finger as `touch_start`, `touch_move`,
 `touch_end` and `touch_cancel`, with `event.pointer_id` telling fingers apart.
 A finger's events all go to the node it landed on, wherever it moves, so a drag
 that leaves a node keeps reporting to it. The engine also recognizes four
-gestures from the fingers and delivers them as events (rotate and swipe are new in 0.5.7):
+gestures from the fingers and delivers them as events (rotate and swipe are new in 0.5.8):
 
 | Event | When | Fields |
 | --- | --- | --- |
@@ -107,7 +107,7 @@ A rotation comes with the pinch the same fingers make (a pinch's wobble under ab
 7 degrees is not one). A swipe is the pan plus its lift: a `pan` listener still gets
 every step, and `swipe` says it was a flick and which way.
 
-Two settings (0.5.7) make touch easier on imprecise fingers, both in layout pixels,
+Two settings (0.5.8) make touch easier on imprecise fingers, both in layout pixels,
 which are device-independent (a scale factor of 2 does not halve them):
 
 ```python
@@ -153,7 +153,7 @@ is yours.
 Limits: the OS gives a file drag no position of its own while it is over the window,
 so the node is the one under the pointer's last known position, which on some
 platforms is where it was when the drag entered; for a full-window drop target,
-listen on the window. On X11 this was measured (0.5.7): the pointer does not move during a drag, so a drop whose pointer never entered the window reaches the window's listener and no node's. File drag and drop works on Windows, macOS and X11. It does not
+listen on the window. On X11 this was measured (0.5.8): the pointer does not move during a drag, so a drop whose pointer never entered the window reaches the window's listener and no node's. File drag and drop works on Windows, macOS and X11. It does not
 on Wayland (`winit` 0.30 doesn't implement it there), so a Wayland session never
 fires these events; `simulate` does.
 

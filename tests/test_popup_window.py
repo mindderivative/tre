@@ -1,4 +1,4 @@
-"""0.5.7 (#223): `PopupWindow`, a menu the compositor places beside a rectangle of its parent.
+"""0.5.8 (#223): `PopupWindow`, a menu the compositor places beside a rectangle of its parent.
 
 These need no compositor: a popup is built and driven headless (its parent is a headless
 `LayerWindow`). What a compositor does with one (placement, flipping, the grab, dismissal) is in

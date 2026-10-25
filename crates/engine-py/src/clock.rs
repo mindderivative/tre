@@ -42,7 +42,7 @@ pub(crate) fn now(tree: &SharedTree) -> Instant {
 
 /// The time a frame pass ticks animations to: `tree`'s pinned instant after `advance`,
 /// otherwise the instant the loop's turn began, so every window's pass in one turn reads
-/// the same time (0.5.7, #205). Off the loop it is the real clock.
+/// the same time (0.5.8, #205). Off the loop it is the real clock.
 pub(crate) fn frame_now(tree: &SharedTree) -> Instant {
     PINNED
         .with(|pinned| {
@@ -77,7 +77,7 @@ pub(crate) fn unpin(tree: &SharedTree) {
 mod tests {
     use super::*;
 
-    /// 0.5.7 (#205): two windows' frame passes in one loop turn read one instant, and a
+    /// 0.5.8 (#205): two windows' frame passes in one loop turn read one instant, and a
     /// window whose clock was pinned by `advance` keeps its own.
     #[test]
     fn frame_now_is_one_instant_per_turn_and_a_pinned_tree_keeps_its_own() {

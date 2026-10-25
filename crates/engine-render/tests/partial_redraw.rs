@@ -745,7 +745,7 @@ fn the_damage_overlay_tints_the_image_but_never_the_kept_frame() {
     );
 }
 
-/// 0.5.7 (#221): a window that redraws in full gives the kept frame back, and one
+/// 0.5.8 (#221): a window that redraws in full gives the kept frame back, and one
 /// that turns partial redraw on again makes it anew and draws that frame in full.
 #[test]
 fn the_kept_frame_can_be_given_back_and_made_again() {

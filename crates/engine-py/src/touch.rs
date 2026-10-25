@@ -37,10 +37,10 @@ pub(crate) struct TouchRouter {
     pinch_target: Option<NodeId>,
     /// A trackpad pinch's scale so far.
     trackpad_scale: f64,
-    /// 0.5.7 (#132): how far from a node, in layout pixels, a touch still
+    /// 0.5.8 (#132): how far from a node, in layout pixels, a touch still
     /// counts as on it, for nodes that listen for touches (0 = exactly on).
     target_slop: f64,
-    /// 0.5.7 (#132): fingers whose touch was given to a nearby node, and that node.
+    /// 0.5.8 (#132): fingers whose touch was given to a nearby node, and that node.
     snapped: HashMap<u64, NodeId>,
     /// The pointer events the primary finger stood in for, for the live loop
     /// to replay into text-input handling (which needs the text renderer).
@@ -73,7 +73,7 @@ impl Default for TouchRouter {
 }
 
 impl TouchRouter {
-    /// 0.5.7 (#132): how far a touch may wander and still be a tap (layout pixels).
+    /// 0.5.8 (#132): how far a touch may wander and still be a tap (layout pixels).
     pub(crate) fn set_slop(&mut self, slop: f64) {
         self.recognizer.set_slop(slop);
     }
@@ -145,7 +145,7 @@ fn node_box(tree: &engine_core::Tree, id: NodeId) -> (f64, f64, f64, f64) {
     (x, y, x + f64::from(size.width), y + f64::from(size.height))
 }
 
-/// 0.5.7 (#132): the node a touch at `at` is meant for. The one under it, when it
+/// 0.5.8 (#132): the node a touch at `at` is meant for. The one under it, when it
 /// or an ancestor listens for touches (a click, tap, press, long press, pan,
 /// swipe, pinch or rotate); failing that, the nearest listening node whose box is
 /// within `slop` layout pixels; failing that, whatever is under it. The second
@@ -527,7 +527,7 @@ fn deliver_gestures(
                     }
                 }
             }
-            // 0.5.7 (#132): a swipe goes where the pan went; a rotation where the
+            // 0.5.8 (#132): a swipe goes where the pan went; a rotation where the
             // pinch it comes with went.
             GestureKind::Swipe { direction } => {
                 let target = io.window.touch.borrow().pan_target;

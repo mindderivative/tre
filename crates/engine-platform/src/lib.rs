@@ -98,7 +98,7 @@ pub mod outputs;
 pub use layer_loop::window_id as layer_window_id;
 pub mod titlebar;
 
-/// 0.5.7 (#198): what a host hands the loop to run layer surfaces; only Linux has them.
+/// 0.5.8 (#198): what a host hands the loop to run layer surfaces; only Linux has them.
 #[cfg(target_os = "linux")]
 pub use layer::LayerHooks;
 #[cfg(not(target_os = "linux"))]
@@ -468,16 +468,16 @@ enum PlatformEvent {
     /// 0.5.0 M2: report window `id`'s current size as a resize --
     /// `EventLoopWaker::report_size`.
     ReportSize(WindowId),
-    /// 0.5.7 (#198): open a layer surface (`WindowOpener::open_layer`).
+    /// 0.5.8 (#198): open a layer surface (`WindowOpener::open_layer`).
     #[cfg(target_os = "linux")]
     OpenLayer(layer::LayerRequest),
-    /// 0.5.7 (#198): something the layer thread has to say.
+    /// 0.5.8 (#198): something the layer thread has to say.
     #[cfg(target_os = "linux")]
     Layer(layer::LayerEvent),
-    /// 0.5.7 (#200): a screen reader connected to, or acted on, a layer surface.
+    /// 0.5.8 (#200): a screen reader connected to, or acted on, a layer surface.
     #[cfg(target_os = "linux")]
     LayerAccess(WindowId, layer_access::LayerAccessEvent),
-    /// 0.5.7 (#202): start reporting output changes (`EventLoopWaker::watch_outputs`).
+    /// 0.5.8 (#202): start reporting output changes (`EventLoopWaker::watch_outputs`).
     #[cfg(target_os = "linux")]
     WatchOutputs,
 }
@@ -503,7 +503,7 @@ impl WindowOpener {
             .send_event(PlatformEvent::OpenWindow(request, false));
     }
 
-    /// 0.5.7 (#198): queues a layer surface to open as the loop starts.
+    /// 0.5.8 (#198): queues a layer surface to open as the loop starts.
     #[cfg(target_os = "linux")]
     pub fn open_layer(&self, request: layer::LayerRequest) {
         let _ = self.proxy.send_event(PlatformEvent::OpenLayer(request));
@@ -551,14 +551,14 @@ impl EventLoopWaker {
             .send_event(PlatformEvent::OpenWindow(request, true));
     }
 
-    /// 0.5.7 (#198): asks the loop to open a layer surface while it runs, or before
+    /// 0.5.8 (#198): asks the loop to open a layer surface while it runs, or before
     /// (`WindowOpener`); the result reaches the `LayerHooks`.
     #[cfg(target_os = "linux")]
     pub fn open_layer(&self, request: layer::LayerRequest) {
         let _ = self.proxy.send_event(PlatformEvent::OpenLayer(request));
     }
 
-    /// 0.5.7 (#202): asks the loop to start reporting output changes to the
+    /// 0.5.8 (#202): asks the loop to start reporting output changes to the
     /// `LayerHooks`, if it is not already.
     #[cfg(target_os = "linux")]
     pub fn watch_outputs(&self) {
@@ -878,7 +878,7 @@ struct MultiWindowApp<C, F, A, N, X, L> {
     idle: Option<IdleHooks>,
     /// Whether `idle.release` has been called with no `reacquire` since.
     released: bool,
-    /// 0.5.7 (#198): the host's callbacks for layer surfaces, and the surfaces
+    /// 0.5.8 (#198): the host's callbacks for layer surfaces, and the surfaces
     /// open now, keyed by the id minted for each (see `layer_loop`).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     layer_hooks: Option<LayerHooks>,
@@ -929,7 +929,7 @@ thread_local! {
     static TURN: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
 }
 
-/// 0.5.7 (#205): the instant the loop's current turn began, or the real clock off the loop
+/// 0.5.8 (#205): the instant the loop's current turn began, or the real clock off the loop
 /// (headless). Read by a frame pass so two windows' animations in one turn share a time.
 pub fn turn_instant() -> std::time::Instant {
     TURN.with(std::cell::Cell::get)

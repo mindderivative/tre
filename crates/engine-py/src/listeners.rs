@@ -120,7 +120,7 @@ pub(crate) enum EventType {
     LongPress,
     Pan,
     Pinch,
-    /// 0.5.7 (#132): two fingers turning, and a fast flick in one direction.
+    /// 0.5.8 (#132): two fingers turning, and a fast flick in one direction.
     Rotate,
     Swipe,
     /// 0.5.4 (#114): files dragged over, away from, or dropped on the node.
@@ -304,13 +304,13 @@ pub(crate) enum WindowEventType {
     HighContrast,
     /// 0.5.4 (#116): a frame was drawn and presented; `stats` has its costs.
     Frame,
-    /// 0.5.7 (#198), layer windows: the compositor assigned a size.
+    /// 0.5.8 (#198), layer windows: the compositor assigned a size.
     Configure,
-    /// 0.5.7 (#198): the surface entered another output.
+    /// 0.5.8 (#198): the surface entered another output.
     OutputChanged,
-    /// 0.5.7 (#198): a setting the protocol accepts but ignores.
+    /// 0.5.8 (#198): a setting the protocol accepts but ignores.
     Warning,
-    /// 0.5.7 (#205): a margin drag ended; `margin` is the final `(top, right, bottom, left)`.
+    /// 0.5.8 (#205): a margin drag ended; `margin` is the final `(top, right, bottom, left)`.
     Moved,
 }
 

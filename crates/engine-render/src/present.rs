@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn every_restore_reconfigures_once_and_a_sweep_that_resumes_starts_a_new_cycle() {
-        // 0.5.7 (#158): the restore is one `settle`, so one swapchain
+        // 0.5.8 (#158): the restore is one `settle`, so one swapchain
         // reconfigure; a resize arriving after it starts a fresh cycle and ends
         // with exactly one more. The loop never flips back and forth.
         use std::time::{Duration, Instant};

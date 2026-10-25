@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A scripted X11 drag source: drags files onto a window the way a file manager does (0.5.7, #133).
+"""A scripted X11 drag source: drags files onto a window the way a file manager does (0.5.8, #133).
 
 It speaks XDND (version 5) through libX11 with ctypes, so it needs only an X server
 (XWayland counts) and no toolkit. It is how tre's file drag and drop is exercised on

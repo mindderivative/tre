@@ -1,6 +1,6 @@
 # `Output`
 
-A screen the compositor has (0.5.7). A shell makes one bar per screen, a launcher opens on the
+A screen the compositor has (0.5.8). A shell makes one bar per screen, a launcher opens on the
 screen the pointer is on, an app remembers which screen a window was on: all start from the list
 of outputs and from being told when it changes.
 

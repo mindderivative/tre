@@ -1,4 +1,4 @@
-"""0.5.7 (#198): a `LayerWindow` on a real compositor.
+"""0.5.8 (#198): a `LayerWindow` on a real compositor.
 
 Needs a Wayland session whose compositor has the layer shell (KDE's KWin, wlroots');
 skips without one. A bar is mapped on the desktop for a few seconds per test and
@@ -1269,7 +1269,7 @@ def test_a_bar_moved_off_the_screen_by_a_negative_margin_gets_no_pointer_events(
     assert not [e for e in events if e["kind"] in ("enter", "click")], events
 
 
-# ---- outputs (0.5.7, #202) ----
+# ---- outputs (0.5.8, #202) ----
 
 
 def test_outputs_agree_with_what_the_compositor_reports():

@@ -1,5 +1,5 @@
 """A virtual absolute pointer and keyboard through /dev/uinput, for live tests of what a
-compositor delivers (0.5.7, #198). It creates a new device; the real ones are untouched,
+compositor delivers (0.5.8, #198). It creates a new device; the real ones are untouched,
 but the desktop's pointer does move, so the tests that use it run only with
 `TRE_LIVE_INPUT=1` and write access to /dev/uinput."""
 import fcntl, os, struct, time
