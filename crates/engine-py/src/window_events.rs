@@ -935,7 +935,11 @@ impl PyWindow {
             *self.title.borrow_mut() = title;
         }
         if let Some(on) = partial_redraw {
-            self.handles.partial_redraw.set(on);
+            // 0.5.7 (#221): a change takes or gives back the kept frame on the next
+            // frame, so an idle window is woken to make it.
+            if self.handles.partial_redraw.replace(on) != on {
+                self.handles.tree.borrow_mut().mark_dirty();
+            }
         }
         if let Some(on) = show_damage {
             self.handles.show_damage.set(on);

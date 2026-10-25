@@ -50,26 +50,35 @@ def vram():
     return total if seen else None
 
 app = App()
-w = Window(width=200, height=100)
+width, height = (int(v) for v in os.environ.get("TRE_TEST_SIZE", "200x100").split("x"))
+w = Window(width=width, height=height)
 w.root.set(fill=(200, 60, 60, 255))
+if os.environ.get("TRE_TEST_PARTIAL") == "0":
+    w.set(partial_redraw=False)
 app.add_window(w)
+readings = {}
 def report():
     time.sleep(2.0)
-    print(json.dumps({"vram": vram()}), flush=True)
+    readings["first"] = vram()
+    print(json.dumps(readings), flush=True)
     os._exit(0)
 threading.Thread(target=report, daemon=True).start()
 app.run()
 """
 
 
-def window_vram(**env):
+def run_child(**env):
     out = subprocess.run(
         [sys.executable, "-I", "-c", CHILD], capture_output=True, text=True, timeout=60,
         env=dict(os.environ, **env),
     ).stdout.strip().splitlines()
     lines = [line for line in out if line.startswith("{")]
     assert lines, "the window printed nothing"
-    return json.loads(lines[-1])["vram"]
+    return json.loads(lines[-1])
+
+
+def window_vram(**env):
+    return run_child(**env)["first"]
 
 
 def test_a_small_window_holds_a_few_tens_of_mib_not_two_hundred():
@@ -85,3 +94,16 @@ def test_the_environment_variable_brings_the_big_reservation_back():
         pytest.skip("this driver reports no per-process video memory in fdinfo")
     big = window_vram(TRE_GPU_MEMORY="performance")
     assert big > small + 100, f"performance {big} MiB vs default {small} MiB"
+
+
+BIG = "2400x1400"  # a kept frame of 2400 * 1400 * 4 bytes is about 12.8 MiB
+
+
+def test_a_window_that_redraws_in_full_does_not_keep_a_frame():
+    """(#221) `partial_redraw=False` at open makes no kept frame, so the window holds less."""
+    kept = window_vram(TRE_TEST_SIZE=BIG)
+    if kept is None or kept == 0:
+        pytest.skip("this driver reports no per-process video memory in fdinfo")
+    full = window_vram(TRE_TEST_SIZE=BIG, TRE_TEST_PARTIAL="0")
+    assert kept - full > 8, f"kept {kept} MiB vs full redraw {full} MiB"
+

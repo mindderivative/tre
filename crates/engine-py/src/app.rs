@@ -239,6 +239,9 @@ struct GpuState {
     /// 0.5.1 (#65): this device's health: its lost and error handlers, and
     /// the stall watchdog. Installed the moment the device exists.
     watch: GpuWatch,
+    /// 0.5.7 (#221): whether the surface can be copied into, so a kept frame
+    /// can be made when partial redraw is switched on after the window opened.
+    copyable: bool,
     /// 0.5.4 (#101): how the swapchain paces frames, and the modes this
     /// surface supports (the choice picks one of them).
     present: PresentChoice,
@@ -261,6 +264,7 @@ impl GpuState {
         height: u32,
         present: PresentChoice,
         transparent: bool,
+        partial_redraw: bool,
     ) -> Result<Self, String> {
         let instance = wgpu::Instance::default();
         let surface = source
@@ -339,7 +343,14 @@ impl GpuState {
             }
         }
         surface.configure(&device, &config);
-        let renderer = WindowRenderer::new(&device, config.format, width, height, copyable);
+        // 0.5.7 (#221): the kept frame is only made for a window that redraws partially.
+        let renderer = WindowRenderer::new(
+            &device,
+            config.format,
+            width,
+            height,
+            copyable && partial_redraw,
+        );
         let timer = engine_render::GpuTimer::new(&device, &queue);
 
         Ok(Self {
@@ -355,6 +366,7 @@ impl GpuState {
             present_modes: capabilities.present_modes,
             pacing: engine_render::ResizePacing::default(),
             transparent_active,
+            copyable,
             timer,
         })
     }
@@ -1019,6 +1031,7 @@ impl App {
                                 info.height,
                                 handles.present_mode.get(),
                                 handles.transparent.get(),
+                                handles.partial_redraw.get(),
                             ) {
                                 Ok(gpu) => gpu,
                                 Err(err) => {
@@ -1035,9 +1048,7 @@ impl App {
                             crate::frame_stats::lock(&handles.frame_stats)
                                 .set_device(gpu.device.clone());
                             handles.transparent_active.set(Some(gpu.transparent_active));
-                            handles
-                                .surface_partial
-                                .set(Some(gpu.renderer.has_persistent_target()));
+                            handles.surface_partial.set(Some(gpu.copyable));
                             let opened = crate::clock::now(&handles.tree);
                             created_runtimes.borrow_mut().insert(
                                 window_id,
@@ -1256,6 +1267,7 @@ impl App {
                     setup.handles.height.get(),
                     setup.handles.present_mode.get(),
                     setup.handles.transparent.get(),
+                    setup.handles.partial_redraw.get(),
                 ) {
                     Ok(gpu) => gpu,
                     Err(err) => {
@@ -1275,10 +1287,7 @@ impl App {
                     .handles
                     .transparent_active
                     .set(Some(gpu.transparent_active));
-                setup
-                    .handles
-                    .surface_partial
-                    .set(Some(gpu.renderer.has_persistent_target()));
+                setup.handles.surface_partial.set(Some(gpu.copyable));
                 runtimes_for_created.borrow_mut().insert(
                     window_id,
                     WindowRuntime {
@@ -1506,8 +1515,17 @@ impl App {
                     &runtime.handles.tree,
                     &runtime.handles.svg_font_generation,
                 );
+                // 0.5.7 (#221): `partial_redraw` takes the kept frame (a window's
+                // worth of video memory) or gives it back, live.
+                let kept_changed = runtime.gpu.copyable
+                    && runtime.gpu.renderer.set_persistent(
+                        &runtime.gpu.device,
+                        runtime.handles.width.get(),
+                        runtime.handles.height.get(),
+                        runtime.handles.partial_redraw.get(),
+                    );
                 let dirty = runtime.handles.tree.borrow_mut().take_dirty();
-                let changed = dirty || resized || fonts_changed;
+                let changed = dirty || resized || fonts_changed || kept_changed;
                 // 0.4.0 M6: an OS redraw (an expose) with nothing changed
                 // still gets the kept frame presented again -- the surface
                 // image may have lost it -- where there is a kept frame.

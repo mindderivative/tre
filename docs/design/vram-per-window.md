@@ -125,6 +125,19 @@ headless snapshot device). A live test reads a window's own video memory from `f
 stays under 100 MiB and that the variable brings the large reservation back. Findings 2 to 5 stay
 in the Backlog (#220, #221, #222, and the hardware issues #187 and #188).
 
+## What was done afterwards (#221)
+
+The persistent render target is made only for a window that redraws partially. A window opened
+with `partial_redraw=False` keeps no copy of its last frame: measured on a 2400 x 1400 window,
+54.4 MiB with the copy and 38.4 MiB without (16 MiB less, a little over the 12.8 MiB of pixels).
+`set(partial_redraw=...)` works while the window is open too: on makes the copy and draws that
+frame in full, off drops it (`WindowRenderer::set_persistent`, pixel-checked in
+`partial_redraw.rs`). Dropping it live did not lower the process's video memory on the AMD
+driver tested in four seconds, even with the device polled, so the saving is reliable only for a
+window opened without it; why the driver keeps it is not known. The other option in the issue
+(a menu-sized surface instead of a full-screen overlay) is `PopupWindow` (#223). The four
+swapchain images (about 16 bytes a pixel at 4K) stay out of tre's reach.
+
 ## What was changed and reverted
 
 Two throwaway edits in `GpuState::new` (a memory-hint switch and a swapchain-latency switch) and

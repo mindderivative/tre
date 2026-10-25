@@ -55,6 +55,16 @@ mapping, two live tests that read a window's own memory from `/proc/self/fdinfo`
 100 MiB; the variable brings back more than 100 MiB extra), and the snapshot tests (they use the
 other device site).
 
+### #221, no kept frame for a window that redraws in full (2026-10-25)
+
+`GpuState::new` takes the window's `partial_redraw` and makes the persistent target only when it is
+on and the surface can be copied into (`copyable`, now kept on `GpuState`). `WindowRenderer::set_persistent`
+makes or drops it live; each frame checks the setting, and `window.set(partial_redraw=...)` now marks the
+tree dirty so an idle window makes the change. Measured: a 2400 x 1400 window 54.4 MiB with the
+kept frame, 38.4 MiB without. Dropping it live did not lower the driver's count (AMD, 4 s). Tests: a
+Rust pixel test (give back, draw in full, make again, partial exact) and a live fdinfo test.
+`partial_redraw_active` now means "the surface allows it and the setting is on".
+
 ### #222, allocator totals in `frame_stats()` (2026-10-25)
 
 `frame_stats()["memory"]` (and `StatsHandle.read()`) reports `allocated_bytes`, `reserved_bytes`,
