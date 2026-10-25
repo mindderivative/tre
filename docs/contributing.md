@@ -132,6 +132,25 @@ Every real engine capability has its own headless, GPU-backed pixel test
 under `crates/engine-render/tests/`, proving it actually paints what it
 claims to, not just that the code compiles.
 
+## Helper scripts
+
+Small scripts in `tools/` take over the routine parts of the workflow. All of them read before
+they write, and the ones that change something (`pr_chain.py`, `board.py move`/`create`,
+`restamp_version.py`) do nothing until told to (`--yes`, `--apply`) or show a dry run first.
+
+| Script | What it does |
+|---|---|
+| `tools/status.sh` | Branch, the chain of local branches, unpushed work, version, the newest `LOG.md` section and the board, in one screen. |
+| `tools/branches.py` | The local branches as a tree: commits over the parent, merged, pushed. |
+| `tools/tests_for.py` | The clippy, cargo and pytest commands that cover the files you changed (by name match; it runs nothing). |
+| `tools/with_adapter.sh` | Runs a command on one GPU adapter: `radv`, `lvp` (llvmpipe) or `fallback`. |
+| `tools/sway_live.sh` | Runs a command inside a private headless sway, for the live `LayerWindow` tests, and shuts it down. |
+| `tools/pr_chain.py` | Status, push, open, retarget (with the close and reopen that start CI), wait, merge and cleanup for a stack of branches. |
+| `tools/board.py` | The project board: `status`, `move` (Done needs `--approved`) and `create` (an issue into Backlog or Ready). |
+| `tools/check_version.py` | Every place the version lives agrees; `--expect V --pypi` before a release. |
+| `tools/restamp_version.py` | Re-stamps "X.Y.Z (#N)" notes written for a version that was released without that work. |
+| `tools/wrapup.py` | What `LOG.md`, the docs and the board still need after a piece of work. |
+
 ## Checking transparent windows on a new platform
 
 Transparency, blur-behind and click-through depend on the OS and compositor, and

@@ -3,7 +3,8 @@
 **A GPU-rendered retained-mode UI engine for Python, written in Rust.**
 
 Tesserae Engine (imported as `tre`) gives Python the building blocks of a desktop UI — nodes, layout,
-paint, animation, input, text, accessibility, and layers — and renders them
+paint, animation, input, text, accessibility, and layers — and, on Wayland, bars, panels and
+menus the compositor places (`LayerWindow`, `PopupWindow`) — and renders them
 on the GPU. It has no widgets and no theme of its own: a UI library or
 application built on it turns the blocks into buttons, dialogs, and design
 systems. You write Python; the engine underneath uses:
@@ -55,6 +56,10 @@ app.run()
   with a title bar, buttons, and borders of your own (0.5.0).
 - **[Shaders](guide/shaders.md)** — your own WGSL paints a node or transforms
   its rendered content (0.5.1).
+- **[Bars and panels](guide/bars-and-panels.md)** and
+  **[Menus from a bar](guide/menus-from-a-bar.md)** — a bar, panel, dock or OSD the
+  compositor places (`LayerWindow`), and the menus that hang off it (`PopupWindow`),
+  on Wayland compositors with the layer shell (0.5.8).
 
 [Building a Widget](guide/building-a-widget.md) puts them together into a
 complete switch.

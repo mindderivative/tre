@@ -91,6 +91,10 @@ EVENTS = {
     "WindowOpener": "asks the loop to open a window (`open_window`)",
 }
 
+# Public modules whose items are documented as if re-exported at the crate root: the layer-surface
+# and output types a host passes to the loop. Every other module stays out, as before.
+INCLUDE_MODULES = {"engine_platform": {"layer", "layer_config", "outputs"}}
+
 OVERRIDES: dict[str, str] = {}
 for _file in sorted((ROOT / "tools").glob(OVERRIDES_GLOB)):
     OVERRIDES.update(json.loads(_file.read_text()))
@@ -242,9 +246,19 @@ class Crate:
         root = self.index[str(data["root"])]
         self.items: list[tuple[str, dict]] = []
         self.externals: list[tuple[str, str]] = []
+        wanted = INCLUDE_MODULES.get(mod, set())
         for i in root["inner"]["module"]["items"]:
             it = self.index[str(i)]
             kind = next(iter(it["inner"]))
+            if kind == "module" and it.get("name") in wanted and it.get("visibility") == "public":
+                for j in it["inner"]["module"]["items"]:
+                    sub = self.index[str(j)]
+                    sub_kind = next(iter(sub["inner"]))
+                    if sub.get("visibility") == "public" and sub_kind in (
+                        "struct", "enum", "trait", "function", "constant", "type_alias",
+                    ):
+                        self.items.append((sub["name"], sub))
+                continue
             if kind == "use":
                 u = it["inner"]["use"]
                 target = self.index.get(str(u["id"]))
@@ -256,6 +270,11 @@ class Crate:
                 "struct", "enum", "trait", "function", "constant", "type_alias",
             ):
                 self.items.append((it["name"], it))
+
+        unique: dict[int, tuple[str, dict]] = {}
+        for name, it in self.items:  # a type re-exported at the root and public in a module once
+            unique.setdefault(it["id"], (name, it))
+        self.items = list(unique.values())
 
     def kind(self, it) -> str:
         return next(iter(it["inner"]))
@@ -437,7 +456,7 @@ def main() -> int:
         "",
         "Rust has no class inheritance. Where a class would list its parents, each type "
         "here lists the **traits it implements** (linked), and a `Deref` to another type "
-        "where one exists. Items are the ones each crate re-exports at its root.",
+        "where one exists. Items are the ones each crate re-exports at its root, plus the public items of `engine-platform`'s `layer`, `layer_config` and `outputs` modules.",
         "",
         "| Crate | Role |",
         "| --- | --- |",
