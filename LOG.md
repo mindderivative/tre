@@ -21,7 +21,10 @@ Instructions moved to `AGENTS.md` (`CLAUDE.md` is `@AGENTS.md`). New in `tools/`
 install` to `AGENTS.md` and the hooks, after a graphify upgrade), `board.py` (board status, and card
 moves with a guard on Done), `check_version.py` (the version agrees in `Cargo.toml`, `pyproject.toml`
 and the four `Cargo.lock` entries; `--pypi` checks the version is free), and `status.sh` (one-screen
-state). Tested against the real repo and board, and against broken fixtures; `board.py --comment`
+state, now with the branch chain). Later the same day: `branches.py` (local branches as a tree: commits over the parent, merged,
+pushed) and `tests_for.py` (the clippy, cargo and pytest commands that cover the changed files, picked by
+name match; prints only), and `tools/generate_tracker_artifact.py` was removed as a duplicate of the
+`build-tracker` skill's copy. Tested against the real repo and board, and against broken fixtures; `board.py --comment`
 was not exercised, since it posts publicly.
 
 ### Project skills reviewed and revised (2026-10-25)

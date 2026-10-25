@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Where the project stands, in one screen. Run from anywhere:  tools/status.sh
 #
-# Read-only. Shows the branch and what is not pushed, the working tree, the version, the newest
-# LOG.md section, and the open cards on the GitHub board (tools/board.py). The board part is
-# skipped with a note if `gh` is not logged in.
+# Read-only. Shows the branch and what is not pushed, the chain of local branches
+# (tools/branches.py), the working tree, the version, the newest LOG.md section, and the open
+# cards on the GitHub board (tools/board.py). The board part is skipped with a note if `gh` is
+# not logged in.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -24,6 +25,10 @@ fi
 dirty=$(git status --short)
 if [ -n "$dirty" ]; then echo "uncommitted:"; echo "$dirty" | sed 's/^/  /'; else echo "working tree clean"; fi
 echo "recent:"; git log --oneline -5 | sed 's/^/  /'
+
+echo
+echo "== branches"
+python3 -I tools/branches.py
 
 echo
 echo "== version"

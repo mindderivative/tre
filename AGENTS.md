@@ -27,13 +27,14 @@
 
 ## Branches, Releases and Verification
 * Work on a version-named branch and open a PR into `main`. The release steps are in `docs/contributing.md` and the `release-checklist` skill. Pixel-test failures follow `pixel-test-triage`; timing work follows `perf-profiling`.
+* To pick tests for a change, run `python3 -I tools/tests_for.py` (files changed since `origin/main`, or name the files): it prints the clippy, cargo and pytest commands that cover them and runs nothing. It matches names, not coverage, so read its reasons. `python3 -I tools/branches.py` shows the stack of local branches and which are merged or pushed.
 * Run `tools/verify.sh` (`--cross` for a release) before calling work done.
 * Before a release run `python3 tools/check_version.py --expect <version> --pypi`: every place the version lives must agree and PyPI must not have it yet.
 * Agent instructions live in `AGENTS.md`; `CLAUDE.md` only imports it. Do not run `graphify claude install`; after upgrading graphify run `python3 tools/graphify_agents.py` (it writes the graphify section to `AGENTS.md` and keeps the hooks). If any tool adds a section to `CLAUDE.md`, run `python3 tools/check_agent_docs.py --fix`.
 * Only Linux is testable here (AMD RADV and llvmpipe). Mark Mac, Windows and other-GPU checks as unverified, not passed. The held issues are listed in the "Status" section of `LOG.md`.
 
 ## Session Start
-* Run `tools/status.sh` (branch, unpushed work, version, board), then read `LOG.md` ("Status" and the latest section) and the `tre-v2-gui-framework` memory entity to pick up the current state.
+* Run `tools/status.sh` (branch, branch chain, unpushed work, version, board), then read `LOG.md` ("Status" and the latest section) and the `tre-v2-gui-framework` memory entity to pick up the current state.
 
 ## graphify
 
