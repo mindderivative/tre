@@ -54,6 +54,11 @@ use smithay_client_toolkit::registry::{ProvidesRegistryState, RegistryState};
 use smithay_client_toolkit::seat::pointer::{PointerEvent, PointerEventKind, PointerHandler};
 use smithay_client_toolkit::seat::touch::TouchHandler;
 use smithay_client_toolkit::seat::{Capability, SeatHandler, SeatState};
+use crate::layer_ime::ImeSession;
+use smithay_client_toolkit::reexports::protocols::wp::text_input::zv3::client::{
+    zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+    zwp_text_input_v3::{self, ContentHint, ContentPurpose, ZwpTextInputV3},
+};
 use crate::layer_surface::{
     Anchor, KeyboardInteractivity, Layer, LayerData, LayerShell, LayerSurface,
 };
@@ -216,8 +221,19 @@ enum Command {
     InputRegion(u64, Option<Vec<crate::layer_config::Rect>>),
     Margin(u64, (i32, i32, i32, i32)),
     BeginMarginDrag(u64),
+    Ime(u64, Option<ImeInfo>),
     Destroy(u64),
     Shutdown,
+}
+
+/// What the input method needs to know about the focused text input of a layer surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImeInfo {
+    /// The caret's box `(x, y, width, height)` in surface-local logical pixels, where the
+    /// input method puts its candidate window.
+    pub area: (i32, i32, i32, i32),
+    /// A password field: the input method should not learn or suggest from it.
+    pub password: bool,
 }
 
 /// A handle that sends requests to the layer thread; cheap to clone.
@@ -267,6 +283,13 @@ impl LayerController {
     /// `MarginMoved`). A surface that cannot move on either axis ignores this.
     pub fn begin_margin_drag(&self, id: u64) {
         self.send(Command::BeginMarginDrag(id));
+    }
+
+    /// Tells the input method about the surface's focused text input (`None`: none has focus):
+    /// the layer thread enables text input for the surface, places the candidate window at the
+    /// caret, or disables it. Does nothing where the compositor has no text-input protocol.
+    pub fn set_ime(&self, id: u64, info: Option<ImeInfo>) {
+        self.send(Command::Ime(id, info));
     }
 
     /// Destroys the surface; the `wgpu` surface must be dropped first.
@@ -495,6 +518,8 @@ struct Surf {
     announced: bool,
     /// The app has been told this compositor cannot take `exclusive_edge`.
     edge_warned: bool,
+    /// The focused text input's state as the app last reported it.
+    ime: Option<ImeInfo>,
     /// The shape the app last asked for, applied whenever the pointer enters.
     cursor: CursorIcon,
 }
@@ -539,6 +564,16 @@ struct State {
     /// The surface-local position of the pointer, logical pixels, from its last event.
     pointer_local: (f64, f64),
     drag: Option<MarginDrag>,
+    /// `zwp_text_input_v3`, when the compositor has it: one object for the seat.
+    text_input_manager: Option<ZwpTextInputManagerV3>,
+    text_input: Option<ZwpTextInputV3>,
+    /// The surface the compositor says has the text-input focus (`enter`/`leave`).
+    ime_focus: Option<u64>,
+    /// What was last committed to the compositor, to send only changes.
+    ime_sent: Option<ImeInfo>,
+    /// How many `commit` requests were sent: the protocol's serial.
+    ime_commits: u32,
+    ime_session: ImeSession,
     alive: bool,
 }
 
@@ -742,6 +777,7 @@ impl State {
                 scale: 1.0,
                 announced: false,
                 edge_warned: false,
+                ime: None,
                 cursor: CursorIcon::Default,
             },
         );
@@ -758,6 +794,9 @@ impl State {
     fn destroy(&mut self, id: u64) {
         if self.drag.as_ref().is_some_and(|d| d.id == id) {
             self.drag = None;
+        }
+        if self.ime_focus == Some(id) {
+            self.ime_lost_focus();
         }
         if let Some(surf) = self.surfaces.remove(&id) {
             self.by_surface.remove(&surf.surface.id());
@@ -1238,11 +1277,142 @@ fn anchor_flags(bits: u8) -> Anchor {
     anchor
 }
 
+impl State {
+    /// The text input belongs to the seat, whatever devices it has now (a headless compositor
+    /// starts with none), so it is made when the seat is known, not when it gets a keyboard.
+    fn ensure_text_input(&mut self, qh: &QueueHandle<Self>, seat: &wl_seat::WlSeat) {
+        if self.text_input.is_none() {
+            self.text_input = self
+                .text_input_manager
+                .as_ref()
+                .map(|m| m.get_text_input(seat, qh, ()));
+        }
+    }
+
+    /// Brings the compositor's text input in line with the focused field of the surface that
+    /// has the text-input focus: enable with its content type and caret box, update them, or
+    /// disable. Only changes are sent, each with one `commit`.
+    fn sync_ime(&mut self) {
+        let (Some(text_input), Some(id)) = (&self.text_input, self.ime_focus) else {
+            return;
+        };
+        let wanted = self.surfaces.get(&id).and_then(|s| s.ime);
+        if wanted == self.ime_sent {
+            return;
+        }
+        match wanted {
+            Some(info) => {
+                if self.ime_sent.is_none() {
+                    text_input.enable();
+                }
+                let (hint, purpose) = if info.password {
+                    (ContentHint::SensitiveData, ContentPurpose::Password)
+                } else {
+                    (ContentHint::None, ContentPurpose::Normal)
+                };
+                text_input.set_content_type(hint, purpose);
+                let (x, y, w, h) = info.area;
+                text_input.set_cursor_rectangle(x, y, w, h);
+                text_input.commit();
+            }
+            None => {
+                text_input.disable();
+                text_input.commit();
+                for out in self.ime_session.reset() {
+                    self.emit(LayerEvent::Input {
+                        id,
+                        event: out.into_input(),
+                    });
+                }
+            }
+        }
+        self.ime_commits = self.ime_commits.wrapping_add(1);
+        self.ime_sent = wanted;
+    }
+
+    /// The text input lost its focus (the compositor disabled it): a showing preview is cleared.
+    fn ime_lost_focus(&mut self) {
+        if let Some(id) = self.ime_focus.take() {
+            for out in self.ime_session.reset() {
+                self.emit(LayerEvent::Input {
+                    id,
+                    event: out.into_input(),
+                });
+            }
+        }
+        self.ime_sent = None;
+    }
+}
+
+impl Dispatch<ZwpTextInputManagerV3, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &ZwpTextInputManagerV3,
+        _: <ZwpTextInputManagerV3 as smithay_client_toolkit::reexports::client::Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ZwpTextInputV3, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &ZwpTextInputV3,
+        event: zwp_text_input_v3::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        use zwp_text_input_v3::Event;
+        match event {
+            Event::Enter { surface } => {
+                // Both seats see every surface: only our own layer surfaces count.
+                if let Some(id) = state.id_of(&surface) {
+                    state.ime_focus = Some(id);
+                    state.ime_sent = None;
+                    state.sync_ime();
+                }
+            }
+            Event::Leave { surface } => {
+                if state.id_of(&surface).is_some() && state.ime_focus == state.id_of(&surface) {
+                    state.ime_lost_focus();
+                }
+            }
+            Event::PreeditString {
+                text,
+                cursor_begin,
+                cursor_end,
+            } => state
+                .ime_session
+                .preedit_string(text, cursor_begin, cursor_end),
+            Event::CommitString { text } => state.ime_session.commit_string(text),
+            Event::DeleteSurroundingText { .. } => {
+                // No surrounding text is reported, so there is nothing to delete.
+            }
+            Event::Done { .. } => {
+                if let Some(id) = state.ime_focus {
+                    for out in state.ime_session.done() {
+                        state.emit(LayerEvent::Input {
+                            id,
+                            event: out.into_input(),
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 impl SeatHandler for State {
     fn seat_state(&mut self) -> &mut SeatState {
         &mut self.seats
     }
-    fn new_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
+    fn new_seat(&mut self, _: &Connection, qh: &QueueHandle<Self>, seat: wl_seat::WlSeat) {
+        self.ensure_text_input(qh, &seat);
+    }
     fn new_capability(
         &mut self,
         _: &Connection,
@@ -1729,11 +1899,22 @@ fn run(
         relative_pointer: None,
         pointer_local: (0.0, 0.0),
         drag: None,
+        text_input_manager: globals.bind(&qh, 1..=1, ()).ok(),
+        text_input: None,
+        ime_focus: None,
+        ime_sent: None,
+        ime_commits: 0,
+        ime_session: ImeSession::default(),
         alive: true,
     };
     // Learn the outputs and seats before anything is asked of them.
     let _ = queue.roundtrip(&mut state);
     let _ = queue.roundtrip(&mut state);
+    // A seat that existed at start never reaches `new_seat`.
+    let known: Vec<wl_seat::WlSeat> = state.seats.seats().collect();
+    for seat in &known {
+        state.ensure_text_input(&qh, seat);
+    }
     let existing: Vec<wl_output::WlOutput> = state.outputs.outputs().collect();
     for output in existing {
         if let Some(info) = output_info(&state.outputs, &output) {
@@ -1771,6 +1952,14 @@ fn run(
                     }
                 }
                 Command::BeginMarginDrag(id) => state.begin_margin_drag(id),
+                Command::Ime(id, info) => {
+                    if let Some(surf) = state.surfaces.get_mut(&id) {
+                        surf.ime = info;
+                    }
+                    if state.ime_focus == Some(id) {
+                        state.sync_ime();
+                    }
+                }
                 Command::Margin(id, margin) => {
                     if let Some(surf) = state.surfaces.get_mut(&id) {
                         surf.layer

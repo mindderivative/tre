@@ -1550,6 +1550,32 @@ impl App {
                             winit::window::ImePurpose::Normal
                         });
                     }
+                    // 0.5.7 (#199): a layer surface has no `winit` window; its input method is
+                    // told through the layer thread, in surface-local logical pixels.
+                    #[cfg(target_os = "linux")]
+                    if let Some(layer) = &runtime.handles.layer
+                        && let (Some(controller), Some(id)) =
+                            (layer.controller.borrow().as_ref(), layer.id.get())
+                    {
+                        // The layout is in logical pixels when `dpi_scaling` is on and in
+                        // physical ones when it is off.
+                        let to_logical = runtime.handles.scale.get() / layer.scale.get().max(0.01);
+                        controller.set_ime(
+                            id,
+                            ime.map(|state| {
+                                let (x, y, w, h) = state.area;
+                                engine_platform::layer::ImeInfo {
+                                    area: (
+                                        (x * to_logical).floor() as i32,
+                                        (y * to_logical).floor() as i32,
+                                        (w * to_logical).ceil() as i32,
+                                        (h * to_logical).ceil() as i32,
+                                    ),
+                                    password: state.password,
+                                }
+                            }),
+                        );
+                    }
                     runtime.ime = ime;
                 }
 

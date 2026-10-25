@@ -90,6 +90,6 @@ Where the build differs from, or settled, what the sections above said.
   the name. The `Output` objects and hot-plug events stay in phase 3.
 - **Defaults.** The root has no padding or gap; layout is logical with the surface's scale
   (`dpi_scaling` on); the surface is transparent.
-- **Not done in this phase:** IME (input-method preedit) and AccessKit on layer surfaces, each
-  its own follow-up as decided; the frame-callback-driven redraw (a surface draws when something
+- **Not done in this phase:** IME (input-method preedit; done afterwards in #199) and AccessKit on
+  layer surfaces, each its own follow-up as decided; the frame-callback-driven redraw (a surface draws when something
   changed, paced by the swapchain's present, as a window).

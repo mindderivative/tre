@@ -14,6 +14,26 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #199, input-method (IME) preedit on layer surfaces (2026-10-24)
+
+A `LayerWindow`'s text input now works with an input method. The layer thread binds
+`zwp_text_input_manager_v3` (optional) and makes one text input for the seat (at start, not when
+a keyboard appears: a headless compositor has no devices). The compositor's `enter` / `leave` say
+which surface has the text-input focus; the frame pass sends the focused field's caret box
+(logical px) and password flag through a new `LayerController::set_ime`, and the thread `enable`s,
+sets the content type (password: `sensitive_data` and `password`), the cursor rectangle, and
+`commit`s, or `disable`s. `preedit_string`, `commit_string` and `delete_surrounding_text` are held
+until `done` (`layer_ime.rs`, a pure state machine, unit tested) and then become
+`InputEvent::ImePreedit` and `TextInput`, as the winit path does: the old preview cleared, the
+commit, the new preview. No input method is installed here and wiring one into KDE would change
+the desktop's input settings, so the live tests use a **stand-in input method on a headless sway**
+(`tests/wlr_input_method.py`, `pywayland`, bindings generated from the vendored input-method v2
+XML; it also keeps a virtual keyboard, because a sway with no keyboard device gives no window the
+keyboard focus): activation on focus, a preview shown, replaced and cleared, a commit landing as
+text, and the password and plain content types all pass. Not run: a real input method (fcitx5,
+ibus), KWin's path (its text-input needs a virtual-keyboard input method configured in KDE),
+surrounding text (not reported; `delete_surrounding_text` is ignored).
+
 ### #201, exclusive_edge: tre binds the layer shell itself (2026-10-24)
 
 `LayerWindow(exclusive_edge=...)` and `set(exclusive_edge=...)` now work: a corner-anchored surface
