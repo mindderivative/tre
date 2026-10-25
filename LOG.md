@@ -2,9 +2,11 @@
 
 ## Status
 
-**0.5.8 in preparation (branch `0.5.8`, 2026-10-25): LayerWindow for Tesserae Shell and the work around it.**
-Version bumped, the "0.5.7" stamps on this work re-stamped to 0.5.8, `docs/migrating-0.5.md` has the
-0.5.8 section. Not yet pushed, merged or tagged.
+**0.5.8 released (2026-10-25, PR #230, tag `v0.5.8`, PyPI `tesserae-engine==0.5.8`).** LayerWindow for
+Tesserae Shell and the GPU-memory work; the notes are in `docs/migrating-0.5.md`. Wheels: manylinux
+(3.12, 3.13, 3.14, 3.14t, 3.15, 3.15t), macOS arm64 and Windows (3.12 to 3.14), and the sdist. Installed from
+PyPI into a clean venv on Linux (Python 3.14) and smoke-tested headless: version 0.5.8, `LayerWindow`,
+`PopupWindow`, `App.outputs`, a snapshot. The macOS and Windows wheels were built but not run.
 0.5.7 was released 2026-10-17 (PR #185, tag `v0.5.7`, PyPI `tesserae-engine==0.5.7`);
 0.5.6 on 2026-10-09 (PR #167, tag `v0.5.6`).
 Tracking lives in the GitHub project Tesserae Rendering Engine (the old
@@ -12,7 +14,7 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position), #220 (one wgpu device for all windows).
 
-## 0.5.8 (release prep, 2026-10-25)
+## 0.5.8 (released 2026-10-25)
 
 ### The release pass (2026-10-25)
 
