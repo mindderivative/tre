@@ -16,6 +16,30 @@ position), #220 (one wgpu device for all windows).
 
 ## 0.5.8 (released 2026-10-25)
 
+### CI tiers (2026-10-25)
+
+`ci.yml` now has three tiers, picked by a `plan` job running `tools/ci_plan.py`: **docs** (only documentation
+changed: `mkdocs build --strict`, the generated Python API page is current, agent-doc and version checks; CI never
+built the site on a PR before, only `docs.yml` after the merge), **partial** (code changed: fmt, clippy and tests for
+the changed crates and every crate that depends on them, dev-dependencies counted; then the extension build,
+mypy, stubtest and the Python tests that cover the change, or the whole suite when a lower crate changed or a file
+is named by no test; Linux only) and **full** (the workspace version moved, `Cargo.lock`, `rust-toolchain.toml`,
+the root `Cargo.toml` or `ci.yml` changed, the `full-ci` label, or a manual run: the old jobs unchanged, on
+Linux, Windows and macOS, plus MSRV, examples and the docs build). A partial run also runs the examples that relate to the change (they name what changed, or share a word with the
+changed file's name) plus `showcase.py`, `layout.py` and `animation.py`; the full tier runs all of them and the docs
+tier none. A `CI result` job passes when every job
+that ran passed. Not asked for, so say if you disagree: the build-config files send a change to the full tier
+(a dependency bump can break Windows or the MSRV without a line of Rust changing), a PR label can force full, and
+a PR's older run is cancelled when it is pushed again. Tested: 35 planner tests (`tests/test_ci_plan.py`), the
+planner on real history (a docs commit, the merge that touched `engine-render`, v0.5.7 to HEAD), the docs job's
+commands and a partial run's pytest selection locally, `actionlint` on all three workflows. **Not tested until a
+PR runs it:** the workflow on GitHub itself.
+
+While wiring this up I found a bug I had introduced in `tools/tests_for.py` a few hours earlier: a refactor dropped
+the loop that adds the tests a changed Rust source file names, so it printed no test suggestions for Rust
+changes, although I had reported it working (I had checked the version before the refactor). Fixed, and
+`tests/test_tests_for.py` pins it.
+
 ### Documentation gaps closed after the release (2026-10-25)
 
 Found by checking each docs page for the new features after 0.5.8 shipped. Added: `examples/popup_menu.py`

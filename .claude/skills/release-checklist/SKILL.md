@@ -48,7 +48,7 @@ Commit on the branch in the repo's style (`<version>: what it does (#issue)`; ch
 
 ## 6. Steps that need the user's instruction, in order
 
-1. Push the branch and open the pull request into `main`; `ci.yml` runs on it. Read the result, including the Windows and macOS jobs, which are non-blocking for tests and may be red or green for reasons worth reporting.
+1. Push the branch and open the pull request into `main`; `ci.yml` runs on it. Because the workspace version moved, `tools/ci_plan.py` picks the **full tier** (Linux, Windows, macOS, MSRV, every example, the docs build); check the plan in the run summary says `full`. The result to read is `CI result`. Read the result, including the Windows and macOS jobs, which are non-blocking for tests and may be red or green for reasons worth reporting.
 2. Merge. The merge deploys the docs (`docs.yml`).
 3. Tag the merge commit `vX.Y.Z`, annotated, and push the tag. This starts `wheels.yml`, which builds the wheels and sdist and creates the GitHub Release.
 4. A reviewer approves the **`pypi` environment**. Only then does the upload happen (trusted publishing). Claude does not approve this.

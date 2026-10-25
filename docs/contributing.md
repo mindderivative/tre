@@ -45,7 +45,8 @@ work is committed there, one commit per finished item with the issue number
 (`0.5.6: what it does (#166)`), and the version in `Cargo.toml`, `pyproject.toml`
 and `Cargo.lock` is bumped on the branch. Nothing is released until it is told to:
 
-1. Push the branch and open a pull request into `main`; CI (`ci.yml`) runs on it.
+1. Push the branch and open a pull request into `main`; CI (`ci.yml`) runs on it. Bumping the
+   version makes it the [full tier](#ci-tiers), so the release PR gets the whole run.
 2. Merge it. The merge also deploys the docs to GitHub Pages (`docs.yml`).
 3. Tag the merge commit `vX.Y.Z` (annotated) and push the tag. That starts
    `wheels.yml`: it builds the wheels and sdist, creates the GitHub Release, and
@@ -83,6 +84,31 @@ else is verified on real hardware yet, notably: an IME (East Asian input) on any
 platform, screen-reader output for the accessibility states, the feel of scroll
 snapping with a real wheel or touch fling, window placement outside Wayland, and
 `skip_taskbar` on Windows.
+
+## CI tiers
+
+`ci.yml` does not run everything on every pull request. A small job, `plan`
+(`tools/ci_plan.py`), reads what the change touches and picks one of three tiers; **`CI result`**
+is the one job that says whether it passed (a job the tier does not use is skipped, which is fine).
+The plan is also printed in the run's summary, with the reason.
+
+| Tier | When | What runs |
+|---|---|---|
+| **docs** | Only documentation changed: `docs/`, any `*.md`, `mkdocs.yml`, `.claude/`. | `mkdocs build --strict`, the generated Python API page is current, `CLAUDE.md` still only imports `AGENTS.md`, the version agrees. No Rust, no Python tests, no examples. |
+| **partial** | Code changed: the standard run. | `cargo fmt --check`; clippy and `cargo test` for the **changed crates and every crate that depends on them** (a change to `engine-core` reaches all four, one to `engine-render` reaches `engine-render` and `engine-py`); then, when Python is reached, the extension is built, `mypy --strict`, stubtest and the API page are checked, and the **Python tests that cover the change** run, with **the examples that relate to it** (the ones that name what changed or share a word with the file's name, such as `gradient.rs` and `gradients.py`) and three broad ones (`showcase.py`, `layout.py`, `animation.py`). Linux only. |
+| **full** | A release (the workspace `version` in `Cargo.toml` moved, such as 0.5.7 to 0.5.8); a build-configuration change (`Cargo.lock`, `rust-toolchain.toml`, the root `Cargo.toml`, `ci.yml`); the `full-ci` label on the PR; or a manual run (`Actions` > `CI` > `Run workflow`). | Everything: Linux (build, test, clippy, fmt, mypy, stubtest, the whole pytest suite, **all 45 examples**), Windows, macOS and the MSRV check. |
+
+Which Python tests a partial run takes. The crates are layered: `engine-core` is under
+`engine-render` and `engine-platform`, which are under `engine-py`, the Python surface. A change to
+a lower crate reaches Python indirectly, and its Rust names are not in the Python tests, so it runs
+the **whole** pytest suite. A change to `engine-py` or `python/` runs the tests that name what
+changed (the same match `tools/tests_for.py` prints) plus a small smoke set, and the whole suite
+when a changed file is named by no test or the picks are over 40% of the suite. That match is by
+name, not coverage data, so it can miss a test that reaches the code another way; add the `full-ci`
+label to a PR that deserves the whole run. The pytest picks, and the live window tests that skip on
+a runner with no display, are listed in the job's log.
+
+To see the plan for your branch before pushing: `python3 tools/ci_plan.py --base origin/main`.
 
 ## Running the checks
 
