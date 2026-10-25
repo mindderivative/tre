@@ -14,6 +14,16 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### #219, small GPU memory blocks by default (2026-10-25)
+
+A window's device (and the headless snapshot device) now asks `wgpu` for `MemoryHints::MemoryUsage`
+(blocks of 8 to 64 MiB) instead of the default 128 MiB blocks: `gpu_memory.rs`.
+`TRE_GPU_MEMORY=performance` restores the old reservation. On the measured machine a small window
+went from 211 to 31 MiB of video memory. Tests run for this change only: the unit test of the
+mapping, two live tests that read a window's own memory from `/proc/self/fdinfo` (default under
+100 MiB; the variable brings back more than 100 MiB extra), and the snapshot tests (they use the
+other device site).
+
 ### #207, why a small window holds about 210 MB of VRAM (research, 2026-10-25)
 
 Measured per process from `/proc/<pid>/fdinfo`: a 200 x 100 window 211 MiB VRAM and 73 MiB GTT, each

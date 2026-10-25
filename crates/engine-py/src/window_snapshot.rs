@@ -50,6 +50,7 @@ fn headless_device() -> Result<(wgpu::Device, wgpu::Queue), String> {
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("engine-py snapshot device"),
         required_features: wgpu::Features::empty(),
+        memory_hints: crate::gpu_memory::memory_hints(),
         ..Default::default()
     }))
     .map_err(|err| format!("couldn't create a GPU device for the snapshot: {err}"))

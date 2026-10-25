@@ -117,6 +117,14 @@ Filed as Backlog issues; nothing is built until approved.
 5. **Measure other hardware** (NVIDIA, Intel, a discrete AMD GPU, Windows, macOS): folded into the
    existing hardware issues, #187 and #188, with this probe.
 
+## What was done afterwards (#219)
+
+Finding 1 is built: tre asks for small memory blocks by default (`gpu_memory.rs`), with
+`TRE_GPU_MEMORY=performance` as the escape hatch, at both device sites (a window's device and the
+headless snapshot device). A live test reads a window's own video memory from `fdinfo` and checks it
+stays under 100 MiB and that the variable brings the large reservation back. Findings 2 to 5 stay
+in the Backlog (#220, #221, #222, and the hardware issues #187 and #188).
+
 ## What was changed and reverted
 
 Two throwaway edits in `GpuState::new` (a memory-hint switch and a swapchain-latency switch) and
