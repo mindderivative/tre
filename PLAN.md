@@ -1,4 +1,4 @@
-# PLAN — after 0.5.7
+# PLAN — after 0.5.8
 
 *(Replaces the 0.5.0 plan, custom windowing (#28), which shipped in 0.5.0
 and is recorded in `LOG.md`. From 0.5.0 every step is tracked in the GitHub
@@ -7,11 +7,10 @@ project Tesserae Rendering Engine; the old trackers are archived as
 
 ## Where we are
 
-`main` is at 0.5.7 plus the LayerWindow work for Tesserae Shell and the GPU-memory changes. 0.5.7 was
-released 2026-10-17 (PR #185, tag `v0.5.7`, on PyPI as `tesserae-engine==0.5.7`). The next release, 0.5.8, is
-being prepared on branch `0.5.8` (version bumped, migration notes written); push, PR, merge, tag and the
-PyPI approval wait for the user. Per `CLAUDE.md`, work starts from a scoped `Backlog` entry that the user
-moves to `Ready`.
+`main` is at 0.5.8 (released 2026-10-25: PR #230, tag `v0.5.8`, on PyPI as `tesserae-engine==0.5.8`;
+installed from PyPI and smoke-tested in a clean venv). Open issues: #187 and #188 (Windows and macOS hardware
+checks), #189 (X11 drop position), #220 (one wgpu device for all windows, Ready). Per `CLAUDE.md`, work starts
+from a scoped `Backlog` entry that the user moves to `Ready`.
 
 ## Backlog (not scoped)
 
