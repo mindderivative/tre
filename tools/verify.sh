@@ -18,6 +18,8 @@ if [ -x .venv/bin/python ]; then
 fi
 step() { printf '\n== %s\n' "$*"; }
 
+step "agent docs (CLAUDE.md only imports AGENTS.md)"
+python3 -I tools/check_agent_docs.py
 step "rustfmt"
 cargo fmt --check
 step "clippy (warnings are errors)"

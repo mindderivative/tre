@@ -28,6 +28,7 @@
 ## Branches, Releases and Verification
 * Work on a version-named branch and open a PR into `main`. The release steps are in `docs/contributing.md` and the `release-checklist` skill. Pixel-test failures follow `pixel-test-triage`; timing work follows `perf-profiling`.
 * Run `tools/verify.sh` (`--cross` for a release) before calling work done.
+* Agent instructions live in `AGENTS.md`; `CLAUDE.md` only imports it. If a tool (e.g. `graphify claude install`) adds a section to `CLAUDE.md`, run `python3 tools/check_agent_docs.py --fix`.
 * Only Linux is testable here (AMD RADV and llvmpipe). Mark Mac, Windows and other-GPU checks as unverified, not passed. The held issues are listed in the "Status" section of `LOG.md`.
 
 ## Session Start
