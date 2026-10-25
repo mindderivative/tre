@@ -37,6 +37,7 @@ __all__ = [
     "App",
     "Window",
     "LayerWindow",
+    "PopupWindow",
     "Output",
     "Node",
     "Painter",
