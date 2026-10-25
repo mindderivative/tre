@@ -744,3 +744,59 @@ fn the_damage_overlay_tints_the_image_but_never_the_kept_frame() {
         "{differing} bytes of overlay leaked into the kept frame"
     );
 }
+
+/// 0.5.7 (#221): a window that redraws in full gives the kept frame back, and one
+/// that turns partial redraw on again makes it anew and draws that frame in full.
+#[test]
+fn the_kept_frame_can_be_given_back_and_made_again() {
+    let gpu = Gpu::new();
+    let mut s = scene();
+    let mut window = Window::new(&gpu);
+    assert_eq!(window.frame(&gpu, &s.tree, s.root, true), Damage::Full);
+    assert!(window.renderer.has_persistent_target());
+
+    assert!(
+        !window
+            .renderer
+            .set_persistent(&gpu.device, u32::from(W), u32::from(H), true)
+    );
+    assert!(
+        window
+            .renderer
+            .set_persistent(&gpu.device, u32::from(W), u32::from(H), false)
+    );
+    assert!(!window.renderer.has_persistent_target());
+
+    // Without a kept frame every frame is a full one, whatever the setting says.
+    s.tree.get_mut(s.tint).unwrap().paint.background.current =
+        Color::from_rgba8(0x30, 0xFF, 0x90, 0x90);
+    layout(&mut s.tree, s.root);
+    assert_eq!(window.frame(&gpu, &s.tree, s.root, true), Damage::Full);
+    let mut reference = Window::new(&gpu);
+    reference.frame(&gpu, &s.tree, s.root, false);
+    assert_eq!(
+        window.pixels(&gpu),
+        reference.pixels(&gpu),
+        "a full redraw without a kept frame"
+    );
+
+    // Back on: the first frame is full, the next can be partial and exact.
+    assert!(
+        window
+            .renderer
+            .set_persistent(&gpu.device, u32::from(W), u32::from(H), true)
+    );
+    assert_eq!(window.frame(&gpu, &s.tree, s.root, true), Damage::Full);
+    s.tree.get_mut(s.card).unwrap().paint.background.current =
+        Color::from_rgba8(0xE0, 0x80, 0x80, 0xFF);
+    layout(&mut s.tree, s.root);
+    let damage = window.frame(&gpu, &s.tree, s.root, true);
+    assert!(matches!(damage, Damage::Rects(_)), "got {damage:?}");
+    let mut reference = Window::new(&gpu);
+    reference.frame(&gpu, &s.tree, s.root, false);
+    assert_eq!(
+        window.pixels(&gpu),
+        reference.pixels(&gpu),
+        "a partial redraw over the new kept frame"
+    );
+}

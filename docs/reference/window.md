@@ -232,7 +232,14 @@ and (0.5.1) `gpu_lost`, `gpu_error` and `gpu_stalled`; see
 frame. By default (`True`) each frame redraws only the parts of the window
 that changed, and a frame where nothing visible changed draws nothing.
 The pixels are the same either way; the switch is there for measuring and
-for ruling partial redraw out when chasing a rendering bug. A window whose
+for ruling partial redraw out when chasing a rendering bug. (0.5.7) Partial
+redraw needs a kept copy of the last frame, as big as the window (4 bytes a pixel:
+32 MiB at 3840 x 2160, 16 MiB measured for 2400 x 1400). A window opened with
+`partial_redraw=False` never makes it, which is the cheap choice for a large surface
+that redraws in full anyway; switching it on later makes the copy then and draws that
+frame in full. Switching it off while the window is open stops using the copy and
+frees it, though the driver may not hand the memory back at once (on one AMD driver the
+process's video memory did not fall). A window whose
 surface the platform won't let Tesserae Engine copy into always redraws in full, and
 logs a warning saying so; `get("partial_redraw")` reports the setting, and
 `get("partial_redraw_active")` whether it's in effect (`None` until

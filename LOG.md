@@ -14,6 +14,43 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### Helper tools for the agent (2026-10-25)
+
+Instructions moved to `AGENTS.md` (`CLAUDE.md` is `@AGENTS.md`). New in `tools/`: `check_agent_docs.py`
+(keeps `CLAUDE.md` an import; run by `verify.sh`), `graphify_agents.py` (applies `graphify claude
+install` to `AGENTS.md` and the hooks, after a graphify upgrade), `board.py` (board status, and card
+moves with a guard on Done), `check_version.py` (the version agrees in `Cargo.toml`, `pyproject.toml`
+and the four `Cargo.lock` entries; `--pypi` checks the version is free), and `status.sh` (one-screen
+state, now with the branch chain). Later the same day: `branches.py` (local branches as a tree: commits over the parent, merged,
+pushed) and `tests_for.py` (the clippy, cargo and pytest commands that cover the changed files, picked by
+name match; prints only), and `tools/generate_tracker_artifact.py` was removed as a duplicate of the
+`build-tracker` skill's copy. Tested against the real repo and board, and against broken fixtures; `board.py --comment`
+was not exercised, since it posts publicly.
+
+### More helper tools (2026-10-25)
+
+Added to `tools/`: `with_adapter.sh` (pin RADV, llvmpipe or the wgpu fallback adapter for a command),
+`sway_live.sh` (a private headless sway for the live tests: starts it, exports `WAYLAND_DISPLAY` and
+`SWAYSOCK`, runs the command, exits sway by pid), `pr_chain.py` (status of a branch stack and its PRs;
+push, open, retarget with close/reopen for CI, wait, merge, cleanup, all dry-run unless `--yes`),
+`wrapup.py` (what LOG.md, docs, the board and the memory entity are behind on, plus a draft memory
+line), and `graphify_refresh.sh` (runs `graphify update .` only when a source file is newer than the
+graph; registered as a `Stop` hook in `.claude/settings.json`). `board.py` gained `create` (an issue into
+Backlog or Ready). Checked: `sway_live.sh` ran two real live tests on sway with `with_adapter.sh lvp`
+and left no sway behind; `pr_chain.py status` and every dry run against the real repo; `wrapup.py` on
+this branch; the hook's check and rebuild by hand. Not run: `pr_chain.py` with `--yes`, and `board.py
+create` without `--dry-run`, because both would write to the public repo. The `Stop` hook itself has not
+yet been seen to fire in a session.
+
+### Project skills reviewed and revised (2026-10-25)
+
+The three skills added in `71adab8` (`pixel-test-triage`, `release-checklist`, `perf-profiling`)
+were reviewed and revised. `perf-profiling` now lists the live measurements (`frame_stats()` stages
+and `memory`, `profile_nodes`, `start_trace`), `TRE_GPU_MEMORY=performance` as a comparison setting,
+and that `acquire_ms` under vsync is waiting, not work. `pixel-test-triage` sizes flaky re-runs by
+failure rate (about 20 for a 1-in-6 flake) and says to report a test, branch or version that does not
+exist. `release-checklist` pre-flight asks when the named branch or version is missing.
+
 ### KWin corner reservation re-checked (2026-10-25)
 
 The Tesserae Shell ADR/request note listed "KWin shows no reservation for a corner surface" as
@@ -54,6 +91,16 @@ went from 211 to 31 MiB of video memory. Tests run for this change only: the uni
 mapping, two live tests that read a window's own memory from `/proc/self/fdinfo` (default under
 100 MiB; the variable brings back more than 100 MiB extra), and the snapshot tests (they use the
 other device site).
+
+### #221, no kept frame for a window that redraws in full (2026-10-25)
+
+`GpuState::new` takes the window's `partial_redraw` and makes the persistent target only when it is
+on and the surface can be copied into (`copyable`, now kept on `GpuState`). `WindowRenderer::set_persistent`
+makes or drops it live; each frame checks the setting, and `window.set(partial_redraw=...)` now marks the
+tree dirty so an idle window makes the change. Measured: a 2400 x 1400 window 54.4 MiB with the
+kept frame, 38.4 MiB without. Dropping it live did not lower the driver's count (AMD, 4 s). Tests: a
+Rust pixel test (give back, draw in full, make again, partial exact) and a live fdinfo test.
+`partial_redraw_active` now means "the surface allows it and the setting is on".
 
 ### #222, allocator totals in `frame_stats()` (2026-10-25)
 

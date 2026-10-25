@@ -507,7 +507,10 @@ class Window:
         `partial_redraw`: `True` (the default) redraws only what changed
         each frame, `False` redraws the whole window every frame. A window
         whose surface can't be copied into always redraws in full, with a
-        warning logged, whatever this says. (0.4.1) `show_damage`: `True`
+        warning logged, whatever this says. (0.5.7) `False` also keeps no
+        copy of the last frame, which is a window's worth of video memory
+        (about 16 MiB for a 2400 x 1400 window, 32 MiB at 4K): set it before
+        `App.run()` for a window that redraws all of itself anyway. (0.4.1) `show_damage`: `True`
         tints what each presented frame redrew -- its damage rects in
         magenta, a full redraw outlined in orange -- over the image, never
         the kept frame; off by default. (0.5.4) `profile_nodes`: `True` times each

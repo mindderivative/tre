@@ -37,6 +37,8 @@ pub struct WindowRenderer {
     text: TextRenderer,
     geometry: GeometryCache,
     target: Option<PersistentTarget>,
+    /// The surface's format, for a kept target made later by `set_persistent`.
+    format: wgpu::TextureFormat,
     tracker: DamageTracker,
     /// 0.5.4 (#126): the scroll shift this frame's `prepare` found, for `draw`.
     shift: Option<Shift>,
@@ -84,6 +86,7 @@ impl WindowRenderer {
             text: TextRenderer::new(),
             geometry: GeometryCache::new(),
             target: persistent.then(|| PersistentTarget::new(device, format, width, height)),
+            format,
             tracker: DamageTracker::new(),
             shift: None,
             last_shift: None,
@@ -133,6 +136,26 @@ impl WindowRenderer {
     /// apply.
     pub fn has_persistent_target(&self) -> bool {
         self.target.is_some()
+    }
+
+    /// 0.5.7 (#221): keeps the frame or lets it go, live. The kept target is the
+    /// size of the window (32 MiB at 3840 x 2160) and only partial redraw uses it,
+    /// so a window that redraws in full gives it back; turning partial redraw on
+    /// again makes a new one and draws the next frame in full. Returns whether
+    /// anything changed (the frame after a change must be drawn).
+    pub fn set_persistent(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        on: bool,
+    ) -> bool {
+        if on == self.target.is_some() {
+            return false;
+        }
+        self.target = on.then(|| PersistentTarget::new(device, self.format, width, height));
+        self.tracker.reset();
+        true
     }
 
     /// Resizes the kept target; a recreated one has lost its frame, so the

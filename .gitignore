@@ -26,3 +26,7 @@ python/tre/*.dylib
 /graphify-out/.graphify_python
 /graphify-out/.graphify_root
 /graphify-out/obsidian/
+
+# Skills installed with `npx skills add` (restore with skills-lock.json)
+.agents/
+skills-lock.json
