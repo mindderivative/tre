@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -80,17 +81,20 @@ def module_filter(src: Path) -> str:
     return "::".join(parts)
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("files", nargs="*", help="files to cover (default: changed files)")
-    ap.add_argument("--base", default="origin/main", help="diff base (default origin/main)")
-    args = ap.parse_args()
+@dataclass
+class Plan:
+    files: list[str]
+    pytest: dict[str, str] = field(default_factory=dict)  # test file -> why
+    cargo: dict[str, str] = field(default_factory=dict)  # command -> why
+    notes: list[str] = field(default_factory=list)
+    crates: set[str] = field(default_factory=set)
+    needs_build: bool = False
+    unmatched: list[str] = field(default_factory=list)  # Rust sources no test file mentions by name
 
-    files = [str(Path(f)) for f in args.files] or changed_files(args.base)
-    if not files:
-        print("no changed files")
-        return 0
 
+def plan(files: list[str]) -> Plan:
+    """Which tests cover `files` (paths relative to the repo root). Nothing is run."""
+    out = Plan(files=list(files))
     py_tests = sorted((ROOT / "tests").glob("test_*.py"))
     rs_tests = sorted(ROOT.glob("crates/*/tests/*.rs"))
     corpus = {t: read(t) for t in py_tests + rs_tests}
@@ -101,13 +105,7 @@ def main() -> int:
         pat = re.compile(rf"\b{re.escape(name)}\b")
         return [t for t, text in corpus.items() if pat.search(text)]
 
-    pytest_files: dict[str, str] = {}
-    cargo_cmds: dict[str, str] = {}
-    notes: list[str] = []
-    crates: set[str] = set()
-    needs_build = False
-
-    def rank_tests(p: Path, f: str) -> list[tuple[Path, set[str]]]:
+    def rank_tests(p: Path) -> list[tuple[Path, set[str]]]:
         """Test files that mention this file's distinctive names or share its stem, best first."""
         hits: dict[Path, set[str]] = defaultdict(set)
         for n in names_in(p):
@@ -121,12 +119,11 @@ def main() -> int:
         return sorted(hits.items(), key=lambda kv: (-len(kv[1]), str(kv[0])))[:MAX_PER_FILE]
 
     def add_pytest(t: Path, why: str) -> None:
-        pytest_files.setdefault(str(t.relative_to(ROOT)), why)
+        out.pytest.setdefault(str(t.relative_to(ROOT)), why)
 
     def add_cargo(t: Path, why: str) -> None:
         crate = t.parts[len(ROOT.parts) + 1]
-        cmd = f"cargo test -p {crate} --release --test {t.stem}"
-        cargo_cmds.setdefault(cmd, why)
+        out.cargo.setdefault(f"cargo test -p {crate} --release --test {t.stem}", why)
 
     for f in files:
         p = ROOT / f
@@ -141,40 +138,63 @@ def main() -> int:
             continue
         if len(parts) > 3 and parts[0] == "crates" and parts[2] == "tests" and p.suffix == ".rs":
             add_cargo(p, "changed")
-            crates.add(parts[1])
+            out.crates.add(parts[1])
             continue
         if len(parts) > 3 and parts[0] == "crates" and parts[2] == "src" and p.suffix == ".rs":
             crate = parts[1]
-            crates.add(crate)
+            out.crates.add(crate)
             text = read(p)
             if "#[cfg(test)]" in text:
                 flt = module_filter(p)
                 cmd = f"cargo test -p {crate} --release --lib" + (f" {flt}" if flt else "")
-                cargo_cmds.setdefault(cmd, f"unit tests in {f}")
-            ranked = rank_tests(p, f)
-            if not ranked and "#[cfg(test)]" not in text:
-                notes.append(f"{f}: no test mentions its names; pick one by hand")
+                out.cargo.setdefault(cmd, f"unit tests in {f}")
+            ranked = rank_tests(p)
+            for t, why in ranked:
+                reason = f"{f}: " + ", ".join(sorted(why)[:4])
+                (add_pytest if t.suffix == ".py" else add_cargo)(t, reason)
+            if not ranked:
+                out.unmatched.append(f)
+                if "#[cfg(test)]" not in text:
+                    out.notes.append(f"{f}: no test mentions its names; pick one by hand")
             continue
         if f.startswith("python/tre/") and p.suffix == ".py":
-            needs_build = True
-            for t, why in rank_tests(p, f):
-                if t.suffix == ".py":
-                    add_pytest(t, f"{f}: " + ", ".join(sorted(why)[:4]))
+            out.needs_build = True
+            ranked = [(t, w) for t, w in rank_tests(p) if t.suffix == ".py"]
+            for t, why in ranked:
+                add_pytest(t, f"{f}: " + ", ".join(sorted(why)[:4]))
+            if not ranked:
+                out.unmatched.append(f)
             if p.stem == "__init__":
-                notes.append(f"{f}: the package root; run the tests that exercise the changed names")
+                out.notes.append(f"{f}: the package root; run the tests that exercise the changed names")
             continue
         if f == "python/tre/_core.pyi":
-            notes.append(f"{f}: python -m mypy.stubtest tre._core --allowlist tools/stubtest_allowlist.txt && python -m mypy --strict python")
+            out.notes.append(f"{f}: python -m mypy.stubtest tre._core --allowlist tools/stubtest_allowlist.txt && python -m mypy --strict python")
             continue
         if f.startswith("docs/") or f == "mkdocs.yml":
-            notes.append(f"{f}: python -m mkdocs build --strict")
+            out.notes.append(f"{f}: python -m mkdocs build --strict")
             continue
         if f.endswith("Cargo.toml") or f == "Cargo.lock" or f == "pyproject.toml":
-            notes.append(f"{f}: cargo check --workspace --all-targets (and python tools/check_version.py if a version moved)")
+            out.notes.append(f"{f}: cargo check --workspace --all-targets (and python tools/check_version.py if a version moved)")
             continue
         if f.startswith(("tools/", ".claude/")) or f.endswith((".md", ".sh", ".gitignore")):
             continue  # nothing here is covered by the test suites
-        notes.append(f"{f}: not mapped to a test")
+        out.notes.append(f"{f}: not mapped to a test")
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("files", nargs="*", help="files to cover (default: changed files)")
+    ap.add_argument("--base", default="origin/main", help="diff base (default origin/main)")
+    args = ap.parse_args()
+
+    files = [str(Path(f)) for f in args.files] or changed_files(args.base)
+    if not files:
+        print("no changed files")
+        return 0
+    found = plan(files)
+    crates, cargo_cmds, pytest_files, notes = found.crates, found.cargo, found.pytest, found.notes
+    needs_build = found.needs_build
 
     print(f"changed: {len(files)} file(s)\n")
     if crates:

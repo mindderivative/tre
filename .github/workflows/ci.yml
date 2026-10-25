@@ -59,16 +59,201 @@
 # finding #261 convention `App.run()` implements).
 name: CI
 
+# Three tiers, picked by tools/ci_plan.py from what the change touches (docs/contributing.md,
+# "CI tiers"):
+#   docs     only documentation changed: build the site strictly, check the generated API page.
+#   partial  code changed (the standard run): the changed crates and every crate that depends on them
+#            (clippy and tests), and the Python tests that cover the change. Linux only.
+#   full     a release (the workspace version moved), a build-config change (Cargo.lock, the
+#            toolchain, the root Cargo.toml, this file), the `full-ci` label, or a manual run:
+#            everything, on Linux, Windows and macOS, plus the MSRV check and the examples.
+# `CI result` is the one job to look at (or require): it fails if any job that ran failed, and
+# passes when the tier's jobs passed and the others were skipped by design.
+
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Which tier to run"
+        type: choice
+        options: [full, docs]
+        default: full
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Decides the tier. Cheap: git and Python's standard library only.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tier: ${{ steps.plan.outputs.tier }}
+      reason: ${{ steps.plan.outputs.reason }}
+      run_docs: ${{ steps.plan.outputs.run_docs }}
+      rust: ${{ steps.plan.outputs.rust }}
+      affected_args: ${{ steps.plan.outputs.affected_args }}
+      build_ext: ${{ steps.plan.outputs.build_ext }}
+      typecheck: ${{ steps.plan.outputs.typecheck }}
+      pytest_scope: ${{ steps.plan.outputs.pytest_scope }}
+      pytest_files: ${{ steps.plan.outputs.pytest_files }}
+      examples: ${{ steps.plan.outputs.examples }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pick the tier
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          TIER: ${{ inputs.tier }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # A pull request is checked out as a merge of its head into the base: the first parent
+          # is the base as it is now, so the diff is exactly what the PR changes.
+          if [ "$EVENT" = pull_request ]; then BASE=$(git rev-parse HEAD^1); else BASE="$BEFORE"; fi
+          python3 tools/ci_plan.py --base "$BASE" --event "$EVENT" --tier "$TIER" --labels "$LABELS" \
+            --github-output "$GITHUB_OUTPUT" --summary "$GITHUB_STEP_SUMMARY"
+
+  # The docs tier, and part of the others whenever a page changed: the site builds strictly, the
+  # generated Python API page is current, CLAUDE.md still only imports AGENTS.md, the version agrees.
+  docs:
+    needs: plan
+    if: needs.plan.outputs.run_docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install mkdocs mkdocs-material
+      - name: Build the site (broken links and nav entries fail it)
+        run: mkdocs build --strict
+      - name: Check the generated Python API page is current
+        run: |
+          python tools/gen_python_api.py
+          git diff --exit-code -- docs/api/python.md
+      - name: Agent instructions and version consistency
+        run: |
+          python tools/check_agent_docs.py
+          python tools/check_version.py
+
+  # The partial tier: the standard run for a code change.
+  partial:
+    needs: plan
+    if: needs.plan.outputs.tier == 'partial'
+    runs-on: ubuntu-latest
+    env:
+      AFFECTED: ${{ needs.plan.outputs.affected_args }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        if: needs.plan.outputs.rust == 'true' || needs.plan.outputs.build_ext == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
+            libxi-dev libxcursor-dev libxinerama-dev libudev-dev \
+            libfontconfig1-dev pkg-config mesa-vulkan-drivers libgl1-mesa-dri
+
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        if: needs.plan.outputs.rust == 'true' || needs.plan.outputs.build_ext == 'true'
+        run: rustup show
+
+      # Restore only: a partial build is not the whole dependency set, so the full tier saves it.
+      - name: Restore cargo registry and build artifacts
+        if: needs.plan.outputs.rust == 'true' || needs.plan.outputs.build_ext == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Format check
+        if: needs.plan.outputs.rust == 'true'
+        run: cargo fmt --check
+
+      - name: Clippy on the affected crates
+        if: needs.plan.outputs.rust == 'true'
+        run: cargo clippy $AFFECTED --all-targets -- -D warnings
+
+      - name: Test the affected crates
+        if: needs.plan.outputs.rust == 'true'
+        run: cargo test $AFFECTED
+        env:
+          TRE_DAMAGE_VERIFY: "1"
+
+      - uses: actions/setup-python@v5
+        if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
+        with:
+          python-version: "3.12"
+      - name: Create and activate a venv
+        if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
+        run: |
+          python -m venv .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$PWD/.venv" >> "$GITHUB_ENV"
+      - name: Install maturin, pytest, and mypy
+        if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
+        run: pip install "maturin>=1.7,<2.0" pytest "mypy>=2.3,<3"
+      - name: Build and install the tre extension (maturin develop)
+        if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
+        run: maturin develop
+      - name: Import smoke test
+        if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
+        run: python -c "import tre; print(tre.App, tre.Node)"
+
+      - name: Type-check the package (mypy --strict)
+        if: needs.plan.outputs.typecheck == 'true'
+        run: mypy --strict python/tre
+      - name: Check the stub against the extension (stubtest)
+        if: needs.plan.outputs.typecheck == 'true'
+        run: python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
+      - name: Check the generated Python API page is current
+        if: needs.plan.outputs.typecheck == 'true'
+        run: |
+          python tools/gen_python_api.py
+          git diff --exit-code -- docs/api/python.md
+
+      - name: Python tests (the whole suite)
+        if: needs.plan.outputs.pytest_scope == 'all'
+        run: python -m pytest tests/ -v
+        env:
+          TRE_DAMAGE_VERIFY: "1"
+      - name: Python tests that cover the change
+        if: needs.plan.outputs.pytest_scope == 'selected'
+        run: python -m pytest ${{ needs.plan.outputs.pytest_files }} -v
+        env:
+          TRE_DAMAGE_VERIFY: "1"
+
+      - name: Run the changed examples
+        if: needs.plan.outputs.examples != ''
+        run: |
+          for example in ${{ needs.plan.outputs.examples }}; do
+            echo "== $example"
+            timeout 120 python "$example"
+          done
+
+  # The full tier is the jobs below, as they were: Linux (tests, clippy, fmt, mypy, stubtest, pytest,
+  # every example), Windows, macOS and the MSRV. They run only when the plan says `full`.
   # The MSRV the root Cargo.toml's `rust-version` states, enforced: the
   # whole workspace must still build on it.
   msrv:
+    needs: plan
+    if: needs.plan.outputs.tier == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,6 +270,8 @@ jobs:
         run: cargo +1.90 check --workspace --all-targets
 
   test:
+    needs: plan
+    if: needs.plan.outputs.tier == 'full'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -238,6 +425,8 @@ jobs:
   # no clippy/fmt, no frame-time benchmark: those stay Linux-only checks,
   # not per-platform ones).
   test-windows:
+    needs: plan
+    if: needs.plan.outputs.tier == 'full'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -288,6 +477,8 @@ jobs:
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   test-macos:
+    needs: plan
+    if: needs.plan.outputs.tier == 'full'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -336,3 +527,26 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+  # One verdict for the whole workflow. A job the tier does not use is skipped, which is fine;
+  # one that ran and failed (or was cancelled) is not.
+  result:
+    name: CI result
+    if: always()
+    needs: [plan, docs, partial, msrv, test, test-windows, test-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every job that ran
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          TIER: ${{ needs.plan.outputs.tier }}
+          REASON: ${{ needs.plan.outputs.reason }}
+        run: |
+          echo "tier: $TIER ($REASON)"
+          echo "$NEEDS" | python3 -c '
+          import json, sys
+          bad = {k: v["result"] for k, v in json.load(sys.stdin).items() if v["result"] in ("failure", "cancelled")}
+          for name, result in bad.items():
+              print(f"{name}: {result}")
+          sys.exit(1 if bad else 0)
+          '
