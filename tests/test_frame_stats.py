@@ -21,6 +21,7 @@ def test_a_window_that_never_drew_has_empty_statistics():
     stats = Window().frame_stats()
     assert stats["frames"] == 0 and stats["skipped"] == 0
     assert stats["last"] is None
+    assert stats["memory"] is None  # (#222) no device before App.run()
     recent = stats["recent"]
     assert recent["count"] == 0 and recent["fps"] == 0.0
     assert set(recent["stage_ms"]) == STAGES
@@ -89,3 +90,21 @@ def test_a_live_window_reports_its_frames():
     assert set(data["first_event"]) == set(last)
     # reset cleared the history.
     assert json.loads(lines[-1]) == 0
+
+
+@pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="needs a display")
+def test_a_live_window_reports_the_video_memory_it_holds():
+    """(#222) `memory` comes from the device's allocator; `None` on a backend that cannot say."""
+    import json
+
+    result = subprocess.run([sys.executable, "-c", LIVE], capture_output=True, text=True, timeout=120)
+    assert result.returncode == 0, result.stderr
+    memory = json.loads(result.stdout.strip().splitlines()[-2])["stats"]["memory"]
+    if memory is None:
+        pytest.skip("this backend has no allocator report")
+    assert set(memory) == {"allocated_bytes", "reserved_bytes", "blocks", "largest"}
+    assert 0 < memory["allocated_bytes"] <= memory["reserved_bytes"]
+    assert memory["blocks"] >= 1
+    sizes = [item["bytes"] for item in memory["largest"]]
+    assert 1 <= len(sizes) <= 5 and sizes == sorted(sizes, reverse=True)
+    assert all(isinstance(item["name"], str) for item in memory["largest"])

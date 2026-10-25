@@ -55,6 +55,15 @@ mapping, two live tests that read a window's own memory from `/proc/self/fdinfo`
 100 MiB; the variable brings back more than 100 MiB extra), and the snapshot tests (they use the
 other device site).
 
+### #222, allocator totals in `frame_stats()` (2026-10-25)
+
+`frame_stats()["memory"]` (and `StatsHandle.read()`) reports `allocated_bytes`, `reserved_bytes`,
+`blocks` and the five `largest` allocations, from the window's `wgpu` allocator report. `FrameStats`
+keeps a clone of the window's `Device` (set where the window's `GpuState` is made, for windows and
+layer windows alike) and builds the report when the stats are read, so a frame costs nothing extra.
+`None` before the window opens or on a backend without an allocator report. Tests: the empty
+case, and a live window.
+
 ### #207, why a small window holds about 210 MB of VRAM (research, 2026-10-25)
 
 Measured per process from `/proc/<pid>/fdinfo`: a 200 x 100 window 211 MiB VRAM and 73 MiB GTT, each
