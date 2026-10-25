@@ -11,9 +11,8 @@ maintainer's own, copied here so they survive a lost machine.
   that worked for `tre`: baseline and inventory, findings as ranked Backlog issues, nothing
   built until approved.
 - **`build-tracker`**: the `BUILD_TRACKER.md` format and the script that renders it as an
-  interactive page (`generate_tracker_artifact.py`, the same script as
-  `tools/generate_tracker_artifact.py`). `tre` used it up to 0.4; from 0.5.0 progress is
-  tracked on the GitHub project instead (see `docs/contributing.md`), so it is kept for
+  interactive page (`generate_tracker_artifact.py`, kept in the skill's directory). `tre` used
+  it up to 0.4; from 0.5.0 progress is tracked on the GitHub project instead (see `docs/contributing.md`), so it is kept for
   reference and for the archived trackers (`BUILD_TRACKER_ARCHIVE_*.md`).
 - **`pixel-test-triage`**: what to do when a headless GPU pixel test fails or changes after
   a renderer bump (`vello_gpu`, `wgpu`, ...) or between GPUs: reproduce on a real and the
