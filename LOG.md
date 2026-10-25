@@ -14,6 +14,12 @@ drag and drop, reduced-motion and contrast on hardware), #158 (a burst of
 
 ## After 0.5.7 (unreleased)
 
+### Hand-off corrected (2026-10-25)
+
+`docs/design/layer-window-shell-handoff.md` now says `PopupWindow` (#223) and small GPU memory
+blocks (#219) exist, that the overlay menu is kept but is not the efficient route, and that
+`PopupWindow` was not run on KWin.
+
 ### #223, `PopupWindow` (2026-10-25)
 
 A window whose role is `xdg_popup`, parented to a `LayerWindow` (through
