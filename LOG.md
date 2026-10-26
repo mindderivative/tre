@@ -16,6 +16,33 @@ position), #220 (one wgpu device for all windows).
 
 ## After 0.5.8 (unreleased)
 
+### #236, pass-through clicks on the unfilled parts of a frame (2026-10-26)
+
+For the shell's screen frame (a ring with convex outer corners, concave inner fillets and joins). Two
+gaps, both fixed. (1) `Tree::input_region` could not represent a hole: `strip_extent` kept one
+`[min, max]` x-span per polygon per band, so a ring's two sides became one span across its cut-out. It
+is now `shape_spans`: a shape is a set of contours (a path's sub-paths, each its own contour); a band is
+split at every vertex height, the edges across each slice are sorted and paired by the non-zero winding
+rule, and a span runs from the left edge's furthest-left reach to the right edge's furthest-right reach over
+the slice (exact, since the interval at each height varies continuously). Rounded outward as before, so
+the region never loses a drawn pixel. Convex shapes give the same rectangles (all 321 old engine-core tests
+pass unchanged). (2) A path node was hit and measured as its box. New `hit_shape` on a path, `"box"` (the
+default, so nothing changes) or `"painted"`: the fill region (colour or gradient, non-zero rule) and the
+stroke (half the width either side, round caps and joins, as painted), in the node's transform, view box
+and padding, used by pointer events and by `input_region="auto"`. The fill and the stroke outline are
+separate shapes so their windings cannot cancel; a path with neither takes no clicks. Decisions taken as
+recommended in the issue: default `"box"`, `auto` follows `hit_shape`, svg and canvas-fill left out, the 2 px
+band contract. Tests: 10 engine-core tests (ring, concave notch, stroke-only line, nothing painted,
+transform, a shape thinner than a band, a rounded frame at caps of 256, 40 and 12 rectangles) and a randomized
+check over 40 rounded rings that every pixel whose centre is painted is covered (also at a cap of 40),
+8 Python tests (`tests/test_path_hit_shape.py`), and two live tests: a rounded frame on a layer window passes a
+click outside a convex corner, in the interior and inside a concave fillet, and takes the ring and the
+fillet's body (`test_a_painted_path_frame_passes_clicks_...`), and the same frame at `hit_shape="box"` takes
+the interior as before. They pass on a headless sway (three runs) and on KWin 6.8.1 (`TRE_LIVE_INPUT=1`, which
+moves the real pointer). Cost: a 400 x 400 rounded frame is a few dozen rectangles; the earlier estimate for
+a 4K ring was 66. Not done: the cap fallback is tested (bands widen to 40 and 12 rectangles) but a frame with
+many joins at 4K has not been measured on a real output; `svg` nodes; a fill-based canvas hit test.
+
 ### #235, windows share one renderer and the bundled fonts (2026-10-26)
 
 Measured first, on top of #220 (`/tmp/scale.py`-style probes, RADV, private headless sway, 1, 10, 25, 50

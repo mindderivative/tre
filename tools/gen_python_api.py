@@ -122,6 +122,7 @@ NODE_PROPERTIES = [
         ("`clip_children`", "`bool`", "Clips children to the rounded box."),
         ("`cursor`", "cursor name or `None`", "Pointer shape over the node."),
         ("`hit_testable`", "`bool`", "Whether the node can be a pointer target."),
+        ("`hit_shape`", "`\"box\"`, `\"painted\"` (path only)", "Whether a path is hit by its box or by what it paints."),
         ("`window_region`", "`\"drag\"`, `\"none\"`, `None`", "Makes a node a title bar that moves the window."),
     ]),
     ("Paint (every kind)", [

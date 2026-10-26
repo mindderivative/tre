@@ -1,6 +1,7 @@
 //! Hit-testing, hover, press, focus movement, activation, and pointer capture.
 
 use super::*;
+use crate::HitShape;
 
 impl Tree {
     pub fn focused(&self) -> Option<NodeId> {
@@ -125,6 +126,10 @@ impl Tree {
                     (state.options.selectable
                         || state.options.spans.iter().any(|s| s.link.is_some()))
                         && rect_contains(layout, local_point)
+                }
+                // 0.5.9 (#236): a path that opts in is hit by what it paints.
+                NodeKind::Path(state) if state.hit_shape == HitShape::Painted => {
+                    region::painted_contains(node, layout, local_point)
                 }
                 _ => region::shape_contains(&node.paint, layout, local_point),
             }

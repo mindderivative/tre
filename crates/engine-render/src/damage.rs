@@ -2047,6 +2047,7 @@ fn image_fingerprint(h: &mut impl Hasher, state: &ImageState) {
 fn path_fingerprint(h: &mut impl Hasher, state: &PathState) {
     let PathState {
         data,
+        hit_shape: _, // how the node is hit, not how it looks
         view_box,
         trim_start,
         trim_end,

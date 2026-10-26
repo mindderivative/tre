@@ -25,6 +25,36 @@ const MORPH_SAMPLES: usize = 96;
 /// Arc-length accuracy, in path units.
 const ACCURACY: f64 = 1e-3;
 
+/// 0.5.9 (#236): what a `path` node is hit by.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HitShape {
+    /// The node's box, with its corners rounded as painted: how every node was hit before, and
+    /// the default.
+    #[default]
+    Box,
+    /// What is painted: the fill region (when the fill has colour or a gradient) united with the
+    /// stroke (when the stroke has width and colour), so a click in a hole, a notch or outside a
+    /// curve passes to what is behind.
+    Painted,
+}
+
+impl HitShape {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "box" => Some(Self::Box),
+            "painted" => Some(Self::Painted),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Box => "box",
+            Self::Painted => "painted",
+        }
+    }
+}
+
 /// A path's data -- the value an `Animated<PathData>` interpolates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PathData(pub BezPath);
@@ -272,6 +302,9 @@ pub fn fit_transform(view_box: Option<Rect>, width: f64, height: f64) -> Affine 
 /// same as every other node's.
 pub struct PathState {
     pub data: Animated<PathData>,
+    /// 0.5.9 (#236): which part of the node takes pointer events and counts in an
+    /// `input_region="auto"`.
+    pub hit_shape: HitShape,
     /// The `(min_x, min_y, width, height)` region `data` is drawn in,
     /// fitted into the node's box; `None` draws `data` in node-local
     /// pixels.
@@ -285,6 +318,7 @@ impl PathState {
     pub fn new(data: PathData) -> Self {
         Self {
             data: Animated::new(data),
+            hit_shape: HitShape::Box,
             view_box: None,
             trim_start: Animated::new(0.0),
             trim_end: Animated::new(1.0),

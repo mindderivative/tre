@@ -26,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 69] = [
+const SETTABLE: [&str; 70] = [
     // 0.5.7 (#179): placed against another node.
     "anchor",
     "placement",
@@ -52,6 +52,7 @@ const SETTABLE: [&str; 69] = [
     "blend_mode",
     "data",
     "view_box",
+    "hit_shape",
     "trim_start",
     "trim_end",
     "placeholder",
@@ -226,6 +227,8 @@ pub(crate) enum Change {
     RotationDeg(f64),
     Data(PathData),
     ViewBox(Option<Rect>),
+    /// 0.5.9 (#236).
+    HitShape(engine_core::HitShape),
     TrimStart(f64),
     TrimEnd(f64),
     Fill(Color),
@@ -715,6 +718,7 @@ impl Change {
         Some(match self {
             Change::Data(_) => ("data", "path", path),
             Change::ViewBox(_) => ("view_box", "path", path),
+            Change::HitShape(_) => ("hit_shape", "path", path),
             Change::TrimStart(_) => ("trim_start", "path", path),
             Change::TrimEnd(_) => ("trim_end", "path", path),
             Change::Placeholder(_) => ("placeholder", "text_input", text_input),
@@ -1096,6 +1100,13 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             }
             Some(Rect::new(x, y, x + w, y + h))
         }),
+        "hit_shape" => {
+            let expected = "\"box\" or \"painted\"";
+            let word: String = required(value, name, expected)?;
+            Change::HitShape(
+                engine_core::HitShape::parse(&word).ok_or_else(|| invalid(name, expected))?,
+            )
+        }
         "trim_start" => Change::TrimStart(fraction(value, name)?),
         "trim_end" => Change::TrimEnd(fraction(value, name)?),
         "fill" => match value.extract::<crate::gradient::PyGradient>() {
@@ -1790,6 +1801,19 @@ impl Node {
                     };
                     palette_to_py(&state.palette, py)?
                 }
+                "hit_shape" => {
+                    let NodeKind::Path(state) = &node.kind else {
+                        return Err(PyValueError::new_err(
+                            "node property `hit_shape` applies only to a path node",
+                        ));
+                    };
+                    state
+                        .hit_shape
+                        .name()
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind()
+                }
                 "view_box" => {
                     let NodeKind::Path(state) = &node.kind else {
                         return Err(PyValueError::new_err(
@@ -2146,6 +2170,11 @@ impl Node {
                 Change::ViewBox(view_box) => {
                     if let NodeKind::Path(state) = &mut node.kind {
                         state.view_box = view_box;
+                    }
+                }
+                Change::HitShape(hit_shape) => {
+                    if let NodeKind::Path(state) = &mut node.kind {
+                        state.hit_shape = hit_shape;
                     }
                 }
                 Change::TrimStart(start) => {

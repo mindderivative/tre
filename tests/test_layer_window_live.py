@@ -622,13 +622,19 @@ app.add_window(behind)
 overlay = LayerWindow("tre-test-overlay", layer="overlay", anchor=("top", "bottom", "left", "right"),
                       size=(0, 0), exclusive_zone=0, output=args["output"], input_region=args["region"])
 overlay.root.set(fill=(0, 0, 0, 0))
-if not args.get("nodes"):
+if not args.get("nodes") and not args.get("paths"):
     overlay.root.on("click", lambda e: say("layer_click"))
 for x, y, w, h, radius in args.get("nodes", []):
     box = overlay.create("box", width=w, height=h, x=x, y=y, position="absolute", fill=(40, 90, 200, 255),
                          corner_radius=radius)
     box.on("click", lambda e: say("layer_click"))
     overlay.root.add_child(box)
+for data, x, y, w, h, hit_shape in args.get("paths", []):
+    shape = overlay.create("path", data=data, width=w, height=h, x=x, y=y, position="absolute",
+                           fill=(40, 90, 200, 255))
+    shape.set(hit_shape=hit_shape)
+    shape.on("click", lambda e: say("layer_click"))
+    overlay.root.add_child(shape)
 app.add_window(overlay)
 threading.Thread(target=lambda: (time.sleep(args["seconds"]), os._exit(0)), daemon=True).start()
 threading.Thread(target=lambda: (time.sleep(2.5), say("ready")), daemon=True).start()
@@ -648,24 +654,27 @@ def test_input_region_decides_who_gets_the_click(children, region, inside, outsi
     _routed(children, region, inside, outside, [(100, 100), (700, 400)])
 
 
-def _routed(children, region, inside, outside, points, nodes=()):
+def _routed(children, region, inside, outside, points, nodes=(), paths=(), expected=None):
     name = next(iter(outputs()))
+    expected = expected or [inside, outside]
     pointer = _input_pointer(name)
     try:
         # KWin floats and maximises the window below a moment after it opens, and a click that
         # lands before that is lost now and then (about one run in twenty): one fresh attempt
         # is allowed. A click routed to the wrong place fails both.
         try:
-            _region_clicks(children, pointer, name, region, [inside, outside], points, nodes)
+            _region_clicks(children, pointer, name, region, expected, points, nodes, paths)
         except AssertionError:
-            _region_clicks(children, pointer, name, region, [inside, outside], points, nodes)
+            _region_clicks(children, pointer, name, region, expected, points, nodes, paths)
     finally:
         pointer.close()
 
 
-def _region_clicks(children, pointer, name, region, expected, points, nodes):
+def _region_clicks(children, pointer, name, region, expected, points, nodes, paths=()):
     child = children(
-        REGION, REGION_ARGS=json.dumps({"output": name, "region": region, "nodes": list(nodes), "seconds": 9})
+        REGION, REGION_ARGS=json.dumps(
+            {"output": name, "region": region, "nodes": list(nodes), "paths": list(paths), "seconds": 9 + len(points)}
+        )
     )
     child.events(until="ready", timeout=20)
     time.sleep(1.0)  # a floating compositor (KWin) takes a moment to maximise the window below
@@ -698,6 +707,46 @@ def test_a_screen_frame_takes_clicks_on_its_ring_and_lets_the_interior_through(c
     _, _, w, h = outputs()[next(iter(outputs()))]
     ring = [(0, 0, w, 30, 0), (0, h - 30, w, 30, 0), (0, 0, 30, h, 0), (w - 30, 0, 30, h, 0)]
     _routed(children, "auto", "layer_click", "window_click", [(w // 2, 12), (w // 2, h // 2)], nodes=ring)
+
+
+def _frame_path(w, h, thickness, outer_radius, inner_radius):
+    """SVG data for a screen frame: an outer rounded rectangle (convex corners) and the hole inside
+    it, wound the other way, with its own rounded corners (the ring's concave fillets)."""
+    (o, i, t) = (outer_radius, inner_radius, thickness)
+    outer = (f"M{o},0 H{w - o} A{o},{o} 0 0 1 {w},{o} V{h - o} A{o},{o} 0 0 1 {w - o},{h} "
+             f"H{o} A{o},{o} 0 0 1 0,{h - o} V{o} A{o},{o} 0 0 1 {o},0 Z")
+    hole = (f"M{t + i},{t} A{i},{i} 0 0 0 {t},{t + i} V{h - t - i} A{i},{i} 0 0 0 {t + i},{h - t} "
+            f"H{w - t - i} A{i},{i} 0 0 0 {w - t},{h - t - i} V{t + i} A{i},{i} 0 0 0 {w - t - i},{t} Z")
+    return outer + " " + hole
+
+
+FRAME_POINTS = [
+    ("the ring, top middle", lambda w, h: (w // 2, 15), "layer_click"),
+    ("the open interior", lambda w, h: (w // 2, h // 2), "window_click"),
+    # The bottom-left corner (the top edge has a title bar), 60 px up so a desktop panel along the
+    # bottom edge is not under the click; the outer radius is 120, so (8, h - 60) is outside the curve.
+    ("outside a convex outer corner", lambda w, h: (8, h - 60), "window_click"),
+    ("the ring's concave fillet (body)", lambda w, h: (40, 40), "layer_click"),
+    ("inside the hole's rounded corner (open)", lambda w, h: (55, 55), "window_click"),
+]
+
+
+def test_a_painted_path_frame_passes_clicks_at_convex_and_concave_corners_and_in_the_interior(children):
+    # (#236) The shell's screen frame: one path with rounded outer corners (120), a 30 px ring and
+    # inner corners rounded the other way (60): the notch between the ring and its fillet stays
+    # open, as does everything outside the outer curve and the whole interior.
+    _, _, w, h = outputs()[next(iter(outputs()))]
+    data = _frame_path(w, h, 30, 120, 60)
+    points = [fn(w, h) for _, fn, _ in FRAME_POINTS]
+    expected = [want for _, _, want in FRAME_POINTS]
+    _routed(children, "auto", None, None, points, paths=[(data, 0, 0, w, h, "painted")], expected=expected)
+
+
+def test_the_same_frame_left_at_hit_shape_box_takes_the_interior_as_before(children):
+    _, _, w, h = outputs()[next(iter(outputs()))]
+    data = _frame_path(w, h, 30, 120, 60)
+    _routed(children, "auto", None, None, [(w // 2, h // 2), (8, h - 60)],
+            paths=[(data, 0, 0, w, h, "box")], expected=["layer_click", "layer_click"])
 
 
 def test_a_margin_animation_moves_the_surface_smoothly_and_ends_on_time(children):

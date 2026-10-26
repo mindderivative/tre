@@ -32,10 +32,35 @@ listed in [Nodes and Properties](properties.md).
 | `data` | SVG path data — the `d` attribute: `M`, `L`, `H`, `V`, `C`, `S`, `Q`, `T`, `A`, `Z`, absolute and relative |
 | `view_box` | `(min_x, min_y, width, height)` — the region `data` is drawn in, fitted uniformly and centered into the node's box (SVG's default `xMidYMid meet`); `None` draws `data` in node-local pixels |
 | `trim_start`, `trim_end` | `0.0`–`1.0` — the part of the stroke drawn, by length across every subpath in order |
+| `hit_shape` | `"box"` (the default) or `"painted"` (0.5.9) — what takes pointer events and counts in an `input_region="auto"`; see [Hit testing a path](#hit-testing-a-path) |
 | `fill` | the path's fill |
 | `stroke_color`, `stroke_width` | the stroke, centered on the path with round caps and joins; its width stays in pixels however the view box scales |
 
 A Material Symbols SVG drops straight in: pass its `d` and its `viewBox`.
+
+### Hit testing a path
+
+By default a path is hit by its **box**, as every node is: a click in the empty middle of a
+ring, or in the notch of a concave corner, lands on the path. `hit_shape="painted"` (0.5.9) makes
+it what is painted instead: the **fill region** (when `fill` has colour or is a gradient), under the
+non-zero winding rule, united with the **stroke** (when `stroke_width` is above zero and the colour
+is not transparent), measured as half the stroke width either side of the line with round caps and
+joins, as painted. A click anywhere else on the path's box passes to what is behind it, and a path
+with neither fill nor stroke takes none. The shape follows the node's transform, its `view_box`,
+`trim_*` and padding, and it is the same shape for `click` and the other pointer events, `hover`,
+and a layer window's [`input_region="auto"`](layer-window.md), so what the compositor lets through and
+what tre accepts agree.
+
+```python
+ring = window.create("path", data="M0,0 H400 V300 H0 Z M24,24 V276 H376 V24 Z",   # a frame: the second
+                     fill=(30, 30, 40, 255), width=400, height=300)                  # contour is wound the
+ring.set(hit_shape="painted")                                                        # other way, so it is a hole
+```
+
+Two limits. A click close to a curve on the unfilled side may still be taken, by up to about two
+pixels (the region is cut into bands of that height); test with points a few pixels inside the unfilled
+area. And `canvas` and `svg` nodes are not covered: a canvas's own hit shape is `set_hit_test_circle` or
+`set_hit_test_path` (which follows the outline, not a filled region).
 
 `get("data")` reads the path back **normalized**, not as you wrote it: relative
 commands become absolute, `H` and `V` become `L`, an arc `A` becomes cubic

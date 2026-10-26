@@ -122,6 +122,18 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 
 ## 0.5.9 (unreleased)
 
+### Added
+
+- **`hit_shape` on a `path` node** (#236): `"box"` (the default, as before) or `"painted"`. A
+  painted path is hit by its fill region and its stroke, not its box, so a click in a ring's hole or a
+  concave notch passes to what is behind it, for pointer events and for a layer window's
+  `input_region="auto"` alike. See [Hit testing a path](reference/paint.md#hit-testing-a-path). It is
+  what a screen frame needs: a path with convex outer corners and concave inner fillets, clickable only
+  on the ring.
+- *Rust (`engine-core`):* `HitShape`, `PathState::hit_shape`. The input region's builder now handles
+  shapes with holes and concave corners (it used one span per shape per band before); nothing changes
+  for the shapes it handled, and a convex shape gives the same rectangles.
+
 ### Behavior changes
 
 - **Windows share one GPU device.** The first window makes the `wgpu` instance, adapter and
