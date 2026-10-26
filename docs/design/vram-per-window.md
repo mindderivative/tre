@@ -113,7 +113,31 @@ Filed as Backlog issues; nothing is built until approved.
    `TRE_GPU_DEVICES=per-window` reproduces the old numbers exactly. Time until five windows have
    each drawn a frame: about 285 ms against 334 ms (three runs each), so roughly 12 ms a window;
    the rest of a window's start-up is its own renderer (pipelines and caches), which is not shared.
-   That is the next step if many windows matter: share the `vello_gpu` pipelines between windows.
+   That was the next step if many windows matter, and it is done too (#235, below).
+
+**Many windows (#235, 0.5.9).** With the device shared, each further window still cost about 4.3 MiB
+of process memory and 9 to 12 ms. Taken apart (throwaway tests, no windows): a `WindowRenderer` cost
+4.2 MiB and 9 ms on its own, because `vello_gpu::Renderer::new_with` builds its own pipelines,
+gradient cache and atlases and cannot share them; and a `TextRenderer::new` cost 3.2 MiB, because it
+copied every bundled font file (a Nerd Font among them) with `to_vec()`. Now windows on a shared device
+share one `vello_gpu` renderer per surface format (`SharedRenderer`; a vello renderer follows the size
+it is asked to render, and the renderer writes its buffers when work is submitted, which each window's
+frame does before the next window's starts), and the fonts are the program's static data, not copies.
+Medians of three runs, AMD RADV, 200 x 100 windows with a text label, a private headless sway:
+
+| windows | device memory in use | process memory | all windows drawn after |
+|---|---|---|---|
+| 1 | 4.5 MiB | 96.9 -> 91.0 MiB | 66 ms |
+| 10 | 6.3 -> 4.6 MiB | 136.8 -> 93.0 MiB | 319 -> 257 ms |
+| 50 | 15.1 -> 5.0 MiB | 309.7 -> 97.9 MiB | 508 -> 173 ms |
+
+(Before = shared device, a renderer and fonts per window. With a device per window, 50 windows held
+532 MiB.) Idle CPU was 0% at every size. The 50-window open times varied a lot between runs in both
+modes (a compositor places each window in turn), so read them as a direction. What the table does not
+show: the process's reported video memory (`drm-total-vram`) at 50 windows was 107 MiB both ways. The
+wgpu allocator holds 32 MiB of that, so about 75 MiB is memory the driver allocates outside it
+(swapchain images are the likely cause); that is the floor each window needs and is not explained
+further here. `TRE_GPU_RENDERERS=per-window` brings the renderer per window back.
 3. **Cut the per-pixel cost of full-screen surfaces** (4K: about 160 MiB). Options: skip the
    persistent target for a surface that never redraws partially (saves 32 MiB at 4K); keep
    overlay surfaces menu-sized where an input grab does not need the whole output. Effort and risk

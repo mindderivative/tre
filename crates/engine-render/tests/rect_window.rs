@@ -336,7 +336,7 @@ impl GpuState {
             self.root,
             self.width,
             self.height,
-            self.frame_renderer.resources_mut(),
+            &mut self.frame_renderer.resources_mut(),
             &mut self.text_renderer,
             &mut self.geometry_cache,
         );

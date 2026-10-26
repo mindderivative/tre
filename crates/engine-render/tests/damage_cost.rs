@@ -92,7 +92,7 @@ fn scene_cost_follows_the_damage() {
         let (w, h) = (960u16, ((n / 96 + 1) * 10) as u16);
         let mut text = TextRenderer::new();
         let mut geometry = GeometryCache::new();
-        let mut frames = FrameRenderer::new(
+        let frames = FrameRenderer::new(
             &device,
             &RenderTargetConfig {
                 format: wgpu::TextureFormat::Rgba8Unorm,
@@ -125,7 +125,7 @@ fn scene_cost_follows_the_damage() {
                     None,
                     &ShaderTextures::none(),
                     1.0,
-                    frames.resources_mut(),
+                    &mut frames.resources_mut(),
                     &mut text,
                     &mut geometry,
                 );

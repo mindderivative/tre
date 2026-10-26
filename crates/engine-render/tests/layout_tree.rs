@@ -115,7 +115,7 @@ fn two_row_children_paint_at_their_own_laid_out_positions() {
             root,
             width,
             height,
-            frame_renderer.resources_mut(),
+            &mut frame_renderer.resources_mut(),
             &mut text_renderer,
             &mut geometry_cache,
         );

@@ -1854,10 +1854,11 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 | `fn render(&mut self, scene: &Scene, device: &Device, queue: &Queue, encoder: &mut CommandEncoder, render_size: &RenderSize, target: &TextureView)` | Renders `scene` into `target` via `encoder`. |
 | `fn render_into(&mut self, scene: &Scene, device: &Device, queue: &Queue, encoder: &mut CommandEncoder, render_size: &RenderSize, target: &TextureView, rects: Option<&[Rect]>)` | Renders a scene, clearing only the given rects and keeping the rest of the target. |
 | `fn render_over(&mut self, scene: &Scene, device: &Device, queue: &Queue, encoder: &mut CommandEncoder, render_size: &RenderSize, target: &TextureView)` | Renders a scene on top of the target's existing pixels without clearing anything. |
-| `fn resources_mut(&mut self) -> &mut Resources` | Gives access to the renderer's resources, which glyph drawing needs. |
+| `fn resources_mut(&self) -> RefMut<'_, Resources>` | Gives access to the renderer's resources, which glyph drawing needs. |
 | `fn run_shader_passes(&mut self, tree: &Tree, root: NodeId, width: u16, height: u16, time: f32, scale: f64, device: &Device, queue: &Queue, text: &mut TextRenderer, geometry: &mut GeometryCache) -> ShaderTextures` | Runs this frame's shader passes and offscreen effect renders in dependency order. |
 | `fn shader_pass_count(&self) -> usize` | How many shader passes the last `run_shader_passes` recorded. |
 | `fn shaders_animated(&self) -> bool` | Whether a shader drawn by the last `run_shader_passes` is animated. |
+| `fn sharing(shared: &SharedRenderer, format: TextureFormat) -> Self` | A `FrameRenderer` that draws with `shared`'s renderer and resources (0.5.9, #235), for a surface of `format` (the format `shared` was made for). |
 | `fn skip_shader_passes(&mut self)` | Marks a frame that draws nothing, so no shader pass ran. |
 | `fn sync_image_textures(&mut self, tree: &Tree, device: &Device, queue: &Queue)` | Uploads GPU textures for every image node so they are ready before the next render. |
 
@@ -1999,6 +2000,19 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 | `fn is_empty(&self) -> bool` | Whether any shader texture is ready. |
 | `fn none() -> Self` | No shader textures: nothing to draw. |
 
+### SharedRenderer { #sharedrenderer }
+
+*struct.* A `vello_gpu` renderer that several windows draw with (0.5.9, #235).
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html)
+
+| Method | Description |
+| --- | --- |
+| `fn downgrade(&self) -> WeakSharedRenderer` | A handle that does not keep the renderer alive, for a registry of the renderers windows can still take. |
+| `fn for_format(device: &Device, format: TextureFormat, width: u32, height: u32) -> Self` | Like `new` from plain values: a renderer for surfaces of `format`, starting at `width` x `height` (clamped to what the renderer takes). |
+| `fn holders(&self) -> usize` | How many ``FrameRenderer`s` draw with this one (itself included). |
+| `fn new(device: &Device, config: &RenderTargetConfig) -> Self` | A renderer for `config.format` on `device`. |
+
 ### Shift { #shift }
 
 *struct.* A scroller's content moved as a block.
@@ -2065,6 +2079,16 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 | `fn text_offset_under(&mut self, node_id: NodeId, state: &TextState, at: TextPlacement, point: Point) -> Option<usize>` | The byte offset of the character *under* `point` (a local point in the node), or `None` when the point is past the text. |
 | `fn text_range_at(&mut self, node_id: NodeId, state: &TextState, at: TextPlacement, point: Point, line: bool) -> (usize, usize)` | The bytes of the word (`lines == false`) or the visual line (`lines == true`) at `point`, for a double or triple click. |
 
+### WeakSharedRenderer { #weaksharedrenderer }
+
+*struct.* A `SharedRenderer` that is freed when the windows using it are.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html)
+
+| Method | Description |
+| --- | --- |
+| `fn upgrade(&self) -> Option<SharedRenderer>` | The renderer, if some window still uses it. |
+
 ### WindowRenderer { #windowrenderer }
 
 *struct.* Owns a window's renderer, caches and kept frame.
@@ -2089,6 +2113,7 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 | `fn set_scroll_blit_min_nodes(&mut self, nodes: usize)` | How many nodes must move with a scroll for it to be carried by a copy instead of redrawn (default `SCROLL_BLIT_MIN_NODES`); `0` always does. |
 | `fn set_time(&mut self, seconds: f32)` | Sets the time, in seconds, the next frame's shaders see as `frame.time`. |
 | `fn shader_pass_count(&self) -> usize` | How many shader passes the last drawn frame ran. |
+| `fn sharing(device: &Device, format: TextureFormat, width: u32, height: u32, persistent: bool, shared: &SharedRenderer) -> Self` | Like `new`, drawing with `shared`'s `vello_gpu` renderer instead of making one (0.5.9, #235). |
 | `fn take_profile(&mut self) -> Option<FrameProfile>` | What the last `draw` spent per node, when profiling was on for it. |
 | `fn text(&mut self) -> &mut TextRenderer` | The window's text shaper — the one painting uses, so hit-testing and font registration see the same layouts. |
 

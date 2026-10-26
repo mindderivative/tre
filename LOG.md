@@ -16,6 +16,31 @@ position), #220 (one wgpu device for all windows).
 
 ## After 0.5.8 (unreleased)
 
+### #235, windows share one renderer and the bundled fonts (2026-10-26)
+
+Measured first, on top of #220 (`/tmp/scale.py`-style probes, RADV, private headless sway, 1, 10, 25, 50
+windows): each window still cost 4.3 MiB of process memory, about 1.6 MiB of reported video memory and 9 to 12 ms,
+and idle CPU was 0%. Text content made no difference. Taken apart with throwaway tests: `WindowRenderer` alone
+4.2 MiB and 9 ms (`vello_gpu::Renderer` builds its pipelines, gradient cache and atlases per renderer, and
+cannot share them), `TextRenderer::new` 3.2 MiB (it copied every bundled font with `to_vec`), everything else
+nothing. Built: `SharedRenderer` (`engine-render`; the vello `Renderer` + `Resources` behind an `Rc<RefCell>`),
+`FrameRenderer::sharing`, `WindowRenderer::sharing`; `gpu_share::renderer_for` hands the loop's windows one
+renderer per shared device and surface format (thread-local, weak, freed with the last window);
+`TRE_GPU_RENDERERS=per-window` opts out. `resources_mut` now returns a guard (36 call sites changed). The bundled
+fonts are shared as `'static` data. Safe to share because a vello renderer follows the size it is asked to
+render and writes its buffers when work is submitted, which each window's frame does before the next
+starts. Result (medians of three, 200 x 100 windows with text): 50 windows hold 98 MiB of process memory
+(310 before, 532 with a device each), device memory in use 5.0 MiB (15.1), a window adds 0.14 MiB (4.3);
+10 windows draw in 257 ms (319). The 50-window open times were noisy. **Not explained:** the process's
+reported video memory at 50 windows (107 MiB) did not change; the allocator holds 32 of it, the rest is
+outside it, probably swapchain images. Tests: 3 pixel tests (`shared_renderer.rs`: two windows of different
+sizes and content, drawn in turn through one renderer, byte for byte the same as with their own, text
+included; holders; `new` shares nothing), the whole `engine-render` suite (334 tests, damage-verified), 2 live
+tests (thirty windows use what one does; the variable brings the cost back), 579 Python tests on the
+windows that open real surfaces on RADV, the live layer, popup and overlay tests, and the two window-manager
+tests that fail on sway pass on KWin (they fail the same with sharing off). Not tested: other GPUs, windows
+with different surface formats at once, Windows and macOS.
+
 ### #220, windows share one GPU device (2026-10-26)
 
 `GpuState::new` used to make a `wgpu` instance, adapter, device and queue per window. Now `Opened::new`

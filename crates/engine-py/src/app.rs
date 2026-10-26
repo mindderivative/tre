@@ -424,13 +424,18 @@ impl GpuState {
         }
         surface.configure(&device, &config);
         // 0.5.8 (#221): the kept frame is only made for a window that redraws partially.
-        let renderer = WindowRenderer::new(
-            &device,
-            config.format,
-            width,
-            height,
-            copyable && partial_redraw,
-        );
+        let copy_target = copyable && partial_redraw;
+        let renderer = match shared
+            .as_ref()
+            .filter(|_| crate::gpu_share::renderer_sharing_enabled())
+        {
+            // 0.5.9 (#235): the renderer is shared like the device.
+            Some(shared) => {
+                let vello = crate::gpu_share::renderer_for(shared, config.format, width, height);
+                WindowRenderer::sharing(&device, config.format, width, height, copy_target, &vello)
+            }
+            None => WindowRenderer::new(&device, config.format, width, height, copy_target),
+        };
         let timer = engine_render::GpuTimer::new(&device, &queue);
 
         Ok(Self {

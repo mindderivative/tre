@@ -102,7 +102,15 @@ window on the device, once each, because `wgpu` does not say which window's draw
 lost device is lost for all of them, so every window's `gpu_lost` listener hears it before the run
 ends. A window whose surface the shared adapter cannot present to (a second GPU) gets a device of its
 own. **Set `TRE_GPU_DEVICES=per-window` before the app starts for a device per window again** (`shared`,
-or anything else, is the default). `frame_stats()["memory"]` reports the device, so with a shared device
+or anything else, is the default).
+
+**One renderer too (0.5.9, #235).** Windows on a shared device also share one `vello_gpu` renderer
+(its pipelines, glyph atlas and gradient cache) per surface format, and the bundled fonts are not
+copied for each window. A renderer cost about 4 MiB and 9 ms to make, and the fonts about 3 MiB, for
+every window. On the machine measured, 50 small windows hold 98 MiB of process memory (they held 310
+with a renderer each, and 532 with a device each), and a window adds about 0.14 MiB, not 4.3. A
+window's own text layouts, images, shader passes, kept frame and damage stay its own. **Set
+`TRE_GPU_RENDERERS=per-window` for a renderer per window again** (the device stays shared). `frame_stats()["memory"]` reports the device, so with a shared device
 every window reads the same numbers (`shared_device` says which case it is).
 
 ## `thread_handle`

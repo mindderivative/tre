@@ -120,6 +120,30 @@ def test_every_window_draws_and_reads_the_devices_memory(reading):
     assert all(s["memory"]["shared_device"] is False for s in own["stats"])
 
 
+def allocated_mib(result):
+    memory = result["stats"][0]["memory"]
+    return None if memory is None else memory["allocated_bytes"] / 1048576
+
+
+def test_windows_share_one_vello_renderer_so_the_device_holds_no_more_for_thirty_than_for_one():
+    """(#235) A renderer of its own cost each window about 0.2 MiB of device memory (and 4 MiB of
+    process memory and 9 ms); shared, thirty windows use what one does. Read from the device's
+    allocator, so it needs no per-process driver keys."""
+    one = allocated_mib(run_memory(1))
+    if one is None:
+        pytest.skip("this backend has no allocator report")
+    thirty = allocated_mib(run_memory(30))
+    assert thirty - one < 1.5, f"one {one:.2f} MiB, thirty {thirty:.2f} MiB"
+
+
+def test_a_renderer_each_is_one_environment_variable_away():
+    one = allocated_mib(run_memory(1))
+    if one is None:
+        pytest.skip("this backend has no allocator report")
+    thirty = allocated_mib(run_memory(30, TRE_GPU_RENDERERS="per-window"))
+    assert thirty - one > 3, f"one {one:.2f} MiB, thirty {thirty:.2f} MiB: windows still share a renderer"
+
+
 LOSS = r"""
 import json, os, threading, time
 from tre import App, Window

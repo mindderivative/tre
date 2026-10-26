@@ -51,7 +51,7 @@ async fn render(tree: &Tree, root: NodeId) -> (Vec<u8>, u32) {
         root,
         WIDTH,
         HEIGHT,
-        frame_renderer.resources_mut(),
+        &mut frame_renderer.resources_mut(),
         &mut text_renderer,
         &mut geometry_cache,
     );

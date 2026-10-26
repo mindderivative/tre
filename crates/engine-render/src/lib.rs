@@ -43,6 +43,9 @@ use engine_core::{
 };
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Rect, RoundedRect, Shape, Stroke};
+use std::cell::{RefCell, RefMut};
+use std::rc::Rc;
+
 use vello_gpu::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use damage::{Damage, DamageTracker, Extents, MAX_RECTS, SCROLL_BLIT_MIN_NODES, Shift};
@@ -1982,13 +1985,95 @@ fn fill_scrollbar_thumb(
 /// states for the reverse case.
 const SCROLLBAR_THUMB_RADIUS: f64 = 2.0;
 
+/// The `vello_gpu` renderer and its resources: its pipelines, the glyph and image atlases and the
+/// gradient cache. A renderer belongs to a device and a target format, not to a window -- it
+/// follows the size it is asked to render -- so windows on one device can use one (0.5.9, #235).
+struct VelloCore {
+    renderer: Renderer,
+    resources: Resources,
+}
+
+/// A `vello_gpu` renderer that several windows draw with (0.5.9, #235).
+///
+/// Making one costs about 4 MiB of memory and 9 ms (its pipelines are compiled for the device
+/// and live in the driver's memory in this process), and `vello_gpu` cannot share pipelines
+/// between renderers, so a window that makes its own pays that again. Windows on one device with
+/// one surface format take a clone of one handle instead; the core is freed with the last
+/// holder. Draws are one after another on the loop's thread, each window encoding and
+/// submitting its frame before the next starts, which is what makes the shared buffers safe: the
+/// renderer writes them when work is submitted.
+#[derive(Clone)]
+pub struct SharedRenderer {
+    core: Rc<RefCell<VelloCore>>,
+}
+
+impl SharedRenderer {
+    /// A renderer for `config.format` on `device`. `config`'s size is only where it starts: it
+    /// follows whatever size each frame asks for.
+    pub fn new(device: &wgpu::Device, config: &RenderTargetConfig) -> Self {
+        let (renderer, resources) = Renderer::new(device, config);
+        Self {
+            core: Rc::new(RefCell::new(VelloCore {
+                renderer,
+                resources,
+            })),
+        }
+    }
+
+    /// Like [`new`](Self::new) from plain values: a renderer for surfaces of `format`, starting at
+    /// `width` x `height` (clamped to what the renderer takes).
+    pub fn for_format(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let side = |pixels: u32| u16::try_from(pixels).unwrap_or(u16::MAX);
+        Self::new(
+            device,
+            &RenderTargetConfig {
+                format,
+                width: side(width),
+                height: side(height),
+            },
+        )
+    }
+
+    /// How many ``FrameRenderer`s` draw with this one (itself included).
+    pub fn holders(&self) -> usize {
+        Rc::strong_count(&self.core)
+    }
+
+    /// A handle that does not keep the renderer alive, for a registry of the renderers windows
+    /// can still take.
+    pub fn downgrade(&self) -> WeakSharedRenderer {
+        WeakSharedRenderer {
+            core: Rc::downgrade(&self.core),
+        }
+    }
+}
+
+/// A [`SharedRenderer`] that is freed when the windows using it are.
+#[derive(Clone)]
+pub struct WeakSharedRenderer {
+    core: std::rc::Weak<RefCell<VelloCore>>,
+}
+
+impl WeakSharedRenderer {
+    /// The renderer, if some window still uses it.
+    pub fn upgrade(&self) -> Option<SharedRenderer> {
+        self.core.upgrade().map(|core| SharedRenderer { core })
+    }
+}
+
 /// Thin wrapper around `vello_gpu::Renderer` -- it needs a mutable
 /// `Resources` alongside it for every render call, which is easy to get
 /// out of sync by hand; bundling them here means callers only ever see
-/// one object.
+/// one object. The renderer and its resources may be shared with other
+/// windows' `FrameRenderer`s ([`SharedRenderer`]); the images and shader
+/// passes below are always this window's own.
 pub struct FrameRenderer {
-    renderer: Renderer,
-    resources: Resources,
+    core: Rc<RefCell<VelloCore>>,
     // M22 Phase 1 (§5): every real `Image` node's own GPU texture,
     // plus the live `TextureBindings` `render` hands to `vello_gpu`
     // -- empty (byte-for-byte this struct's pre-M22 behavior) unless a
@@ -2001,12 +2086,17 @@ pub struct FrameRenderer {
 
 impl FrameRenderer {
     pub fn new(device: &wgpu::Device, config: &RenderTargetConfig) -> Self {
-        let (renderer, resources) = Renderer::new(device, config);
+        Self::sharing(&SharedRenderer::new(device, config), config.format)
+    }
+
+    /// A `FrameRenderer` that draws with `shared`'s renderer and resources (0.5.9, #235), for
+    /// a surface of `format` (the format `shared` was made for). Its image textures and shader
+    /// passes are its own.
+    pub fn sharing(shared: &SharedRenderer, format: wgpu::TextureFormat) -> Self {
         Self {
-            renderer,
-            resources,
+            core: shared.core.clone(),
             images: image_cache::ImageTextureCache::new(),
-            shaders: shader_pass::ShaderPasses::new(config.format),
+            shaders: shader_pass::ShaderPasses::new(format),
         }
     }
 
@@ -2060,10 +2150,11 @@ impl FrameRenderer {
             },
             None => vello_gpu::ClearSettings::default(),
         };
-        self.renderer
+        let core = &mut *self.core.borrow_mut();
+        core.renderer
             .render(
                 scene,
-                &mut self.resources,
+                &mut core.resources,
                 device,
                 queue,
                 encoder,
@@ -2089,10 +2180,11 @@ impl FrameRenderer {
         render_size: &RenderSize,
         target: &wgpu::TextureView,
     ) {
-        self.renderer
+        let core = &mut *self.core.borrow_mut();
+        core.renderer
             .render(
                 scene,
-                &mut self.resources,
+                &mut core.resources,
                 device,
                 queue,
                 encoder,
@@ -2135,6 +2227,7 @@ impl FrameRenderer {
         text: &mut TextRenderer,
         geometry: &mut GeometryCache,
     ) -> ShaderTextures {
+        let core = &mut *self.core.borrow_mut();
         self.shaders.run(
             tree,
             root,
@@ -2145,8 +2238,8 @@ impl FrameRenderer {
             device,
             queue,
             shader_pass::Gpu {
-                renderer: &mut self.renderer,
-                resources: &mut self.resources,
+                renderer: &mut core.renderer,
+                resources: &mut core.resources,
                 images: &mut self.images,
                 text,
                 geometry,
@@ -2179,8 +2272,10 @@ impl FrameRenderer {
     /// struct's own doc comment promises than it looks: callers still
     /// only ever hold a `FrameRenderer`, they just borrow through it for
     /// this one call.
-    pub fn resources_mut(&mut self) -> &mut Resources {
-        &mut self.resources
+    /// The renderer's resources (glyph atlas and the rest), for building a scene. A guard, since
+    /// windows that share a renderer share these: do not hold it across a render.
+    pub fn resources_mut(&self) -> RefMut<'_, Resources> {
+        RefMut::map(self.core.borrow_mut(), |core| &mut core.resources)
     }
 }
 

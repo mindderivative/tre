@@ -163,7 +163,7 @@ fn frame_pipeline_fits_the_16_6ms_budget() {
                 root,
                 WIDTH,
                 HEIGHT,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 &mut text_renderer,
                 &mut geometry_cache,
             );

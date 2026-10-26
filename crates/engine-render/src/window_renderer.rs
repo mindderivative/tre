@@ -21,8 +21,8 @@ use peniko::kurbo::{Affine, Rect, Stroke};
 use vello_gpu::{RenderSize, RenderTargetConfig, Scene};
 
 use crate::{
-    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, ShaderTextures, Shift,
-    TextRenderer, build_tree_scene_shaded,
+    Damage, DamageTracker, FrameRenderer, GeometryCache, PersistentTarget, ShaderTextures,
+    SharedRenderer, Shift, TextRenderer, build_tree_scene_shaded,
 };
 
 /// The redrawn-areas overlay's colours (0.4.1 M8): a translucent fill and a
@@ -74,15 +74,31 @@ impl WindowRenderer {
         height: u32,
         persistent: bool,
     ) -> Self {
+        let shared = SharedRenderer::new(
+            device,
+            &RenderTargetConfig {
+                format,
+                width: extent(width),
+                height: extent(height),
+            },
+        );
+        Self::sharing(device, format, width, height, persistent, &shared)
+    }
+
+    /// Like [`new`](Self::new), drawing with `shared`'s `vello_gpu` renderer instead of making
+    /// one (0.5.9, #235). `shared` must have been made for this `device` and `format`. The
+    /// window's text shaper, caches, images, shader passes, kept frame and damage are its own;
+    /// only the renderer and its resources (pipelines, glyph atlas) are shared.
+    pub fn sharing(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+        persistent: bool,
+        shared: &SharedRenderer,
+    ) -> Self {
         Self {
-            frame_renderer: FrameRenderer::new(
-                device,
-                &RenderTargetConfig {
-                    format,
-                    width: extent(width),
-                    height: extent(height),
-                },
-            ),
+            frame_renderer: FrameRenderer::sharing(shared, format),
             text: TextRenderer::new(),
             geometry: GeometryCache::new(),
             target: persistent.then(|| PersistentTarget::new(device, format, width, height)),
@@ -319,7 +335,7 @@ impl WindowRenderer {
                 profile.as_mut(),
                 &shaders,
                 self.scale,
-                self.frame_renderer.resources_mut(),
+                &mut self.frame_renderer.resources_mut(),
                 &mut self.text,
                 &mut self.geometry,
             )),

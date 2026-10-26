@@ -503,10 +503,13 @@ impl TextRenderer {
     /// registered -- lets a test build a renderer that genuinely lacks a
     /// family, to prove a later `fonts::register_font` is what supplies
     /// it. Every font already in the M86 registry is registered too.
-    fn with_bundled_fonts(bundled: &[&[u8]]) -> Self {
+    fn with_bundled_fonts(bundled: &[&'static [u8]]) -> Self {
+        // 0.5.9 (#235): the font files are the program's own static data, shared by every renderer
+        // as they are. Copying them (`to_vec`) made every window hold its own copy of a
+        // Nerd Font among others: about 3 MiB of memory a window.
         let bundled: Vec<Blob<u8>> = bundled
             .iter()
-            .map(|bytes| Blob::new(Arc::new(bytes.to_vec())))
+            .map(|bytes| Blob::new(Arc::new(*bytes)))
             .collect();
         let system_fonts = fonts::system_fonts();
         let (font_generation, registered_font_count, registered) = fonts::registered_since(0);
@@ -2491,7 +2494,7 @@ mod tests {
     #[test]
     fn shaped_layout_is_cached_per_node_and_evicted_on_removal() {
         pollster::block_on(async {
-            let mut frame_renderer = frame_renderer_for_test().await;
+            let frame_renderer = frame_renderer_for_test().await;
             let mut renderer = TextRenderer::new();
             let mut scene = Scene::new(100, 100);
             let mut tree = Tree::new();
@@ -2504,7 +2507,7 @@ mod tests {
             };
             renderer.draw(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 state_a,
                 placement(),
                 a,
@@ -2519,7 +2522,7 @@ mod tests {
             };
             renderer.draw(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 state_a,
                 placement(),
                 a,
@@ -2535,7 +2538,7 @@ mod tests {
             };
             renderer.draw(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 state_b,
                 placement(),
                 b,
@@ -2741,7 +2744,7 @@ mod tests {
     #[test]
     fn querying_and_painting_a_text_node_shapes_it_once_whatever_the_colour() {
         pollster::block_on(async {
-            let mut frame_renderer = frame_renderer_for_test().await;
+            let frame_renderer = frame_renderer_for_test().await;
             let mut renderer = TextRenderer::new();
             let mut scene = Scene::new(100, 100);
             let mut tree = Tree::new();
@@ -2751,7 +2754,7 @@ mod tests {
             };
             renderer.draw(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 state,
                 placement(),
                 a,
@@ -2766,7 +2769,13 @@ mod tests {
                 color: Color::from_rgba8(255, 0, 0, 255),
                 ..placement()
             };
-            renderer.draw(&mut scene, frame_renderer.resources_mut(), state, red, a);
+            renderer.draw(
+                &mut scene,
+                &mut frame_renderer.resources_mut(),
+                state,
+                red,
+                a,
+            );
             assert_eq!(
                 renderer.shapes, 1,
                 "a query and a recolour reuse the layout"
@@ -3215,7 +3224,7 @@ mod tests {
     #[test]
     fn terminal_run_cache_does_not_grow_on_an_unchanged_repaint() {
         pollster::block_on(async {
-            let mut frame_renderer = frame_renderer_for_test().await;
+            let frame_renderer = frame_renderer_for_test().await;
             let mut renderer = TextRenderer::new();
             let mut scene = Scene::new(100, 100);
             let mut tree = Tree::new();
@@ -3227,7 +3236,7 @@ mod tests {
 
             renderer.draw_terminal(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 &state,
                 placement(),
                 false,
@@ -3243,7 +3252,7 @@ mod tests {
             // grow the cache -- the whole real point of this milestone.
             renderer.draw_terminal(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 &state,
                 placement(),
                 false,
@@ -3260,7 +3269,7 @@ mod tests {
     #[test]
     fn terminal_run_cache_reshapes_only_the_row_whose_content_actually_changed() {
         pollster::block_on(async {
-            let mut frame_renderer = frame_renderer_for_test().await;
+            let frame_renderer = frame_renderer_for_test().await;
             let mut renderer = TextRenderer::new();
             let mut scene = Scene::new(100, 100);
             let mut tree = Tree::new();
@@ -3272,7 +3281,7 @@ mod tests {
 
             renderer.draw_terminal(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 &state,
                 placement(),
                 false,
@@ -3292,7 +3301,7 @@ mod tests {
             set_cell(&mut state, 1, 0, 'c', Color::from_rgba8(255, 255, 255, 255));
             renderer.draw_terminal(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 &state,
                 placement(),
                 false,
@@ -3329,7 +3338,7 @@ mod tests {
     #[test]
     fn terminal_run_cache_is_evicted_on_removal_and_on_resize_shrink() {
         pollster::block_on(async {
-            let mut frame_renderer = frame_renderer_for_test().await;
+            let frame_renderer = frame_renderer_for_test().await;
             let mut renderer = TextRenderer::new();
             let mut scene = Scene::new(100, 100);
             let mut tree = Tree::new();
@@ -3347,7 +3356,7 @@ mod tests {
             let id = terminal_node(&mut tree, state.clone());
             renderer.draw_terminal(
                 &mut scene,
-                frame_renderer.resources_mut(),
+                &mut frame_renderer.resources_mut(),
                 &state,
                 placement(),
                 false,

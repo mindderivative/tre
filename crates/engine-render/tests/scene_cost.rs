@@ -154,7 +154,7 @@ fn time_tree(name: &str, tree: Tree, root: NodeId, count: usize) {
             root,
             W,
             H,
-            renderer.resources_mut(),
+            &mut renderer.resources_mut(),
             &mut text,
             &mut geometry,
         );
