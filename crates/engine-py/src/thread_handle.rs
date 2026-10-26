@@ -29,6 +29,9 @@ struct Shared {
     /// `None` outside `App.run()` -- a callable queued then just waits
     /// for the next run's first frame.
     waker: Option<EventLoopWaker>,
+    /// 0.5.9 (#238): `stop()` was called for the run now ending, so the windows it closes
+    /// hear `closed` with the reason `"stopped"`. Cleared when a run starts or ends.
+    stopping: bool,
 }
 
 /// The queue one `App` drains. Cheap to clone (one `Arc`); every clone
@@ -58,7 +61,28 @@ impl CallQueue {
     /// Installed by `App.run()`'s `setup` closure, cleared when `run()`
     /// returns.
     pub(crate) fn set_waker(&self, waker: Option<EventLoopWaker>) {
-        self.lock().waker = waker;
+        let mut shared = self.lock();
+        shared.waker = waker;
+        shared.stopping = false;
+    }
+
+    /// 0.5.9 (#238): asks the running loop to end. `false` outside a run (nothing is queued:
+    /// a stop must not end a later run), or if the loop is already gone.
+    pub(crate) fn stop(&self) -> bool {
+        let waker = {
+            let mut shared = self.lock();
+            let Some(waker) = shared.waker.clone() else {
+                return false;
+            };
+            shared.stopping = true;
+            waker
+        };
+        waker.stop()
+    }
+
+    /// Whether the run now ending was ended by `stop()`.
+    pub(crate) fn is_stopping(&self) -> bool {
+        self.lock().stopping
     }
 
     fn wake(&self) {
@@ -127,6 +151,16 @@ impl LoopHandle {
         }
         self.queue.push(callback.unbind());
         Ok(())
+    }
+
+    /// 0.5.9 (#238): ends the `App`'s running loop from any thread. Every open window is closed
+    /// without a `close_requested` (a stop cannot be vetoed), each hearing `closed` with the
+    /// reason `"stopped"`, and `App.run()` returns normally. Returns `True` if a loop was running
+    /// and has been asked to end, `False` if none was (before `run()` or after it returned):
+    /// nothing is remembered, so a stop never ends a later run. Works with or without
+    /// `run(keep_alive=True)`.
+    fn stop(&self) -> bool {
+        self.queue.stop()
     }
 }
 

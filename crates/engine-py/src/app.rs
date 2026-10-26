@@ -31,8 +31,8 @@ use std::time::Instant;
 
 use engine_core::{Cursor, InputEvent, NodeId, Tree, from_access_id};
 use engine_platform::{
-    EventLoopWaker, IdleHooks, LayerHooks, WindowConfig, WindowLifecycle, WindowOptions,
-    WindowRequest, run_windowed_multi_with,
+    EventLoopWaker, IdleHooks, LayerHooks, LoopOptions, WindowConfig, WindowLifecycle,
+    WindowOptions, WindowRequest, run_windowed_multi_with,
 };
 use engine_render::{GpuReport, GpuWatch, PresentChoice, WindowRenderer};
 use peniko::kurbo::Point;
@@ -757,6 +757,12 @@ impl GpuWake {
             .name("tre-gpu-wake".into())
             .spawn(move || {
                 while !flag.load(Ordering::Relaxed) {
+                    // 0.5.9 (#238): asleep, with no timer, until a frame is submitted: an idle
+                    // loop (a keep-alive one with no window) wakes nothing.
+                    engine_render::wait_while_idle(&flag);
+                    if flag.load(Ordering::Relaxed) {
+                        break;
+                    }
                     std::thread::park_timeout(Duration::from_millis(100));
                     if engine_render::any_in_flight() {
                         waker.wake();
@@ -771,6 +777,7 @@ impl GpuWake {
 impl Drop for GpuWake {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        engine_render::notify_flight();
         if let Some(thread) = self.thread.take() {
             thread.thread().unpark();
             let _ = thread.join();
@@ -968,8 +975,13 @@ impl App {
     /// window individually (the same headless-CI-safe convention every
     /// windowed test in this workspace already uses, TRE v1 finding
     /// #261), not to the app's own lifetime as a whole.
-    #[pyo3(signature = (max_frames=None))]
-    fn run(&self, py: Python<'_>, max_frames: Option<u32>) -> PyResult<()> {
+    ///
+    /// 0.5.9 (#238): `keep_alive=True` keeps the loop running when no window is open (it
+    /// does not raise with none added, and does not return when the last one closes): output
+    /// events and `LoopHandle.call_soon` callbacks still arrive, and only `LoopHandle.stop()`
+    /// ends it. For a desktop shell that waits for a monitor to come back.
+    #[pyo3(signature = (max_frames=None, keep_alive=false))]
+    fn run(&self, py: Python<'_>, max_frames: Option<u32>, keep_alive: bool) -> PyResult<()> {
         // M16 Phase 1 (§3, §9): `App::run` is Design Principle 1's own
         // "one blocking call," a real, early place to get a `tracing`
         // subscriber installed before any per-frame/callback work
@@ -1004,7 +1016,7 @@ impl App {
             })
             .collect();
 
-        if setups.is_empty() {
+        if setups.is_empty() && !keep_alive {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "App.run() called with no windows -- call add_window() at least once first",
             ));
@@ -1055,6 +1067,8 @@ impl App {
         let timer_wake: Rc<RefCell<Option<crate::timers::TimerWake>>> = Rc::new(RefCell::new(None));
         let timer_wake_for_setup = timer_wake.clone();
         let calls_for_frame = self.calls.clone();
+        let calls_for_wake = self.calls.clone();
+        let calls_for_lifecycle = self.calls.clone();
         let calls_for_setup = self.calls.clone();
 
         // 0.4.0: why a window's GPU setup failed, raised once the loop
@@ -2426,9 +2440,14 @@ impl App {
                     }
                     WindowLifecycle::Closed => {
                         let layer = runtime.handles.layer.clone();
-                        let reason = layer
-                            .as_ref()
-                            .map(|l| l.closed_reason.borrow().unwrap_or("app").to_string());
+                        // 0.5.9 (#238): a `LoopHandle.stop()` says so, whatever the window is.
+                        let reason = if calls_for_lifecycle.is_stopping() {
+                            Some("stopped".to_string())
+                        } else {
+                            layer
+                                .as_ref()
+                                .map(|l| l.closed_reason.borrow().unwrap_or("app").to_string())
+                        };
                         listeners::deliver_window(
                             &runtime.handles.window_listeners,
                             py,
@@ -2480,6 +2499,16 @@ impl App {
             },
             Some(idle),
             layer_hooks,
+            LoopOptions {
+                keep_alive,
+                // With nothing open there is no frame to run what other threads queued.
+                on_wake: Some(Box::new(move || {
+                    Python::attach(|py| {
+                        calls_for_wake.drain(py);
+                        crate::node_handles::reclaim();
+                    });
+                })),
+            },
         );
 
         // M87: this run's loop is gone -- a `call_soon` from now on just

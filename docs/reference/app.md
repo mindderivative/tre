@@ -37,15 +37,68 @@ app.add_window(window)
 
 ## `run`
 
-**`run(max_frames=None)`**
+**`run(max_frames=None, keep_alive=False)`**
 
 The single blocking call that opens every registered window and ticks,
 lays out, and renders each window's own tree every frame, independently,
-until every window has closed.
+until every window has closed. It raises `RuntimeError` if no window was added.
 
 ```python
 app.run()
 app.run(max_frames=60)  # each window individually stops after 60 frames
+```
+
+### Staying up with no window: `keep_alive` (0.5.9)
+
+A desktop shell has to stay up when no window should exist (every monitor is set to show
+nothing, or the last output was unplugged) and still react when an output comes back.
+`run(keep_alive=True)` keeps the loop running with **no window open**:
+
+- It does not raise when no window was added, and it does not return when the last window closes
+  (including a bar the compositor closed because its output was unplugged).
+- `App.on("output_added" | "output_removed" | "output_updated", ...)` keep arriving, including after the
+  last output was unplugged and a new one plugged in, and `LoopHandle.call_soon` callbacks run: a
+  window can be added from either (`app.add_window(LayerWindow(...))` from an `output_added` handler
+  opens on that output).
+- It costs nothing while idle: no frames, no timers. Measured with no window, 5 s used 0.01 s of CPU,
+  and none of the engine's own threads woke.
+- **Only `LoopHandle.stop()` ends it** (below). With it, `max_frames` no longer ends the run when
+  its windows are done.
+- Where there is no display `run()` still returns at once, as it always did. Off Wayland there are
+  no output events (nothing to watch), but the loop, `call_soon` and `stop()` work.
+
+```python
+app = App()
+handle = app.thread_handle()
+
+def on_output(output):
+    app.add_window(make_bar(output))            # one bar per screen, as it appears
+app.on("output_added", on_output)
+for output in app.outputs():
+    app.add_window(make_bar(output))
+
+app.run(keep_alive=True)                         # returns only after handle.stop()
+```
+
+**Quitting on a signal.** Python runs a signal handler only when the main thread executes Python,
+and an idle loop does not (a handler set with `signal.signal` runs late, when something else gives
+the main thread work). Use `signal.set_wakeup_fd`, which the C-level handler writes to at once, and a
+watcher thread that calls `stop()`:
+
+```python
+import signal, socket, threading
+
+reader, writer = socket.socketpair()
+writer.setblocking(False)
+signal.set_wakeup_fd(writer.fileno())
+for sig in (signal.SIGTERM, signal.SIGINT):
+    signal.signal(sig, lambda *_: None)           # a handler must exist for the fd to be written
+
+def watch():
+    reader.recv(8)                                 # a signal arrived
+    handle.stop()
+threading.Thread(target=watch, daemon=True).start()
+app.run(keep_alive=True)
 ```
 
 - `max_frames`, when given, is a **per-window** budget, not a whole-app
@@ -134,6 +187,20 @@ app.run()
 
 ## `LoopHandle`
 
+### `stop` (0.5.9)
+
+**`stop() -> bool`**
+
+Ends the running loop from any thread. Every open window is closed **without** asking: a stop is a
+shutdown, so no `close_requested` is sent and a listener cannot keep a window open. Each window
+hears `closed` with the reason `"stopped"` (on any window, not only a `LayerWindow`), and `run()`
+returns normally.
+
+- Returns `True` if a loop was running and has been asked to end, `False` if none was (before `run()`
+  or after it returned). Nothing is remembered: a `stop()` called early never ends a later run.
+- Works with or without `keep_alive`, with or without windows open.
+- Safe from any thread. Like `call_soon`, it is the one `tre` call a worker thread may make.
+
 ### `call_soon`
 
 **`call_soon(callback)`**
@@ -151,7 +218,8 @@ handle.call_soon(lambda: rebuild_screen(text))           # on the loop
 
 - Safe from any thread, before, during, or after `run()`.
 - Callbacks run in the order they were queued, at the top of the next
-  frame. One queued before `run()` runs on the first frame; one queued
+  frame. With no window open (a `keep_alive` loop, 0.5.9) there is no frame, so they run as soon as
+  the loop wakes. One queued before `run()` runs on the first frame; one queued
   after `run()` returns waits for a later `run()`.
 - A callback that itself calls `call_soon` doesn't run again in the
   same frame — its new entry runs on the next one.
