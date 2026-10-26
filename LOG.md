@@ -14,6 +14,40 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position), #220 (one wgpu device for all windows).
 
+## After 0.5.8 (unreleased)
+
+### #220, windows share one GPU device (2026-10-26)
+
+`GpuState::new` used to make a `wgpu` instance, adapter, device and queue per window. Now `Opened::new`
+(`crates/engine-py/src/app.rs`) takes the process's shared handles when there are any
+(`gpu_share.rs`: a `Weak` registry, so the device goes when the last window closes, and a lost device
+is never handed out again) and otherwise makes them and publishes them. A window whose surface the
+shared adapter cannot present to (`Adapter::is_surface_supported`, a second GPU) gets a device of its own.
+`TRE_GPU_DEVICES=per-window` restores one device per window. `wgpu` keeps one lost callback and one error
+handler per device, so `GpuHub` (`engine-render/src/gpu_watch.rs`) installs them once and keeps a short
+log; each window has a `GpuWatch` that reads it from where it joined and counts its own submissions
+for the stall watchdog. Consequences: a GPU error is reported to every window on the device (once each;
+`wgpu` cannot say which window's draw caused it), and when the device is lost every window on it hears
+`gpu_lost` before the run ends (a first version delivered it only to the window that polled first; the
+live test caught that). `frame_stats()["memory"]` is the device's, so windows read the same numbers, with
+a new `shared_device` key.
+
+Measured (`tools/vram_probe.py`, AMD RADV, a private headless sway, real VRAM from `/proc/self/fdinfo`):
+1 window 31.0 MiB VRAM / 13.4 GTT; 2 windows 31.0 / 14.8; 5 windows 31.0 / 16.0. Before: 44.1 / 24.2 and
+83.2 / 51.2; `TRE_GPU_DEVICES=per-window` reproduces those. Time until five windows have each drawn a
+frame: about 285 ms against 334 ms (three runs each), so roughly 12 ms a window: the rest is each
+window's own renderer (pipelines and caches), which is not shared and is the next step.
+
+Tests: 3 new integration tests on a real device (a loss reaches every window's watch and a window that
+joins later does not replay it; an error reaches each window once; submissions are counted per window), 2
+unit tests of the log, one of the setting, and `tests/test_gpu_shared_live.py` (five windows hold about
+what one does; the variable brings the old cost back; every window draws and reads the same device
+memory; a lost shared device is heard by all three windows and ends the run). Also run on the private
+sway with RADV and with llvmpipe: the memory, frame-stats, health, snapshot, popup, layer and
+add-window tests, and the layer live tests that mix ordinary windows, bars, overlays and popups. Not
+tested: a second GPU (the fallback to a device of its own is in the code, not exercised), NVIDIA and
+Intel, Windows and macOS (this machine is Linux with AMD), and the stall watchdog with several windows.
+
 ## 0.5.8 (released 2026-10-25)
 
 ### CI tiers (2026-10-25)

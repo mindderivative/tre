@@ -102,7 +102,8 @@ def test_a_live_window_reports_the_video_memory_it_holds():
     memory = json.loads(result.stdout.strip().splitlines()[-2])["stats"]["memory"]
     if memory is None:
         pytest.skip("this backend has no allocator report")
-    assert set(memory) == {"allocated_bytes", "reserved_bytes", "blocks", "largest"}
+    assert set(memory) == {"allocated_bytes", "reserved_bytes", "blocks", "largest", "shared_device"}
+    assert memory["shared_device"] is True, "one window: its device is the shared one"
     assert 0 < memory["allocated_bytes"] <= memory["reserved_bytes"]
     assert memory["blocks"] >= 1
     sizes = [item["bytes"] for item in memory["largest"]]

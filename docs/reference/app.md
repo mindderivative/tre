@@ -84,7 +84,7 @@ would, for tests with no display.
 
 ## GPU memory
 
-Each window makes its own GPU device, and a device asks the driver's allocator for memory in
+Windows share one GPU device (0.5.9, #220), and a device asks the driver's allocator for memory in
 blocks. tre asks for small blocks (8 to 64 MiB, 4 to 32 MiB for host-visible ones), so a small
 window holds a few tens of MiB of video memory (31 MiB for a 200 x 100 window on the machine it
 was measured on). `wgpu`'s own default reserves 192 MiB the moment a device exists, whatever is
@@ -93,6 +93,17 @@ then put in it, and that was tre's behaviour before 0.5.8's follow-up (#219): **
 value keeps the small blocks). A large image or a big window still gets the memory it needs
 either way; the setting only changes how much is reserved in advance. See
 [GPU memory per window](../design/vram-per-window.md) for the measurements.
+
+**One device for every window (0.5.9, #220).** The first window makes the `wgpu` instance, adapter
+and device, and every later window (ordinary, layer surface or popup) draws with them, so it holds
+only its own swapchain, render target and renderer: five 200 x 100 windows hold the 31 MiB one does
+(they held 83 MiB), and open a little faster. Two things follow. A GPU error is reported to every
+window on the device, once each, because `wgpu` does not say which window's draw caused it; and a
+lost device is lost for all of them, so every window's `gpu_lost` listener hears it before the run
+ends. A window whose surface the shared adapter cannot present to (a second GPU) gets a device of its
+own. **Set `TRE_GPU_DEVICES=per-window` before the app starts for a device per window again** (`shared`,
+or anything else, is the default). `frame_stats()["memory"]` reports the device, so with a shared device
+every window reads the same numbers (`shared_device` says which case it is).
 
 ## `thread_handle`
 
