@@ -13,12 +13,19 @@
 //! present to (a second GPU, say) gets a device of its own, as before.
 //!
 //! `TRE_GPU_DEVICES=per-window` restores one device per window (`shared`, or nothing, is the
-//! default). With one device, `frame_stats()["memory"]` is the whole device's: every window
+//! default; `TRE_GPU_RENDERERS=per-window` keeps the device shared but gives each window a
+//! renderer of its own). With one device, `frame_stats()["memory"]` is the whole device's: every window
 //! reads the same totals.
+//!
+//! 0.5.9 (#235): the windows on a shared device also share one `vello_gpu` renderer per surface
+//! format (`renderer_for`): it costs about 4 MiB of memory and 9 ms to make, and tre's windows
+//! used to make one each.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
 
-use engine_render::GpuHub;
+use engine_render::{GpuHub, SharedRenderer, WeakSharedRenderer};
 
 /// The GPU handles windows share.
 pub(crate) struct SharedGpu {
@@ -50,10 +57,55 @@ fn sharing_for(setting: Option<&str>) -> bool {
     setting != Some("per-window")
 }
 
+/// Whether windows on a shared device also share one `vello_gpu` renderer: yes, unless
+/// `TRE_GPU_RENDERERS` says `per-window` (0.5.9, #235). A way back if a drawing problem shows up.
+pub(crate) fn renderer_sharing_enabled() -> bool {
+    let setting = std::env::var("TRE_GPU_RENDERERS").ok();
+    if let Some(value) = setting.as_deref()
+        && !matches!(value, "shared" | "per-window")
+    {
+        tracing::warn!(
+            value,
+            "TRE_GPU_RENDERERS is \"shared\" or \"per-window\"; using \"shared\""
+        );
+    }
+    sharing_for(setting.as_deref())
+}
+
 /// The device the process's windows share right now, if there is one that can still be used.
 pub(crate) fn current() -> Option<Arc<SharedGpu>> {
     let shared = CURRENT.lock().unwrap().upgrade()?;
     (!shared.hub.is_lost()).then_some(shared)
+}
+
+thread_local! {
+    /// The `vello_gpu` renderers windows can take, by shared device and surface format. Held weakly:
+    /// a renderer goes with the last window that draws with it. The loop's thread only, which is
+    /// where windows are made and drawn.
+    static RENDERERS: RefCell<HashMap<(usize, wgpu::TextureFormat), WeakSharedRenderer>> =
+        RefCell::new(HashMap::new());
+}
+
+/// 0.5.9 (#235): the renderer windows on `shared`'s device with surfaces of `format` draw with,
+/// made by the first of them. Making one costs about 4 MiB and 9 ms (its pipelines), so a further
+/// window takes it instead.
+pub(crate) fn renderer_for(
+    shared: &Arc<SharedGpu>,
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+) -> SharedRenderer {
+    let key = (Arc::as_ptr(shared) as usize, format);
+    RENDERERS.with(|renderers| {
+        let mut renderers = renderers.borrow_mut();
+        renderers.retain(|_, weak| weak.upgrade().is_some());
+        if let Some(existing) = renderers.get(&key).and_then(WeakSharedRenderer::upgrade) {
+            return existing;
+        }
+        let made = SharedRenderer::for_format(&shared.device, format, width, height);
+        renderers.insert(key, made.downgrade());
+        made
+    })
 }
 
 /// Makes `shared` the device later windows take.

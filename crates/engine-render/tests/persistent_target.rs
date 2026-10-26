@@ -68,7 +68,7 @@ impl Gpu {
             root,
             SIZE,
             SIZE,
-            frame_renderer.resources_mut(),
+            &mut frame_renderer.resources_mut(),
             &mut TextRenderer::new(),
             &mut GeometryCache::new(),
         );

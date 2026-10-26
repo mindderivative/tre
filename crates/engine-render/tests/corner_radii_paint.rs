@@ -78,7 +78,7 @@ async fn render(radii: Option<[f64; 4]>) -> (Vec<u8>, u32) {
         root,
         SIZE,
         SIZE,
-        frame_renderer.resources_mut(),
+        &mut frame_renderer.resources_mut(),
         &mut text_renderer,
         &mut geometry_cache,
     );

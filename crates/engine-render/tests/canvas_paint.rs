@@ -53,7 +53,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         root,
         width,
         height,
-        frame_renderer.resources_mut(),
+        &mut frame_renderer.resources_mut(),
         &mut text_renderer,
         &mut geometry_cache,
     );

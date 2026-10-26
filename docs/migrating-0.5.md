@@ -134,6 +134,14 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   `gpu_lost` listeners before the run ends. Before, a window heard only about its own device.
 - `frame_stats()["memory"]` reports the device, so windows on a shared device read the same
   numbers; it has a new key, `shared_device`, that says so.
+- **Windows share one renderer, and the bundled fonts are not copied per window** (#235). Fifty
+  small windows hold 98 MiB of process memory, not 310 (a renderer each) or 532 (a device each). Set
+  `TRE_GPU_RENDERERS=per-window` before the app starts for a renderer per window again.
+- *Rust API (`engine-render`, not part of the Python contract):* `FrameRenderer::resources_mut` now
+  returns a `RefMut<Resources>` (a guard) since windows share the resources, so pass
+  `&mut renderer.resources_mut()` where you passed `renderer.resources_mut()`. New:
+  `SharedRenderer`, `FrameRenderer::sharing`, `WindowRenderer::sharing`. `new` still makes a
+  renderer of its own.
 
 ## 0.5.8
 

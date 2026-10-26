@@ -178,7 +178,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
             root,
             WIDTH,
             HEIGHT,
-            frame_renderer.resources_mut(),
+            &mut frame_renderer.resources_mut(),
             &mut text_renderer,
             &mut geometry_cache,
         );

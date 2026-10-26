@@ -103,7 +103,7 @@ fn compare(x: f32, y: f32, w: f32, h: f32, border: f64) {
             height: AvailableSpace::Definite(f32::from(S)),
         },
     );
-    let mut renderer = FrameRenderer::new(
+    let renderer = FrameRenderer::new(
         &device,
         &RenderTargetConfig {
             format: FORMAT,
@@ -116,7 +116,7 @@ fn compare(x: f32, y: f32, w: f32, h: f32, border: f64) {
         root,
         S,
         S,
-        renderer.resources_mut(),
+        &mut renderer.resources_mut(),
         &mut TextRenderer::new(),
         &mut GeometryCache::new(),
     );

@@ -109,7 +109,7 @@ async fn render(align: TextAlign) -> Readback {
         root,
         WIDTH,
         HEIGHT,
-        frame_renderer.resources_mut(),
+        &mut frame_renderer.resources_mut(),
         &mut text_renderer,
         &mut geometry_cache,
     );
