@@ -120,6 +120,21 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.9 (unreleased)
+
+### Behavior changes
+
+- **Windows share one GPU device.** The first window makes the `wgpu` instance, adapter and
+  device; later windows (ordinary, layer surface and popup) use them. Five small windows hold the
+  video memory one does (31 MiB, was 83 MiB on the machine measured, AMD RADV) and open a little
+  faster. Set `TRE_GPU_DEVICES=per-window` before the app starts to get a device per window again.
+  See [GPU memory](reference/app.md#gpu-memory).
+- **A GPU error is delivered to every window on the device** (`gpu_error`, once per window, since
+  `wgpu` cannot say which window's draw caused it), and a lost device reaches every window's
+  `gpu_lost` listeners before the run ends. Before, a window heard only about its own device.
+- `frame_stats()["memory"]` reports the device, so windows on a shared device read the same
+  numbers; it has a new key, `shared_device`, that says so.
+
 ## 0.5.8
 
 Nothing was removed or renamed. Layer surfaces need a Wayland compositor with the layer shell;

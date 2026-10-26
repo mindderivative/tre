@@ -52,7 +52,7 @@ pub use fonts::{
 };
 pub use geometry_cache::GeometryCache;
 pub use gpu_timer::{GpuTimer, required_features as gpu_timer_features};
-pub use gpu_watch::{GpuReport, GpuWatch, any_in_flight};
+pub use gpu_watch::{GpuHub, GpuReport, GpuWatch, any_in_flight};
 pub use image_cache::MAX_IMAGE_DIMENSION;
 pub use persistent_target::PersistentTarget;
 pub use present::{

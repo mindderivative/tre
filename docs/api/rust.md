@@ -1876,6 +1876,18 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 | `fn rounded_rect_fill(&mut self, id: NodeId, w: f64, h: f64, radius: f64) -> &BezPath` | Returns the cached fill path for a uniform rounded rect, rebuilt only on change. |
 | `fn rounded_rect_fill_per_corner(&mut self, id: NodeId, w: f64, h: f64, radii: [f64; 4]) -> &BezPath` | Returns the cached fill path for a rounded rect with a separate radius per corner. |
 
+### GpuHub { #gpuhub }
+
+*struct.* A device's health, installed once right after the device is made, and handed out as one `GpuWatch` per window that draws with it.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html)
+
+| Method | Description |
+| --- | --- |
+| `fn install(device: &Device) -> Self` | Installs the device-lost callback and the uncaptured-error handler on `device`. |
+| `fn is_lost(&self) -> bool` | Whether the device has been reported lost to anyone (it is known only once some window has polled the device). |
+| `fn watch(&self) -> GpuWatch` | A watch for one more window on this device. |
+
 ### GpuTimer { #gputimer }
 
 *struct.* Measures GPU time per frame.
@@ -1890,7 +1902,7 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 
 ### GpuWatch { #gpuwatch }
 
-*struct.* One device's health: install it right after the device is made.
+*struct.* One window's view of its device's health.
 
 **Implements:** [`Drop`](https://doc.rust-lang.org/std/ops/trait.Drop.html)
 
@@ -1899,7 +1911,7 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 | Method | Description |
 | --- | --- |
 | `fn in_flight(&self) -> bool` | Whether a submission is still running on this device. |
-| `fn install(device: &Device) -> Self` | Installs the device-lost callback and the uncaptured-error handler on `device`. |
+| `fn install(device: &Device) -> Self` | A device used by one window: a `GpuHub` and its only watch. |
 | `fn is_lost(&self) -> bool` | Whether the device has been reported lost. |
 | `fn poll(&mut self, device: &Device) -> Vec<GpuReport>` | Polls the device without blocking and returns what the GPU reported since the last call. |
 | `fn set_watchdog(&mut self, seconds: Option<f64>)` | Turns the stall watchdog on (`Some(seconds)`) or off (`None`). |

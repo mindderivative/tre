@@ -103,11 +103,17 @@ Filed as Backlog issues; nothing is built until approved.
    unmeasured on other GPUs and backends (the same block sizes are used on DX12; Metal ignores the
    hint), and on a discrete GPU the host-visible blocks are in system memory, so the VRAM saving
    there is about 128 MiB, not 180 (inferred from the allocator's behaviour, not measured).
-2. **Share one device across windows.** After finding 1 a further window still costs about 13 MiB
-   of VRAM and 11 MiB of GTT, plus the time to create an instance and device. One device would
-   cut that to the window's own surface. Effort: medium to large (device-lost handling, the GPU
-   watch and the renderers are per window today). Risk: medium. Worth doing only if many windows
-   matter; a shell with a bar per output plus overlays is the case.
+2. **Share one device across windows.** *Done (0.5.9, #220).* After finding 1 a further window still
+   cost about 13 MiB of VRAM and 11 MiB of GTT, plus the time to create an instance and device. Now
+   the first window's instance, adapter, device and queue are shared (`gpu_share.rs`), the device's
+   lost and error handlers are installed once with a watch per window (`GpuHub`), and a window the
+   shared adapter cannot present to gets a device of its own. Measured on the same machine
+   (`tools/vram_probe.py`, AMD RADV, a private headless sway): 1 window 31.0 MiB VRAM / 13.4 GTT,
+   2 windows 31.0 / 14.8, 5 windows 31.0 / 16.0 (before: 44.1 / 24.2 and 83.2 / 51.2).
+   `TRE_GPU_DEVICES=per-window` reproduces the old numbers exactly. Time until five windows have
+   each drawn a frame: about 285 ms against 334 ms (three runs each), so roughly 12 ms a window;
+   the rest of a window's start-up is its own renderer (pipelines and caches), which is not shared.
+   That is the next step if many windows matter: share the `vello_gpu` pipelines between windows.
 3. **Cut the per-pixel cost of full-screen surfaces** (4K: about 160 MiB). Options: skip the
    persistent target for a surface that never redraws partially (saves 32 MiB at 4K); keep
    overlay surfaces menu-sized where an input grab does not need the whole output. Effort and risk

@@ -710,7 +710,8 @@ class Window:
         node kind and its slowest nodes (else `None`). (0.5.8) `memory`: the device's
         video memory, from the allocator when this is called -- `allocated_bytes`,
         `reserved_bytes`, `blocks` and `largest` (the five biggest allocations as
-        `{"name", "bytes"}`); `None` before the window opens or where the backend cannot say."""
+        `{"name", "bytes"}`) and `shared_device` (windows share one GPU device, so the numbers cover
+        all of them); `None` before the window opens or where the backend cannot say."""
         ...
     def stats_handle(self) -> StatsHandle:
         """(0.5.4) A handle any thread can use to read this window's frame

@@ -217,6 +217,103 @@ impl SurfaceSource {
     }
 }
 
+/// A window's GPU handles: the instance its surface came from, the adapter, the device and queue
+/// and the watch on the device, shared with the process's other windows where they can be.
+struct Opened {
+    instance: wgpu::Instance,
+    surface: wgpu::Surface<'static>,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    watch: GpuWatch,
+    shared: Option<Arc<crate::gpu_share::SharedGpu>>,
+}
+
+impl Opened {
+    /// 0.5.9 (#220): the shared device when there is one that can present to this window's surface
+    /// (a second GPU may not), else a new one; the first window's new one is shared in turn.
+    fn new(source: &SurfaceSource) -> Result<Self, String> {
+        if let Some(shared) = crate::gpu_share::current() {
+            let surface = source
+                .create(&shared.instance)
+                .map_err(|err| format!("couldn't create a GPU surface for the window: {err}"))?;
+            if shared.adapter.is_surface_supported(&surface) {
+                return Ok(Self {
+                    instance: shared.instance.clone(),
+                    surface,
+                    adapter: shared.adapter.clone(),
+                    device: shared.device.clone(),
+                    queue: shared.queue.clone(),
+                    watch: shared.hub.watch(),
+                    shared: Some(shared),
+                });
+            }
+            tracing::info!(
+                "the shared GPU adapter cannot present to this window's surface: it gets a device of its own"
+            );
+        }
+        let instance = wgpu::Instance::default();
+        let surface = source
+            .create(&instance)
+            .map_err(|err| format!("couldn't create a GPU surface for the window: {err}"))?;
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::default(),
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+            // The adapter's real limits, as before `wgpu` 30 added
+            // bucketing (a fingerprinting defence for web content).
+            apply_limit_buckets: false,
+        }))
+        // 0.4.0 review (the user's decision): no GPU is an error the
+        // caller sees -- `App.run()` raises it -- rather than the old
+        // `exit(0)` inside the interpreter, which skipped `atexit` and
+        // `finally` and reported success.
+        .map_err(|err| format!("no GPU adapter available: {err}"))?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("engine-py app device"),
+            // 0.5.4 (#135): timestamp queries, where the adapter has them.
+            required_features: adapter.features() & engine_render::gpu_timer_features(),
+            // 0.5.8 (#219): small memory blocks; the default reservation was 192 MiB a window.
+            memory_hints: crate::gpu_memory::memory_hints(),
+            ..Default::default()
+        }))
+        .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
+        // 0.5.1 (#65): replaces wgpu's default handler, which panics on any
+        // GPU error, and learns of a lost device.
+        if crate::gpu_share::sharing_enabled() {
+            let hub = engine_render::GpuHub::install(&device);
+            let watch = hub.watch();
+            let shared = Arc::new(crate::gpu_share::SharedGpu {
+                instance: instance.clone(),
+                adapter: adapter.clone(),
+                device: device.clone(),
+                queue: queue.clone(),
+                hub,
+            });
+            crate::gpu_share::publish(&shared);
+            return Ok(Self {
+                instance,
+                surface,
+                adapter,
+                device,
+                queue,
+                watch,
+                shared: Some(shared),
+            });
+        }
+        let watch = GpuWatch::install(&device);
+        Ok(Self {
+            instance,
+            surface,
+            adapter,
+            device,
+            queue,
+            watch,
+            shared: None,
+        })
+    }
+}
+
 struct GpuState {
     /// 0.4.0 M6: kept to recreate a lost `surface`.
     instance: wgpu::Instance,
@@ -232,6 +329,9 @@ struct GpuState {
     surface_config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// 0.5.9 (#220): the device's owner while windows share one. Held so the shared device
+    /// lives as long as any window uses it; `None` for a window with a device of its own.
+    _shared: Option<Arc<crate::gpu_share::SharedGpu>>,
     /// 0.4.0 M6: the window's renderer, caches, kept frame (M3), and
     /// damage tracker (M4), with the frame sequence that uses them --
     /// `engine_render::WindowRenderer`, which the pixel tests drive too.
@@ -266,35 +366,15 @@ impl GpuState {
         transparent: bool,
         partial_redraw: bool,
     ) -> Result<Self, String> {
-        let instance = wgpu::Instance::default();
-        let surface = source
-            .create(&instance)
-            .map_err(|err| format!("couldn't create a GPU surface for the window: {err}"))?;
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-            // The adapter's real limits, as before `wgpu` 30 added
-            // bucketing (a fingerprinting defence for web content).
-            apply_limit_buckets: false,
-        }))
-        // 0.4.0 review (the user's decision): no GPU is an error the
-        // caller sees -- `App.run()` raises it -- rather than the old
-        // `exit(0)` inside the interpreter, which skipped `atexit` and
-        // `finally` and reported success.
-        .map_err(|err| format!("no GPU adapter available: {err}"))?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("engine-py app device"),
-            // 0.5.4 (#135): timestamp queries, where the adapter has them.
-            required_features: adapter.features() & engine_render::gpu_timer_features(),
-            // 0.5.8 (#219): small memory blocks; the default reservation was 192 MiB a window.
-            memory_hints: crate::gpu_memory::memory_hints(),
-            ..Default::default()
-        }))
-        .map_err(|err| format!("couldn't create a GPU device: {err}"))?;
-        // 0.5.1 (#65): replaces wgpu's default handler, which panics on any
-        // GPU error, and learns of a lost device.
-        let watch = GpuWatch::install(&device);
+        let Opened {
+            instance,
+            surface,
+            adapter,
+            device,
+            queue,
+            watch,
+            shared,
+        } = Opened::new(&source)?;
 
         // 0.4.0 review: a window larger than the GPU's textures can be
         // renders at the largest size it can, not a panic in `configure`.
@@ -360,6 +440,7 @@ impl GpuState {
             surface_config: config,
             device,
             queue,
+            _shared: shared,
             renderer,
             watch,
             present,
@@ -369,6 +450,19 @@ impl GpuState {
             copyable,
             timer,
         })
+    }
+
+    /// 0.5.9 (#220): whether other windows draw with this window's device.
+    fn shares_device(&self) -> bool {
+        self._shared.is_some()
+    }
+
+    /// Which shared device this window draws with (the same value for the windows that share
+    /// one), or `None` for a window with a device of its own.
+    fn shared_id(&self) -> Option<usize> {
+        self._shared
+            .as_ref()
+            .map(|shared| Arc::as_ptr(shared) as usize)
     }
 
     /// 0.5.4 (#101): switches how the swapchain paces frames, live. A no-op
@@ -1046,7 +1140,7 @@ impl App {
                                 }
                             };
                             crate::frame_stats::lock(&handles.frame_stats)
-                                .set_device(gpu.device.clone());
+                                .set_device(gpu.device.clone(), gpu.shares_device());
                             handles.transparent_active.set(Some(gpu.transparent_active));
                             handles.surface_partial.set(Some(gpu.copyable));
                             let opened = crate::clock::now(&handles.tree);
@@ -1282,7 +1376,8 @@ impl App {
                         return false;
                     }
                 };
-                crate::frame_stats::lock(&setup.handles.frame_stats).set_device(gpu.device.clone());
+                crate::frame_stats::lock(&setup.handles.frame_stats)
+                    .set_device(gpu.device.clone(), gpu.shares_device());
                 setup
                     .handles
                     .transparent_active
@@ -1326,6 +1421,13 @@ impl App {
                     .watch
                     .set_watchdog(runtime.handles.gpu_watchdog.get());
                 let reports = runtime.gpu.watch.poll(&runtime.gpu.device);
+                // 0.5.9 (#220): the windows that draw with this window's device lost it too.
+                let device_owner = runtime.gpu.shared_id();
+                let losses: Vec<GpuReport> = reports
+                    .iter()
+                    .filter(|report| matches!(report, GpuReport::Lost { .. }))
+                    .cloned()
+                    .collect();
                 if let Some(why) = deliver_gpu_reports(&runtime.handles, reports, py) {
                     // A lost GPU ends the run: every window is closed (a
                     // `close_requested` listener can't keep one open) and
@@ -1333,6 +1435,14 @@ impl App {
                     *startup_error_for_frame.borrow_mut() =
                         Some(format!("the GPU was lost: {why}; the run has ended"));
                     for (id, other) in runtimes.iter() {
+                        // Tell the windows on the same device before they close; one that has
+                        // a device of its own did not lose anything.
+                        if *id != window_id
+                            && device_owner.is_some()
+                            && other.gpu.shared_id() == device_owner
+                        {
+                            deliver_gpu_reports(&other.handles, losses.clone(), py);
+                        }
                         if let Some(waker) = other.handles.waker.borrow().as_ref() {
                             waker.close_window(*id);
                         }

@@ -130,6 +130,8 @@ pub(crate) struct FrameStats {
     /// video memory is in use. Kept across a reset; the report is made on the read,
     /// not per frame.
     device: Option<wgpu::Device>,
+    /// 0.5.9 (#220): whether other windows draw with that device, so its memory is theirs too.
+    device_shared: bool,
 }
 
 /// 0.5.8 (#222): what a window's device holds, from `wgpu`'s allocator report.
@@ -222,12 +224,19 @@ impl FrameStats {
             trace: self.trace.take(),
             trace_error: self.trace_error.take(),
             device: self.device.take(),
+            device_shared: self.device_shared,
             ..Self::default()
         };
     }
 
-    pub(crate) fn set_device(&mut self, device: wgpu::Device) {
+    pub(crate) fn set_device(&mut self, device: wgpu::Device, shared: bool) {
         self.device = Some(device);
+        self.device_shared = shared;
+    }
+
+    /// Whether the device is shared with other windows (0.5.9, #220).
+    pub(crate) fn device_shared(&self) -> bool {
+        self.device_shared
     }
 
     /// The device's memory now, where the backend reports it (Vulkan, and not
@@ -427,6 +436,7 @@ pub(crate) fn stats_dict<'py>(py: Python<'py>, stats: &FrameStats) -> PyResult<B
             mem.set_item("allocated_bytes", m.allocated)?;
             mem.set_item("reserved_bytes", m.reserved)?;
             mem.set_item("blocks", m.blocks)?;
+            mem.set_item("shared_device", stats.device_shared())?;
             let largest = pyo3::types::PyList::empty(py);
             for (name, size) in m.largest {
                 let item = PyDict::new(py);

@@ -445,7 +445,9 @@ print(f"{r['fps']:.0f} fps, {r['cpu_ms']['p95']:.2f} ms cpu at p95, "
 `memory` (0.5.8, #222) is what the window's GPU device holds, read from `wgpu`'s allocator
 when you call `frame_stats()` (not every frame): `allocated_bytes` (buffers and textures in
 use), `reserved_bytes` (blocks taken from the driver, which is what the process holds),
-`blocks`, and `largest`, the five biggest allocations as `{"name", "bytes"}`. It is `None`
+`blocks`, `largest`, the five biggest allocations as `{"name", "bytes"}`, and `shared_device`
+(0.5.9, #220): windows share one GPU device, so these numbers are the whole device's and every
+window reads the same ones (`TRE_GPU_DEVICES=per-window` gives each window its own). It is `None`
 before `App.run()` opens the window and on a backend that cannot report. A `reserved_bytes`
 far above `allocated_bytes` is the allocator's block size, not a leak
 ([VRAM per window](../design/vram-per-window.md)).

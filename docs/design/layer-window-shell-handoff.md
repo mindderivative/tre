@@ -131,7 +131,9 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
   the window. With the small blocks now default (#219) a window holds tens of MiB, plus about 16
   bytes per pixel (a full-screen overlay at 4K holds about 120 MB more than at 720p). Measured on an
   AMD RADV GPU only. A popup, being menu-sized, costs a bar's worth. Each window still has its own
-  GPU device; sharing one across windows is a separate, larger item in the research page.
+  GPU device; sharing one across windows is a separate, larger item in the research page. (Done
+  after this note was written, in 0.5.9: windows share one device, so a bar, its overlays and
+  popups together hold about what one window does, #220.)
 - Wayland cannot commit two surfaces atomically, so surfaces animating together can differ by up
   to a frame on screen.
 - Under Wayland an application cannot know where its surfaces are on screen, so a screen reader

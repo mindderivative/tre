@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much GPU memory does a tre window hold? (0.5.8, #207)
 
-    python tools/vram_probe.py                 # a window, two windows, a bar, a full-screen overlay
+    python tools/vram_probe.py                 # a window, two, five, a bar, a full-screen overlay
     python tools/vram_probe.py --output DP-1   # the output the layer windows use (default: the first)
 
 Each scenario runs in its own process on the current Wayland session and reports that
@@ -55,6 +55,9 @@ if scenario == "window":
 elif scenario == "two windows":
     for _ in range(2):
         w = Window(width=200, height=100); w.root.set(fill=(200, 60, 60, 255)); app.add_window(w)
+elif scenario == "five windows":
+    for _ in range(5):
+        w = Window(width=200, height=100); w.root.set(fill=(200, 60, 60, 255)); app.add_window(w)
 elif scenario == "bar":
     w = LayerWindow("probe", anchor=("top", "left", "right"), size=(0, 32), output=output)
     w.root.set(fill=(200, 60, 60, 255)); app.add_window(w)
@@ -82,7 +85,7 @@ def main():
         names = [o.name for o in tre.App().outputs()]
         output = names[0] if names else ""
     print(f"{'scenario':<14}{'VRAM MiB':>10}{'GTT MiB':>10}   (output {output or 'none'})")
-    for scenario in ("window", "two windows", "bar", "overlay"):
+    for scenario in ("window", "two windows", "five windows", "bar", "overlay"):
         try:
             out = subprocess.run([sys.executable, "-I", "-c", CHILD, scenario, output], capture_output=True,
                                  text=True, timeout=60).stdout.strip().splitlines()

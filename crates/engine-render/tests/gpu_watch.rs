@@ -5,7 +5,7 @@
 
 mod support;
 
-use engine_render::{GpuReport, GpuWatch, any_in_flight};
+use engine_render::{GpuHub, GpuReport, GpuWatch, any_in_flight};
 
 fn too_big_buffer(device: &wgpu::Device) -> wgpu::Buffer {
     // Larger than any device's maximum buffer size: a validation error.
@@ -112,5 +112,75 @@ fn the_watchdog_stays_quiet_for_a_healthy_frame() {
         watch.set_watchdog(Some(f64::NAN)); // ignored, not a panic
         watch.set_watchdog(None);
         assert!(watch.poll(&device).is_empty());
+    });
+}
+
+/// 0.5.9 (#220): windows sharing a device each have a watch on one hub. `wgpu` keeps one lost
+/// callback per device, so each window's own `install` would silence the one before it.
+#[test]
+fn every_window_on_a_shared_device_hears_that_it_was_lost() {
+    pollster::block_on(async {
+        let (device, _queue) = support::device("gpu-watch shared lost").await;
+        let hub = GpuHub::install(&device);
+        let mut first = hub.watch();
+        let mut second = hub.watch();
+        device.destroy();
+        assert!(
+            !hub.is_lost(),
+            "nothing is known before the device is polled"
+        );
+        let lost = vec![GpuReport::Lost {
+            destroyed: true,
+            message: String::new(),
+        }];
+        assert_eq!(first.poll(&device), lost);
+        assert!(hub.is_lost());
+        assert_eq!(second.poll(&device), lost, "the second window hears it too");
+        assert!(first.is_lost() && second.is_lost());
+        assert!(first.poll(&device).is_empty() && second.poll(&device).is_empty());
+        // A window opened after the loss does not replay it (a lost hub is never reused).
+        let mut late = hub.watch();
+        assert!(late.poll(&device).is_empty() && !late.is_lost());
+    });
+}
+
+/// A GPU error is reported to each window on the device, once per window, since `wgpu` does not
+/// say which window's draw caused it.
+#[test]
+fn a_gpu_error_on_a_shared_device_reaches_each_window_once() {
+    pollster::block_on(async {
+        let (device, _queue) = support::device("gpu-watch shared error").await;
+        let hub = GpuHub::install(&device);
+        let mut first = hub.watch();
+        let mut second = hub.watch();
+        let _a = too_big_buffer(&device);
+        let _b = too_big_buffer(&device);
+        let one = first.poll(&device);
+        let two = second.poll(&device);
+        assert_eq!(one.len(), 1, "{one:?}");
+        assert_eq!(one, two);
+        let _c = too_big_buffer(&device);
+        assert!(
+            first.poll(&device).is_empty(),
+            "the same message is not repeated"
+        );
+    });
+}
+
+/// Each window counts its own submissions, so a stall in one is not hidden by another finishing.
+#[test]
+fn submissions_are_counted_per_window_on_a_shared_device() {
+    pollster::block_on(async {
+        let (device, queue) = support::device("gpu-watch shared flight").await;
+        let hub = GpuHub::install(&device);
+        let mut busy = hub.watch();
+        let idle = hub.watch();
+        empty_submit(&device, &queue);
+        busy.submitted(&queue);
+        assert!(busy.in_flight());
+        assert!(!idle.in_flight(), "the other window submitted nothing");
+        let _ = busy.poll(&device);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        assert!(!busy.in_flight());
     });
 }

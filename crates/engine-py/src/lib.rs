@@ -18,6 +18,7 @@ mod event;
 mod files;
 mod frame_stats;
 mod gpu_memory;
+mod gpu_share;
 mod gradient;
 mod grid;
 mod layer_window;
