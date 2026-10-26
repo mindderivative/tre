@@ -16,6 +16,34 @@ position), #220 (one wgpu device for all windows).
 
 ## After 0.5.8 (unreleased)
 
+### #238, keep-alive and LoopHandle.stop() (2026-10-26)
+
+TRE-REQ-005 from the Tesserae Shell vault (written by the `shell` session, confirmed by the maintainer,
+reviewed against the code first). The shell must stay up with no window and quit cleanly. Built:
+`App.run(keep_alive=True)` (a `run()` argument, not an `App` option) and `LoopHandle.stop() -> bool`.
+`engine-platform`: `LoopOptions { keep_alive, on_wake }` (a new last argument of `run_windowed_multi_with`),
+`PlatformEvent::Stop` and `EventLoopWaker::stop`, and one `exit_if_empty` (moved from the Linux-only module to the
+shared impl) for the eight places the loop could exit. `stop()` closes every window and layer surface without
+asking, each hearing `closed` with the reason `"stopped"`, then the loop returns; it applies to a running loop only
+(`False` before or after a run, and nothing is remembered). **Four things the request did not know**, found by
+reading the loop and measuring: (1) `call_soon` did not run with zero windows: the queue is drained inside a window's
+frame and `Wake` only requested redraws, so a hook (`on_wake`, used only when nothing is open) drains it. (2) The
+idle loop busy-spun a core: it starts in `ControlFlow::Poll` and only a window's frame set `Wait`; `about_to_wait` now
+sets `Wait` when nothing is open (measured 5.0 s of CPU in 5 s before, 0.01 s after). (3) `tre-gpu-wake` woke ten
+times a second polling an in-flight counter even with no GPU work; it now sleeps on a condition variable until a
+frame is submitted (`wait_while_idle`, `notify_flight`). (4) Python signal handlers do not run on an idle loop (a
+handler ran 2 s late, when a `call_soon` gave the main thread Python), so a window-less shell cannot quit on
+SIGTERM with `signal.signal` alone; the documented recipe is `signal.set_wakeup_fd` plus a watcher thread calling
+`stop()` (tested). Remaining idle wake-ups: about two a second from the D-Bus library's worker thread
+(`blocking-1`, behind the OS-preference watcher every tre app has); not chased, none from tre's own threads.
+`examples/keep_alive.py` is the shell skeleton (a bar per output, quit on a real SIGTERM, run with a signal from outside to check). Tests: `tests/test_keep_alive.py` (10: raises without it; `stop()` outside a run; `call_soon` and `stop()` with no
+window; a stop asked early does not end the next run; idle CPU and engine-thread wake-ups; SIGTERM recipe; `stop()`
+with windows open and a vetoing listener; closing the last window with and without `keep_alive`; on a headless sway,
+output hot-plug through the last output with a bar added from `output_added`), and `gpu_flight_wait.rs`. They pass
+on a headless sway (three runs) and on KWin 6.8.1 (9 of 10; the hot-plug test needs a sway to unplug outputs). The
+platform, engine-render (335) and 462 Python tests that open windows pass. Not tested: hot-plug on KWin; a real
+unplug of a physical monitor; non-Linux (keep-alive is cross-platform code, run only on Linux).
+
 ### #236, pass-through clicks on the unfilled parts of a frame (2026-10-26)
 
 For the shell's screen frame (a ring with convex outer corners, concave inner fillets and joins). Two

@@ -41,7 +41,7 @@ Opens and drives one or more windows together in one blocking `run()`.
 | `off(event: Literal['output_added', 'output_removed', 'output_updated']) -> None` | Removes the handler for an output event. |
 | `on(event, handler) -> None` | Registers `handler(output)` for a screen being plugged in, removed, or moved, resized, rescaled or rotated. |
 | `outputs() -> list[Output]` | The screens the compositor has, top to bottom and left to right, read now (so it works before `run()`). |
-| `run(max_frames: int \| None=None) -> None` | Opens every added window and runs the event loop until they all close, or `max_frames`. |
+| `run(max_frames: int \| None=None, keep_alive: bool=False) -> None` | Opens every added window and runs the event loop until they all close, or `max_frames`. |
 | `simulate(event: Literal['output_added', 'output_removed', 'output_updated'], **fields: Any) -> None` | Delivers an output event as the compositor would, for tests with no display: `app.simulate("output_added", name="DP-2"… |
 | `thread_handle() -> LoopHandle` | A thread-safe handle to this `App`'s event loop. |
 
@@ -58,6 +58,7 @@ The one thread-safe object: queues a callable onto a running `App`'s loop.
 | Method | Description |
 | --- | --- |
 | `call_soon(callback: Callable[[], object]) -> None` | Queues `callback` (called with no arguments) to run on the `App`'s event-loop thread, and wakes the loop. |
+| `stop() -> bool` | Ends the running loop, from any thread. |
 
 **Events:** none.
 
