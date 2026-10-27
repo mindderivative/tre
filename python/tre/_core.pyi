@@ -1052,7 +1052,7 @@ class App:
         Every handle from one `App` shares the same queue.
         """
         ...
-    def run(self, max_frames: int | None = None) -> None:
+    def run(self, max_frames: int | None = None, keep_alive: bool = False) -> None:
         """Blocks, pumping every added window's real event loop, until
         every window closes (or, if given, `max_frames` is reached on
         each). Design Principle 1's own "one blocking call" -- returns
@@ -1061,6 +1061,14 @@ class App:
         project relies on. Raises `RuntimeError` if a window's GPU can't
         be set up (no adapter, no device, or an unsupported surface), or
         if no window was added.
+
+        (0.5.9) `keep_alive=True` keeps the loop running with no window
+        open: it does not raise when none was added and does not return
+        when the last one closes (including a bar closed because its
+        output was unplugged). Output events (`App.on`) and
+        `LoopHandle.call_soon` callbacks still arrive, and windows can be
+        added from them. Only `LoopHandle.stop()` ends it. With it,
+        `max_frames` no longer ends the run when its windows are done.
         """
         ...
     def outputs(self) -> list[Output]:
@@ -1130,7 +1138,18 @@ class LoopHandle:
         exception is logged like one from an input handler and doesn't
         stop the loop or later callbacks. Raises `TypeError` if
         `callback` isn't callable.
+
+        (0.5.9) It also runs when no window is open (a `keep_alive` loop).
         """
+        ...
+    def stop(self) -> bool:
+        """(0.5.9) Ends the running loop, from any thread. Every open window
+        is closed without a `close_requested` (a stop cannot be vetoed), each
+        hearing `closed` with the reason `"stopped"`, and `App.run()` returns
+        normally. Returns `True` if a loop was running and has been asked to
+        end, `False` if none was (before `run()` or after it returned); nothing
+        is remembered, so a stop never ends a later run. Works with or without
+        `run(keep_alive=True)`."""
         ...
 
 class ShaderError(ValueError):

@@ -85,6 +85,15 @@ Exception` won't swallow the mistake. Dropping one on another thread is
 safe: if Python's garbage collector frees a Tesserae Engine object on a worker, the
 free itself happens on the object's own thread at its next frame.
 
+## Ending the loop from a thread
+
+`handle.stop()` (0.5.9) ends the running loop from any thread: every window is closed without a
+`close_requested` and hears `closed` (reason `"stopped"`), and `app.run()` returns. It is how a
+`run(keep_alive=True)` loop with no window ends, and how a worker thread (a signal watcher, a
+shutdown message) quits an app. It returns `False` when no loop is running. See
+[`keep_alive`](../reference/app.md#staying-up-with-no-window-keep_alive-059), which also shows how to
+quit on SIGTERM.
+
 ## Idle windows and the GIL
 
 Since 0.5.1 an idle window waits for its next event with the GIL released, so

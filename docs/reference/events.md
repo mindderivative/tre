@@ -121,7 +121,7 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `high_contrast` | The OS's increased-contrast preference changed (0.5.4) | `high_contrast` |
 | `scale_factor` | The window moved to a display with a different scale factor | `scale_factor` |
 | `close_requested` | The user asked to close the window; `event.cancel()` keeps it open | — |
-| `closed` | The window closed — by the user or by reaching `max_frames`. A [`LayerWindow`](layer-window.md) also says why (0.5.8) | `reason` on a `LayerWindow`: `"compositor"`, `"output_removed"` or `"app"` |
+| `closed` | The window closed — by the user or by reaching `max_frames`. A [`LayerWindow`](layer-window.md) also says why (0.5.8) | `reason` on a `LayerWindow`: `"compositor"`, `"output_removed"` or `"app"`; `"stopped"` on any window when `LoopHandle.stop()` ended the run (0.5.9) |
 | `dock_target` | During a docking drag, the pointer moved into another dock zone, or out of every zone | `side` |
 | `file_hover` | Files are being dragged from the OS over the window (0.5.4); `paths` | — |
 | `file_hover_cancel` | The file drag left the window or was abandoned (0.5.4) | — |

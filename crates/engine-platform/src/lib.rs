@@ -449,6 +449,10 @@ enum PlatformEvent {
     /// itself already has, confirmed as the simpler, still-correct v1
     /// answer this phase's own scoping note left as an open question.
     Wake,
+    /// 0.5.9 (#238): end the loop now. Every window and layer surface is closed without a
+    /// `close_requested` (a shutdown cannot be vetoed), each hearing `closed`, and the loop
+    /// returns. See [`EventLoopWaker::stop`].
+    Stop,
     /// M106 (issue #18): the XDG settings portal announced a new light/
     /// dark appearance -- Linux's stand-in for `winit`'s own
     /// `WindowEvent::ThemeChanged`, which never fires there. Every open
@@ -538,6 +542,13 @@ impl EventLoopWaker {
     /// after the loop itself has started or stopped.
     pub fn wake(&self) {
         let _ = self.proxy.send_event(PlatformEvent::Wake);
+    }
+
+    /// 0.5.9 (#238): asks the loop to end: every window and layer surface is closed (each hears
+    /// `closed`; `close_requested` is skipped) and the loop returns. Safe from any thread.
+    /// `false` if the loop is already gone, so nothing was asked.
+    pub fn stop(&self) -> bool {
+        self.proxy.send_event(PlatformEvent::Stop).is_ok()
     }
 
     /// 0.5.6 (#159): asks the loop to open another window while it runs.
@@ -689,7 +700,20 @@ where
         setup,
         None,
         None,
+        LoopOptions::default(),
     )
+}
+
+/// 0.5.9 (#238): how the loop behaves when it has nothing to draw.
+#[derive(Default)]
+pub struct LoopOptions {
+    /// Keep running when no window and no layer surface is open: a desktop shell that waits
+    /// for an output to come back. The loop then ends only by [`EventLoopWaker::stop`].
+    pub keep_alive: bool,
+    /// Runs on every [`EventLoopWaker::wake`] while there is nothing open to draw a frame, so
+    /// work a host queued from another thread (`LoopHandle.call_soon`) still runs: it is
+    /// normally done at the start of a window's frame.
+    pub on_wake: Option<Box<dyn FnMut()>>,
 }
 
 /// 0.5.1 (#92): what a host that holds a lock the loop's *waiting* shouldn't
@@ -714,6 +738,7 @@ pub fn run_windowed_multi_with<C, F, A, S, N, X, L>(
     setup: S,
     idle: Option<IdleHooks>,
     layers: Option<LayerHooks>,
+    options: LoopOptions,
 ) -> Result<(), winit::error::EventLoopError>
 where
     C: FnMut(WindowId, u64, Arc<Window>) -> bool,
@@ -762,6 +787,8 @@ where
         on_lifecycle,
         idle,
         released: false,
+        keep_alive: options.keep_alive,
+        on_wake: options.on_wake,
         layer_hooks: layers,
         layers: HashMap::new(),
         #[cfg(target_os = "linux")]
@@ -878,6 +905,9 @@ struct MultiWindowApp<C, F, A, N, X, L> {
     idle: Option<IdleHooks>,
     /// Whether `idle.release` has been called with no `reacquire` since.
     released: bool,
+    /// 0.5.9 (#238): see [`LoopOptions`].
+    keep_alive: bool,
+    on_wake: Option<Box<dyn FnMut()>>,
     /// 0.5.8 (#198): the host's callbacks for layer surfaces, and the surfaces
     /// open now, keyed by the id minted for each (see `layer_loop`).
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -902,6 +932,14 @@ impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
         }
     }
 
+    /// Starts the loop's exit when nothing is left open, unless the host asked for a loop that
+    /// waits for something to open again (0.5.9, #238).
+    pub(crate) fn exit_if_empty(&self, event_loop: &ActiveEventLoop) {
+        if self.windows.is_empty() && self.layers.is_empty() && !self.keep_alive {
+            event_loop.exit();
+        }
+    }
+
     /// Gives the host's lock up for the wait that follows.
     fn park(&mut self) {
         if !self.released
@@ -921,6 +959,7 @@ impl<C, F, A, N, X, L> MultiWindowApp<C, F, A, N, X, L> {
     fn tell_layers(&mut self, _: InputEvent) {}
     fn shutdown_layers(&mut self) {}
     fn start_output_watch(&mut self, _: &ActiveEventLoop) {}
+    fn stop_layers(&mut self) {}
 }
 
 thread_local! {
@@ -958,6 +997,12 @@ where
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         cursors::flush(event_loop);
         self.run_layer_frames(event_loop);
+        // 0.5.9 (#238): with nothing open there is nothing to poll for. The loop starts in
+        // `Poll` and a window's frame is what drops it to `Wait`, so a keep-alive loop with no
+        // window (or one whose last window just closed) would otherwise spin a core.
+        if self.windows.is_empty() && self.layers.is_empty() {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
         self.park();
     }
 
@@ -1140,10 +1185,28 @@ where
             // real "whole-loop signal" shape `any_active` itself
             // already has.
             PlatformEvent::Wake => {
+                // 0.5.9 (#238): nothing open means no frame to run the host's queued work.
+                if self.windows.is_empty()
+                    && self.layers.is_empty()
+                    && let Some(on_wake) = &mut self.on_wake
+                {
+                    on_wake();
+                }
                 for win in self.windows.values_mut() {
                     win.request_redraw();
                 }
                 self.wake_layers();
+            }
+            PlatformEvent::Stop => {
+                // Every window, then every layer surface, told `closed` and dropped: no
+                // `close_requested`, so a listener cannot keep one open.
+                let ids: Vec<WindowId> = self.windows.keys().copied().collect();
+                for id in ids {
+                    (self.on_lifecycle)(id, WindowLifecycle::Closed);
+                    self.windows.remove(&id);
+                }
+                self.stop_layers();
+                event_loop.exit();
             }
             PlatformEvent::ThemeChanged(dark) => {
                 for (&id, win) in &self.windows {
@@ -1189,9 +1252,7 @@ where
                 {
                     (self.on_lifecycle)(id, WindowLifecycle::Closed);
                     self.windows.remove(&id);
-                    if self.windows.is_empty() && self.layers.is_empty() {
-                        event_loop.exit();
-                    }
+                    self.exit_if_empty(event_loop);
                 } else {
                     self.close_layer(event_loop, id);
                 }
@@ -1223,6 +1284,7 @@ where
         let Self {
             windows,
             layers,
+            keep_alive,
             on_frame,
             build_access_update,
             on_input,
@@ -1241,7 +1303,7 @@ where
                 if on_lifecycle(window_id, WindowLifecycle::CloseRequested) {
                     on_lifecycle(window_id, WindowLifecycle::Closed);
                     windows.remove(&window_id);
-                    if windows.is_empty() && layers.is_empty() {
+                    if windows.is_empty() && layers.is_empty() && !*keep_alive {
                         event_loop.exit();
                     }
                 }
@@ -1271,7 +1333,7 @@ where
                 {
                     on_lifecycle(window_id, WindowLifecycle::Closed);
                     windows.remove(&window_id);
-                    if windows.is_empty() && layers.is_empty() {
+                    if windows.is_empty() && layers.is_empty() && !*keep_alive {
                         event_loop.exit();
                     }
                     return;

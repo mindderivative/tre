@@ -84,8 +84,21 @@ def create(title, body, labels, column, dry_run):
         cmd += ["--label", label]
     url = gh(*cmd).strip().splitlines()[-1]
     print(f"filed {url}")
-    added = json.loads(gh("project", "item-add", PROJECT, "--owner", OWNER, "--url", url, "--format", "json"))
-    set_status(added["id"], field_id, option)
+    # The project may add new issues by itself (an auto-add workflow); then item-add says the
+    # content already exists, and the card is found by its issue number instead.
+    added = subprocess.run(["gh", "project", "item-add", PROJECT, "--owner", OWNER, "--url", url, "--format", "json"],
+                           capture_output=True, text=True)
+    if added.returncode == 0:
+        item_id = json.loads(added.stdout)["id"]
+    elif "already exists" in added.stderr:
+        number = int(url.rstrip("/").rsplit("/", 1)[-1])
+        card = next((c for c in items() if c["content"].get("number") == number), None)
+        if card is None:
+            sys.exit(f"{url} is filed and on the board already, but its card was not found; check the board")
+        item_id = card["id"]
+    else:
+        sys.exit(f"gh project item-add failed: {added.stderr.strip()}")
+    set_status(item_id, field_id, option)
     print(f"on the board in {option['name']}")
     return 0
 

@@ -46,6 +46,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `docking.py` | Docked panels dragged between zones |
 | `two_windows.py` | One `App` driving two windows |
 | `outputs.py` | `App.outputs()` and the output events: one bar per screen, following hot-plug; headless-safe |
+| `keep_alive.py` | A shell skeleton that stays up with no window: a bar per output (added from `output_added`), `run(keep_alive=True)`, and a quit on SIGTERM or Ctrl-C through `set_wakeup_fd` and `LoopHandle.stop()`; ends after 3 s by default, `--seconds 0` runs until a signal; headless-safe |
 | `popup_menu.py` | A menu and a submenu hanging off a thin bar as `PopupWindow`s: placed by the compositor, flipped above a bottom bar, dismissed by an outside click or Escape; headless-safe, `--watch` keeps the bar up |
 | `layer_menu.py` | A menu hanging off a thin bar: a transparent overlay `LayerWindow` with `input_region="auto"` that exists only while the menu is open; headless-safe |
 | `layer_bar.py` | A `LayerWindow`: a bar the compositor places at the top edge, reserving 32 px, with a clock; headless-safe, `--watch` keeps it up |

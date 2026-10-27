@@ -65,13 +65,6 @@ where
         }
     }
 
-    /// Starts the loop's exit when nothing is left open.
-    fn exit_if_empty(&self, event_loop: &ActiveEventLoop) {
-        if self.windows.is_empty() && self.layers.is_empty() {
-            event_loop.exit();
-        }
-    }
-
     /// Starts the layer thread on `winit`'s `wl_display` if it is not running.
     pub(crate) fn ensure_layer_host(&mut self, event_loop: &ActiveEventLoop) -> Result<(), String> {
         if self.layer_host.is_some() {
@@ -388,6 +381,20 @@ where
         }
         self.layers.clear();
         self.layer_host = None;
+    }
+
+    /// 0.5.9 (#238): closes every layer surface for good (a stop): the host hears `closed` for
+    /// each that was open, the surface is destroyed, and no `close_requested` is asked.
+    pub(crate) fn stop_layers(&mut self) {
+        let ids: Vec<WindowId> = self.layers.keys().copied().collect();
+        for wid in ids {
+            if let Some(layer) = self.layers.remove(&wid) {
+                if layer.opened {
+                    (self.on_lifecycle)(wid, WindowLifecycle::Closed);
+                }
+                layer.controller.destroy(layer.id);
+            }
+        }
     }
 
     /// Every layer surface wants a frame (a wake from another thread).

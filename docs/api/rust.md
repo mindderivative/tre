@@ -2191,12 +2191,14 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 | `fn font_generation() -> u64` | Current registry generation. |
 | `fn gpu_timer_features() -> Features` | The features a device needs for `GpuTimer`. |
 | `fn linear_surface_format(supported: &[TextureFormat]) -> Option<TextureFormat>` | The surface format to render into, out of those it supports. |
+| `fn notify_flight()` | Wakes the threads in `wait_while_idle` to look again: a submission was made, or one of them is to give up. |
 | `fn register_font(data: Vec<u8>) -> Result<Vec<String>, NoFontFacesFound>` | Registers font file bytes for all text renderers and returns the family names found. |
 | `fn set_system_fonts(enabled: bool)` | Lets (or stops) every `TextRenderer` in this process use the system's installed fonts. |
 | `fn snapshot(device: &Device, queue: &Queue, tree: &Tree, root: NodeId, width: u32, height: u32, scale: f64, time: f32) -> Result<Snapshot, String>` | Renders `tree` (already laid out) as `root`'s window of `width` x `height` physical pixels at display `scale`, with shaders seeing `time` seconds. |
 | `fn snapshot_with(device: &Device, queue: &Queue, tree: &Tree, root: NodeId, width: u32, height: u32, scale: f64, time: f32, glyph_cache: bool) -> Result<Snapshot, String>` | `snapshot`, drawing text from the glyph cache when `glyph_cache` (0.5.4, #127), as a window that has it on does. |
 | `fn system_fonts() -> bool` | Whether system fonts are on (`set_system_fonts`). |
 | `fn transparent_alpha_mode(supported: &[CompositeAlphaMode]) -> Option<CompositeAlphaMode>` | The alpha mode for a see-through window, out of those the surface supports, or `None` where it can't blend with the desktop at all. |
+| `fn wait_while_idle(give_up: &AtomicBool)` | Blocks while no submission is in flight and `give_up` is false, with no timer: a host's helper thread that must watch the GPU only while it works… |
 | `fn with_opacity(color: Color, opacity: f64) -> Color` | Returns the color with its alpha multiplied by the given opacity. |
 
 ### Constants (engine-render) { #constants-engine-render }
@@ -2269,6 +2271,7 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `fn open_layer(&self, request: LayerRequest)` | Asks the loop to open a layer surface while it runs, or before (`WindowOpener`); the result reaches the `LayerHooks`. |
 | `fn open_window(&self, request: WindowRequest)` | Asks the loop to open another window while it runs. |
 | `fn report_size(&self, id: WindowId)` | Asks the loop to report a window's current size as a resize event on its next turn. |
+| `fn stop(&self) -> bool` | Asks the loop to end: every window and layer surface is closed (each hears `closed`; `close_requested` is skipped) and the loop returns. |
 | `fn wake(&self)` | Requests a redraw of every open window, doing nothing if the loop has exited. |
 | `fn watch_outputs(&self)` | Asks the loop to start reporting output changes to the `LayerHooks`, if it is not already. |
 
@@ -2381,6 +2384,17 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `height` | `u32` |  |
 | `scale` | `f64` |  |
 | `controller` | `LayerController` | For `update`, `set_cursor` and `destroy`. |
+
+### LoopOptions { #loopoptions }
+
+*struct.* How the loop behaves when it has nothing to draw.
+
+**Implements:** [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `keep_alive` | `bool` | Keep running when no window and no layer surface is open: a desktop shell that waits for an output to come back. |
+| `on_wake` | `Option<Box<dyn FnMut()>>` | Runs on every `EventLoopWaker::wake` while there is nothing open to draw a frame, so work a host queued from another thread (`LoopHandle.call_soon`)… |
 
 ### OutputInfo { #outputinfo }
 
@@ -2651,7 +2665,7 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `fn region_from_floats(rects: &[(f64, f64, f64, f64)]) -> Result<Vec<Rect>, ConfigError>` | Explicit rectangles as given (floats, logical pixels) to whole-pixel ones, rounded outward so a rectangle never shrinks: a click on a pixel the app… |
 | `fn run_windowed<F, A>(config: WindowConfig, on_frame: F, build_access_update: A) -> Result<(), EventLoopError>` | Runs an event loop for a single window that calls a per-frame callback. |
 | `fn run_windowed_multi<C, F, A, S, N, X, L>(on_window_created: C, on_frame: F, build_access_update: A, on_input: N, on_access_action: X, on_lifecycle: L, setup: S) -> Result<(), EventLoopError>` | Runs an event loop that manages any number of windows through callbacks. |
-| `fn run_windowed_multi_with<C, F, A, S, N, X, L>(on_window_created: C, on_frame: F, build_access_update: A, on_input: N, on_access_action: X, on_lifecycle: L, setup: S, idle: Option<IdleHooks>, layers: Option<LayerHooks>) -> Result<(), EventLoopError>` | Runs the multi-window loop with optional hooks around its idle wait. |
+| `fn run_windowed_multi_with<C, F, A, S, N, X, L>(on_window_created: C, on_frame: F, build_access_update: A, on_input: N, on_access_action: X, on_lifecycle: L, setup: S, idle: Option<IdleHooks>, layers: Option<LayerHooks>, options: LoopOptions) -> Result<(), EventLoopError>` | Runs the multi-window loop with optional hooks around its idle wait. |
 | `fn supported() -> bool` | Whether this session's compositor offers `zwlr_layer_shell_v1`: `false` off Wayland, on X11, and on a compositor without it (GNOME's). |
 | `fn transform_name(value: u32) -> &'static str` | The names the Python layer shows for a Wayland transform, by its protocol value (`wl_output.transform`: 0 normal, 1 to 3 rotations, 4 flipped, 5 to… |
 | `fn turn_instant() -> Instant` | The instant the loop's current turn began, or the real clock off the loop (headless). |

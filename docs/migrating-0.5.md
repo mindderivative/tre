@@ -130,6 +130,15 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   `input_region="auto"` alike. See [Hit testing a path](reference/paint.md#hit-testing-a-path). It is
   what a screen frame needs: a path with convex outer corners and concave inner fillets, clickable only
   on the ring.
+- **`App.run(keep_alive=True)` and `LoopHandle.stop()`** (#238), for a shell that must stay up with no
+  window. `keep_alive` keeps the loop running with nothing open (output events and `call_soon` still
+  arrive; windows can be added from them), and `stop()` ends any loop from a thread, closing every
+  window without a `close_requested` (reason `"stopped"`). Without `keep_alive` nothing changes:
+  `run()` still raises with no window and ends with the last. See
+  [`keep_alive`](reference/app.md#staying-up-with-no-window-keep_alive-059).
+- *Rust (`engine-platform`):* `LoopOptions` (a new last argument of `run_windowed_multi_with`),
+  `EventLoopWaker::stop`, `PlatformEvent::Stop`; (`engine-render`) `wait_while_idle`, `notify_flight`.
+  The GPU helper thread no longer wakes ten times a second when nothing is in flight.
 - *Rust (`engine-core`):* `HitShape`, `PathState::hit_shape`. The input region's builder now handles
   shapes with holes and concave corners (it used one span per shape per band before); nothing changes
   for the shapes it handled, and a convex shape gives the same rectangles.

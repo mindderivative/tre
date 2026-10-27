@@ -25,7 +25,7 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Submissions still running on any device, for a loop that must keep
@@ -36,6 +36,28 @@ static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 /// Whether any device in this process has a submission still running.
 pub fn any_in_flight() -> bool {
     IN_FLIGHT.load(Ordering::Relaxed) > 0
+}
+
+/// Wakes whoever waits in [`wait_while_idle`]. Held across the check so a submission that
+/// lands between the check and the wait is never missed.
+static FLIGHT: (Mutex<()>, Condvar) = (Mutex::new(()), Condvar::new());
+
+/// 0.5.9 (#238): blocks while no submission is in flight and `give_up` is false, with no timer:
+/// a host's helper thread that must watch the GPU only while it works sleeps through the rest
+/// (an idle loop with no window open wakes nothing). Returns when work is in flight, or when
+/// [`notify_flight`] was called and `give_up` is then true.
+pub fn wait_while_idle(give_up: &std::sync::atomic::AtomicBool) {
+    let mut guard = FLIGHT.0.lock().unwrap_or_else(|e| e.into_inner());
+    while IN_FLIGHT.load(Ordering::Relaxed) == 0 && !give_up.load(Ordering::Relaxed) {
+        guard = FLIGHT.1.wait(guard).unwrap_or_else(|e| e.into_inner());
+    }
+}
+
+/// Wakes the threads in [`wait_while_idle`] to look again: a submission was made, or one of
+/// them is to give up.
+pub fn notify_flight() {
+    let _guard = FLIGHT.0.lock().unwrap_or_else(|e| e.into_inner());
+    FLIGHT.1.notify_all();
 }
 
 /// The most distinct GPU errors reported per device; the rest are dropped,
@@ -233,6 +255,7 @@ impl GpuWatch {
         self.pending.push_back((seq, Instant::now()));
         self.subs.outstanding.fetch_add(1, Ordering::Relaxed);
         IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+        notify_flight();
         let subs = self.subs.clone();
         queue.on_submitted_work_done(move || {
             subs.completed.fetch_max(seq, Ordering::Relaxed);
