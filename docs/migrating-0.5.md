@@ -120,7 +120,7 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
-## 0.5.9 (unreleased)
+## 0.5.9
 
 ### Added
 
@@ -163,6 +163,12 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   `&mut renderer.resources_mut()` where you passed `renderer.resources_mut()`. New:
   `SharedRenderer`, `FrameRenderer::sharing`, `WindowRenderer::sharing`. `new` still makes a
   renderer of its own.
+
+### Not checked on real hardware
+
+A second GPU (the fallback to a device of its own is in the code, not exercised), non-AMD GPUs, a 4K
+frame with many joins, output hot-plug on KWin and a real monitor unplug, and Windows and macOS. The
+shared-device numbers were measured on AMD RADV. See the [hand-off note](design/layer-window-shell-handoff.md).
 
 ## 0.5.8
 

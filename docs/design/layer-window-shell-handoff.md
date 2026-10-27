@@ -5,7 +5,8 @@ A hand-off for the Tesserae Shell side, written when issue #195 closed (2026-10-
 blocks (#219) were added, and the overlay route for menus is no longer the recommendation), and
 brought up to date for the release. It says what is in tre, how each acceptance criterion of the
 request stands, what differs from the request, and what was not tested. Everything here shipped in
-**0.5.8** (0.5.7 had none of it). The reference is
+**0.5.8** (0.5.7 had none of it), except the items marked **0.5.9** below (the shared device, the
+screen frame's pass-through clicks, and the keep-alive loop). The reference is
 [LayerWindow](../reference/layer-window.md) and [Outputs](../reference/outputs.md); the guides are
 [Bars and panels](../guide/bars-and-panels.md) and [Menus from a bar](../guide/menus-from-a-bar.md).
 
@@ -167,4 +168,8 @@ is crisp at 1.5x scale; that a `set()` of zone and anchor never causes a wrong-s
 | `exclusive_edge` | #201 | #215 |
 | IME | #199 | #216 |
 | Screen readers | #200 | #217 |
+| **0.5.9** Windows share one GPU device (5 windows hold what 1 does) | #220 | #234 |
+| **0.5.9** Windows share one renderer and the bundled fonts (50 windows: 98 MiB, not 310) | #235 | #237 |
+| **0.5.9** Pass-through clicks on the unfilled part of a frame: `hit_shape="painted"` on a path, and an input region with holes (TRE-REQ-001 "screen frame") | #236 | #239 |
+| **0.5.9** `App.run(keep_alive=True)` and `LoopHandle.stop()`: a shell that stays up with no window (TRE-REQ-005) | #238 | #240 |
 
