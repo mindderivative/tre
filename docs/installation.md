@@ -80,7 +80,7 @@ Download the wheel matching your platform and interpreter from the
 and install it directly:
 
 ```bash
-pip install ./tesserae_engine-0.5.8-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+pip install ./tesserae_engine-0.5.9-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
 Releases up to `v0.3.5.1` name their files `tre-<version>-...`; they

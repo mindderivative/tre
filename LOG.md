@@ -2,7 +2,10 @@
 
 ## Status
 
-**0.5.8 released (2026-10-25, PR #230, tag `v0.5.8`, PyPI `tesserae-engine==0.5.8`).** LayerWindow for
+**0.5.9 in preparation (branch `0.5.9`, 2026-10-27): shared GPU device and renderer, the screen frame's
+pass-through clicks (`hit_shape`), and `keep_alive` / `stop()` for the shell.** Version bumped, notes in
+`docs/migrating-0.5.md`. Not yet merged, tagged or published.
+0.5.8 was released (2026-10-25, PR #230, tag `v0.5.8`, PyPI `tesserae-engine==0.5.8`): LayerWindow for
 Tesserae Shell and the GPU-memory work; the notes are in `docs/migrating-0.5.md`. Wheels: manylinux
 (3.12, 3.13, 3.14, 3.14t, 3.15, 3.15t), macOS arm64 and Windows (3.12 to 3.14), and the sdist. Installed from
 PyPI into a clean venv on Linux (Python 3.14) and smoke-tested headless: version 0.5.8, `LayerWindow`,
@@ -12,9 +15,9 @@ PyPI into a clean venv on Linux (Python 3.14) and smoke-tested headless: version
 Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 `BUILD_TRACKER_ARCHIVE_*.md` files are the pre-GitHub trackers). Open
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
-position), #220 (one wgpu device for all windows).
+position).
 
-## After 0.5.8 (unreleased)
+## 0.5.9 (release prep, 2026-10-27)
 
 ### #238, keep-alive and LoopHandle.stop() (2026-10-26)
 
