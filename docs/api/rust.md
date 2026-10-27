@@ -499,6 +499,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | Field | Type | Description |
 | --- | --- | --- |
 | `data` | `Animated<PathData>` | The path geometry, animatable. |
+| `hit_shape` | `HitShape` | Which part of the node takes pointer events and counts in an `input_region="auto"`. |
 | `view_box` | `Option<Rect>` | The region of path space fitted into the node's box; None uses pixels. |
 | `trim_start` | `Animated<f64>` | Where the drawn stroke starts along the path, from 0.0 to 1.0. |
 | `trim_end` | `Animated<f64>` | Where the drawn stroke ends along the path, from 0.0 to 1.0. |
@@ -1354,6 +1355,22 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `Linear` | `{ angle_deg: f64 }` | Along a line through the box's centre at `angle_deg` (0 up, 90 right, 180 down), as long as the box is along that direction, as CSS's… |
 | `Radial` | `{ center: (f64, f64), radius: f64 }` | Outward from `center` (fractions of the box, `(0.5, 0.5)` its middle). |
 | `Sweep` | `{ center: (f64, f64), start_deg: f64 }` | Around `center`, starting `start_deg` clockwise from up. |
+
+### HitShape { #hitshape }
+
+*enum.* What a `path` node is hit by.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Box` |  | The node's box, with its corners rounded as painted: how every node was hit before, and the default. |
+| `Painted` |  | What is painted: the fill region (when the fill has colour or a gradient) united with the stroke (when the stroke has width and colour), so a click… |
+
+| Method | Description |
+| --- | --- |
+| `fn name(self) -> &'static str` |  |
+| `fn parse(name: &str) -> Option<Self>` |  |
 
 ### InputEvent { #inputevent }
 

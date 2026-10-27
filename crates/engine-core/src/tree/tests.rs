@@ -8083,3 +8083,408 @@ fn an_open_dismissible_layer_takes_the_whole_surface_and_a_tooltip_does_not() {
     assert_ne!(region, vec![(0, 0, 200, 200)]);
     assert!(region.len() >= 2, "the anchor and the tooltip");
 }
+
+// ---- 0.5.9 (#236): shapes with holes, and a path hit by what it paints ----
+
+/// A path node `w` x `h` at (`x`, `y`) in a `region_scene`, with the view box off (the data is in
+/// node pixels), `fill` (alpha 0 = no fill) and a stroke of `stroke_width` in opaque white.
+fn path_node(
+    tree: &mut Tree,
+    root: NodeId,
+    data: &str,
+    (x, y, w, h): (f32, f32, f32, f32),
+    (fill, stroke_width): (Color, f64),
+) -> NodeId {
+    let (_, mut style, mut paint) = leaf(w, h);
+    style.position = Position::Absolute;
+    style.inset = TaffyRect {
+        left: length(x),
+        top: length(y),
+        right: auto(),
+        bottom: auto(),
+    };
+    paint.background = crate::animation::Animated::new(fill);
+    paint.border_width = crate::animation::Animated::new(stroke_width);
+    paint.border_color = crate::animation::Animated::new(Color::from_rgba8(255, 255, 255, 255));
+    let kind = NodeKind::Path(crate::PathState::new(
+        crate::PathData::from_svg(data).expect("test path data"),
+    ));
+    let id = tree.insert(kind, style, paint);
+    tree.add_child(root, id);
+    id
+}
+
+fn set_painted(tree: &mut Tree, id: NodeId) {
+    if let NodeKind::Path(state) = &mut tree.get_mut(id).unwrap().kind {
+        state.hit_shape = crate::HitShape::Painted;
+    }
+}
+
+const RED: Color = Color::from_rgba8(255, 0, 0, 255);
+const NONE: Color = Color::from_rgba8(0, 0, 0, 0);
+
+/// A 100 x 100 frame: the outer square minus the inner one (wound the opposite way, so the
+/// non-zero rule leaves a hole).
+const RING: &str = "M0,0 H100 V100 H0 Z M25,25 V75 H75 V25 Z";
+
+#[test]
+fn a_path_hit_by_its_box_is_hit_in_its_hole_as_before() {
+    let (mut tree, root) = region_scene(200.0);
+    let ring = path_node(
+        &mut tree,
+        root,
+        RING,
+        (50.0, 50.0, 100.0, 100.0),
+        (RED, 0.0),
+    );
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(
+        tree.hit_test(root, Point::new(100.0, 100.0)),
+        Some(ring),
+        "the default is the box"
+    );
+    let rects = tree.input_region(root, (200.0, 200.0), 256);
+    assert!(covered(&rects, 100, 100), "and so is the region");
+}
+
+#[test]
+fn a_painted_ring_is_hit_on_the_ring_and_passes_clicks_in_its_hole() {
+    let (mut tree, root) = region_scene(200.0);
+    let ring = path_node(
+        &mut tree,
+        root,
+        RING,
+        (50.0, 50.0, 100.0, 100.0),
+        (RED, 0.0),
+    );
+    set_painted(&mut tree, ring);
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(
+        tree.hit_test(root, Point::new(55.0, 100.0)),
+        Some(ring),
+        "the left side"
+    );
+    assert_eq!(
+        tree.hit_test(root, Point::new(100.0, 55.0)),
+        Some(ring),
+        "the top side"
+    );
+    assert_eq!(
+        tree.hit_test(root, Point::new(100.0, 100.0)),
+        Some(root),
+        "the hole passes"
+    );
+    assert_eq!(
+        tree.hit_test(root, Point::new(80.0, 80.0)),
+        Some(root),
+        "inside the hole"
+    );
+    assert_eq!(
+        tree.hit_test(root, Point::new(10.0, 10.0)),
+        Some(root),
+        "outside the node"
+    );
+}
+
+#[test]
+fn the_region_of_a_painted_ring_has_a_hole_and_covers_every_painted_pixel() {
+    let (mut tree, root) = region_scene(200.0);
+    let ring = path_node(
+        &mut tree,
+        root,
+        RING,
+        (50.0, 50.0, 100.0, 100.0),
+        (RED, 0.0),
+    );
+    set_painted(&mut tree, ring);
+    laid_out(&mut tree, root, 200.0);
+    let rects = tree.input_region(root, (200.0, 200.0), 256);
+    // Never less than painted: every pixel of the frame's four sides.
+    for (x, y) in [
+        (50, 50),
+        (149, 149),
+        (50, 149),
+        (149, 50),
+        (60, 100),
+        (140, 100),
+        (100, 60),
+        (100, 140),
+    ] {
+        assert!(covered(&rects, x, y), "painted pixel ({x}, {y}) lost");
+    }
+    // The hole is open, a few pixels in from its edge (the contract allows a band of slack).
+    for (x, y) in [(100, 100), (80, 80), (120, 120), (80, 120)] {
+        assert!(!covered(&rects, x, y), "hole pixel ({x}, {y}) is covered");
+    }
+    assert!(rects.len() <= 8, "{} rects for a square ring", rects.len());
+}
+
+#[test]
+fn a_concave_notch_stays_a_notch() {
+    let (mut tree, root) = region_scene(200.0);
+    // An L: the 100 x 100 square without its bottom-right quarter.
+    let l = path_node(
+        &mut tree,
+        root,
+        "M0,0 H100 V50 H50 V100 H0 Z",
+        (50.0, 50.0, 100.0, 100.0),
+        (RED, 0.0),
+    );
+    set_painted(&mut tree, l);
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(
+        tree.hit_test(root, Point::new(60.0, 140.0)),
+        Some(l),
+        "the long arm"
+    );
+    assert_eq!(
+        tree.hit_test(root, Point::new(140.0, 60.0)),
+        Some(l),
+        "the top arm"
+    );
+    assert_eq!(
+        tree.hit_test(root, Point::new(130.0, 130.0)),
+        Some(root),
+        "the notch passes"
+    );
+    let rects = tree.input_region(root, (200.0, 200.0), 256);
+    assert!(covered(&rects, 60, 140) && covered(&rects, 140, 60) && covered(&rects, 60, 60));
+    assert!(
+        !covered(&rects, 130, 130) && !covered(&rects, 145, 145),
+        "the notch is open"
+    );
+}
+
+#[test]
+fn a_stroke_only_path_is_hit_on_the_line_and_the_region_follows_it() {
+    let (mut tree, root) = region_scene(200.0);
+    // A diagonal line, 6 px wide, no fill: only the line is hit.
+    let line = path_node(
+        &mut tree,
+        root,
+        "M10,10 L90,90",
+        (50.0, 50.0, 100.0, 100.0),
+        (NONE, 6.0),
+    );
+    set_painted(&mut tree, line);
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(
+        tree.hit_test(root, Point::new(100.0, 100.0)),
+        Some(line),
+        "on the line"
+    );
+    assert_eq!(
+        tree.hit_test(root, Point::new(102.0, 98.0)),
+        Some(line),
+        "within half the width"
+    );
+    assert_eq!(
+        tree.hit_test(root, Point::new(120.0, 80.0)),
+        Some(root),
+        "off the line, inside the box"
+    );
+    let rects = tree.input_region(root, (200.0, 200.0), 256);
+    assert!(covered(&rects, 100, 100) && covered(&rects, 70, 70) && covered(&rects, 130, 130));
+    assert!(
+        !covered(&rects, 140, 70) && !covered(&rects, 70, 140),
+        "the box's other corners are open"
+    );
+}
+
+#[test]
+fn a_painted_path_with_nothing_painted_claims_nothing() {
+    let (mut tree, root) = region_scene(200.0);
+    let ghost = path_node(
+        &mut tree,
+        root,
+        RING,
+        (50.0, 50.0, 100.0, 100.0),
+        (NONE, 0.0),
+    );
+    set_painted(&mut tree, ghost);
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(tree.hit_test(root, Point::new(55.0, 100.0)), Some(root));
+    assert!(tree.input_region(root, (200.0, 200.0), 256).is_empty());
+}
+
+#[test]
+fn a_painted_path_follows_its_transform() {
+    let (mut tree, root) = region_scene(300.0);
+    let ring = path_node(
+        &mut tree,
+        root,
+        RING,
+        (50.0, 50.0, 100.0, 100.0),
+        (RED, 0.0),
+    );
+    set_painted(&mut tree, ring);
+    tree.get_mut(ring).unwrap().paint.node_transform.translate_x =
+        crate::animation::Animated::new(100.0);
+    laid_out(&mut tree, root, 300.0);
+    // Moved 100 right: the old left side is empty, the new one is on the ring, the hole moved too.
+    assert_eq!(tree.hit_test(root, Point::new(55.0, 100.0)), Some(root));
+    assert_eq!(tree.hit_test(root, Point::new(155.0, 100.0)), Some(ring));
+    assert_eq!(
+        tree.hit_test(root, Point::new(200.0, 100.0)),
+        Some(root),
+        "the hole moved with it"
+    );
+    let rects = tree.input_region(root, (300.0, 300.0), 256);
+    assert!(covered(&rects, 155, 100) && !covered(&rects, 200, 100) && !covered(&rects, 55, 100));
+}
+
+#[test]
+fn the_region_never_loses_a_pixel_of_a_shape_thinner_than_a_band() {
+    let (mut tree, root) = region_scene(200.0);
+    // A 1 px wide vertical line, 40 px long, and a thin sliver slanting across many bands.
+    let line = path_node(
+        &mut tree,
+        root,
+        "M0.5,0 V40",
+        (20.0, 20.0, 10.0, 40.0),
+        (NONE, 1.0),
+    );
+    let sliver = path_node(
+        &mut tree,
+        root,
+        "M0,0 L80,60 L80,62 L0,2 Z",
+        (60.0, 100.0, 80.0, 62.0),
+        (RED, 0.0),
+    );
+    set_painted(&mut tree, line);
+    set_painted(&mut tree, sliver);
+    laid_out(&mut tree, root, 200.0);
+    let rects = tree.input_region(root, (200.0, 200.0), 256);
+    for y in 20..60 {
+        assert!(covered(&rects, 20, y), "line pixel row {y} lost");
+    }
+    // Every sampled point on the sliver's centre line is covered, however steep the band.
+    for step in 0..40 {
+        // Strictly inside: t = 1 is the shape's right edge, where pixel 140 begins outside it.
+        let t = f64::from(step) / 40.0;
+        let (x, y) = (60.0 + 80.0 * t, 100.0 + 61.0 * t);
+        assert!(
+            covered(&rects, x.floor() as i32, y.floor() as i32),
+            "sliver at t={t}"
+        );
+    }
+}
+
+#[test]
+fn a_ring_of_many_curves_stays_within_the_rectangle_cap_and_never_loses_a_pixel() {
+    let (mut tree, root) = region_scene(400.0);
+    // A rounded-corner frame (outer radius 40, inner radius 24) as arcs, wound to leave a hole.
+    let data = "M40,0 H360 A40,40 0 0 1 400,40 V360 A40,40 0 0 1 360,400 H40 A40,40 0 0 1 0,360 V40 A40,40 0 0 1 40,0 Z \
+                M40,24 A16,16 0 0 0 24,40 V360 A16,16 0 0 0 40,376 H360 A16,16 0 0 0 376,360 V40 A16,16 0 0 0 360,24 Z";
+    let frame = path_node(&mut tree, root, data, (0.0, 0.0, 400.0, 400.0), (RED, 0.0));
+    set_painted(&mut tree, frame);
+    laid_out(&mut tree, root, 400.0);
+    for cap in [256, 40, 12] {
+        let rects = tree.input_region(root, (400.0, 400.0), cap);
+        assert!(
+            rects.len() <= cap,
+            "{} rects over a cap of {cap}",
+            rects.len()
+        );
+        for (x, y) in [
+            (200, 5),
+            (200, 395),
+            (5, 200),
+            (395, 200),
+            (20, 20),
+            (380, 380),
+            (3, 3),
+        ] {
+            let inside = !(x < 14 && y < 14 && (x, y) == (3, 3)); // (3, 3) is outside the rounded corner
+            if inside {
+                assert!(
+                    covered(&rects, x, y),
+                    "painted ({x}, {y}) lost at cap {cap}"
+                );
+            }
+        }
+    }
+    let exact = tree.input_region(root, (400.0, 400.0), 256);
+    assert!(!covered(&exact, 200, 200), "the middle is open");
+    assert!(
+        !covered(&exact, 3, 3),
+        "outside the rounded outer corner passes"
+    );
+}
+
+#[test]
+fn over_many_random_rounded_rings_the_region_never_loses_a_painted_pixel() {
+    use peniko::kurbo::{Affine, BezPath, RoundedRect, Shape};
+    // A small deterministic generator, so a failure names its ring.
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let mut next = move |lo: f64, hi: f64| {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        lo + (hi - lo) * ((state >> 33) as f64 / (1u64 << 31) as f64)
+    };
+    for ring in 0..40 {
+        let (w, h) = (next(80.0, 220.0), next(80.0, 220.0));
+        let thickness = next(4.0, 30.0).min(w.min(h) / 2.0 - 4.0);
+        let outer_radius = next(0.0, 50.0).min(w.min(h) / 2.0);
+        let inner_radius = next(0.0, 40.0).min((w.min(h) / 2.0 - thickness).max(0.0));
+        let outer = RoundedRect::new(0.0, 0.0, w, h, outer_radius).to_path(0.1);
+        let inner: BezPath = Affine::new([
+            1.0,
+            0.0,
+            0.0,
+            -1.0,
+            0.0,
+            2.0 * thickness + (h - 2.0 * thickness),
+        ]) * RoundedRect::new(
+            thickness,
+            thickness,
+            w - thickness,
+            h - thickness,
+            inner_radius,
+        )
+        .to_path(0.1);
+        let mut both = outer.clone();
+        both.extend(inner.elements().iter().copied());
+
+        let (mut tree, root) = region_scene(260.0);
+        let node = path_node(
+            &mut tree,
+            root,
+            "M0,0 H1 V1 Z",
+            (10.0, 10.0, w as f32, h as f32),
+            (RED, 0.0),
+        );
+        if let NodeKind::Path(state) = &mut tree.get_mut(node).unwrap().kind {
+            state.data = crate::animation::Animated::new(crate::PathData(both.clone()));
+        }
+        set_painted(&mut tree, node);
+        laid_out(&mut tree, root, 260.0);
+        let cap = if ring % 3 == 0 { 40 } else { 256 };
+        let rects = tree.input_region(root, (260.0, 260.0), cap);
+        assert!(
+            rects.len() <= cap,
+            "ring {ring}: {} rects over {cap}",
+            rects.len()
+        );
+        let (mut lost, mut open) = (0, 0);
+        for py in 10..(10.0 + h).ceil() as i32 {
+            for px in 10..(10.0 + w).ceil() as i32 {
+                let centre = Point::new(f64::from(px) + 0.5 - 10.0, f64::from(py) + 0.5 - 10.0);
+                let painted = both.contains(centre);
+                let hit_here = covered(&rects, px, py);
+                if painted && !hit_here {
+                    lost += 1;
+                }
+                if !painted && !hit_here {
+                    open += 1;
+                }
+            }
+        }
+        assert_eq!(
+            lost, 0,
+            "ring {ring} (w {w:.0}, h {h:.0}, t {thickness:.0}, cap {cap}): {lost} painted pixels lost"
+        );
+        assert!(open > 0, "ring {ring} has no open pixels at all");
+    }
+}
