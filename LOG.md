@@ -22,6 +22,26 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
 
+## After 0.5.9 (unreleased)
+
+### #243, clipboard read and write from a LayerWindow, proved on KWin (2026-10-28)
+
+The `shell` session asked which data-control protocol tre binds and whether any test proves a `LayerWindow`'s
+clipboard works on KWin, not only sway. Answered from the source: `wl-clipboard-rs` 0.9.4 (under arboard 3.6.1)
+binds `ext_data_control_manager_v1` first and `zwlr_data_control_manager_v1` second; KWin 6.8.1 offers only the
+ext one (checked with `wayland-info`), headless sway offers both, so the sway tests already exercised the ext path.
+There was no KWin test. A one-shot by hand passed, then `tests/test_clipboard_layer_live.py` was built: one tre
+process (a transparent, click-through 8 x 8 `LayerWindow`, no keyboard) writes and another reads, both with
+`DISPLAY` unset and asserting it (arboard silently falls back to the X11 clipboard when Wayland setup fails, so a test
+with `DISPLAY` set can pass without proving data-control). Three tests: a unique token, multi-line unicode text, and a
+later write from a second process replacing the first. The previous clipboard text is saved in memory (never printed;
+failures name lengths) and put back. It overwrites the real clipboard, so on a real desktop it needs
+`TRE_LIVE_CLIPBOARD=1`; `tools/sway_live.sh` now exports `TRE_PRIVATE_COMPOSITOR=1` (a private compositor has its own
+clipboard) and the test runs there unasked. Results: 3 pass on KWin 6.8.1 (the clipboard's hash was the same before and
+after) and on a headless sway (RADV); 3 skip on the real session without the opt-in. Observed on KWin: after the writer
+exits the text stays on the clipboard (a manager, presumably Klipper, takes it over); without one it would go with the
+writer. Not covered: images, the primary selection, Ctrl+V into a focused field on KWin (no key injection there).
+
 ## 0.5.9 (released 2026-10-27)
 
 ### #238, keep-alive and LoopHandle.stop() (2026-10-26)
