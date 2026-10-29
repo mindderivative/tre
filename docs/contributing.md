@@ -158,6 +158,16 @@ Every real engine capability has its own headless, GPU-backed pixel test
 under `crates/engine-render/tests/`, proving it actually paints what it
 claims to, not just that the code compiles.
 
+## Live tests that touch the desktop
+
+Tests marked live open real windows on the compositor you are running, and skip without one. Two kinds
+need to be asked for, because they act on the real session: `TRE_LIVE_INPUT=1` (a virtual pointer or
+keyboard from `/dev/uinput`, which moves the real pointer) and `TRE_LIVE_CLIPBOARD=1`
+(`tests/test_clipboard_layer_live.py` overwrites the clipboard, saving the previous text in memory and
+putting it back; with no clipboard manager that text is lost when the test ends). Under
+`tools/sway_live.sh` the compositor is private, so `TRE_PRIVATE_COMPOSITOR=1` is set and the clipboard
+test runs without being asked.
+
 ## Helper scripts
 
 Small scripts in `tools/` take over the routine parts of the workflow. All of them read before

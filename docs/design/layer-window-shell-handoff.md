@@ -100,6 +100,7 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 | `output=None` binds the same output every run | Met on KWin and sway |
 | Transparent bar over the desktop | Met on sway (pixels read back); not run on KWin, because the test reads pixels with `grim`, a wlroots-only tool |
 | Paste into a focused text field | Met on sway, with no X server; not run on KWin, because the test types with `wtype`, a wlroots-only tool |
+| `read_clipboard` / `write_clipboard` from a `LayerWindow` (text) | Met on KWin 6.8.1 and sway (0.5.9, #243): one tre process writes, another reads, `DISPLAY` unset so the X11 fallback cannot pass. tre binds `ext_data_control_manager_v1` first (KWin offers only that) and `zwlr_data_control_manager_v1` as the fallback; no keyboard focus is needed. Text only: images, the primary selection and Ctrl+V into a field on KWin are not covered. Opt-in on a real desktop (`TRE_LIVE_CLIPBOARD=1`), since it overwrites the clipboard |
 | `outputs()` and hot-plug events | Met (KWin and sway for `outputs()`; added, updated and removed fire on sway) |
 | `input_region=[]` passes clicks through | Met on KWin and sway |
 | `"auto"` with a circle: inside hits, the box corner passes | Met on KWin and sway |
