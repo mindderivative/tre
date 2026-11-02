@@ -1788,6 +1788,15 @@ impl App {
                     .gpu
                     .renderer
                     .set_glyph_cache(runtime.handles.glyph_cache.get());
+                // 0.5.10 (#246): the OS says nothing of the window can be seen (X11, macOS):
+                // nothing is drawn or presented, and `false` lets the loop sleep. Animations
+                // still tick on the frames that do run (a timer, an input, a wake) and
+                // `on_complete` still fires; the loop just no longer asks for more. The
+                // window draws everything once it shows again.
+                if runtime.handles.pause_when_occluded.get() && runtime.handles.occluded.get() {
+                    runtime.handles.tree.borrow_mut().mark_dirty();
+                    return false;
+                }
                 let damage = {
                     let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;
@@ -1901,6 +1910,25 @@ impl App {
                     gpu.watch.submitted(&gpu.queue);
                 }
                 let present_began = Instant::now();
+                // 0.5.10 (#246): on Wayland this asks for a frame callback with the commit
+                // the present makes, and `winit` holds this window's next redraw until the
+                // compositor answers it. A window the compositor is not showing then stops
+                // drawing, instead of queueing frames until the swapchain's acquire blocks
+                // the one thread every window shares. A no-op on other platforms. Not while
+                // a resize is paced (#155): that presents without a vsync barrier on purpose,
+                // and waiting for a callback between frames would slow the resize.
+                if !runtime.gpu.pacing.active() {
+                    if let Some(window) = runtime.handles.os_window.borrow().as_ref() {
+                        window.pre_present_notify();
+                    }
+                    #[cfg(target_os = "linux")]
+                    if let Some(layer) = runtime.handles.layer.as_ref()
+                        && let (Some(controller), Some(id)) =
+                            (layer.controller.borrow().as_ref(), layer.id.get())
+                    {
+                        controller.request_frame(id);
+                    }
+                }
                 runtime.gpu.queue.present(output);
                 let frame_ended = Instant::now();
                 if reconfigure {
@@ -2143,6 +2171,20 @@ impl App {
                             &runtime.handles.active,
                             focused,
                             WindowEventType::Active,
+                        );
+                    }
+                    // 0.5.10 (#246): completely hidden, or showing again.
+                    InputEvent::Occluded { occluded } => {
+                        // Nothing was drawn while it was hidden: draw everything on return.
+                        if !occluded {
+                            runtime.handles.tree.borrow_mut().mark_dirty();
+                        }
+                        listeners::update_window_state(
+                            &runtime.handles.window_listeners,
+                            py,
+                            &runtime.handles.occluded,
+                            occluded,
+                            WindowEventType::Occluded,
                         );
                     }
                     // M32 Phase 2 (§4, §5): the real, winit-driven

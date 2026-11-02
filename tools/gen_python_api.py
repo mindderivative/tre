@@ -264,6 +264,7 @@ EVENT_FIELDS = {
     "scale_factor": "New scale on `scale_factor`.",
     "maximized": "New state on `maximized`.",
     "active": "New state on `active`.",
+    "occluded": "New state on `occluded`.",
     "titlebar_inset": "New `(height, width)` on `titlebar_inset`.",
     "reason": "`\"unknown\"` or `\"destroyed\"` on `gpu_lost`.",
     "message": "The driver's or GPU's message on `gpu_lost` and `gpu_error`.",

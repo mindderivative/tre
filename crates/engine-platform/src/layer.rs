@@ -19,6 +19,7 @@ use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::net::UnixStream;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
@@ -189,6 +190,9 @@ pub enum LayerEvent {
         height: u32,
         scale: f64,
     },
+    /// The compositor answered the frame callback asked for with the surface's last frame:
+    /// it may be drawn again.
+    FrameDone { id: u64 },
     /// The surface is gone.
     Closed { id: u64, reason: CloseReason },
     /// The surface could not be made (an output name that matches nothing, say).
@@ -260,7 +264,20 @@ pub struct ImeInfo {
 pub struct LayerController {
     commands: Sender<Command>,
     wake: Arc<Mutex<UnixStream>>,
+    frames: FrameSlots,
 }
+
+/// 0.5.10 (#246): what a surface needs for its frame callback to be asked for from the thread
+/// that draws it. Wayland requests are safe to make from any thread.
+struct FrameSlot {
+    surface: wl_surface::WlSurface,
+    queue: QueueHandle<State>,
+    /// A callback was asked for with the last frame and has not come back: the compositor
+    /// is not showing the surface (or not yet).
+    pending: Arc<AtomicBool>,
+}
+
+type FrameSlots = Arc<Mutex<HashMap<u64, FrameSlot>>>;
 
 impl LayerController {
     fn send(&self, command: Command) {
@@ -316,6 +333,32 @@ impl LayerController {
         self.send(Command::Ime(id, info));
     }
 
+    /// 0.5.10 (#246): asks the compositor for a frame callback with the next commit of the
+    /// surface `id`, which the caller's present makes. Until it comes back
+    /// ([`frame_pending`](Self::frame_pending)) the surface is not drawn again: a surface
+    /// the compositor is not showing then stops drawing instead of queueing frames until the
+    /// swapchain blocks the thread every window shares. Call it just before presenting.
+    pub fn request_frame(&self, id: u64) {
+        let slots = self
+            .frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(slot) = slots.get(&id)
+            && !slot.pending.swap(true, Ordering::AcqRel)
+        {
+            slot.surface.frame(&slot.queue, slot.surface.clone());
+        }
+    }
+
+    /// Whether a frame callback asked for by [`request_frame`](Self::request_frame) is out.
+    pub fn frame_pending(&self, id: u64) -> bool {
+        self.frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&id)
+            .is_some_and(|slot| slot.pending.load(Ordering::Acquire))
+    }
+
     /// Destroys the surface; the `wgpu` surface must be dropped first.
     pub fn destroy(&self, id: u64) {
         self.send(Command::Destroy(id));
@@ -341,16 +384,28 @@ impl LayerHost {
             .map_err(|e| LayerError::Unsupported(format!("no wake pipe: {e}")))?;
         wake_rx.set_nonblocking(true).ok();
         let (ready_tx, ready_rx) = mpsc::channel();
+        let frames: FrameSlots = Arc::default();
+        let thread_frames = frames.clone();
         let display_ptr = RawPtr(display);
         let thread = thread::Builder::new()
             .name("tre-layer".into())
-            .spawn(move || run(display_ptr, on_event, command_rx, wake_rx, ready_tx))
+            .spawn(move || {
+                run(
+                    display_ptr,
+                    on_event,
+                    command_rx,
+                    wake_rx,
+                    ready_tx,
+                    thread_frames,
+                )
+            })
             .map_err(|e| LayerError::Unsupported(format!("no layer thread: {e}")))?;
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(Self {
                 controller: LayerController {
                     commands,
                     wake: Arc::new(Mutex::new(wake_tx)),
+                    frames,
                 },
                 display: display_ptr,
                 thread: Some(thread),
@@ -586,6 +641,8 @@ struct State {
     display: RawPtr,
     surfaces: HashMap<u64, Surf>,
     by_surface: HashMap<ObjectId, u64>,
+    /// See [`FrameSlot`].
+    frames: FrameSlots,
     pointer_enter_serial: u32,
     pointer_focus: Option<u64>,
     keyboard_focus: Option<u64>,
@@ -820,6 +877,7 @@ impl State {
             .as_ref()
             .map(|v| v.get_viewport(&surface, qh, Plain));
         self.by_surface.insert(surface.id(), id);
+        self.register_frames(id, &surface, qh);
         self.surfaces.insert(
             id,
             Surf {
@@ -928,6 +986,7 @@ impl State {
             .as_ref()
             .map(|v| v.get_viewport(&surface, qh, Plain));
         self.by_surface.insert(surface.id(), id);
+        self.register_frames(id, &surface, qh);
         self.surfaces.insert(
             id,
             Surf {
@@ -961,7 +1020,26 @@ impl State {
         });
     }
 
+    /// Lets the controller ask for frame callbacks for the surface (see [`FrameSlot`]).
+    fn register_frames(&self, id: u64, surface: &wl_surface::WlSurface, qh: &QueueHandle<Self>) {
+        self.frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                id,
+                FrameSlot {
+                    surface: surface.clone(),
+                    queue: qh.clone(),
+                    pending: Arc::new(AtomicBool::new(false)),
+                },
+            );
+    }
+
     fn destroy(&mut self, id: u64) {
+        self.frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&id);
         if self.drag.as_ref().is_some_and(|d| d.id == id) {
             self.drag = None;
         }
@@ -1119,7 +1197,27 @@ impl CompositorHandler for State {
         _: wl_output::Transform,
     ) {
     }
-    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {}
+    fn frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        surface: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+        // 0.5.10 (#246): the compositor showed the surface; it may be drawn again.
+        let Some(id) = self.id_of(surface) else {
+            return;
+        };
+        if let Some(slot) = self
+            .frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&id)
+        {
+            slot.pending.store(false, Ordering::Release);
+        }
+        self.emit(LayerEvent::FrameDone { id });
+    }
     fn surface_enter(
         &mut self,
         _: &Connection,
@@ -2123,6 +2221,7 @@ fn run(
     commands: Receiver<Command>,
     wake: UnixStream,
     ready: Sender<Result<(), LayerError>>,
+    frames: FrameSlots,
 ) {
     // SAFETY: the pointer is `winit`'s `wl_display`, alive for the whole loop; the
     // backend does not own it (a foreign display is not closed on drop).
@@ -2158,6 +2257,7 @@ fn run(
         display,
         surfaces: HashMap::new(),
         by_surface: HashMap::new(),
+        frames,
         pointer_enter_serial: 0,
         pointer_focus: None,
         keyboard_focus: None,

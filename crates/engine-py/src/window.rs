@@ -201,6 +201,10 @@ pub(crate) struct WindowHandles {
     /// on Windows) opens the OS's window menu. Off by default: a framework
     /// opts in, on any platform, unless it shows its own.
     pub(crate) system_menu: Rc<Cell<bool>>,
+    /// 0.5.10 (#246): whether the OS reported the window completely hidden.
+    pub(crate) occluded: Rc<Cell<bool>>,
+    /// 0.5.10 (#246): whether a hidden window draws nothing (the default).
+    pub(crate) pause_when_occluded: Rc<Cell<bool>>,
     /// 0.5.0 M2: the running loop's waker while `App.run()` has the window
     /// open, for `close()` -- `None` before and after.
     pub(crate) waker: Rc<RefCell<Option<engine_platform::EventLoopWaker>>>,
@@ -367,6 +371,8 @@ impl PyWindow {
                 resize_border: Rc::new(Cell::new(0.0)),
                 last_drag_press: Rc::new(Cell::new(None)),
                 system_menu: Rc::new(Cell::new(false)),
+                occluded: Rc::new(Cell::new(false)),
+                pause_when_occluded: Rc::new(Cell::new(true)),
                 waker: Rc::new(RefCell::new(None)),
                 layer: None,
             },

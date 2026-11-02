@@ -69,6 +69,8 @@ window.on("active", lambda e: title_bar.set(opacity=1.0 if e.active else 0.6))
 | `icon` | `(rgba, width, height)` — RGBA8 bytes, `width * height * 4` of them — or `None`; shown on Windows and X11 (Wayland and macOS take the app's icon from its desktop file or bundle) | — |
 | `maximized`, `minimized` | — (use the methods above) | The open window's state, or before `App.run()` how it opens |
 | `active` | — | Whether the window has the OS's focus |
+| `occluded` | — | (0.5.10) Whether the window is completely hidden: the OS says so (X11 and macOS only) or it is minimized |
+| `pause_when_occluded` | `bool`, default `True` | (0.5.10) Whether an occluded window draws nothing until it shows again. See [Hidden windows](#hidden-windows) |
 | `platform` | — | `"wayland"`, `"x11"`, `"windows"`, or `"macos"` |
 
 Each settable one applies live to an open window, or when `App.run()` opens
@@ -631,3 +633,33 @@ on only `advance` moves it. Each window keeps its own time, and
 
 `side` is one of `"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`.
 See [Docking](../guide/docking.md) for a walkthrough.
+
+## Hidden windows
+
+**Wayland (0.5.10, #246).** The compositor says nothing about a hidden window, but it stops sending
+the *frame callbacks* a surface draws on, and tre now draws a window only after the callback for its
+last frame. A window on another workspace or minimized therefore stops drawing and costs nothing
+(sway: 0 CPU ticks in 5 s with a looping animation, against 129 in 4 s visible; KWin 6.8: a minimized window drew 23
+frames in 8 s against 255 before, one on another virtual desktop used about 0.5% of a core against 3.1%). A
+`LayerWindow` under a fullscreen window stops drawing on sway; **KWin keeps showing it and keeps sending its frame
+callbacks**, so it keeps drawing there (498 frames in 8 s, as when visible). `restore()` cannot bring a window back
+from the minimized state under Wayland (the protocol has no such request); the user does. It no longer stalls the
+others. Before this a hidden window left a vsync present
+blocked while holding the one thread every window and Python thread shares, so **every other window
+and every Python thread froze** until it was shown again. This needs no setting.
+
+**X11 and macOS** report `occluded` (`window.get("occluded")`, the `occluded` event with
+`event.occluded`). While the OS says so and `pause_when_occluded` is true (the default) the window draws
+nothing and asks for no more frames, so the loop sleeps if every window is hidden. Frames that still happen
+(an input, a timer, a wake) still run the animations and `on_complete`; values follow the clock, so they are
+right when it shows, and it draws everything once it does. Set `pause_when_occluded=False` for a window that
+must keep drawing while hidden. `get("occluded")` also reads `True` for a minimized window, but the pause
+follows only what the OS reports. `Window.snapshot()` is not affected. **Windows** has no occlusion signal.
+Nothing but Linux Wayland was run for this (sway and KWin); X11 and macOS are unverified.
+
+**What a hidden Wayland window costs and does not do.** A window or layer surface the compositor is not
+showing asks for nothing, so while *every* window is hidden, timers (`call_later`), thread-posted `call_soon`
+work and `on_complete` callbacks wait until one is shown again, because they run in a window's frame. With one
+window visible they run as usual. `present_mode="low_latency"` no longer draws faster than the compositor
+asks for frames on Wayland (a resize still presents without waiting, as before).
+
