@@ -2,6 +2,13 @@
 
 ## Status
 
+**0.5.10 (prepared 2026-11-02, branch `0.5.10`):** SMIL animation in `svg` nodes (`svg_time`, `svg_duration`, #245) and
+occlusion handling (a hidden Wayland window no longer freezes the app, `occluded`, `pause_when_occluded`, #246);
+notes in `docs/migrating-0.5.md`. CI note: the Linux jobs are pinned to `ubuntu-24.04` (PR #251), not `ubuntu-latest`:
+on 26.04 the `engine-render` GPU tests (llvmpipe) segfaulted and a restored cargo cache pinned pyo3 to the old
+image's Python 3.12 (`-lpython3.12` link error), so main's CI was red from 2026-11-02 until then. `docs.yml` and
+`wheels.yml` still use `ubuntu-latest` (no GPU tests there). Not verified: macOS, Windows hardware, X11/macOS `occluded`,
+a real-GPU sway run. Follow-ups: #247, #248.
 **0.5.9 released (2026-10-27, PR #241, tag `v0.5.9`, PyPI `tesserae-engine==0.5.9`):** the shared GPU device
 and renderer (#220, #235), the screen frame's pass-through clicks (`hit_shape`, #236) and
 `keep_alive` / `stop()` for the shell (#238); notes in `docs/migrating-0.5.md`. Wheels: manylinux (3.12, 3.13,
