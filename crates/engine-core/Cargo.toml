@@ -31,6 +31,8 @@ flate2 = { version = "1.1", default-features = false, features = ["rust_backend"
 # Lets an SVG's text use installed fonts, when the app turns that on; the
 # same crate (and version) usvg builds its font database with.
 fontdb = { version = "0.23.0", default-features = false, features = ["fs", "fontconfig"] }
+# Reads an SVG's SMIL animation (0.5.10, #245); the version usvg uses.
+roxmltree = "0.21"
 usvg = { version = "0.47.0", default-features = false, features = ["text"] }
 
 [dev-dependencies]

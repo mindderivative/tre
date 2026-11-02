@@ -906,6 +906,7 @@ dependencies = [
  "fontdb",
  "naga",
  "peniko",
+ "roxmltree 0.21.1",
  "slotmap",
  "smallvec",
  "taffy",

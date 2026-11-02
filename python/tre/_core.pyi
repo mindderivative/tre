@@ -409,7 +409,9 @@ class Window:
         creation only). An svg also takes `svg_color` (what `currentColor`
         is) and `svg_images` (`{href: (rgba, width, height)}`, the raster
         pictures the document refers to: the framework decodes them, the
-        engine never does). Attach it with `add_child`; until it's attached it
+        engine never does). (0.5.10) `svg_time` is the seconds into the
+        document's SMIL animation it is drawn at, animatable; `svg_duration`
+        reads how long that runs (`None` when it loops for ever). Attach it with `add_child`; until it's attached it
         is freed once no handle points into it. Raises `ValueError` for an
         unknown kind or a bad property, creating nothing. See the
         Properties reference for every property.

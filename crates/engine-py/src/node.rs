@@ -436,6 +436,26 @@ impl Node {
                 ));
                 animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
             }
+            // 0.5.10 (#245): an svg's SMIL animation time.
+            "svg_time" => {
+                let NodeKind::Svg(state) = &mut node.kind else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `svg_time` applies only to an svg node",
+                    ));
+                };
+                let value = extract_f64(&to, property)?;
+                if !value.is_finite() || value < 0.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `svg_time` must be a number of seconds, 0 or more",
+                    ));
+                }
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
+                animate_field(&mut state.time, value, duration, curve, now, handle);
+            }
             // M95: a path's data morphs; its stroke trim animates.
             "data" | "trim_start" | "trim_end" => {
                 let NodeKind::Path(state) = &mut node.kind else {

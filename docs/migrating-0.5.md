@@ -120,6 +120,16 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.10
+
+### Added
+
+- **SMIL animation in an `svg` node** (#245): `svg_time` (seconds into the document's animation,
+  animatable) and the read-only `svg_duration`. A document with `<animate>`, `<set>` or
+  `<animateTransform>` was drawn as one static frame; it now draws as it looks at `svg_time`. A
+  document without animation, or with SMIL outside the supported subset, is drawn as before. See
+  [SMIL animation](reference/paint.md#smil-animation-0510).
+
 ## 0.5.9
 
 ### Added

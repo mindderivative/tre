@@ -153,6 +153,43 @@ re-parses the document it has, takes effect together with a new `svg` given in
 the same call, and stays until you change it. A document whose root `<svg>`
 sets its own `color` keeps it.
 
+### SMIL animation (0.5.10)
+
+A document's SMIL animation plays by sampling: the `svg` node draws the document **as it looks
+`svg_time` seconds into its animation** (`0.0` by default, the first frame). Nothing advances it on
+its own; you drive it with tre's own animation clock, in Rust, with no Python per frame:
+
+```python
+icon = window.create("svg", svg=spinner, svg_color=(255, 255, 255, 255), width=24, height=24)
+icon.animate("svg_time", 2.0, 2000, easing="linear")    # plays one pass of a 2 s document
+icon.get("svg_duration")    # seconds until nothing changes more; None if something repeats for ever
+```
+
+A document that loops for ever (`repeatCount="indefinite"`) loops with `svg_time`: it repeats
+every period, so animate `svg_time` past the period (or re-start it) to keep it going.
+`svg_duration` is `0.0` for a document without animation, for which `svg_time` changes nothing.
+Setting `svg` restarts at time `0.0`. `svg_time` is a number of seconds, 0 or more, and animates
+like any other property; it reads back its target when animating.
+
+What plays is the subset animated icon sets use: `<animate>`, `<set>` and `<animateTransform>`
+(`rotate`, `translate`, `scale`); `dur`, `begin` as a clock offset (`1.5s`, `200ms`, or bare
+seconds), `to`, `values`, `keyTimes`, `repeatCount` and `fill` (`freeze`, or `remove`, the
+default); on the attributes `stroke-dashoffset`, `opacity`, `fill-opacity`, `d`, `r`, `cx`, `cy`,
+`x`, `y`, `stroke-width` and `transform`. An animation with only `to` starts from the parent
+element's own attribute (or the attribute's initial value). A `d` morphs when its values have
+the same commands; otherwise it holds its first value. A transform animation replaces the
+element's `transform`. Of several animations of one attribute the later wins. Everything else
+(`animateMotion`, `begin` that follows another animation, `calcMode`, `additive`, `by`, `from`) is
+ignored without an error, so such a document draws its first frame as it did before.
+
+Each new sample is a new parse of the document (a small icon costs about 7 µs; 30 icons
+re-sampled every frame took 0.22 ms a frame on this machine's CPU), skipped when the sample
+is the same as the last one. While `svg_time` animates, the window redraws every frame, like
+for any animation, at the display's rate (there is no 30 Hz cap); tre does not pause it for a
+hidden or occluded window, and an idle window with nothing animating uses no CPU (0.0% measured). One
+looping icon on a headless sway with the software (llvmpipe) renderer, where drawing is on the CPU, used
+about 30% of a core: that is the cost of the frames, not of the sampling. A GPU run was not measured.
+
 ## Paint on every node
 
 | Property | Value |

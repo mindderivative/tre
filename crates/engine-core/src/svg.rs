@@ -17,6 +17,7 @@
 //! error: raster `<image>`s (the engine decodes no image formats), every other
 //! filter, and blend modes.
 
+use crate::Animated;
 use peniko::kurbo::{Affine, BezPath, Cap, Join, Rect, Shape, Stroke};
 use peniko::{Color, Extend, Gradient};
 use std::sync::Arc;
@@ -683,7 +684,7 @@ const MAX_INFLATED_SVG: u64 = 64 * 1024 * 1024;
 
 /// `data` (gzip) decompressed, or an error if it is not valid gzip or expands
 /// past [`MAX_INFLATED_SVG`].
-fn inflate_capped(data: &[u8]) -> Result<Vec<u8>, String> {
+pub(crate) fn inflate_capped(data: &[u8]) -> Result<Vec<u8>, String> {
     use std::io::Read;
     let mut out = Vec::new();
     flate2::read::GzDecoder::new(data)
@@ -764,7 +765,6 @@ impl SvgFonts {
 }
 
 /// `NodeKind::Svg`'s own state.
-#[derive(Debug, Clone)]
 pub struct SvgState {
     pub document: Arc<SvgDocument>,
     /// What the document was parsed from, as it was given.
@@ -775,6 +775,23 @@ pub struct SvgState {
     pub color: Option<Color>,
     /// The raster images the caller decoded, by `href`.
     pub images: SvgImages,
+    /// 0.5.10 (#245): the document's SMIL animation, if it has any.
+    pub timeline: Option<Arc<crate::svg_smil::Timeline>>,
+    /// The seconds into the animation the document is drawn at (`svg_time`).
+    pub time: Animated<f64>,
+    /// The fonts a re-sample shapes text with.
+    pub fonts: Option<SvgFonts>,
+    /// The time `document` was last sampled at, and a hash of the text it was
+    /// parsed from: a sample with the same text is not parsed again.
+    sampled_time: Option<f64>,
+    sampled_hash: Option<u64>,
+}
+
+fn hash(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl SvgState {
@@ -786,6 +803,107 @@ impl SvgState {
             source_is_text: true,
             color: None,
             images: SvgImages::default(),
+            timeline: None,
+            time: Animated::new(0.0),
+            fonts: None,
+            sampled_time: None,
+            sampled_hash: None,
+        }
+    }
+
+    /// A node whose `document` was parsed from `source`. When the source has
+    /// SMIL animation the document is sampled at time 0.
+    pub fn new(
+        document: Arc<SvgDocument>,
+        source: Vec<u8>,
+        source_is_text: bool,
+        color: Option<Color>,
+        images: SvgImages,
+        fonts: SvgFonts,
+    ) -> Self {
+        let timeline = crate::svg_smil::Timeline::parse(&source).map(Arc::new);
+        let sampled_hash = timeline.as_ref().map(|t| hash(t.text().as_bytes()));
+        let mut state = Self {
+            document,
+            source: Arc::new(source),
+            source_is_text,
+            color,
+            images,
+            timeline,
+            time: Animated::new(0.0),
+            fonts: Some(fonts),
+            sampled_time: None,
+            sampled_hash,
+        };
+        state.resample();
+        state
+    }
+
+    /// `svg_time`: the seconds the animation is at, now.
+    pub fn set_time(&mut self, seconds: f64) {
+        self.time.set_now(seconds.max(0.0));
+        self.resample();
+    }
+
+    /// `svg_duration`: the seconds after which nothing changes (0 for a
+    /// document without animation), or `None` when it repeats for ever.
+    pub fn duration(&self) -> Option<f64> {
+        match &self.timeline {
+            Some(timeline) => timeline.duration(),
+            None => Some(0.0),
+        }
+    }
+
+    /// Advances the `svg_time` animation; `true` while it runs.
+    pub fn tick(
+        &mut self,
+        now: std::time::Instant,
+        completed: &mut Vec<crate::CompletionHandle>,
+    ) -> bool {
+        let active = self.time.tick(now, completed);
+        self.resample();
+        active
+    }
+
+    /// Parses the document again from the current text, because the fonts
+    /// changed.
+    pub fn reparse(&mut self, fonts: &SvgFonts) {
+        self.fonts = Some(fonts.clone());
+        self.sampled_hash = None;
+        self.sampled_time = None;
+        if self.timeline.is_some() {
+            self.resample();
+        } else if let Ok(document) =
+            SvgDocument::parse_full(&self.source, fonts, self.color, &self.images)
+        {
+            self.document = document;
+        }
+    }
+
+    /// Draws the document as the animation has it at `time`.
+    fn resample(&mut self) {
+        let Some(timeline) = &self.timeline else {
+            return;
+        };
+        let t = self.time.current;
+        if self.sampled_time == Some(t) {
+            return;
+        }
+        self.sampled_time = Some(t);
+        let sampled = timeline.apply(t);
+        let text = sampled.as_deref().unwrap_or_else(|| timeline.text());
+        let digest = hash(text.as_bytes());
+        if self.sampled_hash == Some(digest) {
+            return;
+        }
+        let Some(fonts) = &self.fonts else {
+            return;
+        };
+        if let Ok(document) =
+            SvgDocument::parse_full(text.as_bytes(), fonts, self.color, &self.images)
+        {
+            self.document = document;
+            self.sampled_hash = Some(digest);
         }
     }
 }

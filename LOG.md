@@ -24,6 +24,28 @@ position).
 
 ## After 0.5.9 (unreleased)
 
+### #245, SMIL animation in svg nodes: `svg_time` and `svg_duration` (2026-11-01)
+
+From the shell's TRE-REQ-008 (animated Material Line Icons, 1,216 of 1,218 use SMIL). `usvg` ignores
+`<animate>`/`<set>`/`<animateTransform>`, so an svg node drew one static frame. Built as a time-sampled render:
+`engine-core/src/svg_smil.rs` reads the SMIL once (`roxmltree`, already in the lock through `usvg`; now a direct
+dependency, so `Cargo.lock` changed and CI runs the full tier), and for a time `t` patches the evaluated
+attribute values into a copy of the document text, which the existing `SvgDocument::parse_full` draws.
+`SvgState` gained `timeline`, `time: Animated<f64>`, `fonts` and the last sample's text hash (an identical
+sample is not parsed again). New node properties: `svg_time` (seconds, animatable with `animate`, set restarts
+at 0 with a new `svg`) and read-only `svg_duration` (`None` for an indefinite repeat, `0.0` without animation).
+`Tree::reparse_svgs` now takes the fonts instead of a closure. Subset: animate, set, animateTransform
+(rotate/translate/scale); dur, begin clock offsets, to (from the parent attribute), values, keyTimes, repeatCount,
+fill freeze/remove; stroke-dashoffset, opacity, fill-opacity, d (equal command sequences, else holds the first
+value), r, cx, cy, x, y, stroke-width, transform (replaces). Everything else is ignored.
+Measured: 30 looping icons re-sampled every frame, 0.22 ms per frame (CPU, release); an idle window 0.0% CPU;
+one looping icon on headless sway + llvmpipe about 30% of a core (software drawing; no GPU run). A live grim
+screenshot of `examples/svg_smil.py` on headless sway differed between two moments. tre has no occlusion
+handling, so a hidden window keeps redrawing while `svg_time` animates. Correction to the issue text:
+`Window.snapshot(time=)` is the shader clock, not the animation clock; tests use `window.advance(ms)`.
+Tests: `tests/test_svg_smil.py` (8), 8 unit tests in `svg_smil.rs`, example `examples/svg_smil.py`.
+Not run: Windows, macOS, a real GPU, the full suite (standing rule).
+
 ### #243, clipboard read and write from a LayerWindow, proved on KWin (2026-10-28)
 
 The `shell` session asked which data-control protocol tre binds and whether any test proves a `LayerWindow`'s
