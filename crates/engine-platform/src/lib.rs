@@ -852,6 +852,16 @@ where
     )
 }
 
+impl PerWindow {
+    /// Whether the loop must poll for this window: it is animating, and nothing else will
+    /// wake the loop for its next frame. On Wayland the compositor's frame callback does
+    /// (`pre_present_notify`), so polling would only spin a core for a window that may
+    /// not be shown. One rule for every place that picks the control flow.
+    fn polls(&self) -> bool {
+        self.animating && platform_name(Some(&self.window)) != "wayland"
+    }
+}
+
 struct PerWindow {
     window: Arc<Window>,
     /// 0.4.0 M6: whether the pending redraw is one this loop asked for
@@ -1358,9 +1368,7 @@ where
                 // 0.5.10 (#246): on Wayland a redraw comes only after the compositor's frame
                 // callback (`pre_present_notify`), which wakes the loop by itself; polling
                 // between would spin a core for a window that is not being shown.
-                let any_window_animating = windows
-                    .values()
-                    .any(|w| w.animating && platform_name(Some(&w.window)) != "wayland");
+                let any_window_animating = windows.values().any(PerWindow::polls);
                 event_loop.set_control_flow(if any_window_animating {
                     ControlFlow::Poll
                 } else {

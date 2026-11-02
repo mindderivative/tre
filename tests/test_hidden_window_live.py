@@ -57,6 +57,13 @@ def _sway():
         pytest.skip("SWAYSOCK does not reach a running sway")
 
 
+def _grab():
+    """The top 200 x 30 pixels of the screen, where the bar is, as PNG bytes."""
+    return subprocess.run(
+        ["grim", "-g", "0,0 200x30", "-"], capture_output=True, check=False
+    ).stdout
+
+
 def _beats(proc, seconds):
     """How many heartbeat lines the child's Python thread printed in `seconds`."""
     os.set_blocking(proc.stdout.fileno(), False)
@@ -149,6 +156,17 @@ def test_a_layer_surface_under_a_fullscreen_window_does_not_freeze_the_app():
         )
         time.sleep(1.0)
         assert _beats(proc, 2.0) >= 12
+        subprocess.run(
+            ["swaymsg", '[title="cover"] fullscreen disable'],
+            capture_output=True,
+            check=False,
+        )
+        time.sleep(1.0)
+        assert _beats(proc, 2.0) >= 12
+        if shutil.which("grim"):
+            first = _grab()
+            time.sleep(0.4)
+            assert first != _grab(), "the bar draws again once it is uncovered"
     finally:
         proc.kill()
         proc.wait()

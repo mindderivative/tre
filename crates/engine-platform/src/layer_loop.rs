@@ -19,7 +19,7 @@ use crate::layer::{
     CloseReason, LayerController, LayerEvent, LayerHost, LayerNotice, LayerRequest,
     LayerSurfaceInfo, RawPtr,
 };
-use crate::{MultiWindowApp, PlatformEvent, WindowLifecycle};
+use crate::{MultiWindowApp, PerWindow, PlatformEvent, WindowLifecycle};
 
 const LAYER_ID_TAG: u64 = 1 << 63;
 
@@ -353,7 +353,7 @@ where
                 controller.destroy(id);
             }
         }
-        let any = self.windows.values().any(|w| w.animating)
+        let any = self.windows.values().any(PerWindow::polls)
             || self
                 .layers
                 .values()

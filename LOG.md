@@ -46,7 +46,12 @@ return), and it redraws everything when shown. Changes `InputEvent::Occluded`, `
 heartbeats of 12), `tests/test_occluded.py` (3). Ran: engine-core/platform lib tests, 129 headless layer/window
 tests, the whole live layer suite on sway (50 passed, 3 skipped). Not run: KWin, a real GPU, macOS, Windows, real
 X11 (the `occluded` path is unverified; XWayland under sway sends no Occluded), the full suite. The stage 3
-fallback heuristic (no callback for N ms) was not needed on Wayland and was not built.
+fallback heuristic (no callback for N ms) was not needed on Wayland and was not built. Review follow-ups: one rule picks the poll/wait
+decision for windows and layers (`PerWindow::polls`); an unoccluded window is marked dirty so it redraws whole; the
+layer test also asserts the bar draws again after uncovering (grim) and a disabled/re-enabled output resumes. A
+tried `clear_pending` on configure made a covered bar freeze the app again (any forced draw while hidden can
+block on the full swapchain), so it was not kept; a configure waits for the callback like any frame. Both live
+tests fail on a main build (4 and 0 heartbeats of 12). Layer live suite plus popup/layer/occluded: 149 passed, 3 skipped.
 
 ### #243, clipboard read and write from a LayerWindow, proved on KWin (2026-10-28)
 

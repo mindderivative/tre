@@ -2170,6 +2170,10 @@ impl App {
                     }
                     // 0.5.10 (#246): completely hidden, or showing again.
                     InputEvent::Occluded { occluded } => {
+                        // Nothing was drawn while it was hidden: draw everything on return.
+                        if !occluded {
+                            runtime.handles.tree.borrow_mut().mark_dirty();
+                        }
                         listeners::update_window_state(
                             &runtime.handles.window_listeners,
                             py,
