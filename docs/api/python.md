@@ -159,7 +159,7 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `read_clipboard() -> str \| None` | Returns the OS clipboard's text, or `None` when there is none or it can't be reached. |
 | `resize(width: int, height: int) -> None` | Sets the window's size from code; the root's layout box follows. |
 | `restore() -> None` | Restores a minimized or maximized window to its normal size; before `App.run()`, undoes `minimize()`/`maximize()`. |
-| `set(*, title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, dpi_scaling, transparent, blur_behind, click_through, x, y, always_on_top, resizable, skip_taskbar, touch_slop, touch_target_slop) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
+| `set(*, title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, dpi_scaling, transparent, blur_behind, click_through, x, y, always_on_top, resizable, skip_taskbar, touch_slop, touch_target_slop, pause_when_occluded) -> None` | Sets window properties by name, all at once; a bad value raises and changes nothing. |
 | `set_active_panel(side: str, index: int) -> None` | Shows the `index`th panel docked in `side`'s zone (was `set_active_tab`). |
 | `show_layer(node, anchor, placement, modal, dismissible, offset, flip) -> None` | Shows `node` over the window's content, above every layer already open. |
 | `simulate(event: str, node: Node \| None=None, **fields: Any) -> None` | Delivers a synthetic event as real input would, for tests with no display. |
@@ -458,6 +458,7 @@ What a listener receives when it takes one argument; never constructed directly.
 | `high_contrast` | `bool \| None` |  |
 | `maximized` | `bool \| None` | New state on `maximized`. |
 | `active` | `bool \| None` | New state on `active`. |
+| `occluded` | `bool \| None` |  |
 | `titlebar_inset` | `tuple[float, float] \| None` | New `(height, width)` on `titlebar_inset`. |
 | `reason` | `str \| None` | `"unknown"` or `"destroyed"` on `gpu_lost`. |
 | `message` | `str \| None` | The driver's or GPU's message on `gpu_lost` and `gpu_error`. |
