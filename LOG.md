@@ -24,6 +24,52 @@ position).
 
 ## After 0.5.9 (unreleased)
 
+### #246, occlusion: a hidden window no longer stalls the app, and an `occluded` state (2026-11-02)
+
+Raised by #245 (a looping icon keeps drawing unseen), then measured on headless sway + llvmpipe before any
+design: a window on another workspace costs 0 CPU (the vsync acquire/present blocks), but the blocked call holds
+the one thread every window and the GIL: a second, visible window stopped animating (identical screenshots) and a
+Python thread printed nothing for 50 s. `present_mode="low_latency"` avoids the block but spins every core
+(~380%). A layer surface under a fullscreen window did the same (0 heartbeats in 3 s). Cause: tre never called
+`Window::pre_present_notify()`, so on Wayland `winit` kept delivering redraws while the compositor withheld
+frame callbacks. Fix: `pre_present_notify()` before `present` (winit then holds a window's next redraw until its frame
+callback), the loop stays in `Wait` on Wayland instead of polling (`platform_name`), and for layer surfaces
+(no winit window) `LayerController::request_frame/frame_pending` ask `wl_surface.frame` themselves, answered
+in the layer thread's `CompositorHandler::frame` (`LayerEvent::FrameDone`), and `run_layer_frames` skips a layer
+with a callback out. Measured after: hidden window 1 tick in 5 s, visible 94-129 per 4 s, back on screen as
+before; the visible window and Python threads keep running; a covered bar keeps the app at full heartbeat.
+New: window state/event `occluded` (winit `Occluded`, X11 and macOS only; a minimized window reads true, no
+event) and `pause_when_occluded` (default True): an occluded window skips prepare/draw/present and returns
+`false` from its frame, so animations are not ticked meanwhile (values follow the clock; `on_complete` runs on
+return), and it redraws everything when shown. Changes `InputEvent::Occluded`, `WindowEventType::Occluded`,
+`PlatformEvent`-side nothing. Tests: `tests/test_hidden_window_live.py` (2, sway; the first fails on main with 4
+heartbeats of 12), `tests/test_occluded.py` (3). Ran: engine-core/platform lib tests, 129 headless layer/window
+tests, the whole live layer suite on sway (50 passed, 3 skipped). Not run: KWin, a real GPU, macOS, Windows, real
+X11 (the `occluded` path is unverified; XWayland under sway sends no Occluded), the full suite. The stage 3
+fallback heuristic (no callback for N ms) was not needed on Wayland and was not built. Review follow-ups: one rule picks the poll/wait
+decision for windows and layers (`PerWindow::polls`); an unoccluded window is marked dirty so it redraws whole; the
+layer test also asserts the bar draws again after uncovering (grim) and a disabled/re-enabled output resumes. A
+tried `clear_pending` on configure made a covered bar freeze the app again (any forced draw while hidden can
+block on the full swapchain), so it was not kept; a configure waits for the callback like any frame. Both live
+tests fail on a main build (4 and 0 heartbeats of 12). Layer live suite plus popup/layer/occluded: 149 passed, 3 skipped.
+
+Overnight pass on KWin 6.8 (real session, AMD RADV, no compositor changes except switching to virtual desktop 2 and
+back, and minimizing one probe window): the freeze is **not reproducible on KWin with main either** (heartbeats
+8.6/s hidden vs 10/s with the fix, a Python thread never starves). Counted with `frame_stats()["frames"]` per
+phase (an earlier note here, from CPU% alone, said KWin keeps drawing minimized windows: wrong): a **minimized
+window drew 23 frames in 8 s with the fix against 255 on main**, and the visible second window ran at 60/s (498 in 8 s)
+instead of 32/s (255), because the hidden one no longer competes for the vsync; a window on another virtual desktop
+used 0.4-0.6% CPU against 3.1%. A bar under a fullscreen window keeps being shown by KWin and drawing (498 frames in
+8 s, as visible). `restore()` cannot un-minimize on Wayland, so the probe window stayed minimized. Separate finding,
+also on main: a fullscreen window counts about 480 frames/s on KWin (#248). Probes: /tmp/req008/kwin_run.py (phases visible/hidden/shown,
+heartbeat thread + /proc ticks). An independent reviewer agent read the branch: its real findings were fixed
+(`FrameDone` overwrote a held-back frame request: now `|=`; resize pacing skips the frame-callback gate so the
+#155 low-latency resize is not slowed; docs corrected: `on_complete`/timers do run on frames that happen, a
+minimized window reads occluded but does not pause). Known and documented, not fixed: with every Wayland window
+hidden, timers and `call_soon` wait (they run in a window's frame); filed as a follow-up. The suspected
+`call_soon`-loss on a static layer could not be reproduced by a test (it passed on the old code too), so no test
+was kept for it.
+
 ### #243, clipboard read and write from a LayerWindow, proved on KWin (2026-10-28)
 
 The `shell` session asked which data-control protocol tre binds and whether any test proves a `LayerWindow`'s

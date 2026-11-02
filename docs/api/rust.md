@@ -1404,6 +1404,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `Scroll` | `{ delta: ScrollDelta, position: Point }` | The wheel or trackpad scrolled by a delta at a pointer position. |
 | `ThemeChanged` | `{ dark: bool }` | The system switched between light and dark appearance. |
 | `Focused` | `{ focused: bool }` | The window gained or lost system focus. |
+| `Occluded` | `{ occluded: bool }` | The OS says the window is completely hidden (`true`) or showing again. |
 | `Resized` | `{ width: f32, height: f32 }` | The window's client area changed size. |
 | `Key` | `{ name: String, pressed: bool, repeat: bool }` | A named key was pressed or released, with a flag for auto-repeat. |
 | `ModifiersChanged` | `(Modifiers)` | The held modifier keys changed. |
@@ -2330,6 +2331,8 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `fn create(&self, id: u64, config: LayerConfig)` | Makes the surface `id` from `config`; its events follow. |
 | `fn create_popup(&self, id: u64, config: PopupConfig)` | Makes the popup surface `id` from `config`; its events follow. |
 | `fn destroy(&self, id: u64)` | Destroys the surface; the `wgpu` surface must be dropped first. |
+| `fn frame_pending(&self, id: u64) -> bool` | Whether a frame callback asked for by `request_frame` is out. |
+| `fn request_frame(&self, id: u64)` | Asks the compositor for a frame callback with the next commit of the surface `id`, which the caller's present makes. |
 | `fn set_cursor(&self, id: u64, icon: CursorIcon)` | Sets the pointer's shape over the surface. |
 | `fn set_ime(&self, id: u64, info: Option<ImeInfo>)` | Tells the input method about the surface's focused text input (`None`: none has focus): the layer thread enables text input for the surface, places… |
 | `fn set_input_region(&self, id: u64, region: Option<Vec<Rect>>)` | Sets only the input region (`None`: the whole surface) and applies it at once, with a commit of its own: an idle surface draws no frame to carry it. |
@@ -2560,6 +2563,7 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `Created` | `{ id: u64, display: RawPtr, surface: RawPtr }` | The surface exists: build its `wgpu` surface from `display` and `surface`. |
 | `Configure` | `{ id: u64, width: u32, height: u32, scale: f64 }` | The compositor assigned a size (`width` x `height`, logical pixels) and the surface's scale is `scale`: the buffer is `width * scale` by `height *… |
 | `Rescale` | `{ id: u64, width: u32, height: u32, scale: f64 }` | The surface's scale changed with the size staying the same. |
+| `FrameDone` | `{ id: u64 }` | The compositor answered the frame callback asked for with the surface's last frame: it may be drawn again. |
 | `Closed` | `{ id: u64, reason: CloseReason }` | The surface is gone. |
 | `Failed` | `{ id: u64, message: String }` | The surface could not be made (an output name that matches nothing, say). |
 | `Input` | `{ id: u64, event: InputEvent }` | Input for the surface, in physical pixels like the `winit` path's. |

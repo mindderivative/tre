@@ -281,6 +281,8 @@ pub(crate) enum WindowEventType {
     Maximized,
     /// 0.5.0 M2: the window gained or lost the OS's focus.
     Active,
+    /// 0.5.10 (#246): the window became completely hidden, or showed again.
+    Occluded,
     /// 0.5.0 M4: the area the OS's window controls take over the content
     /// changed (macOS's overlay title bar; 0 in fullscreen).
     TitlebarInset,
@@ -315,7 +317,7 @@ pub(crate) enum WindowEventType {
 }
 
 impl WindowEventType {
-    const ALL: [WindowEventType; 23] = [
+    const ALL: [WindowEventType; 24] = [
         Self::Resize,
         Self::ColorScheme,
         Self::ScaleFactor,
@@ -323,6 +325,7 @@ impl WindowEventType {
         Self::Closed,
         Self::Maximized,
         Self::Active,
+        Self::Occluded,
         Self::TitlebarInset,
         Self::GpuLost,
         Self::GpuError,
@@ -350,6 +353,7 @@ impl WindowEventType {
             Self::Closed => "closed",
             Self::Maximized => "maximized",
             Self::Active => "active",
+            Self::Occluded => "occluded",
             Self::TitlebarInset => "titlebar_inset",
             Self::GpuLost => "gpu_lost",
             Self::GpuError => "gpu_error",
@@ -799,6 +803,7 @@ pub(crate) fn update_window_state(
     }
     deliver_window(listeners, py, event_type, |e| match event_type {
         WindowEventType::Maximized => e.maximized = Some(value),
+        WindowEventType::Occluded => e.occluded = Some(value),
         _ => e.active = Some(value),
     });
 }

@@ -552,7 +552,7 @@ impl Tree {
             | InputEvent::FileHoverCancelled
             | InputEvent::FileDropped { .. } => DispatchOutcome::None,
             // 0.5.0 M2: plumbing only, like `ThemeChanged`.
-            InputEvent::Focused { .. } => DispatchOutcome::None,
+            InputEvent::Focused { .. } | InputEvent::Occluded { .. } => DispatchOutcome::None,
             // M32 Phase 2 (§4, §5): unlike `ThemeChanged`, a real
             // mutation happens right here -- `root`'s own `layout_
             // style.size` is a pure taffy concern `engine-core` fully

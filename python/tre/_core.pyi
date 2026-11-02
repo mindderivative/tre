@@ -132,6 +132,8 @@ class Event:
     """(0.5.0) `maximized`: whether the window is now maximized."""
     active: bool | None
     """(0.5.0) `active`: whether the window now has the OS's focus."""
+    occluded: bool | None
+    """(0.5.10) `occluded`: whether the window is now completely hidden."""
     titlebar_inset: tuple[float, float] | None
     """(0.5.0) `titlebar_inset`: the new `(height, width)` the OS's window
     controls take over the content."""
@@ -502,6 +504,7 @@ class Window:
         skip_taskbar: bool = ...,
         touch_slop: float = ...,
         touch_target_slop: float = ...,
+        pause_when_occluded: bool = ...,
     ) -> None:
         """M94: sets window properties -- `title`, and (0.4.0 M5)
         `partial_redraw`: `True` (the default) redraws only what changed
@@ -518,7 +521,10 @@ class Window:
         the scene-building time went; off by default (it costs two clock reads a
         node). (0.5.8) `touch_slop`: how far, in layout pixels, a finger may wander and still be
         a tap or a long press (default 10); `touch_target_slop`: how far from a node that
-        listens for touches a touch still counts as on it (default 0, off). (0.5.4)
+        listens for touches a touch still counts as on it (default 0, off). (0.5.10)
+        `pause_when_occluded`: whether a window the OS reports completely hidden
+        (`get("occluded")`, X11 and macOS) draws nothing until it shows again (default
+        `True`). (0.5.4)
         `glyph_cache`: `True` draws text from a cache of rendered glyph
         images instead of each glyph's outline: about four times cheaper to build, but
         the images are rasterised once and then placed, so edge pixels differ slightly
@@ -589,6 +595,8 @@ class Window:
             "maximized",
             "minimized",
             "active",
+            "occluded",
+            "pause_when_occluded",
             "fullscreen",
             "system_menu",
             "native_controls",

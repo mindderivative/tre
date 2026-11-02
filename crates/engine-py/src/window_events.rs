@@ -40,7 +40,7 @@ use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
-const SIMULATED_EVENTS: [&str; 38] = [
+const SIMULATED_EVENTS: [&str; 39] = [
     "pointer_down",
     "pointer_up",
     "pointer_move",
@@ -75,6 +75,7 @@ const SIMULATED_EVENTS: [&str; 38] = [
     "change",
     "maximized",
     "active",
+    "occluded",
     "titlebar_inset",
     "gpu_lost",
     "gpu_error",
@@ -252,7 +253,7 @@ impl PyWindow {
 const SETTABLE: &str = "title, partial_redraw, show_damage, profile_nodes, glyph_cache, decorations, fullscreen, \
     min_width, min_height, icon, resize_border, system_menu, gpu_watchdog, present_mode, \
     dpi_scaling, transparent, blur_behind, click_through, x, y, always_on_top, resizable, skip_taskbar, \
-    touch_slop, touch_target_slop";
+    touch_slop, touch_target_slop, pause_when_occluded";
 
 /// 0.5.8 (#132): a distance in layout pixels, zero or more.
 fn extract_distance(name: &str, value: &Bound<'_, PyAny>) -> PyResult<f64> {
@@ -826,6 +827,7 @@ impl PyWindow {
         let (mut x, mut y) = (None, None);
         let (mut always_on_top, mut resizable, mut skip_taskbar) = (None, None, None);
         let mut system_menu = None;
+        let mut pause_when_occluded = None;
         let (mut touch_slop, mut touch_target_slop) = (None, None);
         if let Some(props) = props {
             for (name, value) in props.iter() {
@@ -901,6 +903,13 @@ impl PyWindow {
                             PyValueError::new_err("window property `system_menu` must be a bool")
                         })?);
                     }
+                    "pause_when_occluded" => {
+                        pause_when_occluded = Some(value.extract::<bool>().map_err(|_| {
+                            PyValueError::new_err(
+                                "window property `pause_when_occluded` must be a bool",
+                            )
+                        })?);
+                    }
                     "touch_slop" => {
                         touch_slop = Some(extract_distance(&name, &value)?);
                     }
@@ -915,7 +924,8 @@ impl PyWindow {
                         });
                     }
                     "width" | "height" | "scale_factor" | "maximized" | "minimized" | "active"
-                    | "platform" | "titlebar_inset" | "native_controls" | "transparent_active" => {
+                    | "occluded" | "platform" | "titlebar_inset" | "native_controls"
+                    | "transparent_active" => {
                         return Err(PyValueError::new_err(format!(
                             "window property `{name}` is read-only -- settable: {SETTABLE}"
                         )));
@@ -1055,6 +1065,9 @@ impl PyWindow {
         if let Some(on) = system_menu {
             self.handles.system_menu.set(on);
         }
+        if let Some(on) = pause_when_occluded {
+            self.handles.pause_when_occluded.set(on);
+        }
         let window = self.handles.os_window.borrow();
         if let Some(on) = fullscreen {
             if let Some(window) = window.as_ref() {
@@ -1175,6 +1188,27 @@ impl PyWindow {
                 .get()
                 .0
                 .into_pyobject(py)?
+                .into_any()
+                .unbind(),
+            // 0.5.10 (#246): hidden from view as the OS reports it (X11, macOS), or minimized.
+            "occluded" => (self.handles.occluded.get()
+                || self
+                    .handles
+                    .os_window
+                    .borrow()
+                    .as_ref()
+                    .and_then(|w| w.is_minimized())
+                    .unwrap_or(self.handles.minimized.get()))
+            .into_pyobject(py)?
+            .to_owned()
+            .into_any()
+            .unbind(),
+            "pause_when_occluded" => self
+                .handles
+                .pause_when_occluded
+                .get()
+                .into_pyobject(py)?
+                .to_owned()
                 .into_any()
                 .unbind(),
             "system_menu" => self
@@ -1426,11 +1460,11 @@ impl PyWindow {
                 return Err(PyValueError::new_err(format!(
                     "unknown window property {name:?} -- valid: width, height, title, \
                      scale_factor, dark, reduced_motion, high_contrast, partial_redraw, partial_redraw_active, show_damage, profile_nodes, glyph_cache, \
-                     decorations, maximized, minimized, active, fullscreen, min_width, \
+                     decorations, maximized, minimized, active, occluded, fullscreen, min_width, \
                      min_height, platform, resize_border, system_menu, titlebar_inset, \
                      native_controls, gpu_watchdog, present_mode, dpi_scaling, transparent, \
                      transparent_active, blur_behind, click_through, x, y, always_on_top, resizable, \
-                     skip_taskbar, touch_slop, touch_target_slop"
+                     skip_taskbar, touch_slop, touch_target_slop, pause_when_occluded"
                 )));
             }
         })
@@ -1994,14 +2028,14 @@ impl PyWindow {
             // 0.5.0 M2: what the live window reports when it's maximized or
             // restored, or gains or loses focus -- the state changes, and
             // the event fires if it changed.
-            "maximized" | "active" => {
+            "maximized" | "active" | "occluded" => {
                 let value = f.bool(event)?;
                 let value = f.required(event, value)?;
                 f.done()?;
-                let (cell, event_type) = if event == "maximized" {
-                    (&self.handles.maximized, WindowEventType::Maximized)
-                } else {
-                    (&self.handles.active, WindowEventType::Active)
+                let (cell, event_type) = match event {
+                    "maximized" => (&self.handles.maximized, WindowEventType::Maximized),
+                    "occluded" => (&self.handles.occluded, WindowEventType::Occluded),
+                    _ => (&self.handles.active, WindowEventType::Active),
                 };
                 listeners::update_window_state(
                     &self.handles.window_listeners,

@@ -145,6 +145,9 @@ pub struct Event {
     /// 0.5.0 M2: the window's `active` event -- whether it now has focus.
     #[pyo3(get)]
     pub(crate) active: Option<bool>,
+    /// 0.5.10 (#246): the window's `occluded` event -- whether it is now completely hidden.
+    #[pyo3(get)]
+    pub(crate) occluded: Option<bool>,
     /// 0.5.0 M4: the window's `titlebar_inset` event -- the new
     /// `(height, width)`.
     #[pyo3(get)]
@@ -327,6 +330,7 @@ impl Event {
             stats: None,
             maximized: None,
             active: None,
+            occluded: None,
             titlebar_inset: None,
             reason: None,
             message: None,
