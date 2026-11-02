@@ -46,6 +46,17 @@ handling, so a hidden window keeps redrawing while `svg_time` animates. Correcti
 Tests: `tests/test_svg_smil.py` (8), 8 unit tests in `svg_smil.rs`, example `examples/svg_smil.py`.
 Not run: Windows, macOS, a real GPU, the full suite (standing rule).
 
+Overnight pass (2026-11-02): on KWin 6.8 (real session) with AMD RADV, a looping icon costs 4.0% of a core against 3.2%
+for a plain rotation animation of the same node, 30 icons 6.8% against 5.2% (rotation), an idle window 0.0%: the
+sampling adds about one percentage point, drawing the frames is the rest (`/tmp/req008/svg_cpu.py`). An independent reviewer
+agent read the branch; fixed: `from` was ignored; a negative `begin` dropped the animation; a `<!DOCTYPE>` gave no
+timeline (usvg reads one); a trailing `;` in `values`/`keyTimes` dropped it; `fill="freeze"` with 3 x 0.1 s showed the
+first value (float error in `active / d`); arc flags in a `d` morph were interpolated and compact `011` flags mis-read;
+`animateTransform` without `type` is `translate`; `svg_color`/`svg_images` restarted a running animation (now keeps
+the time; only an explicit `svg` restarts); `svg_time` given with `svg` in one call was reset (now `late`); `svg_time`
+rejects negatives and bools; a non-finite `svg_duration` is `None`; fonts refresh on timeline documents too.
+Not fixed: a `style=` or CSS rule overriding the animated attribute, `href` targets, `%`/`em` base values.
+
 ### #243, clipboard read and write from a LayerWindow, proved on KWin (2026-10-28)
 
 The `shell` session asked which data-control protocol tre binds and whether any test proves a `LayerWindow`'s

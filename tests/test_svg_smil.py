@@ -121,6 +121,20 @@ def test_a_new_document_restarts_at_time_zero():
     assert pixel(window, 25, 50)[3] == 0
 
 
+def test_a_new_colour_keeps_the_animation_where_it_is_and_a_new_document_does_not():
+    window, node = shown(FADE_IN)
+    node.animate("svg_time", to=1.0, duration_ms=1000, easing="linear")
+    window.advance(500)
+    node.set(svg_color=(0, 0, 255, 255))
+    window.advance(600)
+    assert node.get("svg_time") == 1.0
+    assert pixel(window, 25, 50) == RED
+    node.set(svg=FADE_IN)
+    assert node.get("svg_time") == 0.0
+    node.set(svg_time=0.7, svg=FADE_IN)
+    assert node.get("svg_time") == 0.7, "a time given with a new document is applied after it"
+
+
 def test_svg_time_is_checked():
     window, node = shown(FADE_IN)
     box = window.create("box")
@@ -130,3 +144,7 @@ def test_svg_time_is_checked():
         node.set(svg_duration=1.0)
     with pytest.raises(ValueError, match="svg_time"):
         node.animate("svg_time", to=-1.0, duration_ms=10)
+    with pytest.raises(ValueError, match="svg_time"):
+        node.set(svg_time=-1.0)
+    with pytest.raises(ValueError, match="svg_time"):
+        node.set(svg_time=True)

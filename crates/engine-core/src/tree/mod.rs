@@ -635,7 +635,7 @@ impl Tree {
         let mut changed = false;
         for node in self.nodes.values_mut() {
             if let NodeKind::Svg(state) = &mut node.kind
-                && state.document.has_text
+                && (state.document.has_text || state.timeline.is_some())
             {
                 state.reparse(fonts);
                 changed = true;

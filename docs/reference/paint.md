@@ -168,7 +168,7 @@ icon.get("svg_duration")    # seconds until nothing changes more; None if someth
 A document that loops for ever (`repeatCount="indefinite"`) loops with `svg_time`: it repeats
 every period, so animate `svg_time` past the period (or re-start it) to keep it going.
 `svg_duration` is `0.0` for a document without animation, for which `svg_time` changes nothing.
-Setting `svg` restarts at time `0.0`. `svg_time` is a number of seconds, 0 or more, and animates
+Setting `svg` restarts at time `0.0` (a `svg_time` in the same call is applied after it); changing only `svg_color` or `svg_images` keeps the time, running animation included. `svg_time` is a number of seconds, 0 or more (not a bool), and animates
 like any other property; it reads back its target when animating.
 
 What plays is the subset animated icon sets use: `<animate>`, `<set>` and `<animateTransform>`
@@ -179,8 +179,9 @@ default); on the attributes `stroke-dashoffset`, `opacity`, `fill-opacity`, `d`,
 element's own attribute (or the attribute's initial value). A `d` morphs when its values have
 the same commands; otherwise it holds its first value. A transform animation replaces the
 element's `transform`. Of several animations of one attribute the later wins. Everything else
-(`animateMotion`, `begin` that follows another animation, `calcMode`, `additive`, `by`, `from`) is
-ignored without an error, so such a document draws its first frame as it did before.
+(`animateMotion`, `begin` that follows another animation, `calcMode`, `additive`, `by`) is
+ignored without an error, so such a document draws its first frame as it did before. `from` is read,
+and so is a negative `begin`; the arc flags of a `d` are never interpolated.
 
 Each new sample is a new parse of the document (a small icon costs about 7 µs; 30 icons
 re-sampled every frame took 0.22 ms a frame on this machine's CPU), skipped when the sample

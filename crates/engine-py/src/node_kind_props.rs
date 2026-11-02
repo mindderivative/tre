@@ -179,7 +179,7 @@ fn svg_properties(name: &str, kind: &NodeKind, props: &Bound<'_, PyDict>) -> PyR
             .map(|state| state.images.clone())
             .unwrap_or_default(),
     };
-    svg_change(source, is_text, color, images)
+    svg_change(source, is_text, color, images, !props.contains("svg")?)
 }
 
 /// Parses `source` (raising for a bad document) into a change that installs
@@ -189,6 +189,7 @@ fn svg_change(
     is_text: bool,
     color: Option<Color>,
     images: engine_core::SvgImages,
+    keep_time: bool,
 ) -> PyResult<KindChange> {
     let fonts = svg_fonts();
     let document = engine_core::SvgDocument::parse_full(&source, &fonts, color, &images).map_err(
@@ -198,7 +199,12 @@ fn svg_change(
     let mut kind_change = change(move |node| {
         if let NodeKind::Svg(state) = &mut node.kind {
             // The animation restarts from time 0 with a new document.
-            *state = engine_core::SvgState::new(document, source, is_text, color, images, fonts);
+            let fresh = engine_core::SvgState::new(document, source, is_text, color, images, fonts);
+            let old = std::mem::replace(state, fresh);
+            // A new colour or images keep the animation where it is; a new document starts over.
+            if keep_time && old.source == state.source {
+                state.keep_time_of(old);
+            }
         }
     })?;
     kind_change.svg_ratio = Some(ratio);
@@ -397,17 +403,21 @@ fn parse_known(
         ))),
         // 0.5.10 (#245): the seconds into the document's SMIL animation.
         "svg_time" => {
+            not_bool(value, name, "a number of seconds, 0 or more")?;
             let seconds: f64 = value
                 .extract()
                 .map_err(|_| invalid(name, "a number of seconds, 0 or more"))?;
-            if !seconds.is_finite() {
+            if !seconds.is_finite() || seconds < 0.0 {
                 return Err(invalid(name, "a number of seconds, 0 or more"));
             }
-            change(move |node| {
+            let mut time = change(move |node| {
                 if let NodeKind::Svg(state) = &mut node.kind {
                     state.set_time(seconds);
                 }
-            })
+            })?;
+            // After a new `svg` given in the same call, which starts at time 0.
+            time.late = true;
+            Ok(time)
         }
         // 0.5.4 (#141, #144, #147): the document, what `currentColor` is, and
         // the decoded images it refers to. They parse together, once, so the

@@ -839,6 +839,14 @@ impl SvgState {
         state
     }
 
+    /// A colour or image change re-makes the state from the same source: the animation goes
+    /// on where it was, running animation included.
+    pub fn keep_time_of(&mut self, old: SvgState) {
+        self.time = old.time;
+        self.sampled_time = None;
+        self.resample();
+    }
+
     /// `svg_time`: the seconds the animation is at, now.
     pub fn set_time(&mut self, seconds: f64) {
         self.time.set_now(seconds.max(0.0));

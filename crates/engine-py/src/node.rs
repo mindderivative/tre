@@ -132,7 +132,8 @@ impl Node {
     /// current value, and returns immediately. The animatable properties
     /// are the paint names (`fill`, `stroke_color`, `stroke_width`,
     /// `opacity`, `blur`, `backdrop_blur`, `corner_radius`, `shadows`), the transform parts, a
-    /// scroll view's `scroll_offset`, and a path's `data`/`trim_*`; any
+    /// scroll view's `scroll_offset`, a path's `data`/`trim_*`, and (0.5.10) an svg's
+    /// `svg_time`; any
     /// other name raises `ValueError`. `on_complete` is called with no
     /// arguments exactly once, the frame (or `Window.advance`) this
     /// animation finishes; one replaced or stopped first never calls it.

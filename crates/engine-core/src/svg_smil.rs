@@ -35,6 +35,8 @@ pub struct Timeline {
 enum Tok {
     Cmd(char),
     Num(f64),
+    /// An arc's large-arc or sweep flag: one digit, never interpolated.
+    Flag(bool),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,10 +98,15 @@ impl Timeline {
             data
         };
         let text = std::str::from_utf8(data).ok()?;
-        if !text.contains("<animate") && !text.contains("<set") {
+        if !text.contains("animate") && !text.contains("set") {
             return None;
         }
-        let doc = Document::parse(text).ok()?;
+        // usvg reads a document with a DOCTYPE (Illustrator, Inkscape), so this does too.
+        let options = roxmltree::ParsingOptions {
+            allow_dtd: true,
+            ..Default::default()
+        };
+        let doc = Document::parse_with_options(text, options).ok()?;
         let mut anims = Vec::new();
         for node in doc.descendants().filter(|n| n.is_element()) {
             let tag = node.tag_name().name();
@@ -123,7 +130,7 @@ impl Timeline {
                 (Some(_), true) => None,
                 (Some(d), false) => Some(anim.begin + d * anim.repeat),
             };
-            duration = match (duration, end) {
+            duration = match (duration, end.filter(|e| e.is_finite())) {
                 (Some(a), Some(b)) => Some(a.max(b)),
                 _ => None,
             };
@@ -192,7 +199,7 @@ impl Anim {
             if name != "transform" {
                 return None;
             }
-            match attr("type")? {
+            match attr("type").unwrap_or("translate") {
                 "rotate" => Kind::Rotate,
                 "translate" => Kind::Translate,
                 "scale" => Kind::Scale,
@@ -210,8 +217,11 @@ impl Anim {
             Kind::Path => ("d", 0.0),
             Kind::Number => *NUMBERS.iter().find(|(n, _)| *n == name)?,
         };
+        // A negative `begin` starts the animation part-way through, which is how icon sets
+        // phase their loops.
         let begin = match attr("begin") {
-            Some(b) => clock(b)?,
+            Some(b) => clock(b.trim().strip_prefix('-').unwrap_or(b))
+                .map(|n| if b.trim().starts_with('-') { -n } else { n })?,
             None => 0.0,
         };
         let dur = match attr("dur") {
@@ -237,7 +247,10 @@ impl Anim {
         let mut values: Vec<Value> = if is_set {
             vec![parse(attr("to")?)?]
         } else if let Some(list) = attr("values") {
-            list.split(';')
+            // SMIL allows one `;` after the last value.
+            list.trim()
+                .trim_end_matches(';')
+                .split(';')
                 .map(|v| parse(v.trim()))
                 .collect::<Option<Vec<_>>>()?
         } else {
@@ -245,6 +258,7 @@ impl Anim {
             // A transform animation replaces the attribute, so it starts from
             // the identity, not from the parent's own transform list.
             let from = match (kind, base) {
+                (_, _) if attr("from").is_some() => parse(attr("from")?)?,
                 (Kind::Rotate | Kind::Translate | Kind::Scale, _) => identity(kind, &to),
                 (_, Some(b)) => parse(b)?,
                 (Kind::Number, None) => Value::Num(initial),
@@ -258,7 +272,12 @@ impl Anim {
         normalise(kind, &mut values)?;
         let mut key_times = Vec::new();
         if let Some(kt) = attr("keyTimes") {
-            let parsed: Option<Vec<f64>> = kt.split(';').map(|v| v.trim().parse().ok()).collect();
+            let parsed: Option<Vec<f64>> = kt
+                .trim()
+                .trim_end_matches(';')
+                .split(';')
+                .map(|v| v.trim().parse().ok())
+                .collect();
             if let Some(parsed) = parsed
                 && parsed.len() == values.len()
                 && parsed.first() == Some(&0.0)
@@ -296,8 +315,9 @@ impl Anim {
                     if !self.freeze {
                         return None;
                     }
-                    let iterations = active / d;
-                    let fraction = iterations - iterations.floor();
+                    // The repeat count itself, not `active / d`, which is off by a rounding
+                    // error for a duration like 0.1 s (3 x 0.1 / 0.1 is 3.0000000000000004).
+                    let fraction = self.repeat.fract();
                     if fraction == 0.0 { 1.0 } else { fraction }
                 } else {
                     (local % d) / d
@@ -335,6 +355,10 @@ impl Anim {
                 let mut out = String::new();
                 for tok in tokens {
                     match tok {
+                        Tok::Flag(f) => {
+                            out.push(' ');
+                            out.push(if *f { '1' } else { '0' });
+                        }
                         Tok::Cmd(c) => {
                             if !out.is_empty() {
                                 out.push(' ');
@@ -446,7 +470,7 @@ fn normalise(kind: Kind, values: &mut Vec<Value>) -> Option<()> {
                     a.len() == b.len()
                         && a.iter().zip(b).all(|(x, y)| match (x, y) {
                             (Tok::Cmd(x), Tok::Cmd(y)) => x == y,
-                            (Tok::Num(_), Tok::Num(_)) => true,
+                            (Tok::Num(_), Tok::Num(_)) | (Tok::Flag(_), Tok::Flag(_)) => true,
                             _ => false,
                         })
                 }
@@ -510,12 +534,25 @@ fn tokens(d: &str) -> Option<Vec<Tok>> {
     let b = d.as_bytes();
     let mut i = 0;
     let mut out = Vec::new();
+    // The command in force, and which of its arguments is next: an arc's fourth and fifth
+    // are flags, written as one digit each (`a1 1 0 011 1` is flags 0 and 1, then `1 1`).
+    let mut arc = false;
+    let mut arg = 0usize;
     while i < b.len() {
         let c = b[i];
         if c.is_ascii_whitespace() || c == b',' {
             i += 1;
         } else if c.is_ascii_alphabetic() {
             out.push(Tok::Cmd(c as char));
+            arc = c == b'a' || c == b'A';
+            arg = 0;
+            i += 1;
+        } else if arc && matches!(arg % 7, 3 | 4) {
+            match c {
+                b'0' | b'1' => out.push(Tok::Flag(c == b'1')),
+                _ => return None,
+            }
+            arg += 1;
             i += 1;
         } else {
             let start = i;
@@ -543,7 +580,12 @@ fn tokens(d: &str) -> Option<Vec<Tok>> {
                     i = j;
                 }
             }
-            out.push(Tok::Num(d[start..i].parse().ok()?));
+            let n: f64 = d[start..i].parse().ok()?;
+            if !n.is_finite() {
+                return None;
+            }
+            out.push(Tok::Num(n));
+            arg += 1;
         }
     }
     Some(out)
@@ -659,6 +701,56 @@ mod tests {
             "{}",
             at(&tl, 1.0)
         );
+    }
+
+    #[test]
+    fn from_a_negative_begin_a_trailing_semicolon_and_a_doctype_are_read() {
+        let doc = r#"<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0" stroke-dashoffset="9"><animate attributeName="stroke-dashoffset" from="30" to="0" begin="-1s" dur="2s" fill="freeze"/><animate attributeName="opacity" values="0;1;" dur="2s" fill="freeze"/></path></svg>"#;
+        let tl = Timeline::parse(doc.as_bytes()).unwrap();
+        // One second into a two second animation that started a second ago: from 30 to 0.
+        assert!(
+            at(&tl, 0.0).contains(r#"stroke-dashoffset="15""#),
+            "{}",
+            at(&tl, 0.0)
+        );
+        assert!(at(&tl, 1.0).contains(r#"opacity="0.5""#));
+    }
+
+    #[test]
+    fn a_frozen_animation_holds_its_last_value_whatever_the_float_error() {
+        // 0.1 * 3 / 0.1 is 3.0000000000000004.
+        let doc = svg(
+            r#"<path d="M0 0" opacity="1"><animate attributeName="opacity" to="0" dur="0.1s" repeatCount="3" fill="freeze"/></path>"#,
+        );
+        let tl = Timeline::parse(doc.as_bytes()).unwrap();
+        assert!(at(&tl, 5.0).contains(r#"opacity="0""#), "{}", at(&tl, 5.0));
+    }
+
+    #[test]
+    fn arc_flags_are_read_by_position_and_never_interpolated() {
+        let compact = tokens("M0 0a1 1 0 011 1").unwrap();
+        assert_eq!(
+            compact,
+            vec![
+                Tok::Cmd('M'),
+                Tok::Num(0.0),
+                Tok::Num(0.0),
+                Tok::Cmd('a'),
+                Tok::Num(1.0),
+                Tok::Num(1.0),
+                Tok::Num(0.0),
+                Tok::Flag(false),
+                Tok::Flag(true),
+                Tok::Num(1.0),
+                Tok::Num(1.0),
+            ]
+        );
+        let doc = svg(
+            r#"<path d="M0 0a1 1 0 011 1"><animate attributeName="d" values="M0 0a1 1 0 011 1;M0 0a1 1 0 101 3" dur="2s" fill="freeze"/></path>"#,
+        );
+        let tl = Timeline::parse(doc.as_bytes()).unwrap();
+        // The flags of the segment's start stay, the numbers move.
+        assert!(at(&tl, 1.0).contains("a 1 1 0 0 1 1 2"), "{}", at(&tl, 1.0));
     }
 
     #[test]
