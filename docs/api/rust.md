@@ -750,8 +750,6 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 
 *struct.* `NodeKind::Svg`'s own state.
 
-**Implements:** [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html)
-
 | Field | Type | Description |
 | --- | --- | --- |
 | `document` | `Arc<SvgDocument>` |  |
@@ -759,10 +757,19 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `source_is_text` | `bool` | Whether `source` was given as text (and reads back as text). |
 | `color` | `Option<Color>` | What `currentColor` resolves to; `None` leaves the document's own. |
 | `images` | `SvgImages` | The raster images the caller decoded, by `href`. |
+| `timeline` | `Option<Arc<Timeline>>` | The document's SMIL animation, if it has any. |
+| `time` | `Animated<f64>` | The seconds into the animation the document is drawn at (`svg_time`). |
+| `fonts` | `Option<SvgFonts>` | The fonts a re-sample shapes text with. |
 
 | Method | Description |
 | --- | --- |
+| `fn duration(&self) -> Option<f64>` | `svg_duration`: the seconds after which nothing changes (0 for a document without animation), or `None` when it repeats for ever. |
 | `fn empty() -> Self` | A node with no document yet. |
+| `fn keep_time_of(&mut self, old: SvgState)` | A colour or image change re-makes the state from the same source: the animation goes on where it was, running animation included. |
+| `fn new(document: Arc<SvgDocument>, source: Vec<u8>, source_is_text: bool, color: Option<Color>, images: SvgImages, fonts: SvgFonts) -> Self` | A node whose `document` was parsed from `source`. |
+| `fn reparse(&mut self, fonts: &SvgFonts)` | Parses the document again from the current text, because the fonts changed. |
+| `fn set_time(&mut self, seconds: f64)` | `svg_time`: the seconds the animation is at, now. |
+| `fn tick(&mut self, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool` | Advances the `svg_time` animation; `true` while it runs. |
 
 ### SvgStroke { #svgstroke }
 
@@ -1025,7 +1032,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `fn position_overlay_over(&mut self, content: NodeId, rect: Rect)` | Positions an overlay's content so it covers a given rectangle. |
 | `fn relayout(&mut self, id: NodeId)` | Marks `id` for layout again: its text, font or fit changed, and a fit side's size depends on all of those. |
 | `fn remove(&mut self, id: NodeId) -> bool` | Removes a node and its whole subtree, detaching it from its parent. |
-| `fn reparse_svgs(&mut self, reparse: impl FnMut(&SvgState) -> Option<Arc<SvgDocument>>)` | Every SVG node whose document has text is given the document `reparse` makes from its source. |
+| `fn reparse_svgs(&mut self, fonts: &SvgFonts)` | Every SVG node whose document has text is parsed again with `fonts`. |
 | `fn resolve_text_part(&self, id: NodeId) -> Option<TextPart>` | What the synthetic accessibility id `id` stands for, if it is the run or link of one of this tree's text nodes (0.5.4, #151). |
 | `fn root_of(&self, id: NodeId) -> NodeId` | Returns the top of a node's tree, or the node itself if it has no parent. |
 | `fn scroll_by_key(&mut self, view: NodeId, key: Key) -> bool` | Scrolls a view for a key: arrows by a line, Page keys by a page, Home and End to the ends. |

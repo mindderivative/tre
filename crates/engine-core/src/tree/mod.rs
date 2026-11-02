@@ -628,23 +628,16 @@ impl Tree {
         self.nodes.get(id)
     }
 
-    /// 0.5.4 (#146): every SVG node whose document has text is given the
-    /// document `reparse` makes from its source -- the fonts changed, so its
-    /// outlines must. `None` keeps a node's document. Marks the tree dirty
-    /// when any changed.
-    pub fn reparse_svgs(
-        &mut self,
-        mut reparse: impl FnMut(
-            &crate::svg::SvgState,
-        ) -> Option<std::sync::Arc<crate::svg::SvgDocument>>,
-    ) {
+    /// 0.5.4 (#146): every SVG node whose document has text is parsed again
+    /// with `fonts` -- the fonts changed, so its outlines must. Marks the tree
+    /// dirty when any changed.
+    pub fn reparse_svgs(&mut self, fonts: &crate::svg::SvgFonts) {
         let mut changed = false;
         for node in self.nodes.values_mut() {
             if let NodeKind::Svg(state) = &mut node.kind
-                && state.document.has_text
-                && let Some(document) = reparse(state)
+                && (state.document.has_text || state.timeline.is_some())
             {
-                state.document = document;
+                state.reparse(fonts);
                 changed = true;
             }
         }
@@ -784,6 +777,12 @@ impl Tree {
         }
         // M95: a path's data (morphing) and stroke trim.
         if let NodeKind::Path(state) = &mut node.kind
+            && state.tick(now, completed)
+        {
+            active = true;
+        }
+        // 0.5.10 (#245): an svg's animation time.
+        if let NodeKind::Svg(state) = &mut node.kind
             && state.tick(now, completed)
         {
             active = true;

@@ -21,6 +21,7 @@ card.animate("translate_y", -24, 300, easing=(0.3, 0.0, 0.8, 0.15),
 | `translate_x`, `translate_y`, `scale`, `rotation_deg` | a number — each part animates on its own |
 | `scroll_offset` | a scroll view's offset, in pixels |
 | `data`, `trim_start`, `trim_end` | a path's shape and stroke trim |
+| `svg_time` | an svg's seconds into its SMIL animation (0.5.10) |
 
 **Layout properties animate too (0.5.6)**, in pixels:
 

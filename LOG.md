@@ -24,6 +24,39 @@ position).
 
 ## After 0.5.9 (unreleased)
 
+### #245, SMIL animation in svg nodes: `svg_time` and `svg_duration` (2026-11-01)
+
+From the shell's TRE-REQ-008 (animated Material Line Icons, 1,216 of 1,218 use SMIL). `usvg` ignores
+`<animate>`/`<set>`/`<animateTransform>`, so an svg node drew one static frame. Built as a time-sampled render:
+`engine-core/src/svg_smil.rs` reads the SMIL once (`roxmltree`, already in the lock through `usvg`; now a direct
+dependency, so `Cargo.lock` changed and CI runs the full tier), and for a time `t` patches the evaluated
+attribute values into a copy of the document text, which the existing `SvgDocument::parse_full` draws.
+`SvgState` gained `timeline`, `time: Animated<f64>`, `fonts` and the last sample's text hash (an identical
+sample is not parsed again). New node properties: `svg_time` (seconds, animatable with `animate`, set restarts
+at 0 with a new `svg`) and read-only `svg_duration` (`None` for an indefinite repeat, `0.0` without animation).
+`Tree::reparse_svgs` now takes the fonts instead of a closure. Subset: animate, set, animateTransform
+(rotate/translate/scale); dur, begin clock offsets, to (from the parent attribute), values, keyTimes, repeatCount,
+fill freeze/remove; stroke-dashoffset, opacity, fill-opacity, d (equal command sequences, else holds the first
+value), r, cx, cy, x, y, stroke-width, transform (replaces). Everything else is ignored.
+Measured: 30 looping icons re-sampled every frame, 0.22 ms per frame (CPU, release); an idle window 0.0% CPU;
+one looping icon on headless sway + llvmpipe about 30% of a core (software drawing; no GPU run). A live grim
+screenshot of `examples/svg_smil.py` on headless sway differed between two moments. tre has no occlusion
+handling, so a hidden window keeps redrawing while `svg_time` animates. Correction to the issue text:
+`Window.snapshot(time=)` is the shader clock, not the animation clock; tests use `window.advance(ms)`.
+Tests: `tests/test_svg_smil.py` (8), 8 unit tests in `svg_smil.rs`, example `examples/svg_smil.py`.
+Not run: Windows, macOS, a real GPU, the full suite (standing rule).
+
+Overnight pass (2026-11-02): on KWin 6.8 (real session) with AMD RADV, a looping icon costs 4.0% of a core against 3.2%
+for a plain rotation animation of the same node, 30 icons 6.8% against 5.2% (rotation), an idle window 0.0%: the
+sampling adds about one percentage point, drawing the frames is the rest (`/tmp/req008/svg_cpu.py`). An independent reviewer
+agent read the branch; fixed: `from` was ignored; a negative `begin` dropped the animation; a `<!DOCTYPE>` gave no
+timeline (usvg reads one); a trailing `;` in `values`/`keyTimes` dropped it; `fill="freeze"` with 3 x 0.1 s showed the
+first value (float error in `active / d`); arc flags in a `d` morph were interpolated and compact `011` flags mis-read;
+`animateTransform` without `type` is `translate`; `svg_color`/`svg_images` restarted a running animation (now keeps
+the time; only an explicit `svg` restarts); `svg_time` given with `svg` in one call was reset (now `late`); `svg_time`
+rejects negatives and bools; a non-finite `svg_duration` is `None`; fonts refresh on timeline documents too.
+Not fixed: a `style=` or CSS rule overriding the animated attribute, `href` targets, `%`/`em` base values.
+
 ### #246, occlusion: a hidden window no longer stalls the app, and an `occluded` state (2026-11-02)
 
 Raised by #245 (a looping icon keeps drawing unseen), then measured on headless sway + llvmpipe before any

@@ -135,6 +135,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 - **`occluded`, `pause_when_occluded`** (#246): a window property and event for a window the OS
   reports completely hidden (X11 and macOS), minimized windows read `occluded` too; a hidden window
   draws nothing by default. See [Hidden windows](reference/window.md#hidden-windows).
+- **SMIL animation in an `svg` node** (#245): `svg_time` (seconds into the document's animation,
+  animatable) and the read-only `svg_duration`. A document with `<animate>`, `<set>` or
+  `<animateTransform>` was drawn as one static frame; it now draws as it looks at `svg_time`. A
+  document without animation, or with SMIL outside the supported subset, is drawn as before. See
+  [SMIL animation](reference/paint.md#smil-animation-0510).
 
 ### Behavior changes
 

@@ -30,6 +30,7 @@ mod overlay;
 mod path;
 mod shader;
 mod svg;
+mod svg_smil;
 mod tree;
 
 pub use access::{

@@ -606,6 +606,14 @@ pub(crate) fn animatable_to_py(
             }
             out.into_pyobject(py)?.into_any().unbind()
         }
+        "svg_time" => {
+            let NodeKind::Svg(state) = &node.kind else {
+                return Err(PyValueError::new_err(
+                    "node property `svg_time` applies only to an svg node",
+                ));
+            };
+            number(*pick(&state.time, target))?
+        }
         "data" | "trim_start" | "trim_end" => {
             let NodeKind::Path(state) = &node.kind else {
                 return Err(PyValueError::new_err(format!(
@@ -672,6 +680,14 @@ pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyRes
             }
         }
         "shadows" => node.paint.shadows.stop(),
+        "svg_time" => {
+            let NodeKind::Svg(state) = &mut node.kind else {
+                return Err(PyValueError::new_err(
+                    "node property `svg_time` applies only to an svg node",
+                ));
+            };
+            state.time.stop();
+        }
         "data" | "trim_start" | "trim_end" => {
             let NodeKind::Path(state) = &mut node.kind else {
                 return Err(PyValueError::new_err(format!(

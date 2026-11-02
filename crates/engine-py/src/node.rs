@@ -132,7 +132,8 @@ impl Node {
     /// current value, and returns immediately. The animatable properties
     /// are the paint names (`fill`, `stroke_color`, `stroke_width`,
     /// `opacity`, `blur`, `backdrop_blur`, `corner_radius`, `shadows`), the transform parts, a
-    /// scroll view's `scroll_offset`, and a path's `data`/`trim_*`; any
+    /// scroll view's `scroll_offset`, a path's `data`/`trim_*`, and (0.5.10) an svg's
+    /// `svg_time`; any
     /// other name raises `ValueError`. `on_complete` is called with no
     /// arguments exactly once, the frame (or `Window.advance`) this
     /// animation finishes; one replaced or stopped first never calls it.
@@ -435,6 +436,26 @@ impl Node {
                     property,
                 ));
                 animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
+            }
+            // 0.5.10 (#245): an svg's SMIL animation time.
+            "svg_time" => {
+                let NodeKind::Svg(state) = &mut node.kind else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `svg_time` applies only to an svg node",
+                    ));
+                };
+                let value = extract_f64(&to, property)?;
+                if !value.is_finite() || value < 0.0 {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `svg_time` must be a number of seconds, 0 or more",
+                    ));
+                }
+                let handle = Some(self.completions.borrow_mut().register(
+                    on_complete,
+                    self.id,
+                    property,
+                ));
+                animate_field(&mut state.time, value, duration, curve, now, handle);
             }
             // M95: a path's data morphs; its stroke trim animates.
             "data" | "trim_start" | "trim_end" => {

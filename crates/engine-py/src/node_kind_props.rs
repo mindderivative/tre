@@ -16,7 +16,7 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 35] = [
+pub(crate) const KIND_PROPS: [&str; 37] = [
     "text",
     "font_family",
     "font_weight",
@@ -52,6 +52,8 @@ pub(crate) const KIND_PROPS: [&str; 35] = [
     "svg_size",
     "svg_color",
     "svg_images",
+    "svg_time",
+    "svg_duration",
 ];
 
 const TEXT_ALIGN: [(&str, TextAlign); 3] = [
@@ -177,7 +179,7 @@ fn svg_properties(name: &str, kind: &NodeKind, props: &Bound<'_, PyDict>) -> PyR
             .map(|state| state.images.clone())
             .unwrap_or_default(),
     };
-    svg_change(source, is_text, color, images)
+    svg_change(source, is_text, color, images, !props.contains("svg")?)
 }
 
 /// Parses `source` (raising for a bad document) into a change that installs
@@ -187,21 +189,22 @@ fn svg_change(
     is_text: bool,
     color: Option<Color>,
     images: engine_core::SvgImages,
+    keep_time: bool,
 ) -> PyResult<KindChange> {
-    let document = engine_core::SvgDocument::parse_full(&source, &svg_fonts(), color, &images)
-        .map_err(|reason| {
-            PyValueError::new_err(format!("node property `svg` isn't a valid SVG: {reason}"))
-        })?;
+    let fonts = svg_fonts();
+    let document = engine_core::SvgDocument::parse_full(&source, &fonts, color, &images).map_err(
+        |reason| PyValueError::new_err(format!("node property `svg` isn't a valid SVG: {reason}")),
+    )?;
     let ratio = document.width / document.height;
     let mut kind_change = change(move |node| {
         if let NodeKind::Svg(state) = &mut node.kind {
-            *state = engine_core::SvgState {
-                document,
-                source: std::sync::Arc::new(source),
-                source_is_text: is_text,
-                color,
-                images,
-            };
+            // The animation restarts from time 0 with a new document.
+            let fresh = engine_core::SvgState::new(document, source, is_text, color, images, fonts);
+            let old = std::mem::replace(state, fresh);
+            // A new colour or images keep the animation where it is; a new document starts over.
+            if keep_time && old.source == state.source {
+                state.keep_time_of(old);
+            }
         }
     })?;
     kind_change.svg_ratio = Some(ratio);
@@ -222,9 +225,7 @@ pub(crate) fn refresh_svg_text(
     }
     seen.set(generation);
     let fonts = svg_fonts();
-    tree.borrow_mut().reparse_svgs(|state| {
-        engine_core::SvgDocument::parse_full(&state.source, &fonts, state.color, &state.images).ok()
-    });
+    tree.borrow_mut().reparse_svgs(&fonts);
 }
 
 /// The fonts an SVG's text is shaped with: the engine's own, rebuilt only
@@ -360,7 +361,9 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
         | "selection_end" => ("a text_input", text_input),
         "selection" => ("a text, text_input or terminal", selectable),
         "rgba" | "pixel_width" | "pixel_height" | "fit" => ("an image", image),
-        "svg" | "svg_size" | "svg_color" | "svg_images" => ("an svg", svg),
+        "svg" | "svg_size" | "svg_color" | "svg_images" | "svg_time" | "svg_duration" => {
+            ("an svg", svg)
+        }
         "orientation" | "scroll_snap" => ("a scroll_view", scroll_view),
         "scroll_offset" => ("a scroll_view or virtual_list", scroller),
         "item_count" | "item_extent" => ("a virtual_list", virtual_list),
@@ -395,9 +398,27 @@ fn parse_known(
     props: &Bound<'_, PyDict>,
 ) -> PyResult<KindChange> {
     match name {
-        "svg_size" => Err(PyValueError::new_err(
-            "node property `svg_size` is read-only",
-        )),
+        "svg_size" | "svg_duration" => Err(PyValueError::new_err(format!(
+            "node property `{name}` is read-only"
+        ))),
+        // 0.5.10 (#245): the seconds into the document's SMIL animation.
+        "svg_time" => {
+            not_bool(value, name, "a number of seconds, 0 or more")?;
+            let seconds: f64 = value
+                .extract()
+                .map_err(|_| invalid(name, "a number of seconds, 0 or more"))?;
+            if !seconds.is_finite() || seconds < 0.0 {
+                return Err(invalid(name, "a number of seconds, 0 or more"));
+            }
+            let mut time = change(move |node| {
+                if let NodeKind::Svg(state) = &mut node.kind {
+                    state.set_time(seconds);
+                }
+            })?;
+            // After a new `svg` given in the same call, which starts at time 0.
+            time.late = true;
+            Ok(time)
+        }
         // 0.5.4 (#141, #144, #147): the document, what `currentColor` is, and
         // the decoded images it refers to. They parse together, once, so the
         // first of them in a call does it all with the others' new values.
@@ -1040,6 +1061,8 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
             to_py(ranges, py)
         }
         ("svg_size", NodeKind::Svg(s)) => to_py((s.document.width, s.document.height), py),
+        ("svg_time", NodeKind::Svg(s)) => to_py(*s.time.target(), py),
+        ("svg_duration", NodeKind::Svg(s)) => to_py(s.duration(), py),
         ("svg", NodeKind::Svg(s)) if s.source_is_text => {
             to_py(String::from_utf8_lossy(&s.source).into_owned(), py)
         }
