@@ -95,7 +95,7 @@ concurrency:
 jobs:
   # Decides the tier. Cheap: git and Python's standard library only.
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tier: ${{ steps.plan.outputs.tier }}
       reason: ${{ steps.plan.outputs.reason }}
@@ -131,7 +131,7 @@ jobs:
   docs:
     needs: plan
     if: needs.plan.outputs.run_docs == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -153,7 +153,7 @@ jobs:
   partial:
     needs: plan
     if: needs.plan.outputs.tier == 'partial'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       AFFECTED: ${{ needs.plan.outputs.affected_args }}
     steps:
@@ -181,7 +181,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Format check
         if: needs.plan.outputs.rust == 'true'
@@ -255,7 +255,7 @@ jobs:
   msrv:
     needs: plan
     if: needs.plan.outputs.tier == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
@@ -273,7 +273,7 @@ jobs:
   test:
     needs: plan
     if: needs.plan.outputs.tier == 'full'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -303,7 +303,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build workspace
         run: cargo build --workspace --all-targets
@@ -441,7 +441,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}
       - name: Build workspace
         run: cargo build --workspace --all-targets
       - name: Test workspace (informational -- see file header comment)
@@ -493,7 +493,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-v2-${{ hashFiles('**/Cargo.lock') }}
       - name: Build workspace
         run: cargo build --workspace --all-targets
       - name: Test workspace (informational -- see file header comment)
@@ -535,7 +535,7 @@ jobs:
     name: CI result
     if: always()
     needs: [plan, docs, partial, msrv, test, test-windows, test-macos]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check every job that ran
         env:
