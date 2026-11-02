@@ -286,6 +286,12 @@ where
                     self.notice(wid, token, LayerNotice::PopupPlaced(x, y));
                 }
             }
+            // 0.5.10 (#246): the compositor showed the surface; it may be drawn again.
+            LayerEvent::FrameDone { id } => {
+                if let Some(layer) = self.layers.get_mut(&window_id(id)) {
+                    layer.needs_frame = layer.animating;
+                }
+            }
             LayerEvent::MarginMoved { id, margin } => {
                 let wid = window_id(id);
                 if let Some(token) = self.layers.get(&wid).map(|l| l.token) {
@@ -316,7 +322,7 @@ where
         let due: Vec<WindowId> = self
             .layers
             .iter()
-            .filter(|(_, l)| l.opened && l.needs_frame)
+            .filter(|(_, l)| l.opened && l.needs_frame && !l.controller.frame_pending(l.id))
             .map(|(id, _)| *id)
             .collect();
         for wid in due {
@@ -348,7 +354,10 @@ where
             }
         }
         let any = self.windows.values().any(|w| w.animating)
-            || self.layers.values().any(|l| l.animating || l.needs_frame);
+            || self
+                .layers
+                .values()
+                .any(|l| (l.animating || l.needs_frame) && !l.controller.frame_pending(l.id));
         event_loop.set_control_flow(if any {
             ControlFlow::Poll
         } else {

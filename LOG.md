@@ -24,6 +24,30 @@ position).
 
 ## After 0.5.9 (unreleased)
 
+### #246, occlusion: a hidden window no longer stalls the app, and an `occluded` state (2026-11-02)
+
+Raised by #245 (a looping icon keeps drawing unseen), then measured on headless sway + llvmpipe before any
+design: a window on another workspace costs 0 CPU (the vsync acquire/present blocks), but the blocked call holds
+the one thread every window and the GIL: a second, visible window stopped animating (identical screenshots) and a
+Python thread printed nothing for 50 s. `present_mode="low_latency"` avoids the block but spins every core
+(~380%). A layer surface under a fullscreen window did the same (0 heartbeats in 3 s). Cause: tre never called
+`Window::pre_present_notify()`, so on Wayland `winit` kept delivering redraws while the compositor withheld
+frame callbacks. Fix: `pre_present_notify()` before `present` (winit then holds a window's next redraw until its frame
+callback), the loop stays in `Wait` on Wayland instead of polling (`platform_name`), and for layer surfaces
+(no winit window) `LayerController::request_frame/frame_pending` ask `wl_surface.frame` themselves, answered
+in the layer thread's `CompositorHandler::frame` (`LayerEvent::FrameDone`), and `run_layer_frames` skips a layer
+with a callback out. Measured after: hidden window 1 tick in 5 s, visible 94-129 per 4 s, back on screen as
+before; the visible window and Python threads keep running; a covered bar keeps the app at full heartbeat.
+New: window state/event `occluded` (winit `Occluded`, X11 and macOS only; a minimized window reads true, no
+event) and `pause_when_occluded` (default True): an occluded window skips prepare/draw/present and returns
+`false` from its frame, so animations are not ticked meanwhile (values follow the clock; `on_complete` runs on
+return), and it redraws everything when shown. Changes `InputEvent::Occluded`, `WindowEventType::Occluded`,
+`PlatformEvent`-side nothing. Tests: `tests/test_hidden_window_live.py` (2, sway; the first fails on main with 4
+heartbeats of 12), `tests/test_occluded.py` (3). Ran: engine-core/platform lib tests, 129 headless layer/window
+tests, the whole live layer suite on sway (50 passed, 3 skipped). Not run: KWin, a real GPU, macOS, Windows, real
+X11 (the `occluded` path is unverified; XWayland under sway sends no Occluded), the full suite. The stage 3
+fallback heuristic (no callback for N ms) was not needed on Wayland and was not built.
+
 ### #243, clipboard read and write from a LayerWindow, proved on KWin (2026-10-28)
 
 The `shell` session asked which data-control protocol tre binds and whether any test proves a `LayerWindow`'s

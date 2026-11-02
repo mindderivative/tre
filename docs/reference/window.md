@@ -69,6 +69,8 @@ window.on("active", lambda e: title_bar.set(opacity=1.0 if e.active else 0.6))
 | `icon` | `(rgba, width, height)` — RGBA8 bytes, `width * height * 4` of them — or `None`; shown on Windows and X11 (Wayland and macOS take the app's icon from its desktop file or bundle) | — |
 | `maximized`, `minimized` | — (use the methods above) | The open window's state, or before `App.run()` how it opens |
 | `active` | — | Whether the window has the OS's focus |
+| `occluded` | — | (0.5.10) Whether the window is completely hidden: the OS says so (X11 and macOS only) or it is minimized |
+| `pause_when_occluded` | `bool`, default `True` | (0.5.10) Whether an occluded window draws nothing until it shows again. See [Hidden windows](#hidden-windows) |
 | `platform` | — | `"wayland"`, `"x11"`, `"windows"`, or `"macos"` |
 
 Each settable one applies live to an open window, or when `App.run()` opens
@@ -631,3 +633,22 @@ on only `advance` moves it. Each window keeps its own time, and
 
 `side` is one of `"left"`, `"right"`, `"top"`, `"bottom"`, `"center"`.
 See [Docking](../guide/docking.md) for a walkthrough.
+
+## Hidden windows
+
+**Wayland (0.5.10, #246).** The compositor says nothing about a hidden window, but it stops sending
+the *frame callbacks* a surface draws on, and tre now draws a window only after the callback for its
+last frame. A window on another workspace, minimized, or a `LayerWindow` under a fullscreen window
+therefore stops drawing and costs nothing (measured: 0 CPU ticks in 5 s with a looping animation, against 129
+in 4 s visible), and it no longer stalls the others. Before this a hidden window left a vsync present
+blocked while holding the one thread every window and Python thread shares, so **every other window
+and every Python thread froze** until it was shown again. This needs no setting.
+
+**X11 and macOS** report `occluded` (`window.get("occluded")`, the `occluded` event with
+`event.occluded`). While it is true and `pause_when_occluded` is true (the default) the window draws
+nothing, and the loop sleeps if every window is hidden; animations are not ticked meanwhile (their values
+follow the clock, so they are right when it shows, and `on_complete` runs then), and it draws everything once
+it shows again. Set `pause_when_occluded=False` for a window that must keep drawing while hidden. A minimized
+window reads `occluded` as `True` on every platform (no event: you asked for it). `Window.snapshot()` is not
+affected. **Windows** has no occlusion signal; it is unverified there and on macOS and real X11 (only Linux
+Wayland was run).

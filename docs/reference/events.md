@@ -129,6 +129,7 @@ window.on("close_requested", lambda e: e.cancel())  # keep the window open
 | `dock_drop` | A docking drag ended with the primary button's release; the panel has moved to the zone there, if any | `panel`, `side` |
 | `maximized` | The window was maximized or restored (0.5.0) | `maximized` |
 | `active` | The window gained or lost the OS's focus (0.5.0) | `active` |
+| `occluded` | The window became completely hidden, or showed again (0.5.10; X11 and macOS only) | `occluded` |
 | `titlebar_inset` | The area the OS's window controls take over the content changed — macOS's traffic lights on an undecorated window, 0 in fullscreen (0.5.0) | `titlebar_inset` |
 | `configure` | A [`LayerWindow`](layer-window.md)'s surface was given a size by the compositor, first and on every change (0.5.8); `resize` fires too | `width`, `height` (logical) |
 | `output_changed` | A `LayerWindow`'s surface entered an output (0.5.8) | `output` (its connector name) |

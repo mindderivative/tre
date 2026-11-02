@@ -120,6 +120,27 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   widths, percentages, `auto`, and every other kind are unchanged. A workaround
   that rounds measured widths up yourself is no longer needed, and harmless.
 
+## 0.5.10
+
+### Fixed
+
+- **A hidden window no longer freezes every other window on Wayland** (#246). A window moved to another
+  workspace, minimized, or a layer surface covered by a fullscreen window left a vsync present blocked
+  with the GIL held: the visible windows stopped animating and Python threads stopped running until it
+  was shown again. A window now draws only after the compositor's frame callback for its last frame, so a
+  hidden one stops drawing and costs nothing. Nothing in your code needs to change.
+
+### Added
+
+- **`occluded`, `pause_when_occluded`** (#246): a window property and event for a window the OS
+  reports completely hidden (X11 and macOS), minimized windows read `occluded` too; a hidden window
+  draws nothing by default. See [Hidden windows](reference/window.md#hidden-windows).
+
+### Behavior changes
+
+- On X11 and macOS an occluded window no longer draws or ticks animations until it shows again
+  (`pause_when_occluded=False` restores the old behaviour).
+
 ## 0.5.9
 
 ### Added

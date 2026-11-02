@@ -1355,7 +1355,12 @@ where
                 // must stay `Poll` as long as *any* of them is still
                 // animating, and only drop to `Wait` once every open
                 // window has independently settled.
-                let any_window_animating = windows.values().any(|w| w.animating);
+                // 0.5.10 (#246): on Wayland a redraw comes only after the compositor's frame
+                // callback (`pre_present_notify`), which wakes the loop by itself; polling
+                // between would spin a core for a window that is not being shown.
+                let any_window_animating = windows
+                    .values()
+                    .any(|w| w.animating && platform_name(Some(&w.window)) != "wayland");
                 event_loop.set_control_flow(if any_window_animating {
                     ControlFlow::Poll
                 } else {
@@ -1547,6 +1552,16 @@ where
                     },
                 );
                 win.request_redraw();
+            }
+            // 0.5.10 (#246): fully hidden or showing again (X11 and macOS only; Wayland has no
+            // such event and is paced by frame callbacks, see `pre_present_notify`). A window
+            // that shows again draws at once.
+            WindowEvent::Occluded(occluded) => {
+                on_input(window_id, InputEvent::Occluded { occluded });
+                if !occluded {
+                    win.app_requested = true;
+                    win.request_redraw();
+                }
             }
             // 0.5.0 M2 (issue #28): the window gained or lost focus.
             WindowEvent::Focused(focused) => {

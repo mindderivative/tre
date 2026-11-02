@@ -297,6 +297,12 @@ pub enum InputEvent {
     Focused {
         focused: bool,
     },
+    /// 0.5.10 (#246): the OS says the window is completely hidden (`true`) or showing again --
+    /// `winit::WindowEvent::Occluded`, which only X11 and macOS send. `Tree::dispatch`
+    /// ignores it; `engine-py` reports it as the window's `occluded` event.
+    Occluded {
+        occluded: bool,
+    },
     /// M32 Phase 2 (§4, §5): the OS-level window client area genuinely
     /// changed size -- `winit::WindowEvent::Resized`, translated in
     /// `engine-platform`, in the same window-client-pixel space every
