@@ -645,10 +645,17 @@ blocked while holding the one thread every window and Python thread shares, so *
 and every Python thread froze** until it was shown again. This needs no setting.
 
 **X11 and macOS** report `occluded` (`window.get("occluded")`, the `occluded` event with
-`event.occluded`). While it is true and `pause_when_occluded` is true (the default) the window draws
-nothing, and the loop sleeps if every window is hidden; animations are not ticked meanwhile (their values
-follow the clock, so they are right when it shows, and `on_complete` runs then), and it draws everything once
-it shows again. Set `pause_when_occluded=False` for a window that must keep drawing while hidden. A minimized
-window reads `occluded` as `True` on every platform (no event: you asked for it). `Window.snapshot()` is not
-affected. **Windows** has no occlusion signal; it is unverified there and on macOS and real X11 (only Linux
-Wayland was run).
+`event.occluded`). While the OS says so and `pause_when_occluded` is true (the default) the window draws
+nothing and asks for no more frames, so the loop sleeps if every window is hidden. Frames that still happen
+(an input, a timer, a wake) still run the animations and `on_complete`; values follow the clock, so they are
+right when it shows, and it draws everything once it does. Set `pause_when_occluded=False` for a window that
+must keep drawing while hidden. `get("occluded")` also reads `True` for a minimized window, but the pause
+follows only what the OS reports. `Window.snapshot()` is not affected. **Windows** has no occlusion signal.
+Nothing but Linux Wayland was run for this (sway and KWin); X11 and macOS are unverified.
+
+**What a hidden Wayland window costs and does not do.** A window or layer surface the compositor is not
+showing asks for nothing, so while *every* window is hidden, timers (`call_later`), thread-posted `call_soon`
+work and `on_complete` callbacks wait until one is shown again, because they run in a window's frame. With one
+window visible they run as usual. `present_mode="low_latency"` no longer draws faster than the compositor
+asks for frames on Wayland (a resize still presents without waiting, as before).
+

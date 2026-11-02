@@ -53,6 +53,20 @@ tried `clear_pending` on configure made a covered bar freeze the app again (any 
 block on the full swapchain), so it was not kept; a configure waits for the callback like any frame. Both live
 tests fail on a main build (4 and 0 heartbeats of 12). Layer live suite plus popup/layer/occluded: 149 passed, 3 skipped.
 
+Overnight pass on KWin 6.8 (real session, AMD RADV, no compositor changes except switching to virtual desktop 2 and
+back, and minimizing one probe window): the freeze is **not reproducible on KWin with main either** (heartbeats
+8.6/s hidden vs 10/s with the fix, a Python thread never starves): KWin keeps giving hidden/minimized windows
+frame callbacks. The fix still pays there for windows on another virtual desktop (0.4-0.6% CPU hidden against
+3.1% on main, with one probe window visible 5-6%), and does nothing measurable for a minimized window or a bar under
+a fullscreen window (KWin keeps drawing those). Probes: /tmp/req008/kwin_run.py (phases visible/hidden/shown,
+heartbeat thread + /proc ticks). An independent reviewer agent read the branch: its real findings were fixed
+(`FrameDone` overwrote a held-back frame request: now `|=`; resize pacing skips the frame-callback gate so the
+#155 low-latency resize is not slowed; docs corrected: `on_complete`/timers do run on frames that happen, a
+minimized window reads occluded but does not pause). Known and documented, not fixed: with every Wayland window
+hidden, timers and `call_soon` wait (they run in a window's frame); filed as a follow-up. The suspected
+`call_soon`-loss on a static layer could not be reproduced by a test (it passed on the old code too), so no test
+was kept for it.
+
 ### #243, clipboard read and write from a LayerWindow, proved on KWin (2026-10-28)
 
 The `shell` session asked which data-control protocol tre binds and whether any test proves a `LayerWindow`'s

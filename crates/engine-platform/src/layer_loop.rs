@@ -288,8 +288,10 @@ where
             }
             // 0.5.10 (#246): the compositor showed the surface; it may be drawn again.
             LayerEvent::FrameDone { id } => {
+                // A frame asked for while the callback was out (input, a wake, a configure)
+                // was held back, not dropped: keep it, and add the animation's own.
                 if let Some(layer) = self.layers.get_mut(&window_id(id)) {
-                    layer.needs_frame = layer.animating;
+                    layer.needs_frame |= layer.animating;
                 }
             }
             LayerEvent::MarginMoved { id, margin } => {

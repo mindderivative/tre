@@ -138,8 +138,10 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
 
 ### Behavior changes
 
-- On X11 and macOS an occluded window no longer draws or ticks animations until it shows again
+- On X11 and macOS an occluded window no longer draws until it shows again
   (`pause_when_occluded=False` restores the old behaviour).
+- On Wayland a window that is not shown no longer runs frames, so while every window is hidden timers and
+  `call_soon` work wait for one to be shown (with one visible they run as before).
 
 ## 0.5.9
 
