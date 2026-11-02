@@ -55,10 +55,13 @@ tests fail on a main build (4 and 0 heartbeats of 12). Layer live suite plus pop
 
 Overnight pass on KWin 6.8 (real session, AMD RADV, no compositor changes except switching to virtual desktop 2 and
 back, and minimizing one probe window): the freeze is **not reproducible on KWin with main either** (heartbeats
-8.6/s hidden vs 10/s with the fix, a Python thread never starves): KWin keeps giving hidden/minimized windows
-frame callbacks. The fix still pays there for windows on another virtual desktop (0.4-0.6% CPU hidden against
-3.1% on main, with one probe window visible 5-6%), and does nothing measurable for a minimized window or a bar under
-a fullscreen window (KWin keeps drawing those). Probes: /tmp/req008/kwin_run.py (phases visible/hidden/shown,
+8.6/s hidden vs 10/s with the fix, a Python thread never starves). Counted with `frame_stats()["frames"]` per
+phase (an earlier note here, from CPU% alone, said KWin keeps drawing minimized windows: wrong): a **minimized
+window drew 23 frames in 8 s with the fix against 255 on main**, and the visible second window ran at 60/s (498 in 8 s)
+instead of 32/s (255), because the hidden one no longer competes for the vsync; a window on another virtual desktop
+used 0.4-0.6% CPU against 3.1%. A bar under a fullscreen window keeps being shown by KWin and drawing (498 frames in
+8 s, as visible). `restore()` cannot un-minimize on Wayland, so the probe window stayed minimized. Separate finding,
+also on main: a fullscreen window counts about 480 frames/s on KWin (#248). Probes: /tmp/req008/kwin_run.py (phases visible/hidden/shown,
 heartbeat thread + /proc ticks). An independent reviewer agent read the branch: its real findings were fixed
 (`FrameDone` overwrote a held-back frame request: now `|=`; resize pacing skips the frame-callback gate so the
 #155 low-latency resize is not slowed; docs corrected: `on_complete`/timers do run on frames that happen, a

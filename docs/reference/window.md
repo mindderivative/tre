@@ -638,9 +638,13 @@ See [Docking](../guide/docking.md) for a walkthrough.
 
 **Wayland (0.5.10, #246).** The compositor says nothing about a hidden window, but it stops sending
 the *frame callbacks* a surface draws on, and tre now draws a window only after the callback for its
-last frame. A window on another workspace, minimized, or a `LayerWindow` under a fullscreen window
-therefore stops drawing and costs nothing (measured: 0 CPU ticks in 5 s with a looping animation, against 129
-in 4 s visible), and it no longer stalls the others. Before this a hidden window left a vsync present
+last frame. A window on another workspace or minimized therefore stops drawing and costs nothing
+(sway: 0 CPU ticks in 5 s with a looping animation, against 129 in 4 s visible; KWin 6.8: a minimized window drew 23
+frames in 8 s against 255 before, one on another virtual desktop used about 0.5% of a core against 3.1%). A
+`LayerWindow` under a fullscreen window stops drawing on sway; **KWin keeps showing it and keeps sending its frame
+callbacks**, so it keeps drawing there (498 frames in 8 s, as when visible). `restore()` cannot bring a window back
+from the minimized state under Wayland (the protocol has no such request); the user does. It no longer stalls the
+others. Before this a hidden window left a vsync present
 blocked while holding the one thread every window and Python thread shares, so **every other window
 and every Python thread froze** until it was shown again. This needs no setting.
 

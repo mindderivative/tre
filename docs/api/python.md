@@ -458,7 +458,7 @@ What a listener receives when it takes one argument; never constructed directly.
 | `high_contrast` | `bool \| None` |  |
 | `maximized` | `bool \| None` | New state on `maximized`. |
 | `active` | `bool \| None` | New state on `active`. |
-| `occluded` | `bool \| None` |  |
+| `occluded` | `bool \| None` | New state on `occluded`. |
 | `titlebar_inset` | `tuple[float, float] \| None` | New `(height, width)` on `titlebar_inset`. |
 | `reason` | `str \| None` | `"unknown"` or `"destroyed"` on `gpu_lost`. |
 | `message` | `str \| None` | The driver's or GPU's message on `gpu_lost` and `gpu_error`. |
