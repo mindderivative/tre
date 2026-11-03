@@ -1,6 +1,6 @@
 # LayerWindow: the design (#198)
 
-Phase 2 of [#195](https://github.com/mindderivative/tre/issues/195) (TRE-REQ-001 from Tesserae Shell). **Decided 2026-10-19, built (#198).** The [reference](../reference/layer-window.md) and the [guide](../guide/bars-and-panels.md) say how it works; this page keeps the reasoning, and "As built" at the end lists where the build differs from the plan. It rests on the spike's findings (`layer-surface-spike.md`, #196): layer surfaces on a second event queue of the `wl_display` `winit` owns. Where the maintainer has to choose, the choice is marked **Decision** with a recommendation.
+Phase 2 of [#195](https://github.com/mindderivative/tess-re/issues/195) (TRE-REQ-001 from Tesserae Shell). **Decided 2026-10-19, built (#198).** The [reference](../reference/layer-window.md) and the [guide](../guide/bars-and-panels.md) say how it works; this page keeps the reasoning, and "As built" at the end lists where the build differs from the plan. It rests on the spike's findings (`layer-surface-spike.md`, #196): layer surfaces on a second event queue of the `wl_display` `winit` owns. Where the maintainer has to choose, the choice is marked **Decision** with a recommendation.
 
 ## What it is
 

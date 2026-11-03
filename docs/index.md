@@ -95,9 +95,9 @@ complete switch.
 
 Tesserae Engine is a second, from-scratch iteration of an earlier Vulkan engine,
 archived under
-[`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
+[`archive/`](https://github.com/mindderivative/tess-re/tree/main/archive) with
 the lessons learned that shaped it. Its build history is in
 the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) (0.5.0 on),
-[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) (0.4.x), and
-[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) (0.4.x), and
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
 (through 0.3.5).

@@ -51,7 +51,7 @@ the Tesserae session to approve the scope, iterate until it approves, then move 
 and start work, AND directly tell the Tesserae session (SendMessage to 'Tesserae') when
 work starts and which request.
 
-1) List open issues in mindderivative/tre (gh issue list --state open) and compare with
+1) List open issues in mindderivative/tess-re (gh issue list --state open) and compare with
 the ones already handled: #47 #48 #91 #118 #132 #133 #134 (hardware, held), #158
 (Backlog), #159-#166 (Done, on branch 0.5.6), #157 (closed). Also check new comments on
 the 0.5.6 issues and any PR for Tesserae test results (gh issue view / gh api), and read

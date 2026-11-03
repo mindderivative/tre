@@ -23,11 +23,11 @@ glow = tess_re.Shader(open("shine.wgsl").read(),
 title.set(shader=glow)
 ```
 
-[`examples/shader_shine.py`](https://github.com/mindderivative/tre/blob/main/examples/shader_shine.py)
+[`examples/shader_shine.py`](https://github.com/mindderivative/tess-re/blob/main/examples/shader_shine.py)
 (an effect over text) and
-[`examples/shader_panel.py`](https://github.com/mindderivative/tre/blob/main/examples/shader_panel.py)
+[`examples/shader_panel.py`](https://github.com/mindderivative/tess-re/blob/main/examples/shader_panel.py)
 (a fill behind a panel's children) are runnable, with their WGSL in
-[`examples/shaders/`](https://github.com/mindderivative/tre/tree/main/examples/shaders).
+[`examples/shaders/`](https://github.com/mindderivative/tess-re/tree/main/examples/shaders).
 
 ## What you write
 

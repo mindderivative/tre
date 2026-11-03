@@ -4,7 +4,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 **Artifact:** generate with `python3 tools/generate_tracker_artifact.py --project "tre 0.4" --out tools/build-tracker-0.4.0.generated.html` (after committing the tracker, so the stamp names the commit) and publish to [the 0.4.0 tracker page](https://claude.ai/artifact/PTt1sBpABbM2XxTrL7xdFb). The [0.3 line's page](https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty) stays the record of `main`'s tracker and its `0.3.5.x` fixes.
 
-**This tracker is the `0.4.0` line** -- the `vello_hybrid` fork for real GPU-level partial redraw ([issue #4](https://github.com/mindderivative/tre/issues/4)) -- and its milestones restart at 1. Earlier history is archived: `v0.1.0`–`v0.3.5.1` (M1–M104) in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md), and M1–M49 of that line in [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Fixes to the released `0.3.5` stay on the 0.3.x line as `0.3.5.x` patch releases, tracked on `main`'s `BUILD_TRACKER.md` (continuing its numbering after M104), as `0.3.5.1` was.
+**This tracker is the `0.4.0` line** -- the `vello_hybrid` fork for real GPU-level partial redraw ([issue #4](https://github.com/mindderivative/tess-re/issues/4)) -- and its milestones restart at 1. Earlier history is archived: `v0.1.0`–`v0.3.5.1` (M1–M104) in [`BUILD_TRACKER_ARCHIVE_0.3.md`](BUILD_TRACKER_ARCHIVE_0.3.md), and M1–M49 of that line in [`BUILD_TRACKER_ARCHIVE_M1-M50.md`](BUILD_TRACKER_ARCHIVE_M1-M50.md). Fixes to the released `0.3.5` stay on the 0.3.x line as `0.3.5.x` patch releases, tracked on `main`'s `BUILD_TRACKER.md` (continuing its numbering after M104), as `0.3.5.1` was.
 
 **0.4.x patches** (0.4.1 onward) continue here, their milestones numbered on from M6; `v0.4.0` itself is M1–M6.
 
@@ -23,13 +23,13 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M7 — Partial Redraw's Fixed Costs | `██████████` 100% | ✅ Complete (2026-09-28) — measured, not cut: the whole-window overhead is the 0.1 ms damage walk (the rest of `v0.4.0`'s reported gap was noise), and the 0.25 ms copy can't be narrowed safely without swapchain buffer age |
 | M8 — Show What's Redrawn | `██████████` 100% | ✅ Complete (2026-09-28) — `window.set(show_damage=True)` tints each presented frame's redrawn areas, never the kept frame |
 | M9 — Housekeeping and Release `0.4.1` | `██████████` 100% | ✅ Complete (2026-09-29) — `v0.4.1` released on GitHub and PyPI, closing issue #21; Tesserae moved onto it, its side buttons driving back/forward |
-| M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
-| M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23)) | `██████████` 100% | ✅ Complete (2026-09-29) — `display="grid"`, track lists, placements, auto tracks and flow, row/column gaps, and item alignment, read back as set |
-| M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24)) | `██████████` 100% | ✅ Complete (2026-09-29) — Page Up/Down keys, keyboard scrolling, `scroll_into_view` with focus reveal, and the `scroll` event |
+| M10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tess-re/issues/21)) | `██████████` 100% | ✅ Complete (2026-09-29) — `Event.button` reports `"back"` and `"forward"`, heard on the root, with no `click`; ships in `0.4.1` |
+| M11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tess-re/issues/23)) | `██████████` 100% | ✅ Complete (2026-09-29) — `display="grid"`, track lists, placements, auto tracks and flow, row/column gaps, and item alignment, read back as set |
+| M12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tess-re/issues/24)) | `██████████` 100% | ✅ Complete (2026-09-29) — Page Up/Down keys, keyboard scrolling, `scroll_into_view` with focus reveal, and the `scroll` event |
 | M13 — Release `0.4.2` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.2` released on GitHub and PyPI, closing issues #23 and #24; Tesserae moved onto it, its scroll view now following tre's keys, reveal, and `scroll` event |
 | M14 — Keyboard Scrolling Leaves Shortcuts Alone | `██████████` 100% | ✅ Complete (2026-09-30) — keys with Ctrl, Alt, or Meta held are shortcuts and no longer scroll; Shift still does |
 | M15 — `scroll_offset` Clamped When Set | `██████████` 100% | ✅ Complete (2026-09-30) — `set` and `animate` clamp `scroll_offset` to the view's range at once, with one `scroll` event; a created offset is the event's baseline |
-| M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
+| M16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tess-re/issues/27)) | `██████████` 100% | ✅ Complete (2026-09-30) — `grid_auto_rows=96` means `[96]`, reading back as `"96"` |
 | M17 — Shift+Wheel Scrolls Horizontal Views | `██████████` 100% | ✅ Complete (2026-09-30) — Shift+wheel scrolls horizontal views, and a wheel passes views it can't move to the next one out |
 | M18 — Unit Tests for the Scroll Core | `██████████` 100% | ✅ Complete (2026-09-30) — 9 `engine-core` tests cover the scroll API and M17's wheel rule without Python |
 | M19 — Stub Drift Checked in CI | `██████████` 100% | ✅ Complete (2026-09-30) — the stub matches what PyO3 builds, and CI runs `mypy --strict` and `stubtest` |
@@ -38,7 +38,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M22 — A Windows CI Cache That Saves | `██████████` 100% | ✅ Complete (2026-09-30) — CI caches the dependencies only, keyed exactly: about 450 MB on Windows, saved in seconds, and no longer growing |
 | M23 — Release `0.4.4` | `██████████` 100% | ✅ Complete (2026-09-30) — `v0.4.4` released on GitHub and PyPI; Tesserae moved onto it, only its pinned scroll-chaining test flipping |
 
-**Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tre/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
+**Just closed:** M12 (2026-09-29) -- issue [#24](https://github.com/mindderivative/tess-re/issues/24): scroll views beyond the wheel -- Page Up/Down keys; keys scroll the nearest scroll view around the focused node unless that node uses the key; `node.scroll_into_view()`, which focus and assistive technology also trigger; and a `scroll` event with `old_value`/`new_value` on any change of offset.
 
 **Up next:** nothing on the 0.4 line -- `0.5.0` (custom windowing, issue #28) is scaffolded on its own branch with a new tracker; fixes to `0.4.4` would ship as `0.4.x` patches recorded here.
 
@@ -70,7 +70,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ### Phase 1 — Migration ✅
 - Step 1: `vello_hybrid` → `vello_gpu`, with `vello_common` and `glifo`, as Git dependencies pinned to `b408cd00`, and `wgpu` 29 → 30 in `tre`'s own GPU code; `render()` called with `TargetInit::Clear(ClearSettings::Viewport)`, today's behavior — ✅ (one `[workspace.dependencies]` table in the root `Cargo.toml` pins `vello_gpu`, `vello_common`, and `glifo` to the commit and `wgpu` to 30.0.1, and every crate refers to it -- the lock resolves one `wgpu`; API changes: `glyph_run` now needs `vello_gpu`'s `text` feature; `Scene::draw_texture_rects` and `SampleRect` are gone, so an image is an `ImageSource::ExternalTexture` paint over a filled rect, its sample transform as the paint transform; `render()` takes a `depth_view` (`None`) and a `TargetInit` (a full transparent clear, as 0.2.0 always did); `fill_glyphs` returns a `Result` -- the rest of a run still draws -- now warned once per process through `tracing`; `wgpu` 30 moved `present()` to the queue, made `get_mapped_range()` return a `Result`, added `RequestAdapterOptions::apply_limit_buckets` (set `false`, the adapter's real limits, as before), and `RenderSize`/`RenderTargetConfig` sizes are `u16`, clamped by a new `render_extent`; the pixel tests' readback and setup code updated the same way; `vello_gpu` still updates its size-dependent state from each `render()`'s size, checked in its source, so resizing needs no rebuild; comments describing the old image path and resize reasoning rewritten, and `ARCHITECTURE.md`, the README, and the docs name `vello_gpu`; cargo 327 passed, every pixel test included -- the same as on 0.2.0 -- `frame_budget.rs` median 0.628 ms, pytest 430 passed, 1 skipped, 21 examples, clippy, fmt, mypy, docs strict, API audit 43 names; a release wheel and an sdist build with the Git dependency, the wheel 10.43 MB against 10.32 MB, `glifo` now compiled in)
-- Step 2: every test, pixel test, example, and `frame_budget.rs` passing unchanged; the wheel builds with the Git dependency in CI on all three platforms — ✅ (user: "yes" to pushing and a draft PR, since `ci.yml` runs only on pull requests to `main`; [draft PR #17](https://github.com/mindderivative/tre/pull/17), which stays a draft until M6, ran CI on `1cbda98`, green on all three jobs -- Linux: cargo 328 passed, the frame budget included, pytest 417 passed, 14 skipped with no display, every example; macOS and Windows: cargo 327 passed, 0 failed, so the pixel tests pass on each platform's GPU backend, not only Vulkan -- all fetching `vello_gpu` from the Git commit)
+- Step 2: every test, pixel test, example, and `frame_budget.rs` passing unchanged; the wheel builds with the Git dependency in CI on all three platforms — ✅ (user: "yes" to pushing and a draft PR, since `ci.yml` runs only on pull requests to `main`; [draft PR #17](https://github.com/mindderivative/tess-re/pull/17), which stays a draft until M6, ran CI on `1cbda98`, green on all three jobs -- Linux: cargo 328 passed, the frame budget included, pytest 417 passed, 14 skipped with no display, every example; macOS and Windows: cargo 327 passed, 0 failed, so the pixel tests pass on each platform's GPU backend, not only Vulkan -- all fetching `vello_gpu` from the Git commit)
 
 ---
 
@@ -166,7 +166,7 @@ User: "Start phase 3".
 
 ---
 
-## Milestone 10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tre/issues/21))
+## Milestone 10 — The Mouse's Back and Forward Buttons ([issue #21](https://github.com/mindderivative/tess-re/issues/21))
 
 **Status: ✅ Complete (2026-09-29).** User, before the `0.4.1` release: "before that check your issues" -- the one open issue, #21 from Tesserae's routing work (its M66, `app.back()`/`app.forward()`), folded into `0.4.1` ahead of M9's release phase.
 
@@ -175,7 +175,7 @@ User: "Start phase 3".
 
 ---
 
-## Milestone 11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tre/issues/23))
+## Milestone 11 — CSS Grid Layout ([issue #23](https://github.com/mindderivative/tess-re/issues/23))
 
 **Status: ✅ Complete (2026-09-29).** User: "yes, start M11". Taffy 0.14 already implements CSS Grid (its default `grid` feature); tre's layout properties, all parsed in `engine-py`'s `node_layout.rs`, are flexbox only. Values follow tre's conventions: plain numbers are pixels.
 
@@ -186,7 +186,7 @@ User: "Start phase 3".
 
 ---
 
-## Milestone 12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tre/issues/24))
+## Milestone 12 — Scroll Views: Keys, `scroll_into_view`, Focus, and a `scroll` Event ([issue #24](https://github.com/mindderivative/tess-re/issues/24))
 
 **Status: ✅ Complete (2026-09-29).** User: "yes, start M12". User's decisions (2026-09-29): keys scroll the nearest scroll view around the focused node when that node doesn't use the key itself; `scroll` fires on any change of offset, found by comparison; keyboard and `scroll_into_view` scrolls jump rather than ease.
 
@@ -232,7 +232,7 @@ User: "Start phase 3".
 
 ---
 
-## Milestone 16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tre/issues/27))
+## Milestone 16 — Grid: A Bare Number as a One-Track List ([issue #27](https://github.com/mindderivative/tess-re/issues/27))
 
 **Status: ✅ Complete (2026-09-30).** User: "Check your issues" -- the one open issue, #27, filed from Tesserae's M74 (the grid properties in its view styles): the four track-list properties took a string or a list, but a bare number raised `ValueError`, although `grid_column=2` takes one; in YAML the common case is written `grid_auto_rows: 96`.
 

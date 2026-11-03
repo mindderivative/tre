@@ -2,9 +2,9 @@ site_name: Tesserae Engine
 site_description: >-
   A GPU-rendered retained-mode UI engine for Python, written in Rust --
   the building blocks of a desktop UI.
-site_url: https://mindderivative.github.io/tre/
-repo_url: https://github.com/mindderivative/tre
-repo_name: mindderivative/tre
+site_url: https://mindderivative.github.io/tess-re/
+repo_url: https://github.com/mindderivative/tess-re
+repo_name: mindderivative/tess-re
 edit_uri: edit/main/docs/
 
 theme:

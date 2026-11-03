@@ -106,6 +106,6 @@ $ cargo fmt --check                        # clean
 `BUILD_TRACKER.md` updated: Phase 2 (§14 steps 1-4) is now fully ✅, M3
 at 29%. Next: Phase 3 (§14 step 5) -- `engine-spec` parses one static
 `view.yaml`. Also, per explicit user request this same session: set up
-real CI (this repo has a GitHub remote, `mindderivative/tre`, but no
+real CI (this repo has a GitHub remote, `mindderivative/tess-re`, but no
 `.github/workflows/` yet) and run the whole existing test history through
 it.

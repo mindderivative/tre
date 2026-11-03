@@ -68,14 +68,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M101 — Consolidation and Size Pass | `██████████` 100% | ✅ Complete (2026-09-27) — against `v0.3.4`: Rust source 59,691 → 27,483 lines, public API 193 → 46 members, wheel 11.70 → 10.32 MB, release build 81 → 67 s, no frame-time regression |
 | M102 — Docs, Examples, and Tests Rewrite | `██████████` 100% | ✅ Complete (2026-09-27) — a guide page per building block and a complete-widget walkthrough; ARCHITECTURE.md, README, and Rust comments describe the current engine; 21 self-checking examples and a rebuilt showcase; tests named and described in current terms |
 | M103 — Release | `██████████` 100% | ✅ Complete (2026-09-27) — `v0.3.5` released; Tesserae's M46 moved it onto the release, CI green on `tre` 2e4ed35 |
-| M104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tre/issues/14)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.1`, closing issue #14 |
-| M105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.2`, closing issue #16 |
-| M106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tre/issues/18)) | `██████████` 100% | ✅ Complete (2026-09-28) — released as `v0.3.5.2`, closing issue #18 |
-| M107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tre/issues/19)) | `█████████░` 90% | 🚧 `v0.3.5.2` is on PyPI with all 22 wheels (2026-09-28); PyPI rejected its sdist over a missing `LICENSE`, fixed on branch `0.3.5.3` for the next release |
+| M104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tess-re/issues/14)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.1`, closing issue #14 |
+| M105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tess-re/issues/16)) | `██████████` 100% | ✅ Complete (2026-09-27) — released as `v0.3.5.2`, closing issue #16 |
+| M106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tess-re/issues/18)) | `██████████` 100% | ✅ Complete (2026-09-28) — released as `v0.3.5.2`, closing issue #18 |
+| M107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tess-re/issues/19)) | `█████████░` 90% | 🚧 `v0.3.5.2` is on PyPI with all 22 wheels (2026-09-28); PyPI rejected its sdist over a missing `LICENSE`, fixed on branch `0.3.5.3` for the next release |
 
-**Just closed:** `v0.3.5.2` released (PR #20, merge `3014087`), closing issues [#16](https://github.com/mindderivative/tre/issues/16), [#18](https://github.com/mindderivative/tre/issues/18) and [#19](https://github.com/mindderivative/tre/issues/19): `Window.undock_panel`, `window.get("dark")` with `color_scheme` finally firing on Linux, and `tre` on PyPI as `tesserae-engine` -- `pip install tesserae-engine` works, with all 22 wheels. PyPI rejected the sdist (maturin declared `License-File: LICENSE` without packing it). Tesserae told.
+**Just closed:** `v0.3.5.2` released (PR #20, merge `3014087`), closing issues [#16](https://github.com/mindderivative/tess-re/issues/16), [#18](https://github.com/mindderivative/tess-re/issues/18) and [#19](https://github.com/mindderivative/tess-re/issues/19): `Window.undock_panel`, `window.get("dark")` with `color_scheme` finally firing on Linux, and `tre` on PyPI as `tesserae-engine` -- `pip install tesserae-engine` works, with all 22 wheels. PyPI rejected the sdist (maturin declared `License-File: LICENSE` without packing it). Tesserae told.
 
-**Up next:** ship the sdist fix (`license-files`, committed on local branch `0.3.5.3`) with the next release, when the user says so -- `0.3.5.2` stays wheels-only on PyPI, since a new sdist would come from different source than its tag. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)).
+**Up next:** ship the sdist fix (`license-files`, committed on local branch `0.3.5.3`) with the next release, when the user says so -- `0.3.5.2` stays wheels-only on PyPI, since a new sdist would come from different source than its tag. `0.4.0` stays reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tess-re/issues/4)).
 
 **Known gaps:**
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
@@ -635,7 +635,7 @@ The real `v0.3.0` workflow run (triggered by pushing the tag on the user's expli
 ### Phase 2 — Tests, Verification, PR ✅
 - Step 1: 2 new Rust unit tests in `spec.rs` -- `flex_direction_parses_horizontal_and_vertical` (real, direct proof both new values parse to the correct enum variant) and `flex_direction_no_longer_accepts_the_old_row_column_naming` (real regression coverage proving the old `Row` value now fails to parse with a clear error, not silently still accepted alongside the new names) — ✅
 - Step 2: full verification chain — ✅ (`cargo check`/`clippy -D warnings`/`fmt --check` clean; `cargo test --workspace --release` (`engine-spec` 85, up from 83, +2; every other crate unchanged); `maturin develop --release`; `pytest tests/` 831 passed, 2 skipped, unchanged -- every real example YAML re-parsed and ran clean under its new values, real proof the rename didn't silently break anything; `demo/showcase.py` all 5 phases, exit 0 (its own declarative panel uses the renamed value); `mkdocs build --strict` clean, 0 warnings.)
-- Step 3: opened as a PR on a dedicated branch (`flex-direction-horizontal-vertical`), not pushed directly to `main`, matching the user's own explicit "Add a PR" request for a reviewable change to the declarative schema's public surface — ✅ ([PR #1](https://github.com/mindderivative/tre/pull/1), reviewed and merged by the user, `27fc846`; local branch deleted post-merge)
+- Step 3: opened as a PR on a dedicated branch (`flex-direction-horizontal-vertical`), not pushed directly to `main`, matching the user's own explicit "Add a PR" request for a reviewable change to the declarative schema's public surface — ✅ ([PR #1](https://github.com/mindderivative/tess-re/pull/1), reviewed and merged by the user, `27fc846`; local branch deleted post-merge)
 
 ### Release correction (2026-09-23)
 This rename shipped in **`v0.3.0`**, not a separate `v0.3.1` as first assumed. `v0.3.0` had already been tagged/released (M69) *before* M70 merged, so the real, live `v0.3.0` release didn't contain this change -- a real gap the user caught immediately: "The current release should be 0.3.0 with the vertical and horizontal change in it." Real correction, not a tag move: the original `v0.3.0` release and tag were deleted outright (`gh release delete v0.3.0 --cleanup-tag`) and a fresh `v0.3.0` tag was cut against `main`'s current commit (with M70 merged), re-triggering the full publish workflow. Verified directly against the real published binary, not just a successful CI run: downloaded the release's own standalone `.so`, built a throwaway package around it, and confirmed `flex_direction: Horizontal` parses while the old `Row` value now correctly raises `"unknown variant `Row`, expected `Horizontal` or `Vertical`"`. See the "Branch: 0.3.1" section below for the real workflow change this also established -- release branches accumulate multiple changes over time now, not one change per release.
@@ -749,7 +749,7 @@ Mirrors `kind: Image`'s own real, already-shipped precedent (M22 Phase 2) exactl
 
 ## Milestone 75 — `ImageSpec.src` Optional: a Real Declarative Placeholder Shape for `kind: Image` (§5, §16.1)
 
-**Status: ✅ Complete (2026-09-24).** Closes [`tre` issue #2](https://github.com/mindderivative/tre/issues/2). Real, confirmed finding (not assumed): `add_video` (`window_factory.rs`) is not built on a dedicated `Video` `NodeKind` at all -- it's a plain `NodeKind::Image`, seeded with a synthetic, fully-transparent 1x1 `peniko::ImageData` placeholder, with real frames pushed later via `Node::push_frame(...)`. Since `kind: Image` is already declarative, this default shape should in principle already be expressible in a static `view.yaml` -- except `ImageSpec.src` (`crates/engine-spec/src/spec.rs`) was a required `String`, decoded from a real file on disk (`resolve_image_src`/`image::open`). There was no way to declare a blank/synthetic placeholder image without a real file backing it.
+**Status: ✅ Complete (2026-09-24).** Closes [`tre` issue #2](https://github.com/mindderivative/tess-re/issues/2). Real, confirmed finding (not assumed): `add_video` (`window_factory.rs`) is not built on a dedicated `Video` `NodeKind` at all -- it's a plain `NodeKind::Image`, seeded with a synthetic, fully-transparent 1x1 `peniko::ImageData` placeholder, with real frames pushed later via `Node::push_frame(...)`. Since `kind: Image` is already declarative, this default shape should in principle already be expressible in a static `view.yaml` -- except `ImageSpec.src` (`crates/engine-spec/src/spec.rs`) was a required `String`, decoded from a real file on disk (`resolve_image_src`/`image::open`). There was no way to declare a blank/synthetic placeholder image without a real file backing it.
 
 **The fix:** `ImageSpec.src` is now `Option<String>`. `build.rs`'s `NodeKindSpec::Image` arm branches on it: `Some(src)` keeps the exact existing real decode-from-file path, byte-for-byte unchanged; `None` builds a new, shared `engine_core::ImageState::blank()` -- the identical 1x1 fully-transparent placeholder `add_video` already builds, factored out of `add_video`'s own inline literal (`window_factory.rs`) into `engine-core` so the two real call sites (`add_video`, and now `build.rs`'s `kind: Image` arm) share one definition instead of the literal being duplicated across two crates. `add_video` was refactored to call `ImageState::blank()` too -- a real simplification alongside the fix, not just an addition, closing the duplication that existed before this milestone.
 
@@ -768,7 +768,7 @@ Mirrors `kind: Image`'s own real, already-shipped precedent (M22 Phase 2) exactl
 
 ## Milestone 76 — Issue #3 Part A, Tier 2: `serde_json` Siblings for `WidgetSpec`/`Stylesheet`/`ThemeSpec` (§16.1, §16.3)
 
-**Status: ✅ Complete (2026-09-24).** User: "let's refocus on TRE and look at our issues and start fixing things." The smaller, lower-risk half of [`tre` issue #3](https://github.com/mindderivative/tre/issues/3)'s Part A -- real, direct proof that `WidgetSpec`/`Stylesheet`/`ThemeSpec` are genuinely format-agnostic (each derives plain `Deserialize`, no YAML-specific behavior), not just an assertion in the issue.
+**Status: ✅ Complete (2026-09-24).** User: "let's refocus on TRE and look at our issues and start fixing things." The smaller, lower-risk half of [`tre` issue #3](https://github.com/mindderivative/tess-re/issues/3)'s Part A -- real, direct proof that `WidgetSpec`/`Stylesheet`/`ThemeSpec` are genuinely format-agnostic (each derives plain `Deserialize`, no YAML-specific behavior), not just an assertion in the issue.
 
 New `serde_json` dependency on `engine-spec` only (not `engine-py`) -- deliberately keeps Tier 2 Python-independent, matching this crate's own stated `no pyo3` boundary rule (its own `Cargo.toml` description: "Depends on engine-core and engine-md3; no pyo3, no winit"). `parse_view_json`/`parse_stylesheet_json`/`parse_theme_json` are each a byte-for-byte mirror of their existing YAML sibling, `serde_json::from_str` swapped in for `serde_yaml_ng::from_str` -- genuinely just a second `Deserializer` against the same types, not a second parsing implementation. `load_view_json`/`load_styled_view_json` (`build.rs`) mirror `load_view`/`load_styled_view` the same way. New `SpecError::ParseJson(#[from] serde_json::Error)` variant, distinct from `Parse` since `#[from]` only supports one source type per variant. All 5 new functions re-exported at the crate root (`lib.rs`) alongside their YAML siblings, the same visibility `engine-py` already relies on for the YAML ones.
 
@@ -789,7 +789,7 @@ New `serde_json` dependency on `engine-spec` only (not `engine-py`) -- deliberat
 
 ## Milestone 77 — Issue #3 Part B: `Reconciler::load_spec`/`reconcile_spec` (§16.4)
 
-**Status: ✅ Complete (2026-09-24).** Part B of [`tre` issue #3](https://github.com/mindderivative/tre/issues/3). Discovered as a real, load-bearing prerequisite while scoping Tier 1 (Part A), not started independently: `View::__new__` (`engine-py/src/view.rs`) calls `Reconciler::load(tree, &yaml, ...)`, which only accepts `yaml: &str` and parses it itself (`parse_view_with_includes`). A purely programmatic `View`, constructed from a depythonized Python spec, would have no YAML text to hand that entry point at all -- Tier 1 genuinely can't be built without this landing first.
+**Status: ✅ Complete (2026-09-24).** Part B of [`tre` issue #3](https://github.com/mindderivative/tess-re/issues/3). Discovered as a real, load-bearing prerequisite while scoping Tier 1 (Part A), not started independently: `View::__new__` (`engine-py/src/view.rs`) calls `Reconciler::load(tree, &yaml, ...)`, which only accepts `yaml: &str` and parses it itself (`parse_view_with_includes`). A purely programmatic `View`, constructed from a depythonized Python spec, would have no YAML text to hand that entry point at all -- Tier 1 genuinely can't be built without this landing first.
 
 Confirmed directly (not assumed) that `reconcile_node`/`build_tree`, the real diffing/building logic both `load` and `reconcile` bottom out in, already operate on `WidgetSpec` -- only the two outer entry points were YAML-text-locked. `Reconciler::load_spec`/`reconcile_spec` are the same real logic, factored out to take a pre-built `WidgetSpec` directly; `load`/`reconcile` are now thin wrappers (`parse_view_with_includes` then delegate), byte-for-byte the same external behavior either had before this milestone.
 
@@ -804,7 +804,7 @@ Confirmed directly (not assumed) that `reconcile_node`/`build_tree`, the real di
 
 ## Milestone 78 — Issue #3 Part A, Tier 1: `View(spec=...)`, Real Python-Native Construction (§8, §16.1)
 
-**Status: ✅ Complete (2026-09-24).** Tier 1 of [`tre` issue #3](https://github.com/mindderivative/tre/issues/3)'s Part A, unblocked by M77 -- confirmed directly: `View::__new__` calls `Reconciler::load(tree, &yaml, ...)`, which only accepted YAML text before M77, so a purely programmatic view had nothing to hand it.
+**Status: ✅ Complete (2026-09-24).** Tier 1 of [`tre` issue #3](https://github.com/mindderivative/tess-re/issues/3)'s Part A, unblocked by M77 -- confirmed directly: `View::__new__` calls `Reconciler::load(tree, &yaml, ...)`, which only accepted YAML text before M77, so a purely programmatic view had nothing to hand it.
 
 `View.__init__` widened with a new `spec:` param (user's own choice via `AskUserQuestion`, over a genuinely separate constructor): a real Python object -- a dict shaped like `view.yaml`'s own `WidgetSpec` schema -- depythonized directly into a real `WidgetSpec` (`pythonize::depythonize`) and handed to `Reconciler::load_spec` (M77). Zero YAML-text round trip for a caller that already has native Python data (Tesserae's own macro-expansion layer, or any app composing a tree programmatically).
 
@@ -825,11 +825,11 @@ Confirmed directly (not assumed) that `reconcile_node`/`build_tree`, the real di
 
 ## Milestone 79 — Issue #3 Part C: `View.reconcile(...)`, an Ungated Trigger for a Programmatic Caller (§8, §16.4)
 
-**Status: ✅ Complete (2026-09-24).** Closes [`tre` issue #3](https://github.com/mindderivative/tre/issues/3) entirely. Real gap confirmed directly, not assumed: `poll_reload`'s own change-detection gate (`self.watcher`'s `poll_changed()`) is hard-wired to a real filesystem event. A `View(spec=...)` (M78) built with no `path` has no `watcher` at all -- that gate can never open, so `poll_reload` always reports `false` for such a view, regardless of `source=`.
+**Status: ✅ Complete (2026-09-24).** Closes [`tre` issue #3](https://github.com/mindderivative/tess-re/issues/3) entirely. Real gap confirmed directly, not assumed: `poll_reload`'s own change-detection gate (`self.watcher`'s `poll_changed()`) is hard-wired to a real filesystem event. A `View(spec=...)` (M78) built with no `path` has no `watcher` at all -- that gate can never open, so `poll_reload` always reports `false` for such a view, regardless of `source=`.
 
 New `View.reconcile(source=None, spec=None)` -- the ungated sibling. Same `spec`/`source` mutual-exclusion and at-least-one-required validation `__new__` (M78) already established, for API consistency. Branches into `pythonize::depythonize` + `Reconciler::reconcile_spec` (M77) for `spec=`, or the existing `Reconciler::reconcile` for `source=` -- both real, already-proven code paths, no new reconciliation logic invented. Unconditional: unlike `poll_reload`, there's no "did anything actually change" question to answer, since the caller's own explicit call already asserts that it did.
 
-**Real design correction, made explicit rather than silently assumed while scoping this milestone:** this is deliberately *not* "teach `watch.rs` to detect programmatic changes," a framing considered and rejected. `watch.rs`/`ViewWatcher` are completely untouched by this milestone. A caller with no backing file already knows precisely when its own data changed -- typically via `tre.Effect`'s own real, already-working dependency tracking -- so its own explicit call to `reconcile()` already *is* the change signal. No new Rust-side dirty-flag/channel mechanism needed to detect "did the programmatic source change," matching exactly what [`tre` issue #3](https://github.com/mindderivative/tre/issues/3)'s own Part C proposal predicted.
+**Real design correction, made explicit rather than silently assumed while scoping this milestone:** this is deliberately *not* "teach `watch.rs` to detect programmatic changes," a framing considered and rejected. `watch.rs`/`ViewWatcher` are completely untouched by this milestone. A caller with no backing file already knows precisely when its own data changed -- typically via `tre.Effect`'s own real, already-working dependency tracking -- so its own explicit call to `reconcile()` already *is* the change signal. No new Rust-side dirty-flag/channel mechanism needed to detect "did the programmatic source change," matching exactly what [`tre` issue #3](https://github.com/mindderivative/tess-re/issues/3)'s own Part C proposal predicted.
 
 ### Phase 1 — `View.reconcile(...)` + Test Coverage ✅
 - Step 1: `View::reconcile(&mut self, py, source: Option<String>, spec: Option<Py<PyAny>>) -> PyResult<()>` -- validation mirrors `__new__`'s own; branches into `pythonize::depythonize` + `Reconciler::reconcile_spec`, or the existing `Reconciler::reconcile` for the `source=` form — ✅
@@ -912,7 +912,7 @@ The gap: no honestly-named, one-call way to construct a *static* `Image` node fr
 
 ## Milestone 83 — Fixing a Real, CI-Observed `test_terminal.py` Flake Ahead of the `0.3.1` Release
 
-**Status: ✅ Complete (2026-09-24).** User-directed: pushed `0.3.1` (M80-M82) and opened [PR #5](https://github.com/mindderivative/tre/pull/5) toward `main` per the user's own "push, and if everything is green then release 0.3.1" instruction. `gh run list` showed CI had actually been failing on every recent run -- including commits from *before* M71 even started -- on `tests/test_terminal.py::test_a_real_shell_genuinely_responds_to_typed_input`, unrelated to this session's own M80-M82 changes. Given explicit user direction ("investigate and fix the test now") rather than shrugging it off as unrelated noise or force-releasing over a red check.
+**Status: ✅ Complete (2026-09-24).** User-directed: pushed `0.3.1` (M80-M82) and opened [PR #5](https://github.com/mindderivative/tess-re/pull/5) toward `main` per the user's own "push, and if everything is green then release 0.3.1" instruction. `gh run list` showed CI had actually been failing on every recent run -- including commits from *before* M71 even started -- on `tests/test_terminal.py::test_a_real_shell_genuinely_responds_to_typed_input`, unrelated to this session's own M80-M82 changes. Given explicit user direction ("investigate and fix the test now") rather than shrugging it off as unrelated noise or force-releasing over a red check.
 
 Real investigation, not a guess: `ci.yml`'s Python job installs via plain `maturin develop` (a debug build, not `--release` -- every local verification this session ran used `--release`), on a shared `ubuntu-latest` runner the workflow's own frame-time-benchmark comment already calls out as noisy-neighbor-prone. Attempted real local reproduction two ways -- a debug build (`maturin develop`, no `--release`) run 5x, and the same debug build under real `taskset`-pinned 2-core CPU contention (8 competing `yes` loops) run 6x -- neither reproduced the failure; this local machine's 24 real cores evidently still give the shell process enough scheduling opportunity even when starved this way. Root cause found instead by reading the actual render-loop source, not by more guessing: `engine-platform/src/lib.rs`'s own `still_animating = real_still_animating || win.max_frames.is_some()` (confirmed directly, `lib.rs:662`) means any bounded `App.run(max_frames=N)` call forces `ControlFlow::Poll` with **zero real per-frame pacing** -- it spins through its whole frame budget as fast as the machine can physically issue redraws, never genuinely waiting on terminal activity the way an unbounded run's `ControlFlow::Wait` does. On a fast, idle dev machine, 60 such frames still take enough real wall-clock time for the OS to interleave the spawned shell process in; on CI's debug build + shared runner, that entire budget can burn through before the shell is even scheduled once -- a genuine, structural race between "how fast can this window issue 60 redraws" and "how fast can the OS give the shell CPU time," independent of the pre-Ctrl+C pause the test already had for a *different*, narrower race (the shell needing to actually fork/exec `sleep 100` before the SIGINT byte arrives).
 
@@ -930,12 +930,12 @@ Deliberately did not touch `engine-platform`'s own render-loop pacing to fix thi
 
 ## `v0.3.1` Released
 
-**Status: ✅ Released (2026-09-24).** User-directed: "push, and if everything is green then release 0.3.1 and scaffold 0.3.2." GitHub Actions itself never registered a single check run for either push to `origin/0.3.1` (confirmed via `gh api repos/mindderivative/tre/commits/<sha>/check-runs` returning `{"total_count":0}` both times, despite the `CI` workflow showing `active` and `allowed_actions: all`) -- the most recent visible run before that was a day earlier, several runs each taking 9-11 minutes, consistent with an Actions-minutes/spending-limit wall rather than a code problem, but not something this session can see or fix (no access to the account's own billing/usage page). Given an explicit choice via `AskUserQuestion`, the user chose to proceed on this session's own thorough local verification rather than wait on or force-diagnose CI further.
+**Status: ✅ Released (2026-09-24).** User-directed: "push, and if everything is green then release 0.3.1 and scaffold 0.3.2." GitHub Actions itself never registered a single check run for either push to `origin/0.3.1` (confirmed via `gh api repos/mindderivative/tess-re/commits/<sha>/check-runs` returning `{"total_count":0}` both times, despite the `CI` workflow showing `active` and `allowed_actions: all`) -- the most recent visible run before that was a day earlier, several runs each taking 9-11 minutes, consistent with an Actions-minutes/spending-limit wall rather than a code problem, but not something this session can see or fix (no access to the account's own billing/usage page). Given an explicit choice via `AskUserQuestion`, the user chose to proceed on this session's own thorough local verification rather than wait on or force-diagnose CI further.
 
 - Local `0.3.1` merged `origin/main` to resolve one real, trivial conflict -- both branches had independently edited `BUILD_TRACKER.md`'s own "Up next" line; `main`'s edit (from `f54ca43`, pre-dating M71) was fully superseded by `0.3.1`'s own far more current content, kept as-is — ✅
-- [PR #5](https://github.com/mindderivative/tre/pull/5) (`0.3.1` → `main`) merged via `gh pr merge --merge`, matching PR #1's own real merge-commit precedent — ✅
+- [PR #5](https://github.com/mindderivative/tess-re/pull/5) (`0.3.1` → `main`) merged via `gh pr merge --merge`, matching PR #1's own real merge-commit precedent — ✅
 - Local `main` fast-forwarded to the merge, re-verified directly (not just trusted): `cargo check --workspace` clean, `maturin develop --release`, `pytest tests/` 890 passed, 2 skipped — ✅
-- `git tag -a v0.3.1` (annotated, summarizing M71-M83), pushed — ✅ (`github.com/mindderivative/tre/releases/tag/v0.3.1` once `Wheels`' own `publish` job, triggered by the tag push, finishes attaching real release assets -- that workflow run's own live status is the final confirmation of a real, complete release, not claimed here in advance of it.)
+- `git tag -a v0.3.1` (annotated, summarizing M71-M83), pushed — ✅ (`github.com/mindderivative/tess-re/releases/tag/v0.3.1` once `Wheels`' own `publish` job, triggered by the tag push, finishes attaching real release assets -- that workflow run's own live status is the final confirmation of a real, complete release, not claimed here in advance of it.)
 
 ---
 
@@ -1032,7 +1032,7 @@ Two real, small, pre-existing gaps found and fixed along the way, beyond M71-M84
 
 ## Milestone 87 — Thread-Safe Callbacks into a Running `App` (issue #6)
 
-**Status: ✅ Complete (2026-09-25).** [`tre` issue #6](https://github.com/mindderivative/tre/issues/6), filed by the Tesserae session after its M29 moved all file handling out of `tre`: nothing can hot-reload a live window. `App.run()` (`engine-py/src/app.rs:384`) hands control to `run_windowed_multi` until every window closes, and from then on Python only runs inside input handlers and accessibility actions. `View`/`Window`/`App` are all `#[pyclass(unsendable)]`, so a background thread can't touch them, and an idle loop sleeps in `ControlFlow::Wait`. This isn't new: `tre`'s own `poll_reload()` has never worked inside `App.run()` either (`examples/hot_reload.py` only runs it headless).
+**Status: ✅ Complete (2026-09-25).** [`tre` issue #6](https://github.com/mindderivative/tess-re/issues/6), filed by the Tesserae session after its M29 moved all file handling out of `tre`: nothing can hot-reload a live window. `App.run()` (`engine-py/src/app.rs:384`) hands control to `run_windowed_multi` until every window closes, and from then on Python only runs inside input handlers and accessibility actions. `View`/`Window`/`App` are all `#[pyclass(unsendable)]`, so a background thread can't touch them, and an idle loop sleeps in `ControlFlow::Wait`. This isn't new: `tre`'s own `poll_reload()` has never worked inside `App.run()` either (`examples/hot_reload.py` only runs it headless).
 
 The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (2026-09-25): "I would prefer the threadsafe option more and tesserae will end up moving to a watcher driven by file-change events." So M87 builds a thread-safe callback queue instead of a timer: a background thread (e.g. a `watchfiles` watcher) queues a callable, the idle loop wakes, and the callable runs on the event-loop thread where it can call `view.reconcile(spec=...)`. No polling, no wasted wake-ups.
 
@@ -1062,7 +1062,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 88 — Fix `test_terminal.py`'s CI Failure: No Display, Not Timing (corrects M83)
 
-**Status: ✅ Complete (2026-09-25).** User: "Release 0.3.2." Opening the release PR ([#7](https://github.com/mindderivative/tre/pull/7)) queued CI, and checking first showed the last two CI runs on `main` -- both right after the `v0.3.1` merge -- had **failed**, unnoticed at the time. Reading the log: the only failure was `tests/test_terminal.py::test_a_real_shell_genuinely_responds_to_typed_input`, the same test M83 "fixed", with `get_text()` returning an empty grid (`'\n\n\n\n'`).
+**Status: ✅ Complete (2026-09-25).** User: "Release 0.3.2." Opening the release PR ([#7](https://github.com/mindderivative/tess-re/pull/7)) queued CI, and checking first showed the last two CI runs on `main` -- both right after the `v0.3.1` merge -- had **failed**, unnoticed at the time. Reading the log: the only failure was `tests/test_terminal.py::test_a_real_shell_genuinely_responds_to_typed_input`, the same test M83 "fixed", with `get_text()` returning an empty grid (`'\n\n\n\n'`).
 
 **M83 misdiagnosed it.** The same CI log states the cause: "neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set". CI's Linux runner has no display, so `App.run()` returns immediately without rendering a single frame, and PTY output only reaches the cell grid inside a frame. No amount of `max_frames`/sleep headroom could ever make it pass there. M83 had no CI signal to check its fix against (Actions registered no runs for the `0.3.1` pushes) and couldn't reproduce locally, where a display always exists -- so a plausible timing theory went unfalsified.
 
@@ -1078,11 +1078,11 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 **Status: ✅ Released (2026-09-25).** User-directed: "Release 0.3.2", then "Continue the release when CI is green." Unlike `v0.3.1`, this release went out on a real green CI signal on all three platforms, not local verification alone -- and opening the PR is what surfaced M88: `main`'s own CI had been failing since the `v0.3.1` merge, on a test M83 had misdiagnosed.
 
-- [PR #7](https://github.com/mindderivative/tre/pull/7) (`0.3.2` → `main`) opened; `main` had no commits `0.3.2` lacked, so the merge was clean — ✅
+- [PR #7](https://github.com/mindderivative/tess-re/pull/7) (`0.3.2` → `main`) opened; `main` had no commits `0.3.2` lacked, so the merge was clean — ✅
 - CI on the PR head `d955bd9` (after M88) green on all three jobs: `test` (Linux), `test-macos`, `test-windows`; the Linux job's pytest reported 914 passed, 11 skipped, exactly what simulating CI locally predicted — ✅
 - PR #7 merged via `gh pr merge --merge` (merge commit `c6f0913`), matching PR #5's precedent — ✅
 - Local `main` fast-forwarded to the merge and re-verified directly: `cargo check --workspace` clean, `maturin develop --release` (`tre` 0.3.2), `pytest tests/` 923 passed, 2 skipped — ✅
-- `git tag -a v0.3.2` (annotated, summarizing M84-M88), pushed — ✅ (the tag push triggers `Wheels`, whose `publish` job attaches the release assets at `github.com/mindderivative/tre/releases/tag/v0.3.2`; that run's own outcome is the final confirmation, not claimed here ahead of it)
+- `git tag -a v0.3.2` (annotated, summarizing M84-M88), pushed — ✅ (the tag push triggers `Wheels`, whose `publish` job attaches the release assets at `github.com/mindderivative/tess-re/releases/tag/v0.3.2`; that run's own outcome is the final confirmation, not claimed here ahead of it)
 
 ---
 
@@ -1102,7 +1102,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Branch: `0.3.3` — Release Prep
 
-**Status: ✅ Merged and released as `v0.3.3` (2026-09-25).** Same workflow as `0.3.1`/`0.3.2`: work accumulates on `0.3.3`, merges back into `main` when ready, then gets tagged. User's versioning call: "We won't move to 0.4.0 until vello_hybrid fix/clone feature is put into place" -- so M90's breaking rename ships as `0.3.3`, and `0.4.0` stays reserved for [issue #4](https://github.com/mindderivative/tre/issues/4).
+**Status: ✅ Merged and released as `v0.3.3` (2026-09-25).** Same workflow as `0.3.1`/`0.3.2`: work accumulates on `0.3.3`, merges back into `main` when ready, then gets tagged. User's versioning call: "We won't move to 0.4.0 until vello_hybrid fix/clone feature is put into place" -- so M90's breaking rename ships as `0.3.3`, and `0.4.0` stays reserved for [issue #4](https://github.com/mindderivative/tess-re/issues/4).
 
 - Branch `0.3.3` created off `main` at `cb9eea2` (post-`v0.3.2`, post-M89) — ✅
 - `Cargo.toml`/`pyproject.toml` bumped 0.3.2 → 0.3.3; `Cargo.lock` updated via `cargo check` — ✅
@@ -1160,7 +1160,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8)
 
-**Status: ✅ Complete (2026-09-25).** Closes [issue #8](https://github.com/mindderivative/tre/issues/8). [`tre` issue #8](https://github.com/mindderivative/tre/issues/8), filed from the Tesserae side while scoping its theming milestone. User: "scope issue #8 as M91." Queued after M90, whose renames (`selected`, `value`, `foreground`) M91's binding code must already use.
+**Status: ✅ Complete (2026-09-25).** Closes [issue #8](https://github.com/mindderivative/tess-re/issues/8). [`tre` issue #8](https://github.com/mindderivative/tess-re/issues/8), filed from the Tesserae side while scoping its theming milestone. User: "scope issue #8 as M91." Queued after M90, whose renames (`selected`, `value`, `foreground`) M91's binding code must already use.
 
 **Part 1 — bound values are lost on live updates.** Confirmed by reading the source, not just the issue's reproduction: `View._attach` evaluates each `{{ }}` binding once, subscribes a `BindingCallback` to every `Signal` it read, and then **discards** the returned subscription list (`attach_bindings_and_handlers`, `engine-py/src/view.rs:681`; `View::_attach` keeps nothing). `retheme` and `reconcile_spec` rebuild a patched node's paint from its *static* spec (`patch_node`), and the `View` has no record of which bindings exist or which `ViewModel` they read from, so nothing can re-apply them. The node shows its static placeholder until its `Signal` next changes. Affects `set_theme`, `reconcile(spec=/json=/source=)`, and `poll_reload`.
 
@@ -1208,7 +1208,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 **Status: ✅ Released (2026-09-25).** User: "Approved, release 0.3.3 and start M93." The first release made with the M88 lesson in place: a real green CI run on all three platforms before merging.
 
-- [PR #9](https://github.com/mindderivative/tre/pull/9) (`0.3.3` → `main`) opened; `main` had no commits `0.3.3` lacked, so the merge was clean — ✅
+- [PR #9](https://github.com/mindderivative/tess-re/pull/9) (`0.3.3` → `main`) opened; `main` had no commits `0.3.3` lacked, so the merge was clean — ✅
 - CI on the PR head `8396835` green on all three jobs -- `test` (Linux), `test-macos`, `test-windows`; the Linux job's pytest reported 964 passed, 11 skipped, matching the local no-display run exactly — ✅
 - PR #9 merged via `gh pr merge --merge` (merge commit `bc5e9b6`), matching PRs #5 and #7 — ✅
 - Local `main` fast-forwarded and re-verified directly: `cargo check --workspace` clean, `maturin develop --release` (`tre` 0.3.3), `pytest tests/` 973 passed, 2 skipped — ✅
@@ -1230,10 +1230,10 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 **Status: ✅ Released (2026-09-25).** User: "Push and release 0.3.4 as Tesserae depends on this release." M97 Phase 1: M93–M96, additive, the old API still present.
 
-- `0.3.4` pushed; [PR #11](https://github.com/mindderivative/tre/pull/11) (`0.3.4` → `main`) opened; the pre-merge chain ran first -- pytest 1138 passed, 2 skipped (1129 passed, 11 skipped with no display), cargo release 591, all 89 examples and the showcase, `mkdocs --strict`, and an API-coverage audit of all 181 public names — ✅
+- `0.3.4` pushed; [PR #11](https://github.com/mindderivative/tess-re/pull/11) (`0.3.4` → `main`) opened; the pre-merge chain ran first -- pytest 1138 passed, 2 skipped (1129 passed, 11 skipped with no display), cargo release 591, all 89 examples and the showcase, `mkdocs --strict`, and an API-coverage audit of all 181 public names — ✅
 - Two changes landed while CI ran, each re-run through the chain: Tesserae's screen-swap questions found that `remove()`/`destroy()` cleared focus silently, so the focused node now loses focus with an event first (`18c02c3`); and, by the user's decision, the focus-loss event was renamed `blur` → `unfocus`, keeping `blur` for the visual effect (`b09a4ea`) — ✅
 - CI on the final head `b09a4ea` green on all three jobs -- `test` (Linux), `test-macos`, `test-windows`; the Linux job's pytest reported 1131 passed, 11 skipped, matching the local no-display run exactly — ✅
-- PR #11 merged via `gh pr merge --merge` (merge commit `29800f3`), matching PRs #5, #7, and #9; the merge closed [issue #10](https://github.com/mindderivative/tre/issues/10) — ✅
+- PR #11 merged via `gh pr merge --merge` (merge commit `29800f3`), matching PRs #5, #7, and #9; the merge closed [issue #10](https://github.com/mindderivative/tess-re/issues/10) — ✅
 - Local `main` fast-forwarded and re-verified directly: `cargo check --workspace` clean, `maturin develop --release` (`tre` 0.3.4), `pytest tests/` 1140 passed, 2 skipped — ✅
 - `git tag -a v0.3.4` on the merge commit, pushed — ✅ (the tag push triggers `Wheels`, whose `publish` job attaches the release assets; that run's outcome is the final confirmation, checked rather than assumed)
 
@@ -1501,7 +1501,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 103 — Release
 
-**Status: ✅ Complete (2026-09-27).** The M93–M103 program is done. User: "Finish up M102, then push and move onto M103, then push and do the release. Once done let Tesserae know you are done with the release and to start M46." M102 pushed at `8608e6a`; [PR #13](https://github.com/mindderivative/tre/pull/13) (`0.3.5` → `main`) opened with the release note as its body.
+**Status: ✅ Complete (2026-09-27).** The M93–M103 program is done. User: "Finish up M102, then push and move onto M103, then push and do the release. Once done let Tesserae know you are done with the release and to start M46." M102 pushed at `8608e6a`; [PR #13](https://github.com/mindderivative/tess-re/pull/13) (`0.3.5` → `main`) opened with the release note as its body.
 
 ### Phase 1 — Release ✅
 - Step 1: PR to `main`, CI green on all three platforms, merge, re-verify, release note, annotated tag, as with `v0.3.2` — ✅ (`v0.3.5`: PR #13 merged as `2e4ed35` and tagged; see "`v0.3.5` Released")
@@ -1513,11 +1513,11 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 **Status: ✅ Released (2026-09-27).** User: "Finish up M102, then push and move onto M103, then push and do the release." M97–M102: `tre` as a building-block engine -- the declarative layer, Material Design 3, and file loading moved to the framework, every surviving name in its target form. Breaking; `docs/migrating-0.3.5.md` and `TRE_FORBID_REMOVED=1` cover the upgrade.
 
-- `0.3.5` pushed at `8608e6a`; [PR #13](https://github.com/mindderivative/tre/pull/13) (`0.3.5` → `main`) opened with the release note as its body; the chain ran first -- pytest 425 passed, 1 skipped, cargo release 326, clippy and fmt, 21 examples, `mkdocs --strict`, the API audit of 43 names, `mypy --strict` — ✅
+- `0.3.5` pushed at `8608e6a`; [PR #13](https://github.com/mindderivative/tess-re/pull/13) (`0.3.5` → `main`) opened with the release note as its body; the chain ran first -- pytest 425 passed, 1 skipped, cargo release 326, clippy and fmt, 21 examples, `mkdocs --strict`, the API audit of 43 names, `mypy --strict` — ✅
 - CI on `8608e6a` green on all three jobs -- `test` (Linux), `test-macos`, `test-windows`; the Linux job ran pytest (412 passed, 14 skipped with no display) and, for the first time, every example, all 21 passing — ✅
 - PR #13 merged via `gh pr merge --merge` (merge commit `2e4ed35`), matching PRs #5, #7, #9, and #11 — ✅
 - Local `main` fast-forwarded and re-verified: `cargo check --workspace` clean, `maturin develop --release` (`tre` 0.3.5), pytest 425 passed, 1 skipped, 21 examples — ✅
-- `git tag -a v0.3.5` on the merge commit, pushed; the `Wheels` run succeeded on every job (sdist, manylinux, macOS and Windows for Python 3.9–3.14, the standalone `.so`, publish) and attached 24 assets to the [release](https://github.com/mindderivative/tre/releases/tag/v0.3.5); the generated release body replaced with the release note — ✅
+- `git tag -a v0.3.5` on the merge commit, pushed; the `Wheels` run succeeded on every job (sdist, manylinux, macOS and Windows for Python 3.9–3.14, the standalone `.so`, publish) and attached 24 assets to the [release](https://github.com/mindderivative/tess-re/releases/tag/v0.3.5); the generated release body replaced with the release note — ✅
 - Tesserae told the release is out and to start its M46, which moves its CI pin to `v0.3.5` — ✅
 
 ---
@@ -1531,7 +1531,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ---
 
-## Milestone 104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tre/issues/14))
+## Milestone 104 — `dock_panel` Moves a Docked Panel ([issue #14](https://github.com/mindderivative/tess-re/issues/14))
 
 **Status: ✅ Complete (2026-09-27).** User: "tesserae submitted an issue about the dock_panel." Tesserae found it building its docking presentation on the `v0.3.5` wheel: `dock_panel(side, panel)` on a panel docked in another zone detached it from its parent but left it in the old zone's panel list, so `set_active_panel` on the old zone re-attached it there -- and `left.children()` and `right.children()` both returned it. The issue offered two fixes, moving or raising; moving was chosen, since it also gives a framework a keyboard "Move to" path without simulating a drag, which the issue asked for.
 
@@ -1544,9 +1544,9 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## `v0.3.5.1` Released
 
-**Status: ✅ Released (2026-09-27).** User: "push and release it, then tell Tesserae." M104, closing [issue #14](https://github.com/mindderivative/tre/issues/14).
+**Status: ✅ Released (2026-09-27).** User: "push and release it, then tell Tesserae." M104, closing [issue #14](https://github.com/mindderivative/tess-re/issues/14).
 
-- `0.3.5.1` pushed at `07793b0`; [PR #15](https://github.com/mindderivative/tre/pull/15) opened; CI green on all three jobs -- `test` (Linux), `test-macos`, `test-windows` — ✅
+- `0.3.5.1` pushed at `07793b0`; [PR #15](https://github.com/mindderivative/tess-re/pull/15) opened; CI green on all three jobs -- `test` (Linux), `test-macos`, `test-windows` — ✅
 - PR #15 merged via `gh pr merge --merge` (merge commit `9cba06b`), closing issue #14; local `main` fast-forwarded and re-verified -- `maturin develop --release` (`tre` 0.3.5.1), pytest 430 passed, 1 skipped, 21 examples — ✅
 - `git tag -a v0.3.5.1` on the merge commit, pushed; the `Wheels` run succeeded on every job and attached 24 assets, named `tre-0.3.5.1-...`, confirming the four-part version reaches the wheels; the release body set to the PR's release note — ✅
 - Tesserae told the release is out and that `dock_panel` now moves a docked panel, so its `Dock.move()` drag workaround can go — ✅
@@ -1562,7 +1562,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ---
 
-## Milestone 105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tre/issues/16))
+## Milestone 105 — `undock_panel` ([issue #16](https://github.com/mindderivative/tess-re/issues/16))
 
 **Status: ✅ Complete (2026-09-27).** User: "Take a look at main branch issue #16 about undocking panels", then "yes" to M105 on a new `0.3.5.2` branch. Tesserae's M52 hot-reloads its app shell file, and a panel removed from the file could only be dropped by restarting: `node.remove()` took it off the tree but left it in its zone's list, so `set_active_panel` attached it again. The issue proposed an explicit `Window.undock_panel(panel)` rather than changing `remove()`, since zones detach hidden panels with a plain detach too.
 
@@ -1575,7 +1575,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ---
 
-## Milestone 106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tre/issues/18))
+## Milestone 106 — The OS's Light/Dark Appearance ([issue #18](https://github.com/mindderivative/tess-re/issues/18))
 
 **Status: ✅ Complete (2026-09-28).** User: "Check for more issues, I believe you have 2 more", then, asked how far to go on Linux, "Read + live events", and "Both on 0.3.5.2". Tesserae's `App(dark="system")` starts dark and learned the truth only at the OS's first switch, because nothing could read the current appearance. The issue proposed `window.get("dark")` over `winit`'s `Window::theme()`; `winit` 0.30.13's own source shows that answers only on macOS and Windows -- `None` on X11, only an app-set override on Wayland -- and that its `ThemeChanged` is emitted only on macOS, Windows, and the web, so on Linux `tre`'s `color_scheme` event had never fired either.
 
@@ -1588,7 +1588,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ---
 
-## Milestone 107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tre/issues/19))
+## Milestone 107 — Publish to PyPI as `tesserae-engine` ([issue #19](https://github.com/mindderivative/tess-re/issues/19))
 
 **Status: 🚧 In progress (2026-09-28) -- on PyPI with its wheels; the sdist waits on the next release.** User: "Check for more issues, I believe you have 2 more", then chose the distribution name `tesserae-engine` and this branch. `tre` shipped only as GitHub Release wheels, so `pip install tre` couldn't work and Tesserae, which wants to publish to PyPI, can't depend on it there (PyPI rejects direct-URL dependencies). `tre` on PyPI is an unrelated project (bindings for the TRE regex library), and so is `pytre`; `tesserae-engine` was free (checked against PyPI's JSON API). The first upload is permanent -- PyPI never takes the same version twice -- so it waits on the user.
 
@@ -1606,9 +1606,9 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## `v0.3.5.2` Released
 
-**Status: ✅ Released (2026-09-28).** User: "push and release, and let tesserae know". M105-M107, closing [issues #16, #18 and #19](https://github.com/mindderivative/tre/pull/20).
+**Status: ✅ Released (2026-09-28).** User: "push and release, and let tesserae know". M105-M107, closing [issues #16, #18 and #19](https://github.com/mindderivative/tess-re/pull/20).
 
-- `0.3.5.2` pushed; [PR #20](https://github.com/mindderivative/tre/pull/20) opened; CI green on all three jobs -- `test` (Linux, 432 passed and 15 skipped without a display, so the portal test skipped there), `test-macos`, `test-windows`, the first compile of M106's non-Linux branches — ✅
+- `0.3.5.2` pushed; [PR #20](https://github.com/mindderivative/tess-re/pull/20) opened; CI green on all three jobs -- `test` (Linux, 432 passed and 15 skipped without a display, so the portal test skipped there), `test-macos`, `test-windows`, the first compile of M106's non-Linux branches — ✅
 - PR #20 merged via `gh pr merge --merge` (merge commit `3014087`), closing issues #16, #18 and #19; `main` re-verified in the worktree -- `maturin develop --release` (`tesserae-engine` 0.3.5.2), pytest 446 passed, 1 skipped, every example — ✅
 - `git tag -a v0.3.5.2` on the merge commit, pushed; every build job passed and the GitHub release carries 24 assets, now named `tesserae_engine-0.3.5.2-...`; the release body set to the PR's release note — ✅
 - The `pypi` job, approved by the user, uploaded all 22 wheels to [PyPI](https://pypi.org/project/tesserae-engine/); the sdist was rejected (M107 Phase 2) — ✅
@@ -1619,7 +1619,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Future Work — `vello_hybrid` Fork for Real GPU-Level Partial Redraw
 
-**Tracked as [`tre` issue #4](https://github.com/mindderivative/tre/issues/4), milestone `0.3.2` (2026-09-24).** Not a milestone in this file, still documented only, per explicit user instruction ("Add the vello_hybrid fork for future performance feature"), scoped down via `AskUserQuestion` to "document it only": no git remote/fork created, no `Cargo.toml` change, no code written. This is the real, actionable technical plan for the option M34's own scoping investigation identified but the user declined in favor of the smaller, forkless CPU-side win ("reconsider forking vello_hybrid for a bigger win" — real fork-maintenance risk on a pre-1.0, actively-rewritten crate). Recorded here in full so a future milestone can start directly from real, cited facts instead of re-investigating from scratch; the GitHub issue carries the identical content for anyone tracking work through issues rather than this file.
+**Tracked as [`tre` issue #4](https://github.com/mindderivative/tess-re/issues/4), milestone `0.3.2` (2026-09-24).** Not a milestone in this file, still documented only, per explicit user instruction ("Add the vello_hybrid fork for future performance feature"), scoped down via `AskUserQuestion` to "document it only": no git remote/fork created, no `Cargo.toml` change, no code written. This is the real, actionable technical plan for the option M34's own scoping investigation identified but the user declined in favor of the smaller, forkless CPU-side win ("reconsider forking vello_hybrid for a bigger win" — real fork-maintenance risk on a pre-1.0, actively-rewritten crate). Recorded here in full so a future milestone can start directly from real, cited facts instead of re-investigating from scratch; the GitHub issue carries the identical content for anyone tracking work through issues rather than this file.
 
 **Real target to fork:** `vello_hybrid = "0.2.0"` — confirmed via direct read of the vendored crate's own `Cargo.toml` (`~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/vello_hybrid-0.2.0/Cargo.toml`), `repository = "https://github.com/linebender/vello"` — a monorepo (the `vello`/`vello_cpu`/`vello_hybrid` variants §7.2/§15 already named as "early-stage, no API stability guarantee, uneven parity" live together there), not a single-crate repo. **Real, load-bearing risk, stated directly and not to be glossed over when this is picked up:** its own `CHANGELOG.md` documents that "the scene scheduling and rendering architecture has been rewritten" since 0.1.0 — a fork tracking this crate's own upstream is tracking active architectural churn, not a stable target; every real merge from upstream would need to be re-checked against the patch below.
 

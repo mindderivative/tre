@@ -1,7 +1,7 @@
 # Architecture
 
 A short orientation. The full design reference is
-[`ARCHITECTURE.md`](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md)
+[`ARCHITECTURE.md`](https://github.com/mindderivative/tess-re/blob/main/ARCHITECTURE.md)
 in the repository root.
 
 ## Four crates
@@ -96,11 +96,11 @@ running like any animation.
 
 Tesserae Engine is a from-scratch second iteration of an earlier Vulkan engine,
 archived under
-[`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
+[`archive/`](https://github.com/mindderivative/tess-re/tree/main/archive) with
 its lessons learned.
 The GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3)
 records the work from 0.5.0 on,
-[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) the 0.4.x line, and
-[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) the 0.4.x line, and
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
 every earlier milestone, including the 0.3.5 program that moved Material
 Design 3 and the declarative layer out to the framework.

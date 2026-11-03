@@ -7,7 +7,7 @@ menu. Tesserae Engine does what only the platform can do — move, resize,
 maximize, report the window's state — and leaves the look to you (0.5.0).
 
 The whole of this page runs in
-[`examples/custom_titlebar.py`](https://github.com/mindderivative/tre/blob/main/examples/custom_titlebar.py):
+[`examples/custom_titlebar.py`](https://github.com/mindderivative/tess-re/blob/main/examples/custom_titlebar.py):
 `python examples/custom_titlebar.py --watch` keeps the window open to try.
 
 ## An undecorated window

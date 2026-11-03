@@ -1,6 +1,6 @@
 # Layer surface spike (#196)
 
-What the spike (phase 1 of [#195](https://github.com/mindderivative/tre/issues/195), TRE-REQ-001 from Tesserae Shell) found, on one machine: KDE Plasma 6.8 on Wayland, AMD Radeon 890M (RADV, Mesa 26.2.4), two 1920x1080 outputs at scale 1, `winit` 0.30.13, `wgpu` 30.0.1, `smithay-client-toolkit` 0.21.1, `wayland-client` 0.31. The prototypes (`spikes/layer-surface/`, branch `layer-surface-spike`, not merged) are throwaway; this note is what to keep.
+What the spike (phase 1 of [#195](https://github.com/mindderivative/tess-re/issues/195), TRE-REQ-001 from Tesserae Shell) found, on one machine: KDE Plasma 6.8 on Wayland, AMD Radeon 890M (RADV, Mesa 26.2.4), two 1920x1080 outputs at scale 1, `winit` 0.30.13, `wgpu` 30.0.1, `smithay-client-toolkit` 0.21.1, `wayland-client` 0.31. The prototypes (`spikes/layer-surface/`, branch `layer-surface-spike`, not merged) are throwaway; this note is what to keep.
 
 ## Verdict
 

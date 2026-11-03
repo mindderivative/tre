@@ -30,7 +30,7 @@ widget types, like class names, rather than being option values.
 ## Migrating view files
 
 `tools/migrate_views_0_3_3.py` (in the `tre` repository up to
-[`v0.3.4`](https://github.com/mindderivative/tre/tree/v0.3.4/tools); removed
+[`v0.3.4`](https://github.com/mindderivative/tess-re/tree/v0.3.4/tools); removed
 in 0.3.5 with the declarative layer) rewrites YAML
 views, stylesheets, and themes in place, keeping comments and
 formatting:
@@ -73,7 +73,7 @@ above. Review its diff: a widget whose `kind:` is written after a nested
   color there drew invisible text — Tesserae Engine's own examples had nine such
   labels. Migrating makes the intent explicit; a `foreground` of
   `(0, 0, 0, 0)` is still invisible.
-- **Live updates keep bound values** ([issue #8](https://github.com/mindderivative/tre/issues/8)).
+- **Live updates keep bound values** ([issue #8](https://github.com/mindderivative/tess-re/issues/8)).
   `set_theme`, `reconcile`, and `poll_reload` now re-apply the attached
   `ViewModel` afterward. In 0.3.2 a bound field fell back to its static
   spec value until its `Signal` next changed, and bindings or handlers a

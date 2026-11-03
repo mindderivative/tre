@@ -51,7 +51,7 @@ A dependency on it is written the same way, for example
 
 ## Option 2: install a wheel from a GitHub release
 
-Every [tagged release](https://github.com/mindderivative/tre/releases)
+Every [tagged release](https://github.com/mindderivative/tess-re/releases)
 publishes real, verified wheels, the same files PyPI carries — a source
 distribution, plus:
 
@@ -76,7 +76,7 @@ gnu.so`) for tooling that consumes the compiled module directly rather
 than through `pip`.
 
 Download the wheel matching your platform and interpreter from the
-[latest release](https://github.com/mindderivative/tre/releases/latest)
+[latest release](https://github.com/mindderivative/tess-re/releases/latest)
 and install it directly:
 
 ```bash
@@ -93,7 +93,7 @@ install the same `tess_re` package.
 ## Option 3: build from source
 
 You'll need a Rust toolchain (see
-[`rust-toolchain.toml`](https://github.com/mindderivative/tre/blob/main/rust-toolchain.toml)
+[`rust-toolchain.toml`](https://github.com/mindderivative/tess-re/blob/main/rust-toolchain.toml)
 for the exact pinned version — `rustup` picks it up automatically; the
 minimum supported Rust version is 1.90) and
 [`maturin`](https://www.maturin.rs/). On Linux you also need `pkg-config`
@@ -109,7 +109,7 @@ sudo apt-get install pkg-config libfontconfig1-dev libxkbcommon-dev \
 Then:
 
 ```bash
-git clone https://github.com/mindderivative/tre.git
+git clone https://github.com/mindderivative/tess-re.git
 cd tess_re
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
@@ -120,7 +120,7 @@ maturin develop --release
 `maturin develop` compiles the Rust extension and installs it directly
 into your active virtual environment in editable form — the fastest loop
 for local development. Run any script under
-[`examples/`](https://github.com/mindderivative/tre/tree/main/examples)
+[`examples/`](https://github.com/mindderivative/tess-re/tree/main/examples)
 to confirm it worked:
 
 ```bash
@@ -148,7 +148,7 @@ portable `manylinux` wheel from an ordinary Linux dev host needs either:
 
 - **A real manylinux container**, the same way this project's own release
   CI does it (see
-  [`.github/workflows/wheels.yml`](https://github.com/mindderivative/tre/blob/main/.github/workflows/wheels.yml)):
+  [`.github/workflows/wheels.yml`](https://github.com/mindderivative/tess-re/blob/main/.github/workflows/wheels.yml)):
   a genuinely older glibc baseline inside the container achieves a
   substantially broader, more portable tag automatically, with no zig
   cross-compilation needed at all.

@@ -15,10 +15,10 @@ occlusion handling (#246). 0.5.9 (2026-10-27) was the shared GPU device and `kee
 from a scoped `Backlog` entry that the user moves to `Ready`.
 
 In progress on branch `0.6.0` (#257, not pushed): the Python package is renamed `tre` to `tess_re` and `TRE_*` to
-`TESS_RE_*`, version 0.6.0, no alias. Still to do before a release, each by the owner: the GitHub repo rename (then
-the `mindderivative/tre` URLs in `pyproject.toml`, `mkdocs.yml`, the docs, `tools/board.py`, `tools/pr_chain.py` and
-the workflows), and the PyPI trusted-publisher update for `tesserae-engine`. The other projects (`tess_ui`,
-`tess_el`, `tess_dl`, `tess_shell`) migrate on their own side; `docs/migrating-0.6.md` has the table.
+`TESS_RE_*`, version 0.6.0, no alias. The GitHub repo is renamed `mindderivative/tess-re` and the URLs are updated.
+Still to do before a release, each by the owner: the PyPI trusted-publisher update for `tesserae-engine`, and push +
+PR. The other projects (`tess_ui`, `tess_el`, `tess_dl`, `tess_shell`) migrate on their own side;
+`docs/migrating-0.6.md` has the table.
 
 ## Backlog (not scoped)
 

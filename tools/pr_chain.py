@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 
-REPO = "mindderivative/tre"
+REPO = "mindderivative/tess-re"
 TRUNK = "main"
 
 

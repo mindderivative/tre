@@ -1,22 +1,22 @@
 # Custom windowing (0.5.0)
 
 !!! note "Decided and released (0.5.0, 2026-09-30)"
-    This is 0.5.0's M1 design for [issue #28](https://github.com/mindderivative/tre/issues/28),
+    This is 0.5.0's M1 design for [issue #28](https://github.com/mindderivative/tess-re/issues/28),
     reviewed and decided by the project owner: every
     recommendation accepted, with refinements, and five
     [additions](#additions-from-the-review). Each question below ends with
     its **Decided** line. Built: M2's undecorated windows,
     controls, state and events, fullscreen, minimum size, icon, and
-    platform ([#37](https://github.com/mindderivative/tre/issues/37)); M3's
+    platform ([#37](https://github.com/mindderivative/tess-re/issues/37)); M3's
     drag region, resize border, `pointer_cancel`, double-click to maximize,
-    and window menu ([#38](https://github.com/mindderivative/tre/issues/38));
+    and window menu ([#38](https://github.com/mindderivative/tess-re/issues/38));
     M4's macOS overlay title bar, `titlebar_inset`, `native_controls`, and
-    double-click setting ([#39](https://github.com/mindderivative/tre/issues/39));
+    double-click setting ([#39](https://github.com/mindderivative/tess-re/issues/39));
     M5's example, [guide](../guide/custom-title-bars.md), and upgrade notes
-    ([#40](https://github.com/mindderivative/tre/issues/40)), with the
+    ([#40](https://github.com/mindderivative/tess-re/issues/40)), with the
     owner's manual checks passed on KDE. Released in
-    [0.5.0](https://github.com/mindderivative/tre/releases/tag/v0.5.0)
-    ([#41](https://github.com/mindderivative/tre/issues/41)).
+    [0.5.0](https://github.com/mindderivative/tess-re/releases/tag/v0.5.0)
+    ([#41](https://github.com/mindderivative/tess-re/issues/41)).
 
 ## The goal
 

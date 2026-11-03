@@ -22,7 +22,7 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 BASELINE_FILTER=text cargo test ...   # only scenarios whose name contains "text"
 ```
 
-[`crates/engine-render/tests/baseline.rs`](https://github.com/mindderivative/tre/blob/main/crates/engine-render/tests/baseline.rs)
+[`crates/engine-render/tests/baseline.rs`](https://github.com/mindderivative/tess-re/blob/main/crates/engine-render/tests/baseline.rs)
 runs the app's own frame sequence (`WindowRenderer`: `prepare`, `draw`, then a
 wait for the GPU) at 1920×1080 and times each stage of 60 frames after 8 warm-up
 frames. Idle CPU, wake-ups and startup were measured on a real Python window

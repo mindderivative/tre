@@ -1,7 +1,7 @@
 # Examples
 
 Each script in
-[`examples/`](https://github.com/mindderivative/tre/tree/main/examples) is
+[`examples/`](https://github.com/mindderivative/tess-re/tree/main/examples) is
 small and runnable. Most are self-checking: they drive their building
 block headlessly with `window.simulate` and `window.advance` and assert
 what should happen before opening a window for a few seconds. Run one with

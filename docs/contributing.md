@@ -16,7 +16,7 @@ sudo apt-get install -y build-essential pkg-config git python3 python3-dev pytho
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # 3. The code, a venv with the Python tools, and the extension built into it.
-git clone https://github.com/mindderivative/tre.git
+git clone https://github.com/mindderivative/tess-re.git
 cd tess_re
 git checkout 0.5.6                 # or main; see "Branches and releases" below
 python3 -m venv .venv
@@ -72,7 +72,7 @@ the Tesserae side before the work starts, and a local wheel is handed over for i
 to test before anything is published.
 
 Picking those requests up on a timer is written down in
-[`tools/intake-routine.md`](https://github.com/mindderivative/tre/blob/main/tools/intake-routine.md):
+[`tools/intake-routine.md`](https://github.com/mindderivative/tess-re/blob/main/tools/intake-routine.md):
 the process and the prompt to run in Claude Code, so it can be restarted on a new
 machine.
 
@@ -231,8 +231,8 @@ This project holds itself to one discipline end to end for every real
 change: investigate → plan → implement → test → document → commit. See
 the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) (0.5.0 on; its
 README describes how a step is recorded),
-[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md), and
-[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md) for the
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md), and
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md) for the
 milestone-by-milestone history this discipline has produced, and
 [Architecture](architecture.md) for the design principles that shape it.
 
