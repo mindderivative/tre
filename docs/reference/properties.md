@@ -63,6 +63,7 @@ and applies them in order once all are checked (the same node twice: the later w
 Python-to-Rust calls, not time: layout already runs once per frame however many nodes change, and on a
 3,100-node tree `build` took 5.3 ms against 4.9 ms of per-node calls, `apply` of 1,000 entries 0.33 ms
 against 0.33 ms (`tools/bench_tree_build.py`; llvmpipe, medians). The reason to use them is the all-or-nothing check.
+`set_children` is cheap for appends and removals; a reorder moves nodes one at a time and is not (2,000 reversed: 0.63 ms).
 Appending a child no longer gets slower with every sibling already there: 0.12 µs a call at 20,000
 siblings, 0.13 at 1,000 (it was 10.9 and 0.63).
 

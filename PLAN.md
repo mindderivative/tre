@@ -1,4 +1,4 @@
-# PLAN — after 0.5.9
+# PLAN — after 0.5.10
 
 *(Replaces the 0.5.0 plan, custom windowing (#28), which shipped in 0.5.0
 and is recorded in `LOG.md`. From 0.5.0 every step is tracked in the GitHub
@@ -7,10 +7,11 @@ project Tesserae Rendering Engine; the old trackers are archived as
 
 ## Where we are
 
-`main` is at 0.5.9 (released 2026-10-27: PR #241, tag `v0.5.9`, on PyPI as `tesserae-engine==0.5.9`;
-installed from PyPI and smoke-tested in a clean venv): the shared GPU device and renderer (#220, #235), the
-screen frame's pass-through clicks (#236) and `keep_alive` / `stop()` (#238). Open issues: #187 and #188
-(Windows and macOS hardware checks), #189 (X11 drop position). Per `CLAUDE.md`, work starts
+`main` is at 0.5.10 (released 2026-11-03: tag `v0.5.10`, on PyPI as `tesserae-engine==0.5.10`; installed from
+PyPI and smoke-tested in a clean venv): `Window.build` / `apply` / `Node.set_children` (#253), SMIL `svg_time` (#245) and
+occlusion handling (#246). 0.5.9 (2026-10-27) was the shared GPU device and `keep_alive`. Open issues: #187 and #188
+(Windows and macOS hardware checks), #189 (X11 drop position), #247 (timers wait while every Wayland window is hidden),
+#248 (KWin fullscreen frame rate). Per `CLAUDE.md`, work starts
 from a scoped `Backlog` entry that the user moves to `Ready`.
 
 ## Backlog (not scoped)
