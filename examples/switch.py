@@ -13,7 +13,7 @@ The script checks all of that headlessly with `window.simulate` and
 `App.run()` returns quietly where no display is reachable.
 """
 
-from tre import App, Event, Window
+from tess_re import App, Event, Window
 
 TRACK_OFF = (0xE6, 0xE0, 0xE9, 0xFF)
 TRACK_ON = (0x67, 0x50, 0xA4, 0xFF)
@@ -72,7 +72,7 @@ class Switch:
 
 
 def main():
-    window = Window(width=320, height=120, title="tre -- switch")
+    window = Window(width=320, height=120, title="tess_re -- switch")
     window.root.set(align_items="center", gap=12)
     caption = window.create("text", text="Wi-Fi", font_size=16, width=60, height=20)
     changes = []

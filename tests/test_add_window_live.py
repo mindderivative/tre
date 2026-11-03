@@ -18,7 +18,7 @@ def run(body: str) -> str:
     script = textwrap.dedent(
         """
         import sys
-        from tre import App, Window
+        from tess_re import App, Window
 
         def make(title):
             w = Window(width=200, height=120)

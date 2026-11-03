@@ -11,7 +11,7 @@ import textwrap
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 # --- the watchdog property -------------------------------------------------------
@@ -103,7 +103,7 @@ def test_a_lost_gpu_fires_gpu_lost_and_ends_the_run_with_an_error():
     open can't, and `App.run()` raises instead of freezing or panicking. If
     the loop did not end, the subprocess timeout would fail this test."""
     out = run_live("""
-        from tre import App, Window
+        from tess_re import App, Window
         w = Window(width=200, height=120)
         box = w.create("box", width=20, height=20)
         w.root.add_child(box)

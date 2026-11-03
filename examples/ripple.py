@@ -9,7 +9,7 @@ The script checks the ripple's life with `window.simulate` and
 renders `max_frames=60` and returns quietly without a display.
 """
 
-from tre import App, Event, Window
+from tess_re import App, Event, Window
 
 ACCENT = (0x67, 0x50, 0xA4, 0xFF)
 WHITE = (0xFF, 0xFF, 0xFF, 0xFF)
@@ -17,7 +17,7 @@ EASE_OUT = (0.2, 0.0, 0.0, 1.0)
 W, H = 160.0, 48.0
 RADIUS = (W * W + H * H) ** 0.5  # reaches every corner from anywhere inside
 
-window = Window(width=260, height=120, title="tre -- ripple")
+window = Window(width=260, height=120, title="tess_re -- ripple")
 window.root.set(align_items="center", justify_content="center")
 button = window.create("box", width=W, height=H, corner_radius=H / 2, fill=ACCENT,
                        clip_children=True, align_items="center", justify_content="center",

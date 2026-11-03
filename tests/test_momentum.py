@@ -7,7 +7,7 @@ clock), so a fast flick coasts and a slow drag does not.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def scroll_scene(height=200, content=3000):

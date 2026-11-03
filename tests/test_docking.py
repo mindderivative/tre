@@ -6,7 +6,7 @@ through the same input pipeline `App.run()` uses.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

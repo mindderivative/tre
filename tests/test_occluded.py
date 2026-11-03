@@ -2,7 +2,7 @@
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def test_occluded_is_a_read_only_state_that_fires_once_per_change():

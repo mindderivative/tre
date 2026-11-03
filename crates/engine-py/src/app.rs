@@ -518,7 +518,7 @@ impl GpuState {
     /// `maybe_update_config_buffer` every frame (checked in the pinned
     /// source, 0.4.0 M2), updating its size-dependent state whenever the
     /// `RenderSize` passed to `render` differs from the previous call;
-    /// its depth buffer is the caller's, and `tre` passes none -- real,
+    /// its depth buffer is the caller's, and `tess_re` passes none -- real,
     /// existing resize-safety this phase only needed to rely on, not
     /// build. A 0-sized dimension (a real, possible transient value on
     /// some platforms while a window is being minimized) is skipped
@@ -813,7 +813,7 @@ impl App {
         }))
     }
 
-    /// M87 (tre issue #6): a `Send + Sync` handle a background thread can
+    /// M87 (tess_re issue #6): a `Send + Sync` handle a background thread can
     /// hold, since `App` itself is `unsendable`. `handle.call_soon(fn)`
     /// queues `fn` to run on this `App`'s event-loop thread and wakes the
     /// loop -- how a file watcher thread drives hot reload inside
@@ -1634,7 +1634,7 @@ impl App {
                 let resized = runtime
                     .gpu
                     .needs_resize(runtime.handles.width.get(), runtime.handles.height.get());
-                // M86: a `tre.register_font` call touches no `Tree`
+                // M86: a `tess_re.register_font` call touches no `Tree`
                 // state either -- same reasoning as `resized` above. A
                 // family that fell back before may resolve to a real
                 // face now, so this frame must repaint. One atomic load
@@ -2136,7 +2136,7 @@ impl App {
                     py,
                 );
                 match event {
-                    // A real OS appearance change: tre themes nothing
+                    // A real OS appearance change: tess_re themes nothing
                     // itself (M99), so it only tells the framework.
                     InputEvent::ThemeChanged { dark } => {
                         listeners::deliver_window(

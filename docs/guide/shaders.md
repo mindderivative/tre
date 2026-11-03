@@ -2,7 +2,7 @@
 
 *New in 0.5.1.* A node can be painted by your own WGSL: a fractal behind a
 panel, shining text, a colour grade over a picture. You write one function,
-give it to a node, and tre does the rest. The details of the object and its
+give it to a node, and tess_re does the rest. The details of the object and its
 arguments are in the [Shader reference](../reference/shader.md); this page is
 how to use it.
 
@@ -17,17 +17,17 @@ Use it when you want to change something that exists: a shine over text, a
 blur over a panel, a grade over children.
 
 ```python
-glow = tre.Shader(open("shine.wgsl").read(),
+glow = tess_re.Shader(open("shine.wgsl").read(),
                   uniforms={"speed": 0.35, "glow": (0.9, 0.85, 0.6)},
                   mode="effect", animated=True)
 title.set(shader=glow)
 ```
 
-[`examples/shader_shine.py`](https://github.com/mindderivative/tre/blob/main/examples/shader_shine.py)
+[`examples/shader_shine.py`](https://github.com/mindderivative/tess-re/blob/main/examples/shader_shine.py)
 (an effect over text) and
-[`examples/shader_panel.py`](https://github.com/mindderivative/tre/blob/main/examples/shader_panel.py)
+[`examples/shader_panel.py`](https://github.com/mindderivative/tess-re/blob/main/examples/shader_panel.py)
 (a fill behind a panel's children) are runnable, with their WGSL in
-[`examples/shaders/`](https://github.com/mindderivative/tre/tree/main/examples/shaders).
+[`examples/shaders/`](https://github.com/mindderivative/tess-re/tree/main/examples/shaders).
 
 ## What you write
 
@@ -46,10 +46,10 @@ fn shade(p: Pixel) -> vec4<f32> {
 - Your uniforms are the fields of `u`: `u.speed`, `u.tint.rgb`.
 - In an effect, `content(uv)` reads the node's own pixels. With `inputs`,
   `input_<name>(uv)` reads another node.
-- You return straight-alpha RGBA. tre handles the rest, including blending
+- You return straight-alpha RGBA. tess_re handles the rest, including blending
   over what is behind.
 
-You never write a vertex shader, a binding, or an entry point, so tre can
+You never write a vertex shader, a binding, or an entry point, so tess_re can
 change how it runs shaders without breaking yours.
 
 ## Uniforms
@@ -67,16 +67,16 @@ A shader is checked when it is created, with no GPU and no window:
 
 ```python
 try:
-    tre.Shader("fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(1.0, ;\n}\n")
-except tre.ShaderError as error:
+    tess_re.Shader("fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(1.0, ;\n}\n")
+except tess_re.ShaderError as error:
     print(error.line, error.column)   # 2, 27 -- in *your* source
     print(error)                      # the message, the line, and a caret
 ```
 
-`line`, `column` and `source_line` refer to the WGSL you wrote, not tre's
+`line`, `column` and `source_line` refer to the WGSL you wrote, not tess_re's
 generated code. Some mistakes (a type mismatch) have no position and say what
 is wrong in the message. Where the source comes from, and checking the data you
-feed a shader, are your framework's job: tre reports only this.
+feed a shader, are your framework's job: tess_re reports only this.
 
 A problem only the GPU finds is logged once, and the node paints as if it had
 no shader; it never stops the window. A GPU that hangs or is lost is reported
@@ -128,14 +128,14 @@ run only when something changed. An effect adds a second texture and an
 offscreen render of its subtree, redone only when the subtree changes. Many
 shader nodes cost many passes, so a hundred small animated tiles are a hundred
 passes a frame; one big shader over a big node is usually cheaper than many.
-tre does not cap the number of shader nodes.
+tess_re does not cap the number of shader nodes.
 
 ## Trust
 
-A shader is code that runs on the GPU. tre takes shaders from Python only:
+A shader is code that runs on the GPU. tess_re takes shaders from Python only:
 there is no way to create one from a view file or other data, so a shader is as
 trusted as the Python that creates it. If your framework builds shaders from
 user-supplied text, treat that text as code: a shader can loop for a long time.
-tre reports a hung or lost GPU (and can warn about a stalled frame with
+tess_re reports a hung or lost GPU (and can warn about a stalled frame with
 `window.set(gpu_watchdog=seconds)`), but it cannot stop a shader that is
 running. Don't build shaders from untrusted input.

@@ -17,8 +17,8 @@ import socket
 import sys
 import threading
 
-import tre
-from tre import App, LayerWindow
+import tess_re
+from tess_re import App, LayerWindow
 
 seconds = 3.0
 if "--seconds" in sys.argv:
@@ -39,7 +39,7 @@ def add_bar(output):
     print(f"bar added on {output.name}")
 
 
-if tre.supports("layer_shell"):
+if tess_re.supports("layer_shell"):
     app.on("output_added", add_bar)
     app.on("output_removed", lambda output: print(f"output {output.name} removed"))
     for output in app.outputs():

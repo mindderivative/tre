@@ -1,4 +1,4 @@
-//! 0.5.4 (#109): `tre.Gradient`, a gradient fill for a box's `fill`.
+//! 0.5.4 (#109): `tess_re.Gradient`, a gradient fill for a box's `fill`.
 
 use engine_core::{GradientShape, GradientStop};
 use peniko::Color;

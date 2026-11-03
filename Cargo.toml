@@ -8,12 +8,12 @@ members = [
 ]
 
 [workspace.package]
-version = "0.5.10"
+version = "0.6.0"
 edition = "2024"
 license = "MIT"
 authors = ["Phil Hodgins <philip.a.hodgins@gmail.com>"]
-repository = "https://github.com/mindderivative/tre"
-homepage = "https://github.com/mindderivative/tre"
+repository = "https://github.com/mindderivative/tess-re"
+homepage = "https://github.com/mindderivative/tess-re"
 # The MSRV, derived rather than claimed (LESSONS_LEARNED.md §5: TRE v1's
 # `1.75` was quietly false). 0.4.0: the highest `rust-version` any locked
 # dependency declares is `ordered-float` 5.5.0's 1.90 (`vello_gpu` and

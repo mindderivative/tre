@@ -1,6 +1,6 @@
 # Layer surface spike (#196)
 
-What the spike (phase 1 of [#195](https://github.com/mindderivative/tre/issues/195), TRE-REQ-001 from Tesserae Shell) found, on one machine: KDE Plasma 6.8 on Wayland, AMD Radeon 890M (RADV, Mesa 26.2.4), two 1920x1080 outputs at scale 1, `winit` 0.30.13, `wgpu` 30.0.1, `smithay-client-toolkit` 0.21.1, `wayland-client` 0.31. The prototypes (`spikes/layer-surface/`, branch `layer-surface-spike`, not merged) are throwaway; this note is what to keep.
+What the spike (phase 1 of [#195](https://github.com/mindderivative/tess-re/issues/195), TRE-REQ-001 from Tesserae Shell) found, on one machine: KDE Plasma 6.8 on Wayland, AMD Radeon 890M (RADV, Mesa 26.2.4), two 1920x1080 outputs at scale 1, `winit` 0.30.13, `wgpu` 30.0.1, `smithay-client-toolkit` 0.21.1, `wayland-client` 0.31. The prototypes (`spikes/layer-surface/`, branch `layer-surface-spike`, not merged) are throwaway; this note is what to keep.
 
 ## Verdict
 
@@ -13,10 +13,10 @@ I2 worked end to end: a `winit` window and a layer surface lived in one process 
 | Step | Result |
 |---|---|
 | 1. Layer surface and `wgpu` | A `top`-layer surface (anchor top/left/right, 0x32, exclusive zone 32) maps on its own connection. The `wgpu` surface comes from the raw Wayland handles (`create_surface_unsafe`) and runs on RADV. Surface capabilities: formats include `Bgra8Unorm`/`Rgba8Unorm`, alpha `Opaque` and `PreMultiplied`, usages include `COPY_DST` (the persistent-target copy works). A maximised window is 32 px shorter with the bar up (1052 to 1020, and 1022 to 990 on the other output): the exclusive zone is respected. |
-| 2. tre's pipeline | `WindowRenderer` (`engine-render`) drew a real tre scene (a container, a rounded rect, a text node) on the layer surface and read back correctly. It takes a device, queue, texture and a `Tree`: it is already window-agnostic. Only `GpuState::new` and `recreate_surface` in `engine-py/src/app.rs` assume a `winit` window (to create the surface). |
+| 2. tess_re's pipeline | `WindowRenderer` (`engine-render`) drew a real tess_re scene (a container, a rounded rect, a text node) on the layer surface and read back correctly. It takes a device, queue, texture and a `Tree`: it is already window-agnostic. Only `GpuState::new` and `recreate_surface` in `engine-py/src/app.rs` assume a `winit` window (to create the surface). |
 | 3. Input | Real events, through a virtual `uinput` device (the spike's only way to produce them): pointer enter/motion/press/release with exact surface-local positions, scroll (15 px a notch, as `Pixels`), keyboard text. They fed `engine-core`'s `InputEvent` and `Tree::dispatch`: hover changed, a click returned `Activated`. Keyboard interactivity behaves as the protocol says: `none` gets no key events, `on_demand` gets focus when the surface is clicked, `exclusive` takes focus on map. |
 | 4. Shared connection (I2) | `winit`'s `HasDisplayHandle` gives the `wl_display`; `wayland-backend`'s `Backend::from_foreign_display` wraps it; a second `EventQueue` on it binds the layer shell. Both sides drew through one `wgpu` device. See "I2 findings" below. |
-| 5. Idle and clocks | An idle layer surface drew **1 frame** in 10 s and used 0.0% of a core (a 10 Hz poll in the spike's loop). With frame callbacks chained it ran at **60 a second, steadily** (longest gap 18 ms), including while a fullscreen window was shown (see "Not shown"). Animation progress in tre is clock-driven (`Tree::tick_all(now)`), so it does not depend on callbacks; what must not depend on them is the loop's *wake-up*. |
+| 5. Idle and clocks | An idle layer surface drew **1 frame** in 10 s and used 0.0% of a core (a 10 Hz poll in the spike's loop). With frame callbacks chained it ran at **60 a second, steadily** (longest gap 18 ms), including while a fullscreen window was shown (see "Not shown"). Animation progress in tess_re is clock-driven (`Tree::tick_all(now)`), so it does not depend on callbacks; what must not depend on them is the loop's *wake-up*. |
 | 6. KWin facts | A **negative margin** (`-32` top) is accepted with no protocol error and puts the surface above the screen edge (no pointer event reaches it at y 3 to 25). A **1 px surface with an empty input region and zone 32** keeps its zone (1052 to 1020). A **full-output surface with zone `-1`** reserves nothing, and alongside a 32 px bar the maximised height is still 32 px less. With no output given, the compositor picked one (it alternated between runs), so `LayerWindow` must bind an output itself. `wl_output` is v4 here, so connector names (`DP-1`, `HDMI-A-1`) come with the output; `zxdg_output_manager_v1` is v3. |
 | 7. Fractional scale | `wp_fractional_scale_manager_v1` and `wp_viewporter` bind, and `get_fractional_scale`/`get_viewport` work on a layer surface. At scale 1 the compositor sends no `preferred_scale`. A real 1.5 output was not available and its display settings were not changed. |
 
@@ -35,18 +35,18 @@ I2 worked end to end: a `winit` window and a layer surface lived in one process 
 | Area | State |
 |---|---|
 | Pointer, scroll, buttons, keyboard text, key names, modifiers | Shown working in the spike (about 150 lines to translate to `InputEvent`). |
-| Key repeat | Not provided: `sctk` offers it only through `calloop` (`get_keyboard_with_repeat`), a second event loop. tre needs its own repeat timer on the loop. |
-| Cursor shape | Not tested. KWin offers `wp_cursor_shape_manager_v1`; it needs binding and a mapping from tre's cursor names. |
+| Key repeat | Not provided: `sctk` offers it only through `calloop` (`get_keyboard_with_repeat`), a second event loop. tess_re needs its own repeat timer on the loop. |
+| Cursor shape | Not tested. KWin offers `wp_cursor_shape_manager_v1`; it needs binding and a mapping from tess_re's cursor names. |
 | Touch | The seat here has no touch capability, so nothing was tested. |
 | Text input and IME | Not tested. Plain keys gave UTF-8 text; preedit needs `zwp_text_input_v3` (KWin offers it) for the layer surface, as `winit` does for its windows. |
-| Clipboard | Unaffected by the surface role: `arboard` is built without its Wayland feature, so tre's clipboard already goes through XWayland for every window. |
+| Clipboard | Unaffected by the surface role: `arboard` is built without its Wayland feature, so tess_re's clipboard already goes through XWayland for every window. |
 | Accessibility | Not tested. `engine-platform` uses `accesskit_winit`, which wraps `accesskit_unix` (already built here); a layer surface would use `accesskit_unix` directly. Needs its own check. |
 | Fractional scale | Objects work; 1.5 untested. The renderer already takes a display scale (`WindowRenderer::set_scale`). |
 
 ## Not shown
 
-- **Visible on screen, by eye or screenshot.** `spectacle` did not capture the bar. The evidence that it maps is the protocol trace (`configure`, `ack_configure`, `attach`, `commit`), the first frame read back from the surface texture (a purple bar with the tre scene), the shortened maximised window, and pointer events at the bar's pixels.
-- **Frame callbacks while covered.** They kept coming at 60 a second while a tre window was fullscreen, but that window may have gone to the other output; whether KWin throttles callbacks to a layer surface hidden under a fullscreen window on the *same* output is not shown.
+- **Visible on screen, by eye or screenshot.** `spectacle` did not capture the bar. The evidence that it maps is the protocol trace (`configure`, `ack_configure`, `attach`, `commit`), the first frame read back from the surface texture (a purple bar with the tess_re scene), the shortened maximised window, and pointer events at the bar's pixels.
+- **Frame callbacks while covered.** They kept coming at 60 a second while a tess_re window was fullscreen, but that window may have gone to the other output; whether KWin throttles callbacks to a layer surface hidden under a fullscreen window on the *same* output is not shown.
 - **Output removal (`closed`)**, a hot-plugged output, a 1.5x output, touch, IME, cursor shape, AccessKit, KWin's own map and unmap effects (not observable from a client), the first KWin release with the protocol (documentation, not checked), and wlroots compositors.
 - **How the injected input was made.** A virtual absolute pointer and keyboard through `/dev/uinput` (`spikes/uinput.py`), with the maintainer's agreement; no real device was touched.
 
@@ -56,10 +56,10 @@ Sizes are against the spike, with I2 as the route.
 
 | Phase | Work | Size |
 |---|---|---|
-| 2. `LayerWindow` core | The second-queue thread and proxy plumbing; `LayerWindow` constructor and `set()`; validation before any request; `configure` and `closed` events; `tre.supports("layer_shell")`; a mock backend so `simulate`, `advance` and `snapshot` run with no compositor; render through `WindowRenderer`; input translation, key repeat and cursor shape; the surface-filtering rule. | L |
+| 2. `LayerWindow` core | The second-queue thread and proxy plumbing; `LayerWindow` constructor and `set()`; validation before any request; `configure` and `closed` events; `tess_re.supports("layer_shell")`; a mock backend so `simulate`, `advance` and `snapshot` run with no compositor; render through `WindowRenderer`; input translation, key repeat and cursor shape; the surface-filtering rule. | L |
 | 3. Outputs | `app.outputs()`, `output_added` and `output_removed`, explicit output binding (the compositor's pick varies). `wl_output` v4 names. | S to M |
 | 4. `input_region` | Empty and rectangle lists are one `wl_region` each (shown cheap); `"auto"` from hit-test shapes is the real work. | M |
-| 5. Margin animation and `drag_margin` | Margins are plain requests (negative accepted); animation is tre's existing clock. | M |
+| 5. Margin animation and `drag_margin` | Margins are plain requests (negative accepted); animation is tess_re's existing clock. | M |
 | 6. `PopupWindow` | Separable; not touched by the spike. The full-screen overlay alternative is easier to try given a working layer surface. | M to L |
 
 Open before phase 2: text input (IME), touch, AccessKit and a 1.5x output each need a check on the real implementation; none changes the verdict.

@@ -3,7 +3,7 @@
 an empty right zone. Press the gray handle and drag to the right zone to
 move the panel there.
 
-`tre` docks, drags, and reports; the look is the app's own. The handle
+`tess_re` docks, drags, and reports; the look is the app's own. The handle
 is an ordinary rect whose `pointer_down` starts the drag, and the
 translucent highlight follows the `dock_target` window event --
 `dock_drop` hides it again.
@@ -13,9 +13,9 @@ A real drag needs a person at the mouse; `tests/test_docking.py` drives
 the same path with `window.simulate`.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=320, height=160, title="tre -- docking")
+window = Window(width=320, height=160, title="tess_re -- docking")
 
 handle = window.create("box", fill=(0x80, 0x80, 0x80, 0xFF), width=24, height=100)
 window.root.add_child(handle)

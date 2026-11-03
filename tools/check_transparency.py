@@ -27,11 +27,11 @@ import sys
 import threading
 import time
 
-from tre import App, Window
+from tess_re import App, Window
 
 PHASE_SECONDS = 8.0
 
-window = Window(width=420, height=260, title="tre transparency check", decorations=False)
+window = Window(width=420, height=260, title="tess_re transparency check", decorations=False)
 window.set(transparent=True, blur_behind=True)
 window.root.set(fill=(0, 0, 0, 0), padding=0)
 clicks = {"normal": 0, "click_through": 0, "normal_again": 0}
@@ -98,7 +98,7 @@ def sequence() -> None:
 
 
 threading.Thread(target=sequence, daemon=True).start()
-print(f"tre {importlib.metadata.version('tesserae-engine')} on {platform.platform()} "
+print(f"tess_re {importlib.metadata.version('tesserae-engine')} on {platform.platform()} "
       f"(python {sys.version.split()[0]}, window platform: {window.get('platform')})")
 print("Set DISPLAY/WAYLAND_DISPLAY as usual. XDG_CURRENT_DESKTOP =",
       __import__("os").environ.get("XDG_CURRENT_DESKTOP", "(unset)"))

@@ -9,7 +9,7 @@ closes it with `closed` reason `"dismissed"`. Item B opens a submenu, a popup wh
 the menu.
 
 Needs a Wayland compositor with the layer shell (KDE's KWin, wlroots'); elsewhere
-`LayerWindow(...)` raises `tre.UnsupportedPlatform`, which this example reports and returns
+`LayerWindow(...)` raises `tess_re.UnsupportedPlatform`, which this example reports and returns
 from. With no display at all (CI) it builds the bar, the menu and the submenu and checks them
 headless with simulated clicks. Pass `--watch` to keep the bar up. See
 docs/guide/menus-from-a-bar.md and docs/reference/layer-window.md#popupwindow.
@@ -17,8 +17,8 @@ docs/guide/menus-from-a-bar.md and docs/reference/layer-window.md#popupwindow.
 
 import sys
 
-import tre
-from tre import App, LayerWindow, PopupWindow, UnsupportedPlatform
+import tess_re
+from tess_re import App, LayerWindow, PopupWindow, UnsupportedPlatform
 
 BAR_HEIGHT = 32
 BUTTON = (100, 0, 60, BAR_HEIGHT)  # the button's rectangle, in the bar's coordinates
@@ -98,7 +98,7 @@ sub, sub_item = make_submenu(check)
 sub.simulate("click", node=sub_item)
 assert picked == ["B1"], picked
 
-if tre.supports("layer_shell"):
+if tess_re.supports("layer_shell"):
     app.add_window(bar)
     app.run(max_frames=None if "--watch" in sys.argv else 90)
     print("popup_menu.py: exited cleanly")

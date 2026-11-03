@@ -58,7 +58,7 @@ fn main() {
         |opener, _waker| {
             opener.open_window(WindowRequest {
                 config: WindowConfig {
-                    title: "tre v2 -- §14 step 14 spike: window A".to_string(),
+                    title: "tess_re v2 -- §14 step 14 spike: window A".to_string(),
                     width: 200,
                     height: 150,
                     max_frames: Some(5),
@@ -68,7 +68,7 @@ fn main() {
             });
             opener.open_window(WindowRequest {
                 config: WindowConfig {
-                    title: "tre v2 -- §14 step 14 spike: window B".to_string(),
+                    title: "tess_re v2 -- §14 step 14 spike: window B".to_string(),
                     width: 250,
                     height: 180,
                     max_frames: Some(5),

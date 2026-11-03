@@ -12,7 +12,7 @@ window below's. Closing the overlay on dismiss means it costs nothing while no m
 `placement="below"` flips above the button when the bar is at the bottom edge.
 
 Needs a Wayland compositor with the layer shell (KDE's KWin, wlroots'); elsewhere
-`LayerWindow(...)` raises `tre.UnsupportedPlatform`, which this example reports and returns
+`LayerWindow(...)` raises `tess_re.UnsupportedPlatform`, which this example reports and returns
 from. With no display at all (CI) it builds both surfaces and checks the menu headless: it
 opens, takes an item click, and dismisses on Escape. Pass `--watch` to keep the bar up.
 See docs/guide/menus-from-a-bar.md.
@@ -20,8 +20,8 @@ See docs/guide/menus-from-a-bar.md.
 
 import sys
 
-import tre
-from tre import App, LayerWindow, UnsupportedPlatform
+import tess_re
+from tess_re import App, LayerWindow, UnsupportedPlatform
 
 BAR_HEIGHT = 32
 
@@ -88,7 +88,7 @@ check.advance(0)
 check.simulate("key_down", key="escape")
 assert state["dismissed"] == 1, state["dismissed"]
 
-if tre.supports("layer_shell"):
+if tess_re.supports("layer_shell"):
     app.add_window(bar)
     app.run(max_frames=None if "--watch" in sys.argv else 90)
     print("layer_menu.py: exited cleanly")

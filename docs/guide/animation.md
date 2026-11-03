@@ -150,7 +150,7 @@ icon. See `examples/path_morph.py`.
 
 An `svg` node whose document carries SMIL (`<animate>`, `<set>`, `<animateTransform>`) is drawn as it looks
 `svg_time` seconds into that animation, and `svg_time` animates like any other property (0.5.10). Nothing plays by
-itself: you decide when and how fast, and it runs on tre's clock:
+itself: you decide when and how fast, and it runs on tess_re's clock:
 
 ```python
 spinner = window.create("svg", svg=spinner_svg, width=24, height=24)

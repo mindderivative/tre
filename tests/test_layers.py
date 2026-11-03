@@ -11,26 +11,26 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 
 W, H = 400, 300
 
 
-def window() -> tre.Window:
-    w = tre.Window(W, H, "layers")
+def window() -> tess_re.Window:
+    w = tess_re.Window(W, H, "layers")
     w.root.set(padding=0, gap=0)
     return w
 
 
-def box(w: tre.Window, **props: Any) -> tre.Node:
+def box(w: tess_re.Window, **props: Any) -> tess_re.Node:
     return w.create("box", **props)
 
 
-def button(w: tre.Window, **props: Any) -> tre.Node:
+def button(w: tess_re.Window, **props: Any) -> tess_re.Node:
     return w.create("box", **{"width": 60, "height": 30, "focusable": True, "role": "button", **props})
 
 
-def clicks(node: tre.Node, log: list[str], name: str) -> None:
+def clicks(node: tess_re.Node, log: list[str], name: str) -> None:
     node.on("click", lambda: log.append(name))
 
 

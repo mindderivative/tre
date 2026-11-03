@@ -3,7 +3,7 @@
 A hand-off for the Tesserae Shell side, written when issue #195 closed (2026-10-25),
 **corrected the same day** after the VRAM research (#207) (`PopupWindow` (#223) and small GPU memory
 blocks (#219) were added, and the overlay route for menus is no longer the recommendation), and
-brought up to date for the release. It says what is in tre, how each acceptance criterion of the
+brought up to date for the release. It says what is in tess_re, how each acceptance criterion of the
 request stands, what differs from the request, and what was not tested. Everything here shipped in
 **0.5.8** (0.5.7 had none of it), except the items marked **0.5.9** below (the shared device, the
 screen frame's pass-through clicks, and the keep-alive loop). The reference is
@@ -24,7 +24,7 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
   `warning`, `moved`, plus the window events.
 - **Outputs:** `App.outputs()` and `Output` (name, description, logical position and size, scale
   factor, transform); `App.on("output_added" | "output_removed" | "output_updated")`.
-- **Capability:** `tre.supports("layer_shell")`; `UnsupportedPlatform` where there is none (X11,
+- **Capability:** `tess_re.supports("layer_shell")`; `UnsupportedPlatform` where there is none (X11,
   GNOME's Mutter, Windows, macOS). With no display at all a `LayerWindow` can be built and driven
   headless (`simulate`, `advance`, `snapshot`), so shell logic is testable in CI.
 - **Patterns:** a bar (one edge, or three, reserving space); a screen frame (a painter surface
@@ -40,7 +40,7 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
   protocol's rule), so a menu that should close on it listens and calls `close()`. It costs a bar's
   worth of memory, not an output's. See [`PopupWindow`](../reference/layer-window.md#popupwindow).
 - **Small GPU memory blocks** (#219): a window's device asks for small blocks by default, so a
-  window holds tens of MiB of video memory, not 210. `TRE_GPU_MEMORY=performance` restores the old
+  window holds tens of MiB of video memory, not 210. `TESS_RE_GPU_MEMORY=performance` restores the old
   blocks. See [App](../reference/app.md) and [VRAM per window](vram-per-window.md).
 
 ## How it differs from the request
@@ -69,7 +69,7 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
   This is a behaviour change for existing apps too.
 - **The note's question about masks:** box hit testing did not follow rounded corners or masks
   before; it follows rounded corners now, not masks.
-- **`exclusive_edge`** is built (tre binds layer-shell v5 itself). A compositor with only v4
+- **`exclusive_edge`** is built (tess_re binds layer-shell v5 itself). A compositor with only v4
   still opens the surface and a `warning` event says the edge is ignored.
 - **Drag deltas** come from the relative-pointer protocol, with a fallback to the surface-local
   position when the protocol is missing or the pointer is absolute (a tablet, a VM, a remote
@@ -100,7 +100,7 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 | `output=None` binds the same output every run | Met on KWin and sway |
 | Transparent bar over the desktop | Met on sway (pixels read back); not run on KWin, because the test reads pixels with `grim`, a wlroots-only tool |
 | Paste into a focused text field | Met on sway, with no X server; not run on KWin, because the test types with `wtype`, a wlroots-only tool |
-| `read_clipboard` / `write_clipboard` from a `LayerWindow` (text) | Met on KWin 6.8.1 and sway (0.5.9, #243): one tre process writes, another reads, `DISPLAY` unset so the X11 fallback cannot pass. tre binds `ext_data_control_manager_v1` first (KWin offers only that) and `zwlr_data_control_manager_v1` as the fallback; no keyboard focus is needed. Text only: images, the primary selection and Ctrl+V into a field on KWin are not covered. Opt-in on a real desktop (`TRE_LIVE_CLIPBOARD=1`), since it overwrites the clipboard |
+| `read_clipboard` / `write_clipboard` from a `LayerWindow` (text) | Met on KWin 6.8.1 and sway (0.5.9, #243): one tess_re process writes, another reads, `DISPLAY` unset so the X11 fallback cannot pass. tess_re binds `ext_data_control_manager_v1` first (KWin offers only that) and `zwlr_data_control_manager_v1` as the fallback; no keyboard focus is needed. Text only: images, the primary selection and Ctrl+V into a field on KWin are not covered. Opt-in on a real desktop (`TESS_RE_LIVE_CLIPBOARD=1`), since it overwrites the clipboard |
 | `outputs()` and hot-plug events | Met (KWin and sway for `outputs()`; added, updated and removed fire on sway) |
 | `input_region=[]` passes clicks through | Met on KWin and sway |
 | `"auto"` with a circle: inside hits, the box corner passes | Met on KWin and sway |
@@ -112,7 +112,7 @@ bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "rig
 | Fade-out close keeps the surface mapped until the animation ends | Met on KWin and sway as a sequence: `close_requested` cancelled, the margin animates for its 400 ms, `on_complete` closes, and `closed` follows with reason `"app"`. That the surface stayed mapped is read from the order and timing of the events, not from a screenshot |
 | `reduced_motion` on a `LayerWindow` | Met headless: the read and the event are `Window`'s. A live portal change on a layer surface was not run |
 | `on_demand` gets keys, `"none"` never does | Met on KWin (real injected keys) |
-| `PopupWindow` opens, flips, dismisses | Met on sway (headless, with live tests): placement, flip above a bottom bar, outside-click dismissal, item click, submenu. Also met on KWin 6.8.1 (placement, outside-click dismissal, item click, submenu, and the flip above a bottom bar once the test is told the Plasma panel's height, `TRE_LIVE_BOTTOM_INSET=40`). Escape dismissal of a popup was not checked on either. The overlay route (dismissal on outside click and Escape on KWin and sway) remains as the alternative |
+| `PopupWindow` opens, flips, dismisses | Met on sway (headless, with live tests): placement, flip above a bottom bar, outside-click dismissal, item click, submenu. Also met on KWin 6.8.1 (placement, outside-click dismissal, item click, submenu, and the flip above a bottom bar once the test is told the Plasma panel's height, `TESS_RE_LIVE_BOTTOM_INSET=40`). Escape dismissal of a popup was not checked on either. The overlay route (dismissal on outside click and Escape on KWin and sway) remains as the alternative |
 | Crisp text at 1.0 and 1.5 scale | The surface follows 1.5x (`scale_factor` reads 1.5 on sway); crispness was not inspected |
 | `supports("layer_shell")` false and `UnsupportedPlatform` without the protocol | Met by the availability rule in headless tests; GNOME's Mutter was not run |
 
@@ -151,7 +151,7 @@ is crisp at 1.5x scale; that a `set()` of zone and anchor never causes a wrong-s
 
 ## Where each part is
 
-| | tre issue | PR |
+| | tess_re issue | PR |
 |---|---|---|
 | Spike (design verdict, go on a second event queue) | #196 | #197 |
 | `LayerWindow` core | #198 | #208 |

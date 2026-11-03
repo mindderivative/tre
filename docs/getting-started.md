@@ -6,7 +6,7 @@ This builds a small counter: a label, and a button that counts clicks. See
 ## A window
 
 ```python
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=360, height=160, title="Counter")
 

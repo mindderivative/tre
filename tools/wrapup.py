@@ -69,11 +69,11 @@ def main():
     # code that users see changed, docs did not
     changed = set(sh("git", "diff", "--name-only", f"{trunk}...HEAD").splitlines())
     changed |= set(sh("git", "diff", "--name-only", "HEAD").splitlines())
-    api = sorted(f for f in changed if f.startswith(("crates/engine-py/src/", "python/tre/")) and f.endswith((".rs", ".py", ".pyi")))
+    api = sorted(f for f in changed if f.startswith(("crates/engine-py/src/", "python/tess_re/")) and f.endswith((".rs", ".py", ".pyi")))
     docs = sorted(f for f in changed if f.startswith("docs/") or f in ("README.md", "CHANGELOG.md"))
     check(not api or docs, "no Python-facing code changed without docs",
           f"{len(api)} Python-facing file(s) changed and no docs/ file did (e.g. {api[0] if api else ''})")
-    if "python/tre/_core.pyi" in changed:
+    if "python/tess_re/_core.pyi" in changed:
         # the page is generated from the stub; regenerate (idempotent) and see whether it moved
         py = ROOT / ".venv/bin/python"
         subprocess.run([str(py) if py.exists() else sys.executable, "tools/gen_python_api.py"],

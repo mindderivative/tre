@@ -1,5 +1,5 @@
 //! 0.5.4 (#110): what the pinned vello_gpu can render as layer effects, probed
-//! directly (no tre node involved). `cargo test -p engine-render --release --test
+//! directly (no tess_re node involved). `cargo test -p engine-render --release --test
 //! vello_effects -- --ignored --nocapture`
 
 mod support;

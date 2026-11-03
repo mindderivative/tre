@@ -11,7 +11,7 @@ import textwrap
 
 import pytest
 
-from tre import TimerHandle, Window
+from tess_re import TimerHandle, Window
 
 
 def test_after_fires_once_at_its_time():
@@ -132,7 +132,7 @@ def test_a_timer_that_refers_to_its_window_does_not_leak_it():
 
 LIVE = """
 import json
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=200, height=120)
 box = window.create("box", width=60, height=40, fill=(255, 0, 0, 255))

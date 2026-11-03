@@ -11,11 +11,11 @@ See docs/guide/events-and-input.md.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
 ACCENT = (0x67, 0x50, 0xA4, 0xFF)
 
-window = Window(width=420, height=260, title="tre -- file drop")
+window = Window(width=420, height=260, title="tess_re -- file drop")
 zone = window.create("box", width=360, height=200, x=30, y=30, position="absolute",
                      corner_radius=16, fill=(0xF3, 0xED, 0xF7, 0xFF))
 label = window.create("text", text="Drop files here", font_size=18, width=320, height=160,

@@ -7,7 +7,7 @@ and range to assistive technology.
 
 from __future__ import annotations
 
-import tre
+import tess_re
 from helpers import add
 
 TRACK_WIDTH = 200.0
@@ -15,7 +15,7 @@ STEP = 0.1
 
 
 class PrimitiveSlider:
-    def __init__(self, window: tre.Window) -> None:
+    def __init__(self, window: tess_re.Window) -> None:
         self.track = add(window, "box", fill=(200, 200, 200, 255), width=TRACK_WIDTH, height=20)
         self.value = 0.0
         self.dragging = False
@@ -40,28 +40,28 @@ class PrimitiveSlider:
         self.value = round(min(1.0, max(0.0, value)), 6)
         self.track.set(value=self.value)
 
-    def press(self, e: tre.Event) -> None:
+    def press(self, e: tess_re.Event) -> None:
         assert e.x is not None
         self.track.capture_pointer()
         self.dragging = True
         self.set_value(e.x / TRACK_WIDTH)
 
-    def drag(self, e: tre.Event) -> None:
+    def drag(self, e: tess_re.Event) -> None:
         if self.dragging:
             assert e.x is not None
             self.set_value(e.x / TRACK_WIDTH)
 
-    def release(self, e: tre.Event) -> None:
+    def release(self, e: tess_re.Event) -> None:
         self.dragging = False
         self.committed.append(self.value)
 
-    def key(self, e: tre.Event) -> None:
+    def key(self, e: tess_re.Event) -> None:
         if e.key == "arrow_right":
             self.set_value(self.value + STEP)
         elif e.key == "arrow_left":
             self.set_value(self.value - STEP)
 
-    def action(self, e: tre.Event) -> None:
+    def action(self, e: tess_re.Event) -> None:
         if e.action == "increment":
             self.set_value(self.value + STEP)
         elif e.action == "decrement":
@@ -70,8 +70,8 @@ class PrimitiveSlider:
             self.set_value(float(e.value))
 
 
-def make() -> tuple[tre.Window, PrimitiveSlider]:
-    w = tre.Window(400, 300, "primitive slider")
+def make() -> tuple[tess_re.Window, PrimitiveSlider]:
+    w = tess_re.Window(400, 300, "primitive slider")
     return w, PrimitiveSlider(w)
 
 

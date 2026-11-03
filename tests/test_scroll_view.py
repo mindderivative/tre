@@ -6,7 +6,7 @@ covered by `engine-render`'s `scroll_view.rs` and `engine-core`'s tree tests.
 
 import pytest
 
-from tre import Node, Window
+from tess_re import Node, Window
 from helpers import add
 
 

@@ -29,7 +29,7 @@ def test_a_changed_rust_source_gets_the_rust_tests_that_name_it():
 
 
 def test_a_changed_python_module_gets_its_tests():
-    assert "tests/test_snapshot.py" in tests_for.plan(["python/tre/snapshot.py"]).pytest
+    assert "tests/test_snapshot.py" in tests_for.plan(["python/tess_re/snapshot.py"]).pytest
 
 
 def test_a_source_file_no_test_names_is_reported_as_unmatched():

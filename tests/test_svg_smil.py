@@ -1,7 +1,7 @@
 """0.5.10 (#245): SMIL animation in an `svg` node, drawn at `svg_time`."""
 
 import pytest
-from tre import Window
+from tess_re import Window
 
 RED = (255, 0, 0, 255)
 

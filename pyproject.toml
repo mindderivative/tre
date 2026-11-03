@@ -4,12 +4,12 @@ build-backend = "maturin"
 
 # M107 (issue #19): published to PyPI as `tesserae-engine` -- `tre` there
 # is an unrelated project (bindings for the TRE regex library). Only the
-# distribution name changes; the import name stays `tre`, as with
-# `pillow`/`PIL`.
+# distribution name differs from the import name (`tess_re`, `tre` up to
+# 0.5.x), as with `pillow`/`PIL`.
 [project]
 name = "tesserae-engine"
-version = "0.5.10"
-description = "tre: a GPU-rendered retained-mode UI engine for Python, written in Rust -- nodes, flexbox and grid layout, paint, animation, input, text, and accessibility, rendered with vello."
+version = "0.6.0"
+description = "tess_re: a GPU-rendered retained-mode UI engine for Python, written in Rust -- nodes, flexbox and grid layout, paint, animation, input, text, and accessibility, rendered with vello."
 authors = [{ name = "Phil Hodgins", email = "philip.a.hodgins@gmail.com" }]
 requires-python = ">=3.12"
 license = "MIT"
@@ -32,13 +32,13 @@ classifiers = [
 ]
 
 [project.urls]
-Documentation = "https://mindderivative.github.io/tre/"
-Repository = "https://github.com/mindderivative/tre"
-Issues = "https://github.com/mindderivative/tre/issues"
-Architecture = "https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md"
+Documentation = "https://mindderivative.github.io/tess-re/"
+Repository = "https://github.com/mindderivative/tess-re"
+Issues = "https://github.com/mindderivative/tess-re/issues"
+Architecture = "https://github.com/mindderivative/tess-re/blob/main/ARCHITECTURE.md"
 
 [tool.maturin]
-module-name = "tre._core"
+module-name = "tess_re._core"
 python-source = "python"
 manifest-path = "crates/engine-py/Cargo.toml"
 # maturin passes this straight to `cargo build --features ...` -- NOT a
@@ -80,7 +80,7 @@ features = ["pyo3/extension-module"]
 # compilation needed at all -- confirmed via this exact investigation,
 # not assumed. The real, built artifact was verified end-to-end in a
 # genuinely fresh venv (`pip install` the built `.whl` directly, not
-# `-e`, not from source) -- `import tre` plus real example scripts
+# `-e`, not from source) -- `import tess_re` plus real example scripts
 # (real keyboard input, real clipboard, real live theme switching, a
 # real two-window session) all ran a real frame loop to completion,
 # the exact class of end-to-end proof TRE v1's own missing coverage

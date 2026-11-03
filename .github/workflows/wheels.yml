@@ -158,7 +158,7 @@ jobs:
 
   # M69 (§13): a standalone, non-wheel-packaged Python extension
   # module -- for the separate `Tesserae` UI framework project's own
-  # direct consumption (dropped straight into a vendored `tre/`
+  # direct consumption (dropped straight into a vendored `tess_re/`
   # package directory), not for portable redistribution to arbitrary
   # end-user Linux, so this deliberately does NOT run inside the
   # `linux` job's manylinux container above -- that container's whole
@@ -193,9 +193,9 @@ jobs:
         run: cargo build --release -p engine-py --features pyo3/extension-module
       - name: Name it the real CPython import-name maturin already uses locally
         # Matches exactly what `maturin develop` drops into `python/
-        # tre/` on a real Linux x86_64/CPython 3.14 dev machine (see
+        # tess_re/` on a real Linux x86_64/CPython 3.14 dev machine (see
         # `.gitignore`'s own comment naming this exact filename) --
-        # Tesserae can drop this asset straight into a vendored `tre/`
+        # Tesserae can drop this asset straight into a vendored `tess_re/`
         # package directory with zero renaming.
         run: cp target/release/libengine_py.so _core.cpython-314-x86_64-linux-gnu.so
       - uses: actions/upload-artifact@v4

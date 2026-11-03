@@ -1,4 +1,4 @@
-"""0.5.4 (#140): `tre.CursorImage`, a pointer shape drawn from pixels.
+"""0.5.4 (#140): `tess_re.CursorImage`, a pointer shape drawn from pixels.
 
 Validation and the Python surface are tested here; that the OS cursor is built
 needs a live event loop, so one test runs a window in its own process.
@@ -10,8 +10,8 @@ import sys
 
 import pytest
 
-import tre
-from tre import CursorImage, Window
+import tess_re
+from tess_re import CursorImage, Window
 
 
 def pixels(width=8, height=8, value=200):
@@ -93,12 +93,12 @@ def test_descendants_inherit_a_cursor_image_like_any_cursor():
 
 
 def test_it_is_exported():
-    assert tre.CursorImage is CursorImage
+    assert tess_re.CursorImage is CursorImage
 
 
 LIVE = """
 import threading, time
-from tre import App, CursorImage, Window
+from tess_re import App, CursorImage, Window
 
 window = Window(width=120, height=80)
 image = CursorImage(bytes([255, 0, 0, 255]) * (16 * 16), 16, 16, hotspot=(8, 8))

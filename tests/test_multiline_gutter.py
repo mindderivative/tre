@@ -3,7 +3,7 @@
 shrinks as edits add and merge lines.
 """
 
-from tre import Node, Window
+from tess_re import Node, Window
 from helpers import CODE_EDITOR, add
 
 

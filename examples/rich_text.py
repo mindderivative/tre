@@ -12,13 +12,13 @@ See docs/guide/text.md.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
 INK = (0x1C, 0x1B, 0x1F, 0xFF)
 RED = (0xB3, 0x26, 0x1E, 0xFF)
 LINK = (0x0B, 0x57, 0xD0, 0xFF)
 
-window = Window(width=560, height=240, title="tre -- rich text")
+window = Window(width=560, height=240, title="tess_re -- rich text")
 window.root.set(fill=(0xFF, 0xFB, 0xFE, 0xFF), padding=16, flex_direction="vertical", gap=12)
 
 price = "Sale: $12 $9, ends Friday. Read the terms."

@@ -1,4 +1,4 @@
-"""The migration gate's switch, `TRE_FORBID_REMOVED=1` (`tre/_removed.py`):
+"""The migration gate's switch, `TESS_RE_FORBID_REMOVED=1` (`tess_re/_removed.py`):
 its tables kept in step with the migration table in
 `docs/migrating-0.3.5.md`, and what it
 forbids and leaves alone. The switch patches classes for the rest of a
@@ -14,8 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import tre
-from tre import _core, _removed
+import tess_re
+from tess_re import _core, _removed
 
 SPEC = Path(__file__).resolve().parent.parent / "docs" / "migrating-0.3.5.md"
 TABLE = SPEC.read_text().split("## Migration table", 1)[1]
@@ -44,8 +44,8 @@ def test_every_migration_table_name_is_forbidden_kept_or_explained() -> None:
             assert today in _removed.UNENFORCED, today
             continue
         # A removed class's members, listed after it, go with it.
-        if names[0] in _removed.REMOVED["tre"]:
-            names = [n for n in names if n in _removed.REMOVED["tre"]]
+        if names[0] in _removed.REMOVED["tess_re"]:
+            names = [n for n in names if n in _removed.REMOVED["tess_re"]]
         for name in names:
             assert name in handled, f"{name!r} is in the migration table but not in _removed.py"
 
@@ -63,7 +63,7 @@ def test_every_forbidden_name_is_in_the_migration_table() -> None:
 #: Forbidden names 0.3.5 has already removed, by milestone.
 GONE = {
     # M98: the declarative and reactivity layers. M99: theming.
-    "tre": {
+    "tess_re": {
         "View", "Component", "Signal", "Computed", "Effect", "ViewModel", "batch", "untrack",
         "Theme",
         "CanvasContext",
@@ -128,7 +128,7 @@ def test_the_published_migration_page_names_every_forbidden_name() -> None:
 
 def test_every_forbidden_name_exists_today_or_is_already_gone() -> None:
     """A typo'd table entry would forbid nothing."""
-    classes = {"tre": tre, "Window": _core.Window, "Node": _core.Node, "Event": _core.Event}
+    classes = {"tess_re": tess_re, "Window": _core.Window, "Node": _core.Node, "Event": _core.Event}
     for owner, members in _removed.REMOVED.items():
         for name in members:
             gone = name in GONE.get(owner, set())
@@ -136,16 +136,16 @@ def test_every_forbidden_name_exists_today_or_is_already_gone() -> None:
 
 
 def test_off_by_default() -> None:
-    assert os.environ.get("TRE_FORBID_REMOVED") != "1", "run the suite without the switch"
-    assert tre.Painter is not None
-    assert callable(tre.Window(10, 10, "off").create)
+    assert os.environ.get("TESS_RE_FORBID_REMOVED") != "1", "run the suite without the switch"
+    assert tess_re.Painter is not None
+    assert callable(tess_re.Window(10, 10, "off").create)
 
 
 SCRIPT = r"""
 import json
-import tre
+import tess_re
 
-w = tre.Window(200, 100, "switch")
+w = tess_re.Window(200, 100, "switch")
 results = {}
 
 def probe(label, fn):
@@ -159,8 +159,8 @@ def probe(label, fn):
 
 box = w.create("box", width=50, height=20)
 w.root.add_child(box)
-probe("tre.Signal", lambda: tre.Signal)
-probe("from tre import View", lambda: exec("from tre import View"))
+probe("tess_re.Signal", lambda: tess_re.Signal)
+probe("from tess_re import View", lambda: exec("from tess_re import View"))
 probe("Window.add_button", lambda: w.add_button)
 probe("Window.theme", lambda: w.theme)
 probe("Node.set_on_click", lambda: box.set_on_click)
@@ -177,22 +177,22 @@ box.animate("opacity", 0.5, 100, on_complete=lambda: None)
 box.set(fill=(1, 2, 3, 255), corner_radius=4)
 w.advance(100)
 results["kept"] = [box.get("opacity"), list(box.get("fill")), seen[0].type, box.get("value")]
-results["hasattr add_button"] = hasattr(tre.Window, "add_button")
-results["__all__"] = tre.__all__
-exec("from tre import *")
+results["hasattr add_button"] = hasattr(tess_re.Window, "add_button")
+results["__all__"] = tess_re.__all__
+exec("from tess_re import *")
 print(json.dumps(results))
 """
 
 
 def test_the_switch_forbids_removed_names_and_keeps_the_rest() -> None:
-    env = {**os.environ, "TRE_FORBID_REMOVED": "1"}
+    env = {**os.environ, "TESS_RE_FORBID_REMOVED": "1"}
     out = subprocess.run(
         [sys.executable, "-c", SCRIPT], env=env, capture_output=True, text=True, check=True
     )
     results = json.loads(out.stdout)
-    removed = "is removed in tre 0.3.5 -- use"
-    assert results["tre.Signal"] == f"Signal {removed} Tesserae's reactivity (D5)"
-    assert results["from tre import View"] == "ImportError"
+    removed = "is removed in 0.3.5 -- use"
+    assert results["tess_re.Signal"] == f"Signal {removed} Tesserae's reactivity (D5)"
+    assert results["from tess_re import View"] == "ImportError"
     assert results["Window.add_button"] == f"Window.add_button {removed} the framework's own widget"
     assert results["Window.theme"].startswith(f"Window.theme {removed}")
     assert results["Node.set_on_click"] == f'Node.set_on_click {removed} node.on("click", ...)'

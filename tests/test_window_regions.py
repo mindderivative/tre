@@ -6,7 +6,7 @@ needs a real display and a real press, but the decision, and the
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 EVENTS = ("pointer_down", "pointer_up", "click", "pointer_cancel")

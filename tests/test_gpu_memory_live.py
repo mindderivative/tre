@@ -2,7 +2,7 @@
 
 `wgpu`'s default made device memory blocks of at least 128 MiB the moment a window's device
 existed, so a 200 x 100 window held about 210 MiB of video memory (`docs/design/vram-per-window.md`).
-tre now asks for small blocks; `TRE_GPU_MEMORY=performance` brings the old reservation back.
+tess_re now asks for small blocks; `TESS_RE_GPU_MEMORY=performance` brings the old reservation back.
 
 The window runs in its own process and reads that process's own GPU memory from
 `/proc/self/fdinfo` (`drm-total-vram`, which amdgpu and a few other drivers report per client). The
@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(
 
 CHILD = r"""
 import json, os, re, threading, time
-from tre import App, Window
+from tess_re import App, Window
 
 def mib(text):
     m = re.match(r"\s*([\d.]+)\s*(KiB|MiB|GiB|B)?", text)
@@ -50,10 +50,10 @@ def vram():
     return total if seen else None
 
 app = App()
-width, height = (int(v) for v in os.environ.get("TRE_TEST_SIZE", "200x100").split("x"))
+width, height = (int(v) for v in os.environ.get("TESS_RE_TEST_SIZE", "200x100").split("x"))
 w = Window(width=width, height=height)
 w.root.set(fill=(200, 60, 60, 255))
-if os.environ.get("TRE_TEST_PARTIAL") == "0":
+if os.environ.get("TESS_RE_TEST_PARTIAL") == "0":
     w.set(partial_redraw=False)
 app.add_window(w)
 readings = {}
@@ -92,7 +92,7 @@ def test_the_environment_variable_brings_the_big_reservation_back():
     small = window_vram()
     if small is None or small == 0:
         pytest.skip("this driver reports no per-process video memory in fdinfo")
-    big = window_vram(TRE_GPU_MEMORY="performance")
+    big = window_vram(TESS_RE_GPU_MEMORY="performance")
     assert big > small + 100, f"performance {big} MiB vs default {small} MiB"
 
 
@@ -101,9 +101,9 @@ BIG = "2400x1400"  # a kept frame of 2400 * 1400 * 4 bytes is about 12.8 MiB
 
 def test_a_window_that_redraws_in_full_does_not_keep_a_frame():
     """(#221) `partial_redraw=False` at open makes no kept frame, so the window holds less."""
-    kept = window_vram(TRE_TEST_SIZE=BIG)
+    kept = window_vram(TESS_RE_TEST_SIZE=BIG)
     if kept is None or kept == 0:
         pytest.skip("this driver reports no per-process video memory in fdinfo")
-    full = window_vram(TRE_TEST_SIZE=BIG, TRE_TEST_PARTIAL="0")
+    full = window_vram(TESS_RE_TEST_SIZE=BIG, TESS_RE_TEST_PARTIAL="0")
     assert kept - full > 8, f"kept {kept} MiB vs full redraw {full} MiB"
 

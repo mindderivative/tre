@@ -2,6 +2,12 @@
 
 ## Status
 
+**0.6.0 in progress (#257, branch `0.6.0`, not pushed):** the Python package is `tess_re` (was `tre`) and the
+environment variables are `TESS_RE_*` (were `TRE_*`). Breaking, clean cutover, no alias; the PyPI name stays
+`tesserae-engine`. The GitHub repo is renamed `mindderivative/tess-re` (done by the owner 2026-11-03; docs now at
+`mindderivative.github.io/tess-re/`) and the repo and docs URLs are updated. The owner updated the PyPI trusted
+publisher for `tesserae-engine` to the new repo (2026-11-03, stated in chat; not checkable from here). Not done yet:
+push, PR, merge, tag and the wheels run, each on the owner's word. Notes: `docs/migrating-0.6.md`.
 **0.5.10 released (2026-11-03, tag `v0.5.10` on `4870d3d`, PyPI `tesserae-engine==0.5.10`; a first tag was withdrawn before PyPI to add #253):** batch and tree building (`Window.build`, `Window.apply`, `Node.set_children`, constant-time append, #253), SMIL animation in `svg` nodes (`svg_time`, `svg_duration`, #245) and
 occlusion handling (a hidden Wayland window no longer freezes the app, `occluded`, `pause_when_occluded`, #246);
 notes in `docs/migrating-0.5.md`. CI note: the Linux jobs are pinned to `ubuntu-24.04` (PR #251), not `ubuntu-latest`:
@@ -31,7 +37,38 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
 
-## After 0.5.9 (unreleased)
+## After 0.5.10 (unreleased)
+
+### #257, the namespace `tre` becomes `tess_re` (2026-11-03)
+
+The Tesserae projects share one prefix so their names cannot collide: `tess_re` (this engine), `tess_ui`,
+`tess_el`, `tess_dl`, `tess_shell`. Decisions (user): clean cutover in 0.6.0 (no alias, no fallback to the old
+names), `TRE_*` to `TESS_RE_*`, thread names unchanged (`tre-gpu-wake`, `tre-timer-wake`, `tre-appearance`,
+`tre-layer`), PyPI name unchanged. What changed: `python/tre/` is `python/tess_re/`; `module-name` is
+`tess_re._core`; the exception module in `create_exception!` is `tess_re`; imports and names in tests, examples,
+tools, docs and CI; 18 environment variables (`TRE_GPU_MEMORY` and the rest, listed in
+`docs/migrating-0.6.md`); the engine's own message text and GPU debug labels say `tess_re`; the default window
+title is `tess_re v2`. Version 0.6.0 in `Cargo.toml`, `pyproject.toml` and `Cargo.lock`. Left alone on purpose:
+`archive/` (frozen v1), this file's history, the `BUILD_TRACKER_ARCHIVE_*` files, `docs/migrating-0.3.x` to `0.5`,
+`AGENTS.md` and `.claude/` prose, and thread names. The repo URLs were updated after the owner renamed the GitHub repo
+to `mindderivative/tess-re` (same day; `origin` now points there).
+One wording change beyond the rename: `RemovedError` now says "is removed in 0.3.5" without the package name, because
+the package had another name at 0.3.5. The 0.3.5 migration gate in `_removed.py` checks the module's own name, so it
+cannot be copied into a project still on `tre`.
+
+Checked: `maturin develop --release`; `import tess_re` works and `import tre` raises `ModuleNotFoundError`; a wheel
+installed into a fresh venv imports from site-packages, `TESS_RE_FORBID_REMOVED=1` raises `RemovedError`, a bad shader
+raises `tess_re.ShaderError`, `Window().get("title")` is `tess_re v2`; mypy strict and stubtest clean;
+`mkdocs build --strict`; `cargo fmt --check` (after `cargo fmt`, the longer name moved a few lines), clippy
+`-D warnings` on the four crates; `cargo test -p engine-core --lib shader` (13), `-p engine-py --lib` (62) and the
+`engine-render` tests `shader_fill` and `hidpi`, `engine-core` `anchored` and `node_size`; pytest
+`test_removed`, `test_tests_for`, `test_shader`, `test_keep_alive` on llvmpipe. Not run (standing rule): the full
+suite and `tools/verify.sh`, CI does it on the PR. Not caused by the rename: `test_keep_alive` fails intermittently
+with a JSON "Extra data" error (two JSON lines on one line, from its `log()` printing on two threads). It failed in
+2 of 3 runs here and in 3 of 4 runs on `main` at 0.5.10 (built in a separate worktree), so it is older than this
+change; not fixed here. Not verified: macOS, Windows, a real-GPU run.
+
+## 0.5.10 (released 2026-11-03)
 
 ### #253, batch and tree building: `Window.build`, `Window.apply`, `Node.set_children`, O(1) append (2026-11-02)
 

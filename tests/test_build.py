@@ -2,7 +2,7 @@
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def window():
@@ -183,7 +183,7 @@ def test_a_draw_that_raises_while_building_keeps_its_own_error():
 def test_apply_allows_one_shader_entry_only():
     w = window()
     a, b = w.create("box"), w.create("box")
-    shader = __import__("tre").Shader(
+    shader = __import__("tess_re").Shader(
         "fn shade(p: Pixel) -> vec4<f32> { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }"
     )
     with pytest.raises(ValueError, match="only one entry"):

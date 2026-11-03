@@ -12,14 +12,14 @@ display. Pass `--watch` to keep the window open. See docs/reference/paint.md.
 
 import sys
 
-from tre import App, Gradient, Window
+from tess_re import App, Gradient, Window
 
 PURPLE = (0x67, 0x50, 0xA4, 0xFF)
 DEEP = (0x21, 0x00, 0x5D, 0xFF)
 TEAL = (0x03, 0xDA, 0xC6, 0xFF)
 NAVY = (0x01, 0x2A, 0x4A, 0xFF)
 
-window = Window(width=620, height=220, title="tre -- gradients")
+window = Window(width=620, height=220, title="tess_re -- gradients")
 window.root.set(fill=(0x1C, 0x1B, 0x1F, 0xFF), flex_direction="horizontal", gap=16)
 
 first = window.create(

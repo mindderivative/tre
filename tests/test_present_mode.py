@@ -12,7 +12,7 @@ import textwrap
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def test_vsync_is_the_default():
@@ -45,7 +45,7 @@ def test_the_property_is_in_the_unknown_property_errors():
 
 ANIMATE_SCRIPT = """
 import os, sys, threading, time
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=320, height=200)
 box = window.create("box", width=60, height=40, fill=(255, 0, 0, 255))

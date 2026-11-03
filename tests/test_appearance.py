@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 HERE = Path(__file__).parent
 
@@ -25,7 +25,7 @@ def test_get_dark_is_a_bool_or_none():
 
 
 def test_get_dark_is_none_without_a_session_bus():
-    script = "import tre; print(tre.Window(width=10, height=10).get('dark'))"
+    script = "import tess_re; print(tess_re.Window(width=10, height=10).get('dark'))"
     env = {**os.environ, "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent"}
     out = subprocess.run([sys.executable, "-c", script], env=env,
                          capture_output=True, text=True, timeout=30)
@@ -43,11 +43,11 @@ def gi_python():
 
 
 LIVE = textwrap.dedent("""
-    import time, tre
-    window = tre.Window(width=200, height=120, title="appearance")
+    import time, tess_re
+    window = tess_re.Window(width=200, height=120, title="appearance")
     print("before", window.get("dark"), flush=True)
     window.on("color_scheme", lambda e: print("event", e.dark, window.get("dark"), flush=True))
-    app = tre.App()
+    app = tess_re.App()
     app.add_window(window)
     handle = app.thread_handle()
     def slow():  # about 100 frames a second, so 700 frames outlast the portal's changes

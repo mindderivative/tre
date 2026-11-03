@@ -2,7 +2,7 @@
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 BG = (40, 90, 200, 255)
 RED = (255, 0, 0, 255)

@@ -25,7 +25,7 @@ attribute" — old property names too, in `animate`, `get`, `get_target`, and
 import View` fails with `ImportError`.
 
 To find every use *before* upgrading, while the old names still work, copy
-[`tre/_removed.py`](https://github.com/mindderivative/tre/blob/0.3.5/python/tre/_removed.py)
+[`tre/_removed.py`](https://github.com/mindderivative/tess-re/blob/0.3.5/python/tess_re/_removed.py)
 into a project on 0.3.4 — it uses only names 0.3.4 has — and call its
 `install()` from `conftest.py` when `TRE_FORBID_REMOVED=1` is set.
 

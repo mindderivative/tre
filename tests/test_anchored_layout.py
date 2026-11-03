@@ -9,7 +9,7 @@ parent: clipped, ordered and hit as one, and events bubble through its parent.
 
 import pytest
 
-import tre
+import tess_re
 
 
 def scene(**badge):
@@ -17,7 +17,7 @@ def scene(**badge):
 
     The anchor is 60 x 30, 30 px in and 40 down; the badge is 20 x 10 and is not
     the anchor's child. Returns (window, left, right, anchor, badge)."""
-    window = tre.Window(500, 400, "anchored")
+    window = tess_re.Window(500, 400, "anchored")
     window.root.set(padding=0, gap=0)
     left = window.create("box", width=200, height=300)
     right = window.create("box", width=200, height=300)
@@ -88,7 +88,7 @@ def test_it_follows_the_anchor():
 def test_it_follows_an_anchor_that_scrolls():
     # The anchor is in a scroll view; scrolling moves it on screen, and the
     # badge, which is outside the scroll view, goes with it.
-    window = tre.Window(500, 400, "scrolled")
+    window = tess_re.Window(500, 400, "scrolled")
     window.root.set(padding=0, gap=0)
     view = window.create("scroll_view", width=200, height=100)
     window.root.add_child(view)
@@ -151,7 +151,7 @@ def test_placement_and_offset_can_change_later():
 
 
 def test_placement_or_offset_without_an_anchor_is_refused():
-    window = tre.Window(100, 100, "x")
+    window = tess_re.Window(100, 100, "x")
     node = window.create("box", width=5, height=5)
     with pytest.raises(ValueError, match="need an `anchor`"):
         node.set(placement="below")
@@ -180,7 +180,7 @@ def test_a_node_cannot_be_anchored_to_itself_or_to_a_node_inside_it():
 
 def test_a_node_of_another_window_is_refused():
     window, _, _, _, badge = scene()
-    other = tre.Window(100, 100, "other")
+    other = tess_re.Window(100, 100, "other")
     stranger = other.create("box", width=5, height=5)
     with pytest.raises(Exception, match="(?i)window|foreign"):
         badge.set(anchor=stranger)
@@ -197,7 +197,7 @@ def test_two_nodes_anchored_to_each_other_settle_without_error():
 
 
 def test_it_can_be_made_in_one_create_call():
-    window = tre.Window(300, 300, "create")
+    window = tess_re.Window(300, 300, "create")
     window.root.set(padding=0, gap=0)
     anchor = window.create("box", position="absolute", x=10, y=10, width=40, height=40)
     window.root.add_child(anchor)

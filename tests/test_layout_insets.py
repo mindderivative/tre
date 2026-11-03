@@ -8,7 +8,7 @@ node is stretched between them, from the parent's edge; `x` and `y` are `left` a
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def scene(parent_width=300, parent_height=200, **child):

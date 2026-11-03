@@ -35,7 +35,7 @@ zbus = { version = "5.5", default-features = false, features = ["async-io", "blo
 # through `xkbcommon-dl`, which loads the library when a layer surface needs it.
 smithay-client-toolkit = { version = "0.19.2", default-features = false }
 wayland-backend = { version = "0.3.10", features = ["client_system"] }
-# 0.5.8 (#201): tre binds `zwlr_layer_shell_v1` itself, at version 5 (the toolkit binds up to 4).
+# 0.5.8 (#201): tess_re binds `zwlr_layer_shell_v1` itself, at version 5 (the toolkit binds up to 4).
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 # 0.5.8 (#200): a layer surface's accessibility tree. `accesskit_winit` needs a window; this
 # is its Linux backend, already in the lock at this version with these features.

@@ -4,7 +4,7 @@
 //! window's handler map (`HandlerKey::Draw`/`Materialize`/`SizeHint`), so the
 //! collector sees them and a freed node's go with it.
 //!
-//! A virtual list made by `window.create` is kept materialized by `tre`:
+//! A virtual list made by `window.create` is kept materialized by `tess_re`:
 //! whenever layout runs (`layout`), every row its viewport meets is built,
 //! and every row that left it is detached -- freed, unless the framework
 //! keeps a handle to reuse it.

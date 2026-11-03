@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from tre import LayerWindow, PopupWindow, UnsupportedPlatform, Window
+from tess_re import LayerWindow, PopupWindow, UnsupportedPlatform, Window
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="popups are a Linux (Wayland) feature"

@@ -190,7 +190,7 @@ def plan(files: list[str]) -> Plan:
                 if "#[cfg(test)]" not in text:
                     out.notes.append(f"{f}: no test mentions its names; pick one by hand")
             continue
-        if f.startswith("python/tre/") and p.suffix == ".py":
+        if f.startswith("python/tess_re/") and p.suffix == ".py":
             out.needs_build = True
             ranked = [(t, w) for t, w in rank_tests(p) if t.suffix == ".py"]
             for t, why in ranked:
@@ -202,8 +202,8 @@ def plan(files: list[str]) -> Plan:
             if p.stem == "__init__":
                 out.notes.append(f"{f}: the package root; run the tests that exercise the changed names")
             continue
-        if f == "python/tre/_core.pyi":
-            out.notes.append(f"{f}: python -m mypy.stubtest tre._core --allowlist tools/stubtest_allowlist.txt && python -m mypy --strict python")
+        if f == "python/tess_re/_core.pyi":
+            out.notes.append(f"{f}: python -m mypy.stubtest tess_re._core --allowlist tools/stubtest_allowlist.txt && python -m mypy --strict python")
             continue
         if f.startswith("docs/") or f == "mkdocs.yml":
             out.notes.append(f"{f}: python -m mkdocs build --strict")

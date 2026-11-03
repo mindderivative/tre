@@ -1,22 +1,22 @@
 # Custom windowing (0.5.0)
 
 !!! note "Decided and released (0.5.0, 2026-09-30)"
-    This is 0.5.0's M1 design for [issue #28](https://github.com/mindderivative/tre/issues/28),
+    This is 0.5.0's M1 design for [issue #28](https://github.com/mindderivative/tess-re/issues/28),
     reviewed and decided by the project owner: every
     recommendation accepted, with refinements, and five
     [additions](#additions-from-the-review). Each question below ends with
     its **Decided** line. Built: M2's undecorated windows,
     controls, state and events, fullscreen, minimum size, icon, and
-    platform ([#37](https://github.com/mindderivative/tre/issues/37)); M3's
+    platform ([#37](https://github.com/mindderivative/tess-re/issues/37)); M3's
     drag region, resize border, `pointer_cancel`, double-click to maximize,
-    and window menu ([#38](https://github.com/mindderivative/tre/issues/38));
+    and window menu ([#38](https://github.com/mindderivative/tess-re/issues/38));
     M4's macOS overlay title bar, `titlebar_inset`, `native_controls`, and
-    double-click setting ([#39](https://github.com/mindderivative/tre/issues/39));
+    double-click setting ([#39](https://github.com/mindderivative/tess-re/issues/39));
     M5's example, [guide](../guide/custom-title-bars.md), and upgrade notes
-    ([#40](https://github.com/mindderivative/tre/issues/40)), with the
+    ([#40](https://github.com/mindderivative/tess-re/issues/40)), with the
     owner's manual checks passed on KDE. Released in
-    [0.5.0](https://github.com/mindderivative/tre/releases/tag/v0.5.0)
-    ([#41](https://github.com/mindderivative/tre/issues/41)).
+    [0.5.0](https://github.com/mindderivative/tess-re/releases/tag/v0.5.0)
+    ([#41](https://github.com/mindderivative/tess-re/issues/41)).
 
 ## The goal
 
@@ -25,10 +25,10 @@ framework draws its own: an icon, a title, minimize, maximize, and close
 buttons, and whatever else an application wants up there — a search field,
 tabs, extra buttons. The same window then looks the same on every platform.
 
-Issue #28 splits the work the way `tre` splits everything: mechanism in the
+Issue #28 splits the work the way `tess_re` splits everything: mechanism in the
 engine, look in the framework.
 
-| Tesserae Engine (`tre`) | The framework (Tesserae) |
+| Tesserae Engine (`tess_re`) | The framework (Tesserae) |
 | --- | --- |
 | Turns the native decorations off | Draws the title bar, its buttons, and any border |
 | Moves the window when the title bar is dragged | Marks which nodes are the title bar |
@@ -38,13 +38,13 @@ engine, look in the framework.
 
 ## What `winit` allows
 
-Checked in `winit` 0.30.13's source, which `tre` pins:
+Checked in `winit` 0.30.13's source, which `tess_re` pins:
 
 - `with_decorations(false)` and `set_decorations` turn decorations off on
   every desktop platform, at creation or live.
 - `drag_window()` moves the window on X11, Wayland, Windows, and macOS, but
   only "if the left mouse button was pressed immediately before" the call.
-  So `tre` has to start the drag on the press itself — from a region the
+  So `tess_re` has to start the drag on the press itself — from a region the
   framework marked beforehand — not from a Python callback afterwards.
 - `drag_resize_window(direction)` resizes from an edge or corner everywhere
   **except macOS**, where it always fails. An undecorated macOS window
@@ -60,7 +60,7 @@ Checked in `winit` 0.30.13's source, which `tre` pins:
 - `set_minimized`, `set_maximized`, `is_minimized`, and `is_maximized` are
   there; a window gaining or losing focus arrives as `WindowEvent::Focused`.
 
-What `tre` has today: windows are made in one place (`engine-platform`'s
+What `tess_re` has today: windows are made in one place (`engine-platform`'s
 `WindowAttributes`, which sets only a title and size); nodes already have a
 `cursor` property with every resize shape; nothing handles window focus;
 and there's no double-click detection.
@@ -98,7 +98,7 @@ window.on("maximized", lambda e: swap_icon(e.maximized))
 window.on("active", lambda e: dim_title_bar(not e.active))
 ```
 
-`winit` sends no "maximized" event, so `tre` checks `is_maximized()` after
+`winit` sends no "maximized" event, so `tess_re` checks `is_maximized()` after
 each resize and fires `maximized` when it changes. `active` comes from
 `WindowEvent::Focused`. `window.simulate("active", active=False)` and
 `simulate("maximized", ...)` make both testable without a display, like
@@ -134,7 +134,7 @@ node. See Q2 for the alternative.
 | --- | --- | --- | --- | --- |
 | Linux, Wayland | Yes | Yes | Yes | The compositor draws nothing; everything is the framework's |
 | Linux, X11 | Yes | Yes | Yes | Moves and resizes through the window manager |
-| Windows | Yes | Yes (snaps to edges) | Yes | `tre` sets the undecorated shadow; Windows 11's snap-layout flyout over a maximize button isn't reachable through `winit` |
+| Windows | Yes | Yes (snaps to edges) | Yes | `tess_re` sets the undecorated shadow; Windows 11's snap-layout flyout over a maximize button isn't reachable through `winit` |
 | macOS | See Q5 | Yes | Not undecorated | The transparent title bar keeps native resizing |
 
 ## Accessibility
@@ -183,11 +183,11 @@ the framework can inset its content by that much.
 **Q3. Double-clicking the title bar maximizes.** Windows, GNOME, and KDE
 do this by default; macOS follows a system setting.
 
-- **(recommended)** `tre` does it: a second primary press on a drag region
+- **(recommended)** `tess_re` does it: a second primary press on a drag region
   within 500 ms toggles maximize.
 - The framework does it, timing presses itself and calling `maximize()`.
 
-**Decided:** `tre` does it, counting only presses the Q1 rule would drag
+**Decided:** `tess_re` does it, counting only presses the Q1 rule would drag
 with, and timing them with the system's double-click time where the
 platform gives one (Windows, macOS), 500 ms elsewhere. On macOS it follows
 the user's title-bar double-click setting.
@@ -254,7 +254,7 @@ accepted.
 
 1. **`pointer_cancel`.** `winit` swallows the button release after
    `drag_window()` or `drag_resize_window()` on some platforms, which would
-   leave a framework's pressed state or pointer capture stuck. When `tre`
+   leave a framework's pressed state or pointer capture stuck. When `tess_re`
    starts a move or resize, it sends `pointer_cancel` to the pressed node
    and releases any capture.
 2. **Fullscreen.** `window.set(fullscreen=True)` and

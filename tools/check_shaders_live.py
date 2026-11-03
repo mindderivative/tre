@@ -9,7 +9,7 @@ input repainting every frame, an effect over children across real window resizes
 Needs a display. Run it on Windows (DX12) and macOS (Metal) for #187 and #188.
 """
 import os, sys, threading, time, resource
-from tre import App, Shader, Window
+from tess_re import App, Shader, Window
 
 print("session:", os.environ.get("XDG_SESSION_TYPE"), "DISPLAY", os.environ.get("DISPLAY"), "WAYLAND", os.environ.get("WAYLAND_DISPLAY"))
 INV = "fn shade(p: Pixel) -> vec4<f32> { let c = input_photo(p.uv); return vec4<f32>(c.rgb, c.a); }"

@@ -14,8 +14,8 @@
 # --renderer gles2 (the default) matches the earlier live runs and uses the real GPU for the
 # compositor; pixman keeps the compositor off the GPU. The tests' own windows still render with
 # wgpu on whatever adapter they pick (see tools/with_adapter.sh).
-# Not for KWin-only checks; those need TRE_LIVE_INPUT=1 (or TRE_LIVE_CLIPBOARD=1) and a real session.
-# It exports TRE_PRIVATE_COMPOSITOR=1 for the command, which tests read as "this clipboard is private".
+# Not for KWin-only checks; those need TESS_RE_LIVE_INPUT=1 (or TESS_RE_LIVE_CLIPBOARD=1) and a real session.
+# It exports TESS_RE_PRIVATE_COMPOSITOR=1 for the command, which tests read as "this clipboard is private".
 set -uo pipefail
 
 renderer=gles2
@@ -67,7 +67,7 @@ fi
 
 # This compositor is private, with a clipboard of its own: tests that would overwrite a real desktop's
 # clipboard (tests/test_clipboard_layer_live.py) may run without being asked.
-export SWAYSOCK="$sock" WAYLAND_DISPLAY TRE_PRIVATE_COMPOSITOR=1
+export SWAYSOCK="$sock" WAYLAND_DISPLAY TESS_RE_PRIVATE_COMPOSITOR=1
 WAYLAND_DISPLAY=$(cat "$work/display")
 echo "sway_live: pid $pid, WAYLAND_DISPLAY=$WAYLAND_DISPLAY, renderer $renderer" >&2
 "$@"

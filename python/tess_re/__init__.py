@@ -1,4 +1,4 @@
-"""tre v2 -- a GUI engine's building blocks, for a framework to build on.
+"""tess_re v2 -- a GUI engine's building blocks, for a framework to build on.
 
 `App` collects one or more `Window`s and drives them all together in one
 blocking `App.run()` call; each `Window` owns its own node tree and size:
@@ -16,7 +16,7 @@ the reactivity layer (`Signal`, `Computed`, `Effect`, `ViewModel`, `batch`,
 (Tesserae) owns all of them.
 """
 
-from tre._core import (
+from tess_re._core import (
     App,
     Painter,
     CursorImage,
@@ -38,7 +38,7 @@ from tre._core import (
     supports,
     system_fonts,
 )
-from tre.snapshot import png_bytes, write_png
+from tess_re.snapshot import png_bytes, write_png
 
 #: M32 Phase 1 (§5, §8, §10): the bundled monospace face a terminal always
 #: shapes with (`engine_render::MONOSPACE_FONT_FAMILY`, "Hack Nerd Font
@@ -73,10 +73,10 @@ __all__ = [
     "write_png",
 ]
 
-# M97: the migration gate's switch -- see `tre/_removed.py`.
+# M97: the migration gate's switch -- see `tess_re/_removed.py`.
 import os as _os
 
-if _os.environ.get("TRE_FORBID_REMOVED") == "1":
-    from tre._removed import install as _install
+if _os.environ.get("TESS_RE_FORBID_REMOVED") == "1":
+    from tess_re._removed import install as _install
 
     _install()

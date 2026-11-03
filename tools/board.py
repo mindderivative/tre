@@ -19,7 +19,7 @@ import sys
 
 OWNER = "mindderivative"
 PROJECT = "3"
-REPO = f"{OWNER}/tre"
+REPO = f"{OWNER}/tess-re"
 
 
 def gh(*args):

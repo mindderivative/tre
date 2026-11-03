@@ -2,7 +2,7 @@
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust.**
 
-Tesserae Engine (imported as `tre`) gives Python the building blocks of a desktop UI — nodes, layout,
+Tesserae Engine (imported as `tess_re`) gives Python the building blocks of a desktop UI — nodes, layout,
 paint, animation, input, text, accessibility, and layers — and, on Wayland, bars, panels and
 menus the compositor places (`LayerWindow`, `PopupWindow`) — and renders them
 on the GPU. It has no widgets and no theme of its own: a UI library or
@@ -16,7 +16,7 @@ systems. You write Python; the engine underneath uses:
 - [`winit`](https://github.com/rust-windowing/winit) for windows and input
 
 ```python
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=320, height=120, title="Hello")
 button = window.create("box", width=120, height=40, corner_radius=20,
@@ -83,6 +83,8 @@ complete switch.
 - **[Python API](api/python.md)** and **[Rust API](api/rust.md)** — every
   class or type with its properties, methods and events, on one page each,
   for quick reference. The [Reference](reference/app.md) pages go deeper.
+- **[Upgrading to 0.6.x](migrating-0.6.md)** — from 0.5.x: the package is
+  `tess_re` now (was `tre`) and the variables are `TESS_RE_*`.
 - **[Upgrading to 0.5.x](migrating-0.5.md)** — from 0.4.x: no renames,
   custom windowing, and a window root's fill now paints.
 - **[Upgrading to 0.4.x](migrating-0.4.md)** — from 0.3.5: no renames, a
@@ -93,9 +95,9 @@ complete switch.
 
 Tesserae Engine is a second, from-scratch iteration of an earlier Vulkan engine,
 archived under
-[`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
+[`archive/`](https://github.com/mindderivative/tess-re/tree/main/archive) with
 the lessons learned that shaped it. Its build history is in
 the GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3) (0.5.0 on),
-[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) (0.4.x), and
-[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) (0.4.x), and
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
 (through 0.3.5).

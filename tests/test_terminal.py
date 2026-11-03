@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from tre import App, MONOSPACE_FONT_FAMILY, Node, Window
+from tess_re import App, MONOSPACE_FONT_FAMILY, Node, Window
 from helpers import add
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="Terminal is POSIX-only in this v1")

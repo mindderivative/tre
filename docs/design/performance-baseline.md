@@ -22,7 +22,7 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 BASELINE_FILTER=text cargo test ...   # only scenarios whose name contains "text"
 ```
 
-[`crates/engine-render/tests/baseline.rs`](https://github.com/mindderivative/tre/blob/main/crates/engine-render/tests/baseline.rs)
+[`crates/engine-render/tests/baseline.rs`](https://github.com/mindderivative/tess-re/blob/main/crates/engine-render/tests/baseline.rs)
 runs the app's own frame sequence (`WindowRenderer`: `prepare`, `draw`, then a
 wait for the GPU) at 1920×1080 and times each stage of 60 frames after 8 warm-up
 frames. Idle CPU, wake-ups and startup were measured on a real Python window
@@ -100,7 +100,7 @@ throwaway edit, reverted; it is not in the code.) The code's own comment says "i
 wait for the display is what paces the loop"; with `Mailbox` it does not.
 
 Startup, from the start of a Python process to the first frame callback, was
-130 to 165 ms; `import tre` itself is 2.5 ms.
+130 to 165 ms; `import tess_re` itself is 2.5 ms.
 
 ## Memory
 

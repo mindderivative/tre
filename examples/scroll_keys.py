@@ -14,14 +14,14 @@ exits; `App.run()` returns quietly where no display is reachable.
 See docs/guide/nodes-and-layout.md.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 SURFACE = (0xFE, 0xF7, 0xFF, 0xFF)
 ROW = (0xF3, 0xED, 0xF7, 0xFF)
 ROW_HEIGHT = 32
 GAP = 4
 
-window = Window(width=320, height=280, title="tre -- scroll keys")
+window = Window(width=320, height=280, title="tess_re -- scroll keys")
 window.root.set(flex_direction="vertical", padding=16, gap=12, fill=SURFACE)
 
 status = window.create("text", text="0 px down", font_size=14, height=20)

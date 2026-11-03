@@ -240,7 +240,7 @@ fn length_percentage_to_py(value: LengthPercentage, py: Python<'_>) -> PyResult<
     match ExpandedLengthPercentage::from(value) {
         ExpandedLengthPercentage::Percent(p) => to_py(percent_text(p), py),
         ExpandedLengthPercentage::Length(v) => to_py(f64::from(v), py),
-        // `tre` never sets a calc() value.
+        // `tess_re` never sets a calc() value.
         ExpandedLengthPercentage::Calc(_) => to_py(py.None(), py),
     }
 }

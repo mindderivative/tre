@@ -1,4 +1,4 @@
-# CI for tre v2. The main `test` job is Linux-only, deliberately; §14
+# CI for tess_re v2. The main `test` job is Linux-only, deliberately; §14
 # step 7 (this one, wiring `accesskit`) is ARCHITECTURE.md §6's own named
 # trigger for adding *minimal* Windows/macOS build+smoke jobs (below),
 # since this is the first step where real platform-specific behavior
@@ -53,7 +53,7 @@
 # Python smoke test (§14 step 6): ARCHITECTURE.md §13's own "Decision
 # recorded" -- primary-OS CI for the Python bindings starts as soon as
 # `engine-py` exists (this step), not deferred until the API stabilizes.
-# `maturin develop` + `import tre` + the real pytest suite + every
+# `maturin develop` + `import tess_re` + the real pytest suite + every
 # `examples/*.py` (each checks its building block headlessly, then opens a
 # real window when one's reachable or exits 0 gracefully here via the
 # finding #261 convention `App.run()` implements).
@@ -195,7 +195,7 @@ jobs:
         if: needs.plan.outputs.rust == 'true'
         run: cargo test $AFFECTED
         env:
-          TRE_DAMAGE_VERIFY: "1"
+          TESS_RE_DAMAGE_VERIFY: "1"
 
       - uses: actions/setup-python@v5
         if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
@@ -210,19 +210,19 @@ jobs:
       - name: Install maturin, pytest, and mypy
         if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
         run: pip install "maturin>=1.7,<2.0" pytest "mypy>=2.3,<3"
-      - name: Build and install the tre extension (maturin develop)
+      - name: Build and install the tess_re extension (maturin develop)
         if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
         run: maturin develop
       - name: Import smoke test
         if: needs.plan.outputs.build_ext == 'true' || needs.plan.outputs.typecheck == 'true'
-        run: python -c "import tre; print(tre.App, tre.Node)"
+        run: python -c "import tess_re; print(tess_re.App, tess_re.Node)"
 
       - name: Type-check the package (mypy --strict)
         if: needs.plan.outputs.typecheck == 'true'
-        run: mypy --strict python/tre
+        run: mypy --strict python/tess_re
       - name: Check the stub against the extension (stubtest)
         if: needs.plan.outputs.typecheck == 'true'
-        run: python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
+        run: python -m mypy.stubtest tess_re --allowlist tools/stubtest_allowlist.txt
       - name: Check the generated Python API page is current
         if: needs.plan.outputs.typecheck == 'true'
         run: |
@@ -233,12 +233,12 @@ jobs:
         if: needs.plan.outputs.pytest_scope == 'all'
         run: python -m pytest tests/ -v
         env:
-          TRE_DAMAGE_VERIFY: "1"
+          TESS_RE_DAMAGE_VERIFY: "1"
       - name: Python tests that cover the change
         if: needs.plan.outputs.pytest_scope == 'selected'
         run: python -m pytest ${{ needs.plan.outputs.pytest_files }} -v
         env:
-          TRE_DAMAGE_VERIFY: "1"
+          TESS_RE_DAMAGE_VERIFY: "1"
 
       - name: Run the examples that relate to the change (and the broad ones)
         if: needs.plan.outputs.examples != ''
@@ -313,7 +313,7 @@ jobs:
         env:
           # 0.5.4 (#125): the damage walk that visits only changed nodes also
           # runs the full walk and panics if they disagree.
-          TRE_DAMAGE_VERIFY: "1"
+          TESS_RE_DAMAGE_VERIFY: "1"
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -355,20 +355,20 @@ jobs:
       - name: Install maturin, pytest, and mypy
         run: pip install "maturin>=1.7,<2.0" pytest "mypy>=2.3,<3"
 
-      - name: Build and install the tre extension (maturin develop)
+      - name: Build and install the tess_re extension (maturin develop)
         run: maturin develop
 
       - name: Import smoke test
-        run: python -c "import tre; print(tre.App, tre.Node)"
+        run: python -c "import tess_re; print(tess_re.App, tess_re.Node)"
 
       # 0.4.3 M19: the stub against itself, then against the built
       # extension -- the docs audit found `Node.get(property=)` in the stub
       # where the runtime takes `name`, which `mypy` alone accepted.
       - name: Type-check the package (mypy --strict)
-        run: mypy --strict python/tre
+        run: mypy --strict python/tess_re
 
       - name: Check the stub against the extension (stubtest)
-        run: python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
+        run: python -m mypy.stubtest tess_re --allowlist tools/stubtest_allowlist.txt
 
       # 0.5.4 (review): docs/api/python.md is generated from the built
       # extension and committed; an API change without regenerating it fails
@@ -382,7 +382,7 @@ jobs:
       - name: Python FFI test suite
         run: python -m pytest tests/ -v
         env:
-          TRE_DAMAGE_VERIFY: "1"
+          TESS_RE_DAMAGE_VERIFY: "1"
 
       - name: Run every example
         run: |

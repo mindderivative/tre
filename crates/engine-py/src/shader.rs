@@ -1,5 +1,5 @@
-//! 0.5.1 (#66): `tre.Shader` -- the app's WGSL, checked when it is made --
-//! and `tre.ShaderError`, the `ValueError` a mistake raises. The checking is
+//! 0.5.1 (#66): `tess_re.Shader` -- the app's WGSL, checked when it is made --
+//! and `tess_re.ShaderError`, the `ValueError` a mistake raises. The checking is
 //! `engine_core::Shader`; this is the Python skin on it. Nothing here draws.
 
 use std::cell::RefCell;
@@ -15,7 +15,7 @@ use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyTuple};
 use crate::node::Node;
 
 pyo3::create_exception!(
-    tre,
+    tess_re,
     ShaderError,
     PyValueError,
     "A shader's source or names are wrong. `line`, `column` and `source_line` \

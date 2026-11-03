@@ -12,8 +12,8 @@ See docs/reference/outputs.md and docs/guide/bars-and-panels.md.
 
 import sys
 
-import tre
-from tre import App, LayerWindow, UnsupportedPlatform
+import tess_re
+from tess_re import App, LayerWindow, UnsupportedPlatform
 
 app = App()
 bars = {}
@@ -59,6 +59,6 @@ scratch.simulate("output_added", name="TEST-1", width=2560, height=1440, scale_f
 scratch.simulate("output_removed", name="TEST-1")
 assert events == [("added", "TEST-1", 1.5), ("removed", "TEST-1")], events
 
-if bars and tre.supports("layer_shell"):
+if bars and tess_re.supports("layer_shell"):
     app.run(max_frames=None if "--watch" in sys.argv else 90)
     print("outputs.py: exited cleanly")

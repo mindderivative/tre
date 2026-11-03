@@ -43,7 +43,7 @@ GI_PYTHON = gi_python() if sys.platform.startswith("linux") and shutil.which("db
 
 CHILD = """
 import json, sys, threading, time
-from tre import App, Window
+from tess_re import App, Window
 window = Window(width=120, height=80)
 print(json.dumps({"read": [window.get("reduced_motion"), window.get("high_contrast")]}), flush=True)
 window.on("reduced_motion", lambda e: print(json.dumps({"reduced_motion": e.reduced_motion}), flush=True))
@@ -56,7 +56,7 @@ app.run()
 
 
 class Session:
-    """A private bus, a stand-in portal on it, and a tre child process on that bus."""
+    """A private bus, a stand-in portal on it, and a tess_re child process on that bus."""
 
     def __init__(self, initial):
         self.bus = subprocess.Popen(

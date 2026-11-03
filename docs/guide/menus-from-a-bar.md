@@ -86,7 +86,7 @@ closed, open, and closed again, and by reading the screen back with `grim`:
 | Frames drawn by an open menu while nothing moves | 0 | 0 |
 | Click to menu on screen | | about 140 ms (measured by polling `grim`, so within 70 ms) |
 
-About 210 MB of that is a fixed cost every tre window pays (the bar does too), and the rest
+About 210 MB of that is a fixed cost every tess_re window pays (the bar does too), and the rest
 grows with the output's pixels, roughly 16 bytes each. So **keeping a full-screen overlay mapped
 all the time costs a few hundred MB per output; creating it when the menu opens and closing it
 on dismiss costs nothing in between**, at the price of about a tenth of a second to open. Create

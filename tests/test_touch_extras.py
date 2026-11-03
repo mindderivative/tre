@@ -9,7 +9,7 @@ import math
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def scene(**props):

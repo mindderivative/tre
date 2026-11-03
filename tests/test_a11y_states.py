@@ -5,7 +5,7 @@ Rust tests (`access_states_0_5_6`); here, the Python surface."""
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def make():

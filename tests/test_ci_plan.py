@@ -75,7 +75,7 @@ def test_documentation_alone_gets_the_docs_tier(files):
     "files",
     [
         ["crates/engine-core/src/node.rs"],
-        ["docs/guide/text.md", "python/tre/__init__.py"],  # docs and code together
+        ["docs/guide/text.md", "python/tess_re/__init__.py"],  # docs and code together
         ["tests/test_layers.py"],
         ["examples/popup_menu.py"],
         ["tools/gen_rust_api.py"],
@@ -138,7 +138,7 @@ def test_a_pick_that_is_most_of_the_suite_runs_the_whole_suite():
 
 
 def test_a_selection_that_cannot_be_made_runs_the_whole_suite():
-    result = plan(["python/tre/snapshot.py"], select_tests=lambda f: None)
+    result = plan(["python/tess_re/snapshot.py"], select_tests=lambda f: None)
     assert result.pytest_scope == "all"
 
 

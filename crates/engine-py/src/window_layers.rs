@@ -4,7 +4,7 @@
 //! order, is placed against an optional anchor at every layout, and -- when
 //! modal -- blocks input beneath it and holds focus until hidden. Its
 //! dismissal (an outside press or Escape) arrives as a `dismiss` event; what
-//! that means is the framework's call. `tre` draws no scrim (R12).
+//! that means is the framework's call. `tess_re` draws no scrim (R12).
 
 use std::rc::Rc;
 

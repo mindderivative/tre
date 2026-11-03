@@ -6,7 +6,7 @@ edits do fire `change`. The caret's pixels are `text_field_paint.rs`'s job.
 
 import pytest
 
-from tre import Node, Window
+from tess_re import Node, Window
 from helpers import add
 
 

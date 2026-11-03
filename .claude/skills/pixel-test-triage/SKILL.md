@@ -20,19 +20,19 @@ Pair this with `systematic-debugging`: no fix, and no loosened assertion, before
 ```bash
 cargo test -p engine-render --release --test <binary> -- --nocapture
 # the software adapter CI uses (lavapipe):
-TRE_TEST_FORCE_FALLBACK=1 cargo test -p engine-render --release --test <binary> -- --nocapture
+TESS_RE_TEST_FORCE_FALLBACK=1 cargo test -p engine-render --release --test <binary> -- --nocapture
 # or choose the ICD explicitly:
 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json cargo test ...
 ```
 
-Also run it once with `TRE_DAMAGE_VERIFY=1`, which makes the damage tracker check itself against a full walk and panic on a disagreement. A damage bug shows up as a stale or missing region, not a wrong colour.
+Also run it once with `TESS_RE_DAMAGE_VERIFY=1`, which makes the damage tracker check itself against a full walk and panic on a disagreement. A damage bug shows up as a stale or missing region, not a wrong colour.
 
 | Real GPU | Lavapipe | Reading |
 |---|---|---|
 | fails | fails | Engine or renderer change. Go to step 3. |
 | passes | fails | CI will fail. Software rasteriser difference or a real bug the GPU hides. |
 | fails | passes | A driver or hardware difference. Say which GPU, and do not "fix" it by loosening the test. |
-| flaky | | Suspect timing: a missing wait for the GPU, a reused target, or a thread race. Re-run enough times to expect several failures (a 1-in-6 flake needs about 20 runs, not 10), then compare the failure rate with and without `TRE_DAMAGE_VERIFY=1` and on each adapter. |
+| flaky | | Suspect timing: a missing wait for the GPU, a reused target, or a thread race. Re-run enough times to expect several failures (a 1-in-6 flake needs about 20 runs, not 10), then compare the failure rate with and without `TESS_RE_DAMAGE_VERIFY=1` and on each adapter. |
 
 ## 3. Classify the change
 

@@ -14,7 +14,7 @@ display. Pass `--watch` to keep the window open.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
 BADGE = """<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120">
   <defs>
@@ -33,7 +33,7 @@ BADGE = """<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" view
         stroke-linecap="round" fill="none"/>
 </svg>"""
 
-window = Window(width=520, height=260, title="tre -- svg")
+window = Window(width=520, height=260, title="tess_re -- svg")
 window.root.set(fill=(0x1C, 0x1B, 0x1F, 0xFF), flex_direction="horizontal", gap=16)
 
 square = window.create("svg", svg=BADGE, width=200, height=200, fill=(0x2B, 0x29, 0x30, 0xFF), corner_radius=16)

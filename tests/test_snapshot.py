@@ -5,8 +5,8 @@ import zlib
 
 import pytest
 
-import tre
-from tre import Window
+import tess_re
+from tess_re import Window
 
 
 def pixel(shot, x, y):
@@ -91,12 +91,12 @@ def decode_png(data):
 def test_png_round_trips_the_pixels(tmp_path):
     rgba, width, height = boxed_window().snapshot()
     path = tmp_path / "shot.png"
-    tre.write_png(path, rgba, width, height)
+    tess_re.write_png(path, rgba, width, height)
     assert decode_png(path.read_bytes()) == (width, height, rgba)
 
 
 def test_png_bytes_checks_the_length():
     with pytest.raises(ValueError, match="expected 16 bytes"):
-        tre.png_bytes(b"\x00" * 15, 2, 2)
+        tess_re.png_bytes(b"\x00" * 15, 2, 2)
     with pytest.raises(ValueError, match="greater than 0"):
-        tre.png_bytes(b"", 0, 1)
+        tess_re.png_bytes(b"", 0, 1)

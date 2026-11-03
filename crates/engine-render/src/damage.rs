@@ -47,10 +47,10 @@
 //! exact union (it only grows while a node is passed through), never
 //! narrower; verification checks that against the full walk's.
 //!
-//! `TRE_DAMAGE_VERIFY=1` (or `DamageTracker::with_verification`) runs both on
+//! `TESS_RE_DAMAGE_VERIFY=1` (or `DamageTracker::with_verification`) runs both on
 //! every call and panics if the incremental result misses anything the full
 //! walk finds, or leaves a record that differs from it; CI runs the suites
-//! that way. `TRE_DAMAGE_FULL=1` turns the incremental walk off.
+//! that way. `TESS_RE_DAMAGE_FULL=1` turns the incremental walk off.
 //!
 //! The fingerprint code destructures every state struct without `..`: a
 //! field added later won't compile until someone decides whether it
@@ -292,15 +292,15 @@ struct Recorder<'a> {
 impl Default for DamageTracker {
     fn default() -> Self {
         let mut tracker = Self::default_plain();
-        tracker.incremental = std::env::var_os("TRE_DAMAGE_FULL").is_none();
-        tracker.scroll_blit = std::env::var_os("TRE_SCROLL_BLIT_OFF").is_none();
-        if let Some(n) = std::env::var("TRE_SCROLL_BLIT_MIN_NODES")
+        tracker.incremental = std::env::var_os("TESS_RE_DAMAGE_FULL").is_none();
+        tracker.scroll_blit = std::env::var_os("TESS_RE_SCROLL_BLIT_OFF").is_none();
+        if let Some(n) = std::env::var("TESS_RE_SCROLL_BLIT_MIN_NODES")
             .ok()
             .and_then(|v| v.parse().ok())
         {
             tracker.scroll_blit_min_nodes = n;
         }
-        if std::env::var_os("TRE_DAMAGE_VERIFY").is_some() {
+        if std::env::var_os("TESS_RE_DAMAGE_VERIFY").is_some() {
             tracker.verify = Some(Box::new(Self::full_only()));
         }
         tracker
@@ -349,7 +349,7 @@ impl DamageTracker {
 
     /// A tracker that also walks the whole tree on every call, and panics
     /// when what the incremental walk reports misses a change the full walk
-    /// finds. Set `TRE_DAMAGE_VERIFY` to get one from `new`, to run the test
+    /// finds. Set `TESS_RE_DAMAGE_VERIFY` to get one from `new`, to run the test
     /// suites under it.
     pub fn with_verification() -> Self {
         Self {

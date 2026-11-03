@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import pytest
 
-import tre
+import tess_re
 
 
-def pinned_window() -> tre.Window:
-    w = tre.Window(200, 100, "advance")
+def pinned_window() -> tess_re.Window:
+    w = tess_re.Window(200, 100, "advance")
     w.advance(0)  # pin the clock, so an animation starts at a known instant
     return w
 
@@ -54,4 +54,4 @@ def test_each_window_keeps_its_own_time() -> None:
 @pytest.mark.parametrize("ms", [-1.0, float("nan"), float("inf")])
 def test_advance_rejects_a_bad_duration(ms: float) -> None:
     with pytest.raises(ValueError, match="non-negative number"):
-        tre.Window(10, 10, "advance").advance(ms)
+        tess_re.Window(10, 10, "advance").advance(ms)

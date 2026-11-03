@@ -10,9 +10,9 @@ Needs a display to draw frames (without one `App.run()` returns quietly and
 the statistics are empty). See docs/reference/window.md.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=320, height=200, title="tre -- frame stats")
+window = Window(width=320, height=200, title="tess_re -- frame stats")
 window.set(profile_nodes=True)
 card = window.create("box", width=120, height=80, x=100, y=60, position="absolute",
                      fill=(0x67, 0x50, 0xA4, 0xFF), corner_radius=16)

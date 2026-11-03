@@ -3,7 +3,7 @@ siblings, refocusing firing nothing, focus from a click, a secondary click,
 or Tab, and a raising listener being logged and non-fatal.
 """
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

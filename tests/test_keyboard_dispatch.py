@@ -3,7 +3,7 @@ focus (wrapping), Enter and Space fire `click` on the focused node, and
 Enter with nothing focused does nothing.
 """
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

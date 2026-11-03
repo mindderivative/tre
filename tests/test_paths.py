@@ -10,13 +10,13 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 
 TRIANGLE = "M0,0 L24,0 L24,24 Z"
 
 
-def window() -> tre.Window:
-    return tre.Window(300, 200, "paths")
+def window() -> tess_re.Window:
+    return tess_re.Window(300, 200, "paths")
 
 
 def test_create_makes_a_detached_path_with_its_props() -> None:

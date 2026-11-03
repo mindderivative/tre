@@ -9,14 +9,14 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 
 
-def window() -> tre.Window:
-    return tre.Window(400, 300, "layout")
+def window() -> tess_re.Window:
+    return tess_re.Window(400, 300, "layout")
 
 
-def attached(w: tre.Window, **props: Any) -> tre.Node:
+def attached(w: tess_re.Window, **props: Any) -> tess_re.Node:
     node = w.create("box", **props)
     w.root.add_child(node)
     return node

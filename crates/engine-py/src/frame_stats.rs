@@ -357,7 +357,7 @@ impl FrameStats {
 /// `Window.stats_handle()` makes one on the loop's thread; any thread can then
 /// call `read()`, which does not wait for the loop (the statistics are shared
 /// and each frame takes one short lock to add itself). Like `LoopHandle` it is
-/// the one kind of `tre` object a background thread may hold.
+/// the one kind of `tess_re` object a background thread may hold.
 #[pyclass(frozen, name = "StatsHandle")]
 pub struct StatsHandle {
     stats: SharedStats,

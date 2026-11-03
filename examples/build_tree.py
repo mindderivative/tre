@@ -11,9 +11,9 @@ to keep the window open.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=360, height=120, title="tre -- build")
+window = Window(width=360, height=120, title="tess_re -- build")
 window.root.set(fill=(0x1C, 0x1B, 0x1F, 0xFF), align_items="center", justify_content="center")
 
 root, nodes = window.build({

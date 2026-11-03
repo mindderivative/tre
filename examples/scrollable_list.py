@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A virtual list of 1,000 rows, of which `tre` builds only the few its
+"""A virtual list of 1,000 rows, of which `tess_re` builds only the few its
 200px viewport shows: `materialize(index)` returns a node for each row as
 it scrolls into view, and rows scrolled away are released. A wheel
 scrolls it; the scrollbar thumb paints on its right edge.
@@ -9,9 +9,9 @@ Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
 without a display. See docs/guide/nodes-and-layout.md.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=200, height=200, title="tre -- scrollable list")
+window = Window(width=200, height=200, title="tess_re -- scrollable list")
 
 ROW_COUNT = 1_000
 ROW_HEIGHT = 24.0

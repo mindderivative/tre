@@ -3,7 +3,7 @@
 0.5.4 research (#110). What the pinned `vello_gpu` can do as a layer effect,
 what was built on it, and what could not be. Probed directly with
 `engine-render/tests/vello_effects.rs` (`cargo test -p engine-render --release
---test vello_effects -- --ignored --nocapture`), without any tre node involved.
+--test vello_effects -- --ignored --nocapture`), without any tess_re node involved.
 
 ## What the renderer supports
 

@@ -11,7 +11,7 @@ The script selects a node and zooms with `window.simulate` and
 renders `max_frames=60` and returns quietly without a display.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 POSITIONS = [(40, 40), (160, 30), (260, 70), (200, 160), (70, 150)]
 EDGES = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0), (1, 3)]
@@ -19,7 +19,7 @@ SIZE = 24
 EDGE, HIGHLIGHT = (0xCA, 0xC4, 0xD0, 0xFF), (0x67, 0x50, 0xA4, 0xFF)
 NODE, SELECTED = (0x62, 0x5B, 0x71, 0xFF), (0x67, 0x50, 0xA4, 0xFF)
 
-window = Window(width=340, height=240, title="tre -- node graph")
+window = Window(width=340, height=240, title="tess_re -- node graph")
 window.root.set(padding=0)
 graph = window.create("box", width=320, height=220)
 window.root.add_child(graph)

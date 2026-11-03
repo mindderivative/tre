@@ -1,6 +1,6 @@
 //! 0.5.1 (#54, #66): a shader on a node -- the app's WGSL, checked on the CPU.
 //!
-//! The app writes one function, `fn shade(p: Pixel) -> vec4<f32>`. tre writes
+//! The app writes one function, `fn shade(p: Pixel) -> vec4<f32>`. tess_re writes
 //! the rest (the design is `docs/design/wgsl.md`): a vertex stage, `Pixel`, a
 //! `frame` block, the app's uniforms as a generated struct `u`, `content(uv)`
 //! for an effect, and `input_<name>(uv)` per named input. [`Shader`] holds the
@@ -15,7 +15,7 @@
 //!
 //! **Colour convention.** `shade` returns straight-alpha RGBA, like an
 //! `image`'s pixels, and an effect's `content(uv)` returns the node's rendered
-//! pixels the same way; tre converts at the edges.
+//! pixels the same way; tess_re converts at the edges.
 
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -156,7 +156,7 @@ pub fn frame_block(size: (f32, f32), time: f32) -> [u8; FRAME_BLOCK_SIZE] {
     out
 }
 
-/// Names tre's prelude declares at module scope: an app declaration with one
+/// Names tess_re's prelude declares at module scope: an app declaration with one
 /// of these is a clash.
 const PRELUDE_NAMES: &[&str] = &[
     "Pixel",
@@ -205,7 +205,7 @@ fn check_name(what: &str, name: &str) -> Result<(), ShaderError> {
 /// newline, so the app's first line is the line after the prelude's last.
 fn prelude(mode: ShaderMode, uniforms: &[(String, UniformKind)], inputs: &[String]) -> String {
     let mut s = String::new();
-    s.push_str("// ---- tre's generated prelude: the app's source follows ----\n");
+    s.push_str("// ---- tess_re's generated prelude: the app's source follows ----\n");
     s.push_str("struct Pixel {\n    uv: vec2<f32>,\n    px: vec2<f32>,\n}\n");
     s.push_str("struct Frame {\n    size: vec2<f32>,\n    time: f32,\n    pad: f32,\n}\n");
     s.push_str("struct Uniforms {\n");
@@ -296,9 +296,9 @@ fn positioned(
         return ShaderError::plain(message);
     }
     if location.line_number <= prelude_lines {
-        // Only tre's own `tre_fragment` calls `shade`, so a problem there is
+        // Only tess_re's own `tre_fragment` calls `shade`, so a problem there is
         // the app's `shade` missing or misshapen; anything else in the
-        // prelude is a name tre generated being clashed with.
+        // prelude is a name tess_re generated being clashed with.
         if !wgsl.contains("shade") {
             return ShaderError::plain(SHADE_WANTED);
         }
@@ -308,8 +308,8 @@ fn positioned(
             ));
         }
         return ShaderError::plain(format!(
-            "{message} (in tre's generated code: a uniform or input name probably \
-             clashes with a name tre provides)"
+            "{message} (in tess_re's generated code: a uniform or input name probably \
+             clashes with a name tess_re provides)"
         ));
     }
     let line = location.line_number - prelude_lines;
@@ -337,7 +337,7 @@ fn assemble(
             let mut message = error.message().to_owned();
             if message.contains("redefinition") {
                 message.push_str(&format!(
-                    "; tre provides these names: {}",
+                    "; tess_re provides these names: {}",
                     PRELUDE_NAMES.join(", ")
                 ));
             }
@@ -561,7 +561,7 @@ impl Shader {
         self.state.lock().unwrap().uniforms.clone()
     }
 
-    /// The complete WGSL module for the renderer: tre's prelude, then the
+    /// The complete WGSL module for the renderer: tess_re's prelude, then the
     /// app's source. Its entry points are `tre_vertex` and `tre_fragment`.
     pub fn assembled(&self) -> Arc<str> {
         self.state.lock().unwrap().assembled.clone()
@@ -679,7 +679,7 @@ mod tests {
         let source = format!("{GOOD}struct Pixel {{\n    a: f32,\n}}\n");
         let error = make(&source).unwrap_err();
         assert!(
-            error.message.contains("tre provides these names"),
+            error.message.contains("tess_re provides these names"),
             "{error}"
         );
         assert!(error.message.contains("Pixel"), "{error}");

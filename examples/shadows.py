@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Layered shadows (M95): five cards, each animating in to one of MD3's
 elevation levels -- written as the `shadows` lists a framework passes,
-since `tre` 0.3.5 has no elevation levels of its own (the table is in
+since `tess_re` 0.3.5 has no elevation levels of its own (the table is in
 `docs/design/legacy-behavior.md`). A key shadow over an ambient one,
 CSS `box-shadow`'s model: `(color, offset_x, offset_y, blur, spread)`.
 
@@ -10,7 +10,7 @@ The pixel proof that shadows paint is `crates/engine-render/tests/
 m95_paint.rs`.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 KEY, AMBIENT = (0, 0, 0, 77), (0, 0, 0, 38)
 LEVELS = [
@@ -22,7 +22,7 @@ LEVELS = [
 ]
 FLAT = [((0, 0, 0, 0), 0, 0, 0, 0), ((0, 0, 0, 0), 0, 0, 0, 0)]
 
-window = Window(width=420, height=160, title="tre -- shadows")
+window = Window(width=420, height=160, title="tess_re -- shadows")
 window.root.set(fill=(0xF4, 0xF4, 0xF4, 0xFF))
 
 for shadows in LEVELS:

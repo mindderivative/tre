@@ -3,7 +3,7 @@
 Needs a Wayland session whose compositor has the layer shell (KDE's KWin, wlroots');
 skips without one. A bar is mapped on the desktop for a few seconds per test and
 reserves screen space while it is up. The tests that need real pointer and key events
-(`TRE_LIVE_INPUT=1`) make a virtual input device with `/dev/uinput`, which moves the
+(`TESS_RE_LIVE_INPUT=1`) make a virtual input device with `/dev/uinput`, which moves the
 desktop's pointer, so they never run unasked.
 
 Each case runs the app in a child process and reads the events it prints, the way
@@ -20,21 +20,21 @@ import time
 
 import pytest
 
-import tre
+import tess_re
 
 pytestmark = pytest.mark.skipif(
-    not sys.platform.startswith("linux") or not tre.supports("layer_shell"),
+    not sys.platform.startswith("linux") or not tess_re.supports("layer_shell"),
     reason="needs a Wayland compositor with the layer-shell protocol",
 )
 
-LIVE_INPUT = os.environ.get("TRE_LIVE_INPUT") == "1" and os.access("/dev/uinput", os.W_OK)
+LIVE_INPUT = os.environ.get("TESS_RE_LIVE_INPUT") == "1" and os.access("/dev/uinput", os.W_OK)
 # A desktop panel on the bottom edge (KDE's, say) sits below a bottom layer bar, which the compositor
 # stacks above the panel's reserved strip. Set this to the panel's height so the pointer clicks the bar.
-BOTTOM_INSET = int(os.environ.get("TRE_LIVE_BOTTOM_INSET", "0"))
+BOTTOM_INSET = int(os.environ.get("TESS_RE_LIVE_BOTTOM_INSET", "0"))
 
 BAR = """
 import json, os, sys, threading, time
-from tre import App, LayerWindow, Window
+from tess_re import App, LayerWindow, Window
 
 args = json.loads(os.environ["BAR_ARGS"])
 app = App()
@@ -106,7 +106,7 @@ print(json.dumps({"kind": "done"}), flush=True)
 
 SLIDE_OUT_CLOSE = """
 import json, os, threading, time
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 
 app = App()
 bar = LayerWindow("tre-test-bar", anchor=("top", "left", "right"), size=(0, 32), exclusive_zone=32)
@@ -145,7 +145,7 @@ print(json.dumps({"kind": "done"}), flush=True)
 
 MAXIMISED = """
 import os, threading, time
-from tre import App, Window
+from tess_re import App, Window
 w = Window(width=400, height=300, title="tre-test-maximised")
 app = App(); app.add_window(w); handle = app.thread_handle()
 def drive():
@@ -165,7 +165,7 @@ app.run()
 
 MAXIMISED_SIZE = """
 import os, threading, time
-from tre import App, Window
+from tess_re import App, Window
 w = Window(width=400, height=300, title="tre-test-maximised")
 app = App(); app.add_window(w); handle = app.thread_handle()
 def drive():
@@ -311,7 +311,7 @@ def test_a_cancelled_close_can_slide_the_bar_out_and_then_close_it(children):
 
 def test_an_output_that_does_not_exist_raises_from_run(children):
     child = children(
-        "from tre import App, LayerWindow\n"
+        "from tess_re import App, LayerWindow\n"
         "w = LayerWindow('x', anchor=('top','left','right'), size=(0, 32), output='NOPE-9')\n"
         "a = App(); a.add_window(w)\n"
         "try:\n    a.run(max_frames=5)\nexcept RuntimeError as e:\n    print('RAISED', e)\n"
@@ -411,7 +411,7 @@ def test_output_hot_plug_fires_added_updated_and_removed(children):
     before = sway_outputs()
     code = """
 import json, os, threading, time
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 app = App()
 say = lambda kind, **kw: print(json.dumps({"kind": kind, **kw}), flush=True)
 app.on("output_added", lambda o: say("added", name=o.name, width=o.width))
@@ -514,7 +514,7 @@ def _sway_has(name):
 
 def _input_pointer(name):
     """A virtual pointer for the session under test: a wlroots virtual pointer on a headless
-    sway, or `/dev/uinput` on KWin (with `TRE_LIVE_INPUT=1`; it moves the real pointer)."""
+    sway, or `/dev/uinput` on KWin (with `TESS_RE_LIVE_INPUT=1`; it moves the real pointer)."""
     sys.path.insert(0, os.path.dirname(__file__))
     layout = outputs().values()
     width = max(ox + ow for (ox, _, ow, _) in layout)
@@ -527,7 +527,7 @@ def _input_pointer(name):
     if LIVE_INPUT:
         import uinput_device
         return uinput_device.Pointer(width, height)
-    pytest.skip("needs a headless sway (SWAYSOCK) or TRE_LIVE_INPUT=1 on KWin")
+    pytest.skip("needs a headless sway (SWAYSOCK) or TESS_RE_LIVE_INPUT=1 on KWin")
 
 
 def test_a_transparent_bar_shows_the_desktop_behind_it(children):
@@ -565,7 +565,7 @@ def test_paste_reaches_a_focused_layer_window_without_x(children):
     _on_sway(name)
     code = """
 import json, os, threading, time
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 app = App()
 bar = LayerWindow("paste-test", anchor=("top", "left", "right"), size=(0, 40), exclusive_zone=40,
                   keyboard="exclusive", output=%r)
@@ -608,7 +608,7 @@ app.run()
 
 REGION = """
 import json, os, sys, threading, time
-from tre import App, LayerWindow, Window
+from tess_re import App, LayerWindow, Window
 
 args = json.loads(os.environ["REGION_ARGS"])
 app = App()
@@ -757,7 +757,7 @@ def test_a_margin_animation_moves_the_surface_smoothly_and_ends_on_time(children
     _on_sway(name)
     code = """
 import json, os, threading, time
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 app = App()
 bar = LayerWindow("anim-test", anchor=("top", "left"), size=(200, 40), exclusive_zone=0, output=%r)
 bar.root.set(fill=(200, 100, 50, 255))
@@ -800,7 +800,7 @@ app.run()
 
 DRAG = """
 import json, os, threading, time
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 app = App()
 bar = LayerWindow("drag-test", anchor=("top", "left"), size=(200, 60), exclusive_zone=0, output=%r,
                   margin=(100, 0, 0, 100))
@@ -1042,7 +1042,7 @@ def test_an_open_menu_draws_no_frames_while_nothing_moves(children):
 
 IME_CHILD = """
 import json, os, threading, time
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 app = App()
 def say(kind, **kw):
     print(json.dumps({"kind": kind, **kw}), flush=True)
@@ -1135,7 +1135,7 @@ def test_a_plain_field_is_a_normal_text_input(children):
 
 A11Y_CHILD = """
 import json, os, threading, time
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 app = App()
 bar = LayerWindow("a11y-test", anchor=("top", "left", "right"), size=(0, 40), exclusive_zone=40, output=%r)
 bar.root.set(fill=(30, 30, 30, 255))
@@ -1231,9 +1231,9 @@ def test_layer_windows_and_an_ordinary_window_run_in_one_app(children):
     assert [e["kind"] for e in events].count("configure") == len(names)
 
 
-# ---- real input (TRE_LIVE_INPUT=1) ----
+# ---- real input (TESS_RE_LIVE_INPUT=1) ----
 
-live_input = pytest.mark.skipif(not LIVE_INPUT, reason="set TRE_LIVE_INPUT=1 (and have write access to /dev/uinput)")
+live_input = pytest.mark.skipif(not LIVE_INPUT, reason="set TESS_RE_LIVE_INPUT=1 (and have write access to /dev/uinput)")
 
 
 def drive(output_name, steps):
@@ -1323,7 +1323,7 @@ def test_a_bar_moved_off_the_screen_by_a_negative_margin_gets_no_pointer_events(
 
 def test_outputs_agree_with_what_the_compositor_reports():
     expected = outputs()
-    got = tre.App().outputs()
+    got = tess_re.App().outputs()
     assert {o.name for o in got} == set(expected)
     for o in got:
         x, y, width, height = expected[o.name]
@@ -1337,7 +1337,7 @@ def test_a_surface_bound_by_an_output_object_opens_on_that_output(children):
     name = list(outputs())[-1]
     child = children(
         "import json, os, threading, time\n"
-        "from tre import App, LayerWindow\n"
+        "from tess_re import App, LayerWindow\n"
         f"app = App(); out = [o for o in app.outputs() if o.name == {name!r}][0]\n"
         "bar = LayerWindow('tre-test-bar', anchor=('top','left','right'), size=(0, 24), exclusive_zone=24, output=out)\n"
         "bar.on('output_changed', lambda e: print(json.dumps({'kind': 'output', 'name': e.output}), flush=True))\n"
@@ -1355,7 +1355,7 @@ def test_watching_outputs_changes_nothing_at_start_and_a_run_still_ends_cleanly(
     # thread starts at once, even with no layer window.
     child = children(
         "import json, os, threading, time\n"
-        "from tre import App, Window\n"
+        "from tess_re import App, Window\n"
         "app = App(); seen = []\n"
         "for e in ('output_added', 'output_removed', 'output_updated'):\n"
         "    app.on(e, lambda o, e=e: seen.append((e, o.name)))\n"

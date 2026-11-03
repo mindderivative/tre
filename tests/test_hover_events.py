@@ -3,7 +3,7 @@ entering a node, leaving it for a sibling, the Event's window position, and
 hovering a node with no listener.
 """
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

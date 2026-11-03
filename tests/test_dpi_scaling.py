@@ -12,7 +12,7 @@ import textwrap
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def test_it_is_off_by_default():
@@ -51,7 +51,7 @@ def test_the_property_is_in_the_unknown_property_errors():
 
 LIVE_SCRIPT = """
 import sys, threading, time
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=320, height=200)
 window.set(dpi_scaling=(sys.argv[1] == "on"))

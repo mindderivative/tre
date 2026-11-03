@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from tre import App, Window
+from tess_re import App, Window
 
 needs_display = pytest.mark.skipif(
     not (os.environ.get("WAYLAND_DISPLAY") or os.environ.get("DISPLAY")),
@@ -29,8 +29,8 @@ needs_display = pytest.mark.skipif(
 
 PRELUDE = """
 import json, os, sys, threading, time
-from tre import App, LayerWindow, Window
-import tre
+from tess_re import App, LayerWindow, Window
+import tess_re
 T0 = time.monotonic()
 def say(**kw):
     print(json.dumps({"t": round(time.monotonic() - T0, 2), **kw}), flush=True)
@@ -112,7 +112,7 @@ def test_a_stop_asked_before_the_run_does_not_end_the_next_run():
 @needs_display
 def test_an_idle_loop_with_no_window_uses_no_cpu_and_wakes_no_engine_thread():
     """The shell's requirement: no frames, no timers. 5 s with no window: the process uses about
-    nothing, and none of tre's own threads (named `tre-*`) wakes on a timer."""
+    nothing, and none of tess_re's own threads (named `tre-*`) wakes on a timer."""
     lines, done = child("""
         import glob
         def tre_switches():
@@ -189,7 +189,7 @@ def test_stop_closes_every_window_without_asking_and_run_returns_normally():
             w.on("closed", lambda e, n=n: say(closed=n, reason=e.reason))
             app.add_window(w)
             windows.append(w)
-        if tre.supports("layer_shell"):
+        if tess_re.supports("layer_shell"):
             bar = LayerWindow("stop-test", anchor=("top", "left", "right"), size=(0, 24), exclusive_zone=0)
             bar.on("close_requested", lambda e: (asked.append("bar"), e.cancel()))
             bar.on("closed", lambda e: say(closed="bar", reason=e.reason))

@@ -1,4 +1,4 @@
-"""Type stubs for `tre._core`, the compiled pyo3 extension module.
+"""Type stubs for `tess_re._core`, the compiled pyo3 extension module.
 
 M30 Phase 0 (§5, §7, §8): pyo3 extension modules ship no type
 information of their own -- an IDE or `mypy`/`pyright` sees only an
@@ -398,7 +398,7 @@ class Window:
     """
 
     def __new__(
-        cls, width: int = 480, height: int = 200, title: str = "tre v2", decorations: bool = True
+        cls, width: int = 480, height: int = 200, title: str = "tess_re v2", decorations: bool = True
     ) -> Window:
         """Raises `ValueError` for a zero width or height. (0.5.0)
         `decorations=False` opens the window without the OS's title bar and
@@ -775,7 +775,7 @@ class Window:
         `1.0` before it opens or with `dpi_scaling` off) multiplies them into
         the pixels returned; `time` is the clock an animated shader sees as
         `frame.time`. Animations are drawn at their current values. Save it
-        with `tre.write_png`. Raises `ValueError` for a size or scale that
+        with `tess_re.write_png`. Raises `ValueError` for a size or scale that
         isn't greater than 0, and `RuntimeError` with no GPU or for a size
         the GPU can't render."""
         ...
@@ -1153,7 +1153,7 @@ class StatsHandle:
 @final
 class LoopHandle:
     """M87: a thread-safe handle to an `App`'s event loop, from
-    `App.thread_handle()`. The one `tre` object a background thread
+    `App.thread_handle()`. The one `tess_re` object a background thread
     (a file watcher, a network client) may use.
     """
 
@@ -1370,7 +1370,7 @@ class Painter:
 def register_font(data: bytes) -> list[str]:
     """M86: registers a font the caller already loaded -- a `.ttf`/
     `.otf`/`.ttc` file's raw bytes -- with every current and future
-    window in this process. `tre` never reads a font file itself; the
+    window in this process. `tess_re` never reads a font file itself; the
     caller (a framework like Tesserae) owns that.
 
     Returns the family names the data contains: the exact strings a

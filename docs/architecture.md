@@ -1,7 +1,7 @@
 # Architecture
 
 A short orientation. The full design reference is
-[`ARCHITECTURE.md`](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md)
+[`ARCHITECTURE.md`](https://github.com/mindderivative/tess-re/blob/main/ARCHITECTURE.md)
 in the repository root.
 
 ## Four crates
@@ -62,7 +62,7 @@ proxy, so a layer surface is drawn, laid out, animated and made accessible by th
 as any window (`WindowRenderer` does not know which kind of window it draws into). The thread
 owns what the protocol makes it own: the surface's configure and close, outputs and their
 hot-plug, the keyboard (through `xkbcommon-dl`, loaded at run time), input methods
-(`zwp_text_input_v3`) and a per-surface AccessKit adapter. tre binds the layer shell itself,
+(`zwp_text_input_v3`) and a per-surface AccessKit adapter. tess_re binds the layer shell itself,
 at the highest version the compositor offers. The design and what was measured are in
 [the LayerWindow design note](design/layer-window.md) and the
 [spike findings](design/layer-surface-spike.md).
@@ -96,11 +96,11 @@ running like any animation.
 
 Tesserae Engine is a from-scratch second iteration of an earlier Vulkan engine,
 archived under
-[`archive/`](https://github.com/mindderivative/tre/tree/main/archive) with
+[`archive/`](https://github.com/mindderivative/tess-re/tree/main/archive) with
 its lessons learned.
 The GitHub project [Tesserae Rendering Engine](https://github.com/users/mindderivative/projects/3)
 records the work from 0.5.0 on,
-[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) the 0.4.x line, and
-[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
+[`BUILD_TRACKER_ARCHIVE_0.4.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.4.md) the 0.4.x line, and
+[`BUILD_TRACKER_ARCHIVE_0.3.md`](https://github.com/mindderivative/tess-re/blob/main/BUILD_TRACKER_ARCHIVE_0.3.md)
 every earlier milestone, including the 0.3.5 program that moved Material
 Design 3 and the declarative layer out to the framework.

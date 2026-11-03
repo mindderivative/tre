@@ -8,14 +8,14 @@ A fill shader is clipped to the node's rounded corners. A `fill` with some
 transparency on the same node would tint the shader beneath it.
 
 Self-checking: the shader is validated when it is created, a bad one is
-shown to raise `tre.ShaderError`, and the checks run before the window
+shown to raise `tess_re.ShaderError`, and the checks run before the window
 opens. Headless-CI-safe: it renders `max_frames=180` and exits.
 """
 
 from pathlib import Path
 
-import tre
-from tre import App, Shader, Window
+import tess_re
+from tess_re import App, Shader, Window
 
 SOURCE = (Path(__file__).parent / "shaders" / "julia.wgsl").read_text()
 
@@ -23,12 +23,12 @@ SOURCE = (Path(__file__).parent / "shaders" / "julia.wgsl").read_text()
 # the source -- no GPU, no window.
 try:
     Shader("fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(1.0, ;\n}\n")
-except tre.ShaderError as error:
+except tess_re.ShaderError as error:
     assert error.line == 2, error
 else:
     raise AssertionError("a broken shader should not be accepted")
 
-window = Window(width=560, height=360, title="tre -- shader panel")
+window = Window(width=560, height=360, title="tess_re -- shader panel")
 window.root.set(
     fill=(0x10, 0x12, 0x1C, 0xFF), align_items="center", justify_content="center", padding=24
 )

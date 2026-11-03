@@ -4,7 +4,7 @@ import gzip
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 RED = (255, 0, 0, 255)
 BLUE = (0, 0, 255, 255)
@@ -329,18 +329,18 @@ def test_a_drop_shadow_is_drawn_under_the_shape():
 # switch can show it here.
 
 def test_svg_text_uses_system_fonts_only_when_they_are_on_and_is_hermetic_otherwise():
-    import tre
+    import tess_re
 
     text = '<text x="4" y="40" font-size="32" font-family="Roboto" fill="#000000">漢字かな</text>'
     window, _ = shown(svg(text))
     hermetic = window.snapshot()
     try:
-        tre.set_system_fonts(True)
+        tess_re.set_system_fonts(True)
         with_system = window.snapshot()
-        tre.set_system_fonts(False)
+        tess_re.set_system_fonts(False)
         assert window.snapshot() == hermetic
     finally:
-        tre.set_system_fonts(False)
+        tess_re.set_system_fonts(False)
     if with_system == hermetic:
         pytest.skip("this machine has no system font for these scripts")
 

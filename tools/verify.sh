@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The standing verification chain for tre, in one place. Run from anywhere:
+# The standing verification chain for tess_re, in one place. Run from anywhere:
 #     tools/verify.sh            # everything except the cross-platform checks
 #     tools/verify.sh --cross    # also clippy for Windows and macOS targets, and the MSRV check
 #
@@ -27,20 +27,20 @@ cargo clippy --workspace --all-targets -- -D warnings
 step "Rust tests"
 cargo test --workspace --release
 step "Rust damage tracker, verified against a full walk"
-TRE_DAMAGE_VERIFY=1 cargo test -p engine-render --release
+TESS_RE_DAMAGE_VERIFY=1 cargo test -p engine-render --release
 
 step "build the extension"
 "$PY" -m maturin develop --release
 step "generate docs/api/python.md (commit it if it changed)"
 "$PY" tools/gen_python_api.py
 step "stubtest"
-"$PY" -m mypy.stubtest tre._core --allowlist tools/stubtest_allowlist.txt
+"$PY" -m mypy.stubtest tess_re._core --allowlist tools/stubtest_allowlist.txt
 step "mypy --strict"
 "$PY" -m mypy --strict python
 step "pytest"
 "$PY" -m pytest tests -q
 step "pytest with the damage tracker verified"
-TRE_DAMAGE_VERIFY=1 "$PY" -m pytest tests -q
+TESS_RE_DAMAGE_VERIFY=1 "$PY" -m pytest tests -q
 step "docs"
 "$PY" -m mkdocs build --strict
 

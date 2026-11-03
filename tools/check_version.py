@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check that every place the tre version lives agrees, before a release.
+"""Check that every place the tess_re version lives agrees, before a release.
 
 The version is in `Cargo.toml` ([workspace.package]), `pyproject.toml`, and the four `engine-*`
 entries of `Cargo.lock`; each crate must inherit it (`version.workspace = true`).

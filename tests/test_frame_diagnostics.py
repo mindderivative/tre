@@ -14,8 +14,8 @@ import threading
 
 import pytest
 
-import tre
-from tre import StatsHandle, Window
+import tess_re
+from tess_re import StatsHandle, Window
 
 needs_display = pytest.mark.skipif(not os.environ.get("DISPLAY"), reason="needs a display")
 
@@ -78,7 +78,7 @@ def test_a_trace_into_a_missing_directory_raises_oserror(tmp_path):
 
 LIVE = """
 import json, sys, threading, time
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=240, height=160)
 window.set(profile_nodes=True)

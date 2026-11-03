@@ -3,9 +3,9 @@
 Research for issue #207, 2026-10-25. The question: a 200 x 100 window draws one coloured box, and
 the process holds about 210 MB of VRAM (and 73 MB of GTT) before it does anything else. Why?
 
-**The short answer: tre itself uses under 1 MiB for that window. The rest is `wgpu`'s memory
+**The short answer: tess_re itself uses under 1 MiB for that window. The rest is `wgpu`'s memory
 allocator reserving big blocks when each window creates its GPU device.** One setting
-(`MemoryHints::MemoryUsage`, which tre does not set) brings the same window to 31 MiB, with no
+(`MemoryHints::MemoryUsage`, which tess_re does not set) brings the same window to 31 MiB, with no
 measurable cost in frame time.
 
 ## Hardware and method
@@ -45,7 +45,7 @@ both the process's memory and `wgpu`'s own allocator report after each:
 | `WindowRenderer::new` 200 x 100 | 195.1 MiB | 0.9 MiB | 256 MiB |
 | one frame rendered | 195.8 MiB | 0.9 MiB | 256 MiB |
 
-**Everything tre allocates for that window is under 1 MiB** (the allocator's own list: a 0.5 MiB
+**Everything tess_re allocates for that window is under 1 MiB** (the allocator's own list: a 0.5 MiB
 zero-initialisation buffer that `wgpu` makes itself, the 0.17 MiB persistent render target, and
 about 0.2 MiB of `vello_gpu` textures; the largest of the rest is 64 KiB). The 192 MiB
 appears the moment the device exists. `wgpu`'s allocator, asked for hints with the default
@@ -55,7 +55,7 @@ them (`wgpu-hal` 30.0.1, `AllocationSizes::from_memory_hints`: Performance 128 t
 64 to 128 MiB host blocks; `MemoryUsage` 8 to 64 MiB device and 4 to 32 MiB host). `GpuTimer`'s
 small read-back buffers then pull a 64 MiB host block into GTT.
 
-tre makes one `Instance`, adapter and device **per window** (`GpuState::new`), so every window pays
+tess_re makes one `Instance`, adapter and device **per window** (`GpuState::new`), so every window pays
 this again.
 
 ## The same windows with `MemoryHints::MemoryUsage`
@@ -84,9 +84,9 @@ A throwaway switch in `GpuState::new` (reverted) asked for the small blocks:
 
 ## The part that scales with pixels
 
-What is left at 4K (177 MiB) is the surface: the probe's allocator shows one big thing, tre's
+What is left at 4K (177 MiB) is the surface: the probe's allocator shows one big thing, tess_re's
 persistent render target (32 MiB at 3840 x 2160, 4 bytes a pixel), and the rest of the gap to the
-real process (about 129 MiB) is the swapchain: the driver gives four images of 32 MiB. tre cannot
+real process (about 129 MiB) is the swapchain: the driver gives four images of 32 MiB. tess_re cannot
 choose that count: `desired_maximum_frame_latency` set to 1, 2 or 3 and the present modes `vsync`
 and `low_latency` all gave exactly 176.6 MiB. So a full-screen surface costs about 19 bytes per
 pixel on this driver (four swapchain images plus the persistent target), which is why the overlay
@@ -110,7 +110,7 @@ Filed as Backlog issues; nothing is built until approved.
    shared adapter cannot present to gets a device of its own. Measured on the same machine
    (`tools/vram_probe.py`, AMD RADV, a private headless sway): 1 window 31.0 MiB VRAM / 13.4 GTT,
    2 windows 31.0 / 14.8, 5 windows 31.0 / 16.0 (before: 44.1 / 24.2 and 83.2 / 51.2).
-   `TRE_GPU_DEVICES=per-window` reproduces the old numbers exactly. Time until five windows have
+   `TESS_RE_GPU_DEVICES=per-window` reproduces the old numbers exactly. Time until five windows have
    each drawn a frame: about 285 ms against 334 ms (three runs each), so roughly 12 ms a window;
    the rest of a window's start-up is its own renderer (pipelines and caches), which is not shared.
    That was the next step if many windows matter, and it is done too (#235, below).
@@ -137,7 +137,7 @@ modes (a compositor places each window in turn), so read them as a direction. Wh
 show: the process's reported video memory (`drm-total-vram`) at 50 windows was 107 MiB both ways. The
 wgpu allocator holds 32 MiB of that, so about 75 MiB is memory the driver allocates outside it
 (swapchain images are the likely cause); that is the floor each window needs and is not explained
-further here. `TRE_GPU_RENDERERS=per-window` brings the renderer per window back.
+further here. `TESS_RE_GPU_RENDERERS=per-window` brings the renderer per window back.
 3. **Cut the per-pixel cost of full-screen surfaces** (4K: about 160 MiB). Options: skip the
    persistent target for a surface that never redraws partially (saves 32 MiB at 4K); keep
    overlay surfaces menu-sized where an input grab does not need the whole output. Effort and risk
@@ -149,8 +149,8 @@ further here. `TRE_GPU_RENDERERS=per-window` brings the renderer per window back
 
 ## What was done afterwards (#219)
 
-Finding 1 is built: tre asks for small memory blocks by default (`gpu_memory.rs`), with
-`TRE_GPU_MEMORY=performance` as the escape hatch, at both device sites (a window's device and the
+Finding 1 is built: tess_re asks for small memory blocks by default (`gpu_memory.rs`), with
+`TESS_RE_GPU_MEMORY=performance` as the escape hatch, at both device sites (a window's device and the
 headless snapshot device). A live test reads a window's own video memory from `fdinfo` and checks it
 stays under 100 MiB and that the variable brings the large reservation back. Findings 2 to 5 stay
 in the Backlog (#220, #221, #222, and the hardware issues #187 and #188).
@@ -166,7 +166,7 @@ frame in full, off drops it (`WindowRenderer::set_persistent`, pixel-checked in
 driver tested in four seconds, even with the device polled, so the saving is reliable only for a
 window opened without it; why the driver keeps it is not known. The other option in the issue
 (a menu-sized surface instead of a full-screen overlay) is `PopupWindow` (#223). The four
-swapchain images (about 16 bytes a pixel at 4K) stay out of tre's reach.
+swapchain images (about 16 bytes a pixel at 4K) stay out of tess_re's reach.
 
 ## What was changed and reverted
 

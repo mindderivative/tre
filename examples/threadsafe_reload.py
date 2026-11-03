@@ -31,7 +31,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from tre import App, Window
+from tess_re import App, Window
 
 workdir = Path(tempfile.mkdtemp(prefix="tre_threadsafe_reload_"))
 settings_path = workdir / "settings.json"

@@ -5,7 +5,7 @@ The bundled fonts cover Latin, Cyrillic, Greek and Arabic. `set_system_fonts(Tru
 lets text fall back to the machine's installed fonts for the rest (CJK, Hebrew,
 Indic, Thai, colour emoji); without it those glyphs draw as boxes. Hebrew and
 Arabic lay out right to left. To get the same pixels on every machine, register
-font files you ship with `tre.register_font` instead.
+font files you ship with `tess_re.register_font` instead.
 
 What shows depends on the fonts installed here; a machine without a CJK font
 still shows boxes for it. Headless-CI-safe: renders `max_frames=60` and returns
@@ -15,10 +15,10 @@ See docs/guide/text.md.
 
 import sys
 
-import tre
-from tre import App, Window
+import tess_re
+from tess_re import App, Window
 
-tre.set_system_fonts(True)
+tess_re.set_system_fonts(True)
 
 LINES = [
     "Hello, world — Привет — Γειά σου",
@@ -27,7 +27,7 @@ LINES = [
     "😀 🎉 ❤️ 🚀",
 ]
 
-window = Window(width=640, height=300, title="tre -- languages")
+window = Window(width=640, height=300, title="tess_re -- languages")
 window.root.set(fill=(0xFF, 0xFF, 0xFF, 0xFF), padding=12, flex_direction="vertical", gap=6)
 for line in LINES:
     window.root.add_child(

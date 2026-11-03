@@ -65,8 +65,8 @@ pub use thread_handle::LoopHandle;
 pub use window::PyWindow;
 
 /// The compiled extension module Python actually imports, as
-/// `tre._core` (`pyproject.toml`'s `module-name`) -- `python/tre/
-/// __init__.py` re-exports these as the public `tre` package surface.
+/// `tess_re._core` (`pyproject.toml`'s `module-name`) -- `python/tess_re/
+/// __init__.py` re-exports these as the public `tess_re` package surface.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<App>()?;
@@ -97,7 +97,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// M86: registers a font the caller already loaded (a `.ttf`/`.otf`/
 /// `.ttc` file's raw bytes) with every current and future window in
-/// this process -- `tre` never reads a font file itself. Returns the
+/// this process -- `tess_re` never reads a font file itself. Returns the
 /// family names the data contains, the exact strings a node's
 /// `font_family` property must use. Raises `ValueError` if the data
 /// holds no parseable font face. `&[u8]` borrows a Python `bytes`

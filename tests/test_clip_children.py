@@ -3,7 +3,7 @@ children, and never touching a text input's text. The clipping itself is
 checked by `engine-render`'s `clip_children.rs`.
 """
 
-from tre import Window
+from tess_re import Window
 from helpers import CODE_EDITOR, add
 
 

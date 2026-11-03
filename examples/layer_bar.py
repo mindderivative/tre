@@ -6,7 +6,7 @@ windows stop below it. A swatch, a label and a clock: the clock is `bar.every(10
 on the window's own clock, like any window's timer.
 
 Needs a Wayland compositor with the layer shell (KDE's KWin, wlroots'); on X11, GNOME's
-Mutter, Windows and macOS `LayerWindow(...)` raises `tre.UnsupportedPlatform`, which this
+Mutter, Windows and macOS `LayerWindow(...)` raises `tess_re.UnsupportedPlatform`, which this
 example reports and returns from. With no display at all (CI) it builds the bar and checks
 it headless, like every example here. Pass `--watch` to keep the bar up until you close it
 (`bar.close()`, or kill the script). See docs/guide/bars-and-panels.md.
@@ -14,8 +14,8 @@ it headless, like every example here. Pass `--watch` to keep the bar up until yo
 
 import sys
 
-import tre
-from tre import App, LayerWindow, UnsupportedPlatform
+import tess_re
+from tess_re import App, LayerWindow, UnsupportedPlatform
 
 try:
     bar = LayerWindow(
@@ -38,7 +38,7 @@ bar.root.set(
     gap=10,
 )
 swatch = bar.create("box", width=16, height=16, fill=(0xE8, 0xB4, 0x4C, 0xFF), corner_radius=8)
-title = bar.create("text", text="tre", font_size=14, font_weight=600, fill=(255, 255, 255, 255),
+title = bar.create("text", text="tess_re", font_size=14, font_weight=600, fill=(255, 255, 255, 255),
                    width="fit-content", height="fit-content")
 spacer = bar.create("box", flex_grow=1)
 clock = bar.create("text", text="00:00:00", font_size=14, fill=(0xCA, 0xC4, 0xD0, 0xFF),
@@ -63,7 +63,7 @@ assert clock.get("text") == "00:00:03", clock.get("text")
 pixels, width, height = bar.snapshot()
 assert height == 32 and width > 0 and len(pixels) == width * height * 4
 
-if tre.supports("layer_shell"):
+if tess_re.supports("layer_shell"):
     app = App()
     app.add_window(bar)
     app.run(max_frames=None if "--watch" in sys.argv else 90)

@@ -2,13 +2,13 @@
 row-building tests in `test_kinds.py`: a raising `size_hint` or `materialize`
 is logged and non-fatal, the window takes part in cyclic GC when its
 materializer captures it, and wheel input over the list or a plain node is
-safe. `tre` builds the visible rows itself.
+safe. `tess_re` builds the visible rows itself.
 """
 
 import gc
 import weakref
 
-from tre import Node, Window
+from tess_re import Node, Window
 from helpers import add
 
 

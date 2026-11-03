@@ -22,7 +22,7 @@ reachable.
 
 import sys
 
-from tre import App, Event, Window
+from tess_re import App, Event, Window
 
 BAR_HEIGHT = 40
 BUTTON_WIDTH = 46

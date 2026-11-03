@@ -4,7 +4,7 @@ defaulted `i=i`, a keyword-only parameter), and one listener shared by two
 nodes telling them apart by `event.target`.
 """
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

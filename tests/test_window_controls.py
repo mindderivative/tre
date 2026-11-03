@@ -1,6 +1,6 @@
 """0.5.0 M2 (issue #28, #37): undecorated windows and the window's own
 properties and controls -- what a framework drawing its own title bar needs
-from `tre`. Everything here runs without a display: a window that isn't open
+from `tess_re`. Everything here runs without a display: a window that isn't open
 keeps each setting and applies it when `App.run()` opens it.
 """
 
@@ -12,7 +12,7 @@ import textwrap
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 # --- Step 1: decorations -------------------------------------------------------
@@ -75,7 +75,7 @@ def run_live(script: str) -> str:
 
 def test_close_fires_close_requested_first_and_can_be_cancelled():
     log = run_live("""
-        from tre import App, Window
+        from tess_re import App, Window
         w = Window(width=200, height=120, decorations=False)
         box = w.create("box", width=20, height=20)
         w.root.add_child(box)
@@ -153,7 +153,7 @@ def test_simulating_state_needs_its_value():
 
 def test_a_live_maximize_and_restore_fire_maximized():
     log = run_live("""
-        from tre import App, Window
+        from tess_re import App, Window
         w = Window(width=300, height=200, decorations=False)
         box = w.create("box", width=20, height=20)
         w.root.add_child(box)
@@ -229,7 +229,7 @@ def _compositor_lets_the_app_resize() -> bool:
     compositor holds the size: COSMIC reports every window as tiled on all four
     sides, and winit then declines the resize (#169)."""
     return run_live("""
-        from tre import App, Window
+        from tess_re import App, Window
         w = Window(width=300, height=200, decorations=False)
         box = w.create("box", width=20, height=20)
         w.root.add_child(box)
@@ -253,7 +253,7 @@ def test_live_fullscreen_and_a_minimum_larger_than_the_window():
     if not _compositor_lets_the_app_resize():
         pytest.skip("the compositor holds the window's size here (tiled): a minimum cannot grow it")
     log = run_live("""
-        from tre import App, Window
+        from tess_re import App, Window
         w = Window(width=300, height=200, decorations=False)
         box = w.create("box", width=20, height=20)
         w.root.add_child(box)

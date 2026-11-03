@@ -6,7 +6,7 @@
 # commit doesn't redeploy the same site.
 #
 # Real finding: GitHub Pages was already enabled on this repo (`gh api
-# repos/mindderivative/tre/pages`), `build_type: "workflow"`, serving a
+# repos/mindderivative/tess-re/pages`), `build_type: "workflow"`, serving a
 # *stale* TRE v1 site (the old `archive/mkdocs.yml`'s own readthedocs-
 # themed build) from some earlier point before this repo's v2 rewrite --
 # confirmed by fetching the live URL and reading its own `<title>` tag
@@ -51,7 +51,7 @@ jobs:
       # either (the same `libfontconfig1-dev` ci.yml's Linux job already
       # documents needing). Installing the two doc-build packages
       # directly needs none of that -- this job only ever runs
-      # `mkdocs build`, never imports `tre` itself.
+      # `mkdocs build`, never imports `tess_re` itself.
       - run: pip install mkdocs mkdocs-material
       - run: mkdocs build --strict
       - uses: actions/upload-pages-artifact@v3

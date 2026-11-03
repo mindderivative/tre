@@ -12,14 +12,14 @@ Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
 without a display. See docs/guide/layers.md.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 SURFACE = (0xF3, 0xED, 0xF7, 0xFF)
 ACCENT = (0x67, 0x50, 0xA4, 0xFF)
 WHITE = (0xFF, 0xFF, 0xFF, 0xFF)
 RAISED = [((0, 0, 0, 77), 0, 1, 2, 0), ((0, 0, 0, 38), 0, 2, 6, 2)]
 
-window = Window(width=420, height=300, title="tre -- layers")
+window = Window(width=420, height=300, title="tess_re -- layers")
 window.root.set(align_items="start")
 log = []
 

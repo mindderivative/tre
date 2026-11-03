@@ -9,14 +9,14 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 
 
-def window() -> tre.Window:
-    return tre.Window(400, 300, "grid")
+def window() -> tess_re.Window:
+    return tess_re.Window(400, 300, "grid")
 
 
-def grid(w: tre.Window, **props: Any) -> tre.Node:
+def grid(w: tess_re.Window, **props: Any) -> tess_re.Node:
     # align_self: the root would otherwise stretch it to its own height.
     props.setdefault("width", 300)
     node = w.create("box", display="grid", align_self="start", **props)
@@ -24,14 +24,14 @@ def grid(w: tre.Window, **props: Any) -> tre.Node:
     return node
 
 
-def cells(w: tre.Window, parent: tre.Node, count: int, **props: Any) -> list[tre.Node]:
+def cells(w: tess_re.Window, parent: tess_re.Node, count: int, **props: Any) -> list[tess_re.Node]:
     made = [w.create("box", height=20, **props) for _ in range(count)]
     for cell in made:
         parent.add_child(cell)
     return made
 
 
-def x(node: tre.Node) -> float:
+def x(node: tess_re.Node) -> float:
     return float(node.get("layout_x"))
 
 

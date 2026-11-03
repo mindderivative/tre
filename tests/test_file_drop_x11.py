@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(
 
 CHILD = f"""
 import json
-from tre import App, Window
+from tess_re import App, Window
 window = Window(width=420, height=260, title={TITLE!r})
 zone = window.create("box", width=360, height=200, x=30, y=30, position="absolute")
 window.root.add_child(zone)
@@ -115,7 +115,7 @@ def test_a_drag_that_leaves_cancels_the_hover(window, files):
 
 
 def test_known_limit_the_node_under_the_drag_is_not_found_on_x11(window, files):
-    # winit gives a file event no position, so tre uses the pointer's last one; the
+    # winit gives a file event no position, so tess_re uses the pointer's last one; the
     # pointer never entered the window here, so a drop pointed at the zone's middle
     # reaches the window's listener but not the zone's (#133). Delete this test when
     # the position is the drag's own.

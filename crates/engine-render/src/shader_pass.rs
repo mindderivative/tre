@@ -220,7 +220,7 @@ impl Frame<'_> {
         let device = self.device;
         self.encoder.get_or_insert_with(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("tre shader passes"),
+                label: Some("tess_re shader passes"),
             })
         })
     }
@@ -512,7 +512,7 @@ impl ShaderPasses {
         let mut encoder = f
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("tre effect content"),
+                label: Some("tess_re effect content"),
             });
         let rendered = f.renderer.render(
             &scene,
@@ -565,7 +565,7 @@ impl ShaderPasses {
             .sampler
             .get_or_insert_with(|| {
                 f.device.create_sampler(&wgpu::SamplerDescriptor {
-                    label: Some("tre shader input sampler"),
+                    label: Some("tess_re shader input sampler"),
                     mag_filter: wgpu::FilterMode::Linear,
                     min_filter: wgpu::FilterMode::Linear,
                     ..Default::default()
@@ -628,13 +628,13 @@ impl ShaderPasses {
                 });
             }
             let group = f.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("tre shader bind group"),
+                label: Some("tess_re shader bind group"),
                 layout: &pipeline.layout,
                 entries: &entries,
             });
             {
                 let mut rpass = f.encoder().begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("tre shader"),
+                    label: Some("tess_re shader"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view: &target.view,
                         depth_slice: None,
@@ -674,7 +674,7 @@ fn new_target(
     content_format: Option<wgpu::TextureFormat>,
 ) -> Target {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("tre shader node texture"),
+        label: Some("tess_re shader node texture"),
         size: wgpu::Extent3d {
             width: size.0,
             height: size.1,
@@ -698,7 +698,7 @@ fn new_target(
     };
     let content = content_format.map(|format| {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("tre effect content texture"),
+            label: Some("tess_re effect content texture"),
             size: wgpu::Extent3d {
                 width: size.0,
                 height: size.1,
@@ -722,8 +722,8 @@ fn new_target(
         _texture: texture,
         view,
         size,
-        frame: buffer("tre shader frame", engine_core::FRAME_BLOCK_SIZE as u64),
-        uniforms: buffer("tre shader uniforms", uniform_len),
+        frame: buffer("tess_re shader frame", engine_core::FRAME_BLOCK_SIZE as u64),
+        uniforms: buffer("tess_re shader uniforms", uniform_len),
         key: None,
         content,
         generation: 0,
@@ -741,7 +741,7 @@ fn build_pipeline(
 ) -> Option<Pipeline> {
     let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("tre shader"),
+        label: Some("tess_re shader"),
         source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(source)),
     });
     let uniform = |binding, min| wgpu::BindGroupLayoutEntry {
@@ -795,16 +795,16 @@ fn build_pipeline(
         });
     }
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("tre shader bind group layout"),
+        label: Some("tess_re shader bind group layout"),
         entries: &entries,
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("tre shader pipeline layout"),
+        label: Some("tess_re shader pipeline layout"),
         bind_group_layouts: &[Some(&layout)],
         immediate_size: 0,
     });
     let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("tre fill shader pipeline"),
+        label: Some("tess_re fill shader pipeline"),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &module,

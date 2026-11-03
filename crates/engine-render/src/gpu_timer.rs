@@ -69,14 +69,14 @@ impl GpuTimer {
             return None;
         }
         let queries = device.create_query_set(&wgpu::QuerySetDescriptor {
-            label: Some("tre frame timestamps"),
+            label: Some("tess_re frame timestamps"),
             ty: wgpu::QueryType::Timestamp,
             count: (SLOTS * 2) as u32,
         });
         // Each slot's results sit at an aligned offset in the resolve buffer.
         let size = SLOTS as u64 * wgpu::QUERY_RESOLVE_BUFFER_ALIGNMENT;
         let resolve = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("tre frame timestamps (resolved)"),
+            label: Some("tess_re frame timestamps (resolved)"),
             size,
             usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
@@ -84,7 +84,7 @@ impl GpuTimer {
         let slots = (0..SLOTS)
             .map(|_| Slot {
                 readback: device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("tre frame timestamps (read back)"),
+                    label: Some("tess_re frame timestamps (read back)"),
                     size: 2 * std::mem::size_of::<u64>() as u64,
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
                     mapped_at_creation: false,

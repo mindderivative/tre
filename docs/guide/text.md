@@ -69,7 +69,7 @@ pixel above it. Percentage and `auto` widths, and every other kind of node
 
 Tesserae Engine bundles Roboto (regular and medium), Noto Sans Arabic, and Hack Nerd
 Font Mono, and by default never loads system fonts, so text renders the same on every
-machine. `tre.MONOSPACE_FONT_FAMILY` names the monospace face, which
+machine. `tess_re.MONOSPACE_FONT_FAMILY` names the monospace face, which
 terminals use — use it for anything that must line up with one, such as an
 editor's line numbers.
 
@@ -77,9 +77,9 @@ Any other font is bytes you load and register:
 
 ```python
 from pathlib import Path
-import tre
+import tess_re
 
-families = tre.register_font(Path("fonts/Inter-Regular.ttf").read_bytes())
+families = tess_re.register_font(Path("fonts/Inter-Regular.ttf").read_bytes())
 # ["Inter"] -- the name to use as font_family
 ```
 
@@ -97,7 +97,7 @@ draws as missing-glyph boxes or nothing. There are two ways to supply them.
 is installed, for exactly the glyphs the bundled and registered fonts lack:
 
 ```python
-tre.set_system_fonts(True)     # for every window in this process, live
+tess_re.set_system_fonts(True)     # for every window in this process, live
 ```
 
 A node whose text mixes scripts then needs no special handling: with
@@ -126,10 +126,10 @@ font files you bundle, such as subsets of [Noto](https://fonts.google.com/noto):
 
 ```python
 from importlib.resources import files
-import tre
+import tess_re
 
 for name in ("NotoSansJP-Regular.otf", "NotoSansHebrew-Regular.ttf", "NotoEmoji-Regular.ttf"):
-    tre.register_font(files("myapp.fonts").joinpath(name).read_bytes())
+    tess_re.register_font(files("myapp.fonts").joinpath(name).read_bytes())
 ```
 
 Registered fonts take part in fallback too: a glyph that `font_family` lacks is
@@ -173,7 +173,7 @@ help_text.set(selection=(0, 5))         # select from code; None clears
 
 **Links** (0.5.4). A span with a `link` makes its range clickable. A click (press
 and release on it, with no selection made between) fires a `link` event on the
-text node, which bubbles, and `event.href` is the span's `link` string. tre opens
+text node, which bubbles, and `event.href` is the span's `link` string. tess_re opens
 nothing and styles nothing: colour and underline the span yourself, and decide
 in the listener what `href` means. The pointer shows as a hand over a link
 (unless the node sets its own `cursor`), and text with a link takes pointer
@@ -298,7 +298,7 @@ from your highlighter:
 
 ```python
 editor = window.create("text_input", text=source, multiline=True,
-                       font_family=tre.MONOSPACE_FONT_FAMILY, font_size=13,
+                       font_family=tess_re.MONOSPACE_FONT_FAMILY, font_size=13,
                        width=600, height=400)
 editor.set(syntax_spans=[(0, 3, (0xB5, 0x3F, 0x8C, 0xFF))])  # "def"
 ```

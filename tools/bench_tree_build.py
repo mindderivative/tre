@@ -10,7 +10,7 @@ Run by hand (no assertion: CI runners are too noisy for one). Numbers belong in 
 import statistics as st
 import time
 
-from tre import Window
+from tess_re import Window
 
 pc = time.perf_counter
 

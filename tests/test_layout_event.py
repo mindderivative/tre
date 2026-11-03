@@ -7,7 +7,7 @@ it is first laid out: `event.width`/`event.height` are the new size,
 `set`, a parent's resize, a calc size, new text -- the event comes once a frame.
 """
 
-from tre import Window
+from tess_re import Window
 
 
 def watched(window, node):

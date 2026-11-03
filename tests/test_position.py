@@ -4,7 +4,7 @@ click still finds a node its translation has moved. Hit testing is the probe,
 since the click lands at the target node's center.
 """
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

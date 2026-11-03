@@ -15,7 +15,7 @@ and wakes the loop, even when it's idle waiting for input:
 
 ```python
 import threading
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=400, height=120)
 status = window.create("text", text="Loading...", width=360, height=24)
@@ -109,7 +109,7 @@ otherwise. Tell long CPU-bound work to run in a process or release the GIL
 ## Hidden windows (Wayland)
 
 A window the compositor is not showing (another workspace, minimized, a layer surface under a fullscreen
-window) draws no frames from 0.5.10: tre draws a Wayland window only after the compositor's frame callback for
+window) draws no frames from 0.5.10: tess_re draws a Wayland window only after the compositor's frame callback for
 its last frame, so a hidden one costs nothing and no longer stalls the others (before, its blocked present held the
 GIL and every window and Python thread froze; reproduced on sway, not on KWin). The frame is also what runs
 timers, `call_soon` work and `on_complete`, so **while every window of the app is hidden they wait until one is

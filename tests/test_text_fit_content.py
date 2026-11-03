@@ -11,7 +11,7 @@ import math
 
 import pytest
 
-from tre import Shader, Window
+from tess_re import Shader, Window
 
 LABEL = "Julia set, drawn by a fill shader"
 STYLE = dict(font_size=22)

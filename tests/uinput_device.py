@@ -1,7 +1,7 @@
 """A virtual absolute pointer and keyboard through /dev/uinput, for live tests of what a
 compositor delivers (0.5.8, #198). It creates a new device; the real ones are untouched,
 but the desktop's pointer does move, so the tests that use it run only with
-`TRE_LIVE_INPUT=1` and write access to /dev/uinput."""
+`TESS_RE_LIVE_INPUT=1` and write access to /dev/uinput."""
 import fcntl, os, struct, time
 
 EV_SYN, EV_KEY, EV_REL, EV_ABS = 0, 1, 2, 3

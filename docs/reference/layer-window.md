@@ -9,7 +9,7 @@ bound to one output. A `LayerWindow` is a `Window` in every way that makes sense
 `close`), and `App.run()` opens it like one. How to build one is in
 [Bars and panels](../guide/bars-and-panels.md).
 
-> **Two senses of "layer".** tre's [layers](layers.md) (`show_layer`) are nodes that
+> **Two senses of "layer".** tess_re's [layers](layers.md) (`show_layer`) are nodes that
 > float over a window's own content, drawn inside it. A layer *surface* is a separate
 > window, with its own stacking position among everything on the desktop. A
 > `LayerWindow`'s `layer` setting is the second kind; it keeps the protocol's word. A
@@ -17,7 +17,7 @@ bound to one output. A `LayerWindow` is a `Window` in every way that makes sense
 > small surface.
 
 ```python
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 
 bar = LayerWindow("tesserae-shell.bar", layer="top", anchor=("top", "left", "right"),
                   size=(0, 32), exclusive_zone=32)
@@ -53,7 +53,7 @@ the same edge is allowed. It is live through `set()`; the protocol has no reques
 edge once set, so `set(exclusive_edge=None)` on a surface that has one raises `ValueError` (move it
 to the other edge, or make a new window). It needs layer-shell version 5 (KWin and recent wlroots
 compositors have it); on a compositor with version 4 the surface still opens and a `warning` event
-(`key` `"exclusive_edge"`) says the edge is ignored. tre binds the layer shell itself, at the
+(`key` `"exclusive_edge"`) says the edge is ignored. tess_re binds the layer shell itself, at the
 highest version the compositor offers.
 
 **Compositor support.** sway (wlroots) and KDE's KWin 6.8.1 (version 5) both reserve the zone on
@@ -101,7 +101,7 @@ not four numbers, an `exclusive_zone` below `-1`. A node's `window_region="drag"
 `LayerWindow(...)` raises **`UnsupportedPlatform`** (a `RuntimeError`) where there is no
 layer shell: an X11 session, GNOME's Mutter, Windows and macOS. It does not quietly turn
 into a plain window: a bar without its exclusive zone is worse than an error. An app that
-wants a fallback catches it and builds one from `Window`. `tre.supports("layer_shell")`
+wants a fallback catches it and builds one from `Window`. `tess_re.supports("layer_shell")`
 answers the question without making a window.
 
 With no display at all (a CI run) a `LayerWindow` can be built and driven headless, like
@@ -176,7 +176,7 @@ listener, or one holding the pointer capture, met before the drag node, is an or
 ## Accessibility
 
 A layer surface is published to screen readers like a window (0.5.8). Linux has no toolkit-wide
-accessibility layer to hook, so tre gives each surface an AT-SPI adapter of its own (AccessKit's
+accessibility layer to hook, so tess_re gives each surface an AT-SPI adapter of its own (AccessKit's
 `accesskit_unix`, the backend a window's adapter wraps): the surface appears as one more window of
 the application, its nodes carry the `role`, `label` and state you set on them, the tree follows the
 nodes as they change, a screen reader's action on a node (a click, a focus) reaches the app as the

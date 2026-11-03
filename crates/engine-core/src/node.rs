@@ -693,7 +693,7 @@ pub struct TextFieldState {
     /// 0.5.6 (#162): what kind of text the field takes, for a keyboard that
     /// can adapt to it.
     pub input_mode: InputMode,
-    /// 0.5.6 (#165): whether tre draws the caret; `false` leaves it to a
+    /// 0.5.6 (#165): whether tess_re draws the caret; `false` leaves it to a
     /// framework that draws its own.
     pub caret_visible: bool,
     /// 0.5.6 (#165): the bar's width in pixels (the thickness of an underline).
