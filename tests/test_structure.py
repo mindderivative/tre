@@ -185,3 +185,19 @@ def test_destroy_unfocuses_before_freeing() -> None:
     w.simulate("focus", node=field)
     field.destroy()
     assert len(unfocuses) == 1
+
+
+# 0.5.10 (#253): a plain append keeps the checks that make it safe.
+def test_append_still_rejects_a_node_onto_itself_an_ancestor_and_a_foreign_node():
+    window = tre.Window(width=100, height=100)
+    other = tre.Window(width=100, height=100)
+    root = window.create("box")
+    with pytest.raises(ValueError):
+        root.add_child(root)
+    child = window.create("box")
+    root.add_child(child)
+    with pytest.raises(ValueError):
+        child.add_child(root)
+    with pytest.raises(ValueError):
+        root.add_child(other.create("box"))
+    assert [n.get("kind") for n in root.children()] == ["box"]
