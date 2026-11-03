@@ -1,4 +1,4 @@
-# PLAN — after 0.5.10
+# PLAN — after 0.6.0
 
 *(Replaces the 0.5.0 plan, custom windowing (#28), which shipped in 0.5.0
 and is recorded in `LOG.md`. From 0.5.0 every step is tracked in the GitHub
@@ -7,18 +7,13 @@ project Tesserae Rendering Engine; the old trackers are archived as
 
 ## Where we are
 
-`main` is at 0.5.10 (released 2026-11-03: tag `v0.5.10`, on PyPI as `tesserae-engine==0.5.10`; installed from
-PyPI and smoke-tested in a clean venv): `Window.build` / `apply` / `Node.set_children` (#253), SMIL `svg_time` (#245) and
-occlusion handling (#246). 0.5.9 (2026-10-27) was the shared GPU device and `keep_alive`. Open issues: #187 and #188
-(Windows and macOS hardware checks), #189 (X11 drop position), #247 (timers wait while every Wayland window is hidden),
-#248 (KWin fullscreen frame rate). Per `CLAUDE.md`, work starts
-from a scoped `Backlog` entry that the user moves to `Ready`.
-
-In progress on branch `0.6.0` (#257, not pushed): the Python package is renamed `tre` to `tess_re` and `TRE_*` to
-`TESS_RE_*`, version 0.6.0, no alias. The GitHub repo is renamed `mindderivative/tess-re` and the URLs are updated.
-Still to do before a release, each on the owner's word: push + PR, merge, the annotated tag and the wheels run (the
-owner has updated the PyPI trusted publisher). The other projects (`tess_ui`, `tess_el`, `tess_dl`, `tess_shell`)
-migrate on their own side; `docs/migrating-0.6.md` has the table.
+`main` is at 0.6.0 (released 2026-11-03: PR #258, tag `v0.6.0`, on PyPI as `tesserae-engine==0.6.0`; installed from PyPI
+and smoke-tested in a clean venv): the Python package is `tess_re` (was `tre`) and the variables are `TESS_RE_*`, no alias
+(#257; `docs/migrating-0.6.md`). 0.5.10 (2026-11-03) was `Window.build` / `apply` / `Node.set_children` (#253), SMIL
+`svg_time` (#245) and occlusion handling (#246). Open issues: #187 and #188 (Windows and macOS hardware checks), #189 (X11
+drop position), #247 (timers wait while every Wayland window is hidden), #248 (KWin fullscreen frame rate). The other
+projects (`tess_ui`, `tess_el`, `tess_dl`, `tess_shell`) migrate on their own side. Per `CLAUDE.md`, work starts from a
+scoped `Backlog` entry that the user moves to `Ready`.
 
 ## Backlog (not scoped)
 
