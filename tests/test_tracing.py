@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 SCRIPT = """
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=100, height=100)
 app = App()

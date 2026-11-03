@@ -9,7 +9,7 @@ import weakref
 
 import pytest
 
-from tre import App, Node, Window
+from tess_re import App, Node, Window
 from helpers import add
 
 

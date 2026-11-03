@@ -4,13 +4,13 @@ A `LayerWindow` (0.5.8) is how an app makes a bar, a panel, a dock or an OSD: a 
 compositor places at a screen edge, above or below ordinary windows, optionally reserving
 space so maximised windows stop short of it. It works only on a Wayland compositor that has
 the layer shell (KDE's KWin and the wlroots compositors do; GNOME's Mutter, X11, Windows
-and macOS do not), and raises `tre.UnsupportedPlatform` elsewhere. Every setting is in the
+and macOS do not), and raises `tess_re.UnsupportedPlatform` elsewhere. Every setting is in the
 [`LayerWindow` reference](../reference/layer-window.md); this page is how they fit together.
 
 ## A bar
 
 ```python
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 
 bar = LayerWindow(
     "example.bar",                       # what it is for
@@ -130,7 +130,7 @@ A `LayerWindow` is a `Window`, so `simulate`, `advance` and `snapshot` work with
 compositor and no display, and the headless size of a stretched axis is `1920` x `1080`
 unless `resize` says otherwise. The protocol's validation errors are raised in Python, so
 they are testable the same way. Where there is a display but no layer shell the
-constructor raises `UnsupportedPlatform`; `tre.supports("layer_shell")` tells a test
+constructor raises `UnsupportedPlatform`; `tess_re.supports("layer_shell")` tells a test
 whether to skip.
 
 ## Related

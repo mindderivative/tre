@@ -1,4 +1,4 @@
-//! M96: `ThreadBound<T>`, the thread-checked shell every `tre` object Python
+//! M96: `ThreadBound<T>`, the thread-checked shell every `tess_re` object Python
 //! holds is built on (issue #10).
 //!
 //! The state behind a `Window`, `Node`, `App`, and the rest is `Rc`-shared

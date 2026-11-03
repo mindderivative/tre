@@ -9,9 +9,9 @@ pixel proof that transforms compose is
 `crates/engine-render/tests/transform_composition.rs`.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=320, height=240, title="tre -- pan/zoom")
+window = Window(width=320, height=240, title="tess_re -- pan/zoom")
 
 swatch = window.create("box", fill=(0x67, 0x50, 0xA4, 0xFF), width=80, height=80)
 window.root.add_child(swatch)

@@ -9,14 +9,14 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 from helpers import add
 
 BLACK = (0, 0, 0, 255)
 
 
-def window() -> tre.Window:
-    return tre.Window(400, 300, "props")
+def window() -> tess_re.Window:
+    return tess_re.Window(400, 300, "props")
 
 
 def test_set_and_get_round_trip_every_property() -> None:

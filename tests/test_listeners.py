@@ -10,18 +10,18 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 from helpers import add
 
 BLACK = (0, 0, 0, 255)
 WHITE = (255, 255, 255, 255)
 
 
-def window() -> tre.Window:
-    return tre.Window(400, 300, "listeners")
+def window() -> tess_re.Window:
+    return tess_re.Window(400, 300, "listeners")
 
 
-def nested(w: tre.Window) -> tuple[tre.Node, tre.Node]:
+def nested(w: tess_re.Window) -> tuple[tess_re.Node, tess_re.Node]:
     outer = add(w, "box", fill=BLACK, width=200, height=150)
     inner = add(w, "box", fill=WHITE, width=50, height=50)
     outer.add_child(inner)
@@ -66,7 +66,7 @@ def test_click_bubbles_with_target_and_current() -> None:
     seen: list[tuple[str, str, bool, bool]] = []
 
     def record(tag: str) -> Any:
-        def listener(e: tre.Event) -> None:
+        def listener(e: tess_re.Event) -> None:
             assert e.target is not None and e.current is not None
             seen.append((tag, e.type, e.target == inner, e.current == inner))
 
@@ -85,7 +85,7 @@ def test_stop_ends_propagation() -> None:
     w = window()
     outer, inner = nested(w)
     seen: list[str] = []
-    def stop_here(e: tre.Event) -> None:
+    def stop_here(e: tess_re.Event) -> None:
         seen.append("inner")
         e.stop()
 
@@ -311,7 +311,7 @@ def test_input_and_change_for_typing() -> None:
 
 
 def test_change_is_for_user_edits_never_a_programmatic_set() -> None:
-    """tre#12: a framework applying a bound value -- new or the same --
+    """tess_re#12: a framework applying a bound value -- new or the same --
     mustn't look like the user editing the field."""
     w = window()
     field = w.create("text_input", width=150, height=30)
@@ -348,7 +348,7 @@ def test_focus_and_unfocus_bubble_for_focus_within() -> None:
     box.add_child(field)
     seen: list[tuple[str, bool]] = []
 
-    def record(e: tre.Event) -> None:
+    def record(e: tess_re.Event) -> None:
         assert e.target is not None and e.current is not None
         seen.append((e.type, e.target == field))
 
@@ -378,7 +378,7 @@ def test_focus_and_unfocus_name_the_node_on_the_other_side() -> None:
     clear = add(w, "text_input", width=30, height=30)
     bar.add_child(field)
     bar.add_child(clear)
-    seen: list[tuple[str, tre.Node | None]] = []
+    seen: list[tuple[str, tess_re.Node | None]] = []
     bar.on("unfocus", lambda e: seen.append(("unfocus", e.related_target)))
     bar.on("focus", lambda e: seen.append(("focus", e.related_target)))
     w.simulate("focus", node=field)
@@ -448,7 +448,7 @@ def test_close_requested_is_cancellable_and_other_events_are_not() -> None:
     w = window()
     cancelled: list[bool] = []
 
-    def on_close(e: tre.Event) -> None:
+    def on_close(e: tess_re.Event) -> None:
         e.cancel()
         cancelled.append(True)
 
@@ -458,7 +458,7 @@ def test_close_requested_is_cancellable_and_other_events_are_not() -> None:
 
     errors: list[str] = []
 
-    def on_resize(e: tre.Event) -> None:
+    def on_resize(e: tess_re.Event) -> None:
         try:
             e.cancel()
         except ValueError as err:
@@ -471,7 +471,7 @@ def test_close_requested_is_cancellable_and_other_events_are_not() -> None:
 
 def test_a_window_event_has_no_node() -> None:
     w = window()
-    seen: list[tre.Event] = []
+    seen: list[tess_re.Event] = []
     w.on("closed", lambda e: seen.append(e))
     w.simulate("closed")
     (event,) = seen
@@ -530,7 +530,7 @@ def test_node_handles_compare_and_hash_by_identity() -> None:
     w = window()
     a = add(w, "box", fill=BLACK, width=40, height=40)
     b = add(w, "box", fill=BLACK, width=40, height=40)
-    targets: list[tre.Node] = []
+    targets: list[tess_re.Node] = []
     a.on("click", lambda e: targets.append(e.target))
     w.simulate("click", node=a)
     (target,) = targets
@@ -557,9 +557,9 @@ def test_simulated_resize_rejects_a_negative_or_non_finite_size() -> None:
 
 def test_a_window_needs_a_positive_size() -> None:
     with pytest.raises(ValueError, match="positive width and height"):
-        tre.Window(width=0, height=100)
+        tess_re.Window(width=0, height=100)
     with pytest.raises(ValueError, match="positive width and height"):
-        tre.Window(width=100, height=0)
+        tess_re.Window(width=100, height=0)
 
 
 def test_show_damage_is_off_by_default_and_can_be_switched_on() -> None:

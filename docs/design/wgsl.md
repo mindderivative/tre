@@ -15,7 +15,7 @@
 
 ## The goal
 
-A framework above tre should be able to bring its own WGSL and apply it to
+A framework above tess_re should be able to bring its own WGSL and apply it to
 any node: shining text, a fractal background behind a layout panel, a colour
 grade over a video. The owner's two examples set the scope:
 
@@ -29,7 +29,7 @@ already true, as the survey shows.
 
 ## What the survey found
 
-- **tre has no shaders to migrate.** There are no `.wgsl`, `.glsl` or `.spv`
+- **tess_re has no shaders to migrate.** There are no `.wgsl`, `.glsl` or `.spv`
   files, no pipelines, no `naga`, and no `build.rs` in the engine. The GLSL
   and SPIR-V in the repository are in `archive/`, the retired Vulkan engine.
 - **`vello_gpu` already uses WGSL.** At the pinned commit its shaders are
@@ -37,25 +37,25 @@ already true, as the survey shows.
   and loaded with `wgpu`'s `ShaderSource::Wgsl`. It has no hook for a custom
   shader or paint. Its filter layers implement only blur, and its layer masks
   panic.
-- **There is a seam that doesn't need `vello` to change.** tre keeps one
+- **There is a seam that doesn't need `vello` to change.** tess_re keeps one
   `wgpu::Texture` per image node and `vello_gpu` draws it as an external
   texture. Anything holding the `Device` and `Queue` can write that texture,
   and `vello` can render a scene into any texture.
 - **`naga` is already in the build** (30.0.1, through `wgpu`), so WGSL can be
   parsed and validated on the CPU with no new crate.
-- **tre handles no GPU errors today.** It has no device-lost callback, no
+- **tess_re handles no GPU errors today.** It has no device-lost callback, no
   uncaptured-error handler and no error scopes, though `wgpu` offers all of
   them ([#65](https://github.com/mindderivative/tre/issues/65)).
 
 ## What an app writes
 
 ```python
-import tre
+import tess_re
 
-shine = tre.Shader(SHINE_WGSL, uniforms={"phase": 0.0}, mode="effect", animated=True)
+shine = tess_re.Shader(SHINE_WGSL, uniforms={"phase": 0.0}, mode="effect", animated=True)
 title.set(shader=shine)                       # shining text: a text node
 
-fractal = tre.Shader(FRACTAL_WGSL, uniforms={"zoom": 1.5}, mode="fill", animated=True)
+fractal = tess_re.Shader(FRACTAL_WGSL, uniforms={"zoom": 1.5}, mode="fill", animated=True)
 panel.set(shader=fractal)                     # a fractal behind a layout panel
 ```
 
@@ -85,7 +85,7 @@ pass, and replacing `vello`'s own shaders, are out.
 
 **Q2. What is the API?** ([#56](https://github.com/mindderivative/tre/issues/56))
 
-**Decided:** a `shader` property on **every** node kind, taking a `tre.Shader`
+**Decided:** a `shader` property on **every** node kind, taking a `tess_re.Shader`
 object: `node.set(shader=Shader(wgsl, uniforms, inputs, mode, animated))`, and
 `None` clears it. The owner: apply it to *any* node kind, with the shader
 taking the node's properties into account. So the shader sees the node's size,
@@ -103,17 +103,17 @@ property.
 
 **Q3. What does the shader write?** ([#57](https://github.com/mindderivative/tre/issues/57))
 
-**Decided:** one function, `fn shade(p: Pixel) -> vec4<f32>`. tre supplies the
+**Decided:** one function, `fn shade(p: Pixel) -> vec4<f32>`. tess_re supplies the
 vertex stage, `Pixel { uv, px }`, a `frame` block (`size`, `time`), the app's
 uniforms as a generated struct `u`, `content(uv)` for an effect, and one
 sampler per named input. The app never writes a binding or a vertex shader, so
-the bind-group layout stays tre's to change.
+the bind-group layout stays tess_re's to change.
 
 **Q4. How do uniforms get in?** ([#58](https://github.com/mindderivative/tre/issues/58))
 
 **Decided:** floats and float vectors. A number is an `f32`; a tuple of two,
 three or four numbers is a `vec2`, `vec3` or `vec4`; a colour is a `vec4`.
-Names must be WGSL identifiers. tre generates the struct with WGSL's layout
+Names must be WGSL identifiers. tess_re generates the struct with WGSL's layout
 rules. Changing a name or a type rebuilds the pipeline; changing a value only
 rewrites the buffer.
 
@@ -169,15 +169,15 @@ title-bar checks (#47, #48), and don't block 0.5.1.
 
 **Decided:** Python only. A `Shader` is a Python object; the declarative view
 formats can't create one. Where its source comes from, and any checking of the
-data a framework feeds it, is the host app's job: tre only
+data a framework feeds it, is the host app's job: tess_re only
 reports an error at creation time (Q6). Separately, and for **every** node, not
-only shaders, tre should detect and report a hung or lost GPU where `wgpu`
+only shaders, tess_re should detect and report a hung or lost GPU where `wgpu`
 makes that possible ([#65](https://github.com/mindderivative/tre/issues/65)).
 `wgpu` reports a hang as **Device Lost**, which the OS driver triggers when a
 shader loops or a command buffer runs too long (TDR on Windows, with Linux and
 Metal's own timeouts); a software adapter has no such timeout, so a stall
-watchdog covers it. The callbacks only run when the device is polled, so tre
-polls it each loop turn; and a lost device can't be restored, so tre reports
+watchdog covers it. The callbacks only run when the device is polled, so tess_re
+polls it each loop turn; and a lost device can't be restored, so tess_re reports
 the loss and ends the run rather than rebuilding (the owner's decision on
 #65). A GPU error no longer panics, and a stall watchdog is off by default.
 The shader milestones use this, so a hung shader is reported rather than
@@ -187,7 +187,7 @@ leaving a frozen window.
 
 - No compute shaders, no custom render passes, no changes to `vello`'s own
   shaders.
-- No GLSL or SPIR-V input. `naga` can read both; tre doesn't offer them.
+- No GLSL or SPIR-V input. `naga` can read both; tess_re doesn't offer them.
 - No `"shader"` kind in the declarative view formats.
 - No checking of a framework's data beyond the creation-time error.
 

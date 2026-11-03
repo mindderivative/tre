@@ -51,7 +51,7 @@ jobs:
       # either (the same `libfontconfig1-dev` ci.yml's Linux job already
       # documents needing). Installing the two doc-build packages
       # directly needs none of that -- this job only ever runs
-      # `mkdocs build`, never imports `tre` itself.
+      # `mkdocs build`, never imports `tess_re` itself.
       - run: pip install mkdocs mkdocs-material
       - run: mkdocs build --strict
       - uses: actions/upload-pages-artifact@v3

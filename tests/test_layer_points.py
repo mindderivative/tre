@@ -9,13 +9,13 @@ moves the point the layer attaches to, in the anchor's own coordinates, and
 
 import pytest
 
-import tre
+import tess_re
 
 W, H = 400, 300
 
 
 def scene(anchor_x=100, anchor_y=100, anchor_w=60, anchor_h=30, **layer_args):
-    window = tre.Window(W, H, "layer points")
+    window = tess_re.Window(W, H, "layer points")
     window.root.set(padding=0, gap=0)
     anchor = window.create(
         "box", position="absolute", x=anchor_x, y=anchor_y, width=anchor_w, height=anchor_h
@@ -71,7 +71,7 @@ def test_offset_moves_the_attachment_point():
 
 
 def test_offset_is_in_the_anchors_coordinates_so_a_scaled_anchor_scales_it():
-    window = tre.Window(W, H, "scaled")
+    window = tess_re.Window(W, H, "scaled")
     window.root.set(padding=0, gap=0)
     anchor = window.create(
         "box", position="absolute", x=100, y=100, width=60, height=30, scale=2.0
@@ -101,7 +101,7 @@ def test_the_placement_used_is_reported_by_name():
 
 
 def test_a_bad_placement_or_offset_is_refused():
-    window = tre.Window(W, H, "bad")
+    window = tess_re.Window(W, H, "bad")
     anchor = window.create("box", width=10, height=10)
     window.root.add_child(anchor)
     layer = window.create("box", width=5, height=5)

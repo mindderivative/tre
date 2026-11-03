@@ -4,7 +4,7 @@ Phase 2 of [#195](https://github.com/mindderivative/tre/issues/195) (TRE-REQ-001
 
 ## What it is
 
-A `LayerWindow` is a `Window` whose Wayland role is `zwlr_layer_shell_v1` instead of `xdg_toplevel`: the compositor places it (an edge, a stacking layer, a size, margins), not the user, and it can reserve screen space. It is how a bar, a panel, a dock, an OSD or a wallpaper is made. tre draws and drives it with the same pipeline as any window.
+A `LayerWindow` is a `Window` whose Wayland role is `zwlr_layer_shell_v1` instead of `xdg_toplevel`: the compositor places it (an edge, a stacking layer, a size, margins), not the user, and it can reserve screen space. It is how a bar, a panel, a dock, an OSD or a wallpaper is made. tess_re draws and drives it with the same pipeline as any window.
 
 ```python
 bar = LayerWindow(
@@ -35,9 +35,9 @@ A positive `exclusive_zone` with an anchor set the protocol treats as zero is ac
 
 ### Events
 
-`configure` (`width`, `height`: the compositor assigned a size; tre acks it and resizes the target; `resize` also fires), `closed` (`reason`: `"compositor"`, `"output_removed"` or `"app"`; after the first two the window is dead and the shell makes a new one) and `output_changed` (the output's name; the `Output` object is phase 3). A buffer is never attached before the first configure is acked: tre owns that sequence.
+`configure` (`width`, `height`: the compositor assigned a size; tess_re acks it and resizes the target; `resize` also fires), `closed` (`reason`: `"compositor"`, `"output_removed"` or `"app"`; after the first two the window is dead and the shell makes a new one) and `output_changed` (the output's name; the `Output` object is phase 3). A buffer is never attached before the first configure is acked: tess_re owns that sequence.
 
-`tre.supports("layer_shell")` is `False` where the role does not exist.
+`tess_re.supports("layer_shell")` is `False` where the role does not exist.
 
 ## How it fits the code
 
@@ -47,20 +47,20 @@ The spike measured the seams; none is large.
 - **The platform loop.** `engine-platform` keys every window by `winit`'s `WindowId` (31 uses in `lib.rs`; 3 in `engine-py`, in one file) and opens them through `PlatformEvent::OpenWindow` and `winit`'s `create_window`. A layer surface has no `WindowId`. The change is a small id type in `engine-platform` that is either a `winit` id or a layer surface's, and a second branch where windows are opened.
 - **The connection.** The `wl_display` comes from `winit`'s `ActiveEventLoop` (it implements `HasDisplayHandle`); a second `EventQueue` on it, wrapped with `wayland-backend`'s `from_foreign_display`, binds the layer shell. A thread dispatches that queue and posts what it hears through the existing `EventLoopProxy`, the way `appearance::portal::watch` does for the settings portal; drawing and the `wgpu` surface stay on the loop thread. Requests (`ack_configure`, `set_margin`, and the rest) are proxy calls and can be made from either thread.
 - **Drawing.** `WindowRenderer` is already independent of the window; only `GpuState::new` and `recreate_surface` in `engine-py/src/app.rs` take a `winit` window, to make the surface. A layer surface builds its `wgpu` surface from raw handles (`create_surface_unsafe`), as the spike did, and the renderer is used unchanged.
-- **Input.** A second seat delivers pointer, button, scroll and key events to the layer side. Both seats receive every surface's events, so every handler first checks the event's surface is its own. Key repeat is tre's own timer (the toolkit's needs a second event loop); the cursor comes from `wp_cursor_shape_v1`; touch is written to the protocol and untestable on the dev machine; IME (`zwp_text_input_v3`) comes last and may be its own issue.
+- **Input.** A second seat delivers pointer, button, scroll and key events to the layer side. Both seats receive every surface's events, so every handler first checks the event's surface is its own. Key repeat is tess_re's own timer (the toolkit's needs a second event loop); the cursor comes from `wp_cursor_shape_v1`; touch is written to the protocol and untestable on the dev machine; IME (`zwp_text_input_v3`) comes last and may be its own issue.
 - **Headless.** A `Window` with no OS window already runs `simulate`, `advance` and `snapshot` with no display. A `LayerWindow` constructed where there is no layer shell would raise, so the headless path needs a way to build one for tests: the constructor takes the validation and state without the surface, and the surface exists only once `App.run()` opens it on a compositor that has the role.
 
 ## Decisions (the maintainer accepted all five recommendations, 2026-10-19)
 
 1. **A subclass of `Window`, or one `Window` with a role.** *Recommendation: the subclass (shown to work).* It keeps `Window`'s signature unchanged and `LayerWindow`'s extra keys honest; a role flag would put layer-only keys on every window and make most `set()` errors a runtime role check.
 2. **Raise `UnsupportedPlatform`, or degrade to a plain window.** *Recommendation: raise.* A bar that quietly lacks its exclusive zone is a worse failure than a clear error; the shell can build its own fallback from `Window`.
-3. **The name `layer=`.** *Recommendation: keep the protocol's word* (the shell's other tools use it) and define both senses in the glossary: tre's in-window `show_layer` overlay, and the compositor's stacking layer.
+3. **The name `layer=`.** *Recommendation: keep the protocol's word* (the shell's other tools use it) and define both senses in the glossary: tess_re's in-window `show_layer` overlay, and the compositor's stacking layer.
 4. **AccessKit and IME in this phase, or follow-ups.** *Recommendation: follow-ups for both,* each as its own issue with its own check (`accesskit_unix` for AccessKit; `zwp_text_input_v3` for IME). The core is usable without them.
 5. **`output=` as a connector name now, or wait for phase 3's `Output` objects.** *Recommendation: a name string now.* The compositor's pick varied between spike runs, so a bar that can only be placed by the compositor is not useful, and a name needs only `wl_output` v4, which KWin offers.
 
 ## Steps (from #198)
 
-1. This page and the decisions above. 2. The platform layer (second queue, thread, id type). 3. Surface and render. 4. Input. 5. Validation and events. 6. Capability and headless. 7. Tests (headless pytest; live KWin tests that skip elsewhere, checking the zone by maximising a tre window, keyboard modes, and input through a virtual `uinput` device when writable). 8. Docs, a runnable example, LOG.
+1. This page and the decisions above. 2. The platform layer (second queue, thread, id type). 3. Surface and render. 4. Input. 5. Validation and events. 6. Capability and headless. 7. Tests (headless pytest; live KWin tests that skip elsewhere, checking the zone by maximising a tess_re window, keyboard modes, and input through a virtual `uinput` device when writable). 8. Docs, a runnable example, LOG.
 
 ## As built
 

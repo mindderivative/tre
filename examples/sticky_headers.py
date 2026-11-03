@@ -12,9 +12,9 @@ Pass `--watch` to scroll it with the wheel. See docs/guide/nodes-and-layout.md.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=320, height=300, title="tre -- sticky headers")
+window = Window(width=320, height=300, title="tess_re -- sticky headers")
 window.root.set(padding=0)
 view = window.create("scroll_view", width=320, height=300)
 window.root.add_child(view)

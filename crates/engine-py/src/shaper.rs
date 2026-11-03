@@ -2,7 +2,7 @@
 //! a terminal's cell size, `window.measure_text`. Building a `TextRenderer`
 //! registers every bundled font, so doing it per call (as the terminal
 //! factories used to) repeats that work each time; this builds it once, on
-//! first use, and keeps fonts registered since (`tre.register_font`) in sync.
+//! first use, and keeps fonts registered since (`tess_re.register_font`) in sync.
 
 use std::cell::RefCell;
 

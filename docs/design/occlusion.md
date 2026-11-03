@@ -12,8 +12,8 @@ blocked call held the Python GIL and the single thread that runs every window**,
 app froze: a second, visible window stopped animating (identical screenshots), and a Python thread printed
 nothing for 50 s. `present_mode="low_latency"` avoids the block and spins every core (about 380%), so it is not a fix.
 
-tre never called winit's `Window::pre_present_notify()`. Without it winit keeps delivering `RedrawRequested` while the
-compositor withholds frame callbacks, so tre kept drawing into a swapchain that never drained.
+tess_re never called winit's `Window::pre_present_notify()`. Without it winit keeps delivering `RedrawRequested` while the
+compositor withholds frame callbacks, so tess_re kept drawing into a swapchain that never drained.
 
 ## What changed
 
@@ -37,7 +37,7 @@ compositor withholds frame callbacks, so tre kept drawing into a swapchain that 
 The freeze itself **reproduces on sway/wlroots only**. On KWin, `main` did not stall: a minimized or other-desktop
 window's present did not block, so it kept drawing (255 frames in 8 s for the minimized one) instead of freezing the
 app, and a bar under a fullscreen window is still shown and still gets frame callbacks. With the change a minimized window
-there drops to 23 frames, so KWin does stop calling back once tre waits for the callback; why `main`'s present did not block
+there drops to 23 frames, so KWin does stop calling back once tess_re waits for the callback; why `main`'s present did not block
 there was not investigated. Counting `frame_stats()["frames"]` per phase settled what CPU% alone got wrong.
 
 ## Known gaps

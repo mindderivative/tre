@@ -10,13 +10,13 @@ exits; `App.run()` returns quietly where no display is reachable.
 See docs/guide/nodes-and-layout.md.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 SURFACE = (0xFE, 0xF7, 0xFF, 0xFF)
 BAR = (0xF3, 0xED, 0xF7, 0xFF)
 ACCENT = (0x67, 0x50, 0xA4, 0xFF)
 
-window = Window(width=480, height=300, title="tre -- layout")
+window = Window(width=480, height=300, title="tess_re -- layout")
 window.root.set(flex_direction="vertical", padding=0, gap=0, fill=SURFACE)
 
 toolbar = window.create("box", width="100%", height=48, padding=8, gap=8,

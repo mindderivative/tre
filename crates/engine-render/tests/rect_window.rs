@@ -367,7 +367,7 @@ fn main() {
 
     let result = run_windowed(
         WindowConfig {
-            title: "tre v2 -- §14 step 4 spike".to_string(),
+            title: "tess_re v2 -- §14 step 4 spike".to_string(),
             width: WINDOW_WIDTH,
             height: WINDOW_HEIGHT,
             // Auto-exits after ~1 second at 60Hz -- headless-CI-safe by

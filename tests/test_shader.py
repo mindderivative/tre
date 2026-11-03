@@ -1,10 +1,10 @@
-"""0.5.1 (#66): `tre.Shader` -- WGSL checked when it is made. The checking
+"""0.5.1 (#66): `tess_re.Shader` -- WGSL checked when it is made. The checking
 itself (assembly, naga, positions, layout) is unit-tested in `engine-core`;
 here, the Python surface."""
 
 import pytest
 
-from tre import Shader, ShaderError, Window
+from tess_re import Shader, ShaderError, Window
 
 PIXELS = {"rgba": bytes([255, 0, 0, 255] * 4), "pixel_width": 2, "pixel_height": 2}
 
@@ -163,7 +163,7 @@ def test_a_bad_shader_value_changes_nothing():
     node = window.create("box", width=10, height=10)
     shader = Shader(GOOD)
     node.set(shader=shader)
-    with pytest.raises(ValueError, match="a tre.Shader or None"):
+    with pytest.raises(ValueError, match="a tess_re.Shader or None"):
         node.set(shader="void main() {}", opacity=0.5)
     assert node.get("shader") == shader
     assert node.get("opacity") == 1.0, "atomic: the valid half wasn't applied"
@@ -242,7 +242,7 @@ def test_a_live_window_runs_with_an_animated_shader():
     if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
         pytest.skip("no display reachable")
     script = textwrap.dedent(f"""
-        from tre import App, Shader, Window
+        from tess_re import App, Shader, Window
         w = Window(width=120, height=80)
         box = w.create("box", width=60, height=60, shader=Shader({CLOCK!r}, animated=True))
         w.root.add_child(box)

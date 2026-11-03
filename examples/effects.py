@@ -13,14 +13,14 @@ display. Pass `--watch` to keep the window open. See docs/reference/paint.md.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
 RED = (0xE6, 0x39, 0x46, 0xFF)
 TEAL = (0x2A, 0x9D, 0x8F, 0xFF)
 SAND = (0xE9, 0xC4, 0x6A, 0xFF)
 INK = (0x1C, 0x1B, 0x1F, 0xFF)
 
-window = Window(width=640, height=240, title="tre -- effects")
+window = Window(width=640, height=240, title="tess_re -- effects")
 window.root.set(fill=INK, padding=0)
 
 # Stripes to blur and blend against.

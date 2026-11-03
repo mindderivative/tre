@@ -39,7 +39,9 @@ impl Trace {
             first: true,
             frames: 0,
         };
-        trace.event(r#"{"name":"process_name","ph":"M","pid":1,"args":{"name":"tre window"}}"#)?;
+        trace.event(
+            r#"{"name":"process_name","ph":"M","pid":1,"args":{"name":"tess_re window"}}"#,
+        )?;
         trace.event(
             r#"{"name":"thread_name","ph":"M","pid":1,"tid":1,"args":{"name":"event loop (CPU)"}}"#,
         )?;
@@ -64,7 +66,7 @@ impl Trace {
         args: &str,
     ) -> io::Result<()> {
         let json = format!(
-            r#"{{"name":"{name}","cat":"tre","ph":"X","pid":1,"tid":{tid},"ts":{:.3},"dur":{:.3},"args":{{{args}}}}}"#,
+            r#"{{"name":"{name}","cat":"tess_re","ph":"X","pid":1,"tid":{tid},"ts":{:.3},"dur":{:.3},"args":{{{args}}}}}"#,
             us(start),
             us(took),
         );

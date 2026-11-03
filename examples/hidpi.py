@@ -15,12 +15,12 @@ of different scales to see it follow. See docs/reference/window.md.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
 PURPLE = (0x67, 0x50, 0xA4, 0xFF)
 WHITE = (0xFF, 0xFF, 0xFF, 0xFF)
 
-window = Window(width=360, height=220, title="tre -- hidpi")
+window = Window(width=360, height=220, title="tess_re -- hidpi")
 window.set(dpi_scaling=True)
 assert window.get("dpi_scaling") is True
 

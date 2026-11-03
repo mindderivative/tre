@@ -3,7 +3,7 @@ then gets the clicks, and removing a node with children leaves the rest of
 the tree working.
 """
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

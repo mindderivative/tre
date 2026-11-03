@@ -22,12 +22,12 @@ In scope:
   always empty since `TextState` has no `Animated` fields yet).
 - `engine-py::EngineError` (§8's exact design, minus `CycleRejected` --
   no `add_child` yet) + `From<EngineError> for PyErr`.
-- `pyproject.toml` + `python/tre/__init__.py`, matching §12's exact
+- `pyproject.toml` + `python/tess_re/__init__.py`, matching §12's exact
   sketch. A real `examples/animate_rect.py` driving step 2's animation
   from Python, and `tests/test_engine_py.py` (pytest) covering node
   creation, all four animatable properties, and both `EngineError` paths.
 - CI: per §13's "Decision recorded" (primary-OS CI starts at step 6,
-  not deferred) -- `maturin develop` + `import tre` + the pytest suite +
+  not deferred) -- `maturin develop` + `import tess_re` + the pytest suite +
   the real demo script, added to the existing CI job.
 
 Out of scope (each additive at its own later build-order step): `PyWindow`
@@ -42,6 +42,6 @@ finding: requires `Send`, `Rc<RefCell<Tree>>` is deliberately `!Send`,
 
 `cargo test --workspace`, `cargo clippy --workspace --all-targets --
 -D warnings`, `cargo fmt --check` all clean. `maturin develop` +
-`python -c "import tre"` + `pytest tests/` + `python
+`python -c "import tess_re"` + `pytest tests/` + `python
 examples/animate_rect.py` all succeed for real, locally, against the
 compiled extension -- not just "compiles."

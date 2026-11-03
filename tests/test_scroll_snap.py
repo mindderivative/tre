@@ -3,7 +3,7 @@ on a virtual list, and the wheel on a horizontal strip."""
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

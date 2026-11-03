@@ -49,7 +49,7 @@ joins, as painted. A click anywhere else on the path's box passes to what is beh
 with neither fill nor stroke takes none. The shape follows the node's transform, its `view_box`,
 `trim_*` and padding, and it is the same shape for `click` and the other pointer events, `hover`,
 and a layer window's [`input_region="auto"`](layer-window.md), so what the compositor lets through and
-what tre accepts agree.
+what tess_re accepts agree.
 
 ```python
 ring = window.create("path", data="M0,0 H400 V300 H0 Z M24,24 V276 H376 V24 Z",   # a frame: the second
@@ -109,8 +109,8 @@ that is a single Gaussian blur or a single drop shadow (`feDropShadow`).
 
 - **Text** is turned into outlines from the fonts the engine has: Roboto (also
   the default, serif, and sans-serif family), the bundled mono face
-  (monospace), anything `tre.register_font` registered, and, only when you turn
-  it on with `tre.set_system_fonts(True)`, the installed fonts. With system
+  (monospace), anything `tess_re.register_font` registered, and, only when you turn
+  it on with `tess_re.set_system_fonts(True)`, the installed fonts. With system
   fonts off it looks the same on every machine. The outlines follow the fonts:
   registering a font or switching system fonts re-draws a document's text at the
   next frame or snapshot.
@@ -157,7 +157,7 @@ sets its own `color` keeps it.
 
 A document's SMIL animation plays by sampling: the `svg` node draws the document **as it looks
 `svg_time` seconds into its animation** (`0.0` by default, the first frame). Nothing advances it on
-its own; you drive it with tre's own animation clock, in Rust, with no Python per frame:
+its own; you drive it with tess_re's own animation clock, in Rust, with no Python per frame:
 
 ```python
 icon = window.create("svg", svg=spinner, svg_color=(255, 255, 255, 255), width=24, height=24)
@@ -186,7 +186,7 @@ and so is a negative `begin`; the arc flags of a `d` are never interpolated.
 Each new sample is a new parse of the document (a small icon costs about 7 µs; 30 icons
 re-sampled every frame took 0.22 ms a frame on this machine's CPU), skipped when the sample
 is the same as the last one. While `svg_time` animates, the window redraws every frame, like
-for any animation, at the display's rate (there is no 30 Hz cap); tre does not pause it for a
+for any animation, at the display's rate (there is no 30 Hz cap); tess_re does not pause it for a
 hidden or occluded window, and an idle window with nothing animating uses no CPU (0.0% measured). One
 looping icon on a headless sway with the software (llvmpipe) renderer, where drawing is on the CPU, used
 about 30% of a core: that is the cost of the frames, not of the sampling. A GPU run was not measured.
@@ -227,7 +227,7 @@ card.set(shadows=[((0, 0, 0, 77), 0, 1, 2, 0), ((0, 0, 0, 38), 0, 1, 3, 1)])
 
 ## Gradients
 
-A box's `fill` can be a `tre.Gradient` (0.5.4) instead of a colour: a ramp
+A box's `fill` can be a `tess_re.Gradient` (0.5.4) instead of a colour: a ramp
 across the box, linear, radial or sweeping around a point. A box
 (`window.create("box")`, a window's root), a path and a text node take one as
 `fill` (a text node's gradient paints its glyphs, across the node's box); on a text
@@ -240,7 +240,7 @@ too, each time spanning the shape's own bounds:
   rect, the circle's bounding square, or the path's bounds.
 
 ```python
-from tre import Gradient
+from tess_re import Gradient
 
 card.set(fill=Gradient.linear([(0x67, 0x50, 0xA4, 0xFF), (0x21, 0x00, 0x5D, 0xFF)], angle=135))
 glow.set(fill=Gradient.radial([(255, 255, 255, 200), (255, 255, 255, 0)], radius=0.8))
@@ -311,7 +311,7 @@ avatar.set(mask=None)                                      # clear
 - `{"rounded": r}` takes a number or a `(top_left, top_right, bottom_right, bottom_left)`
   tuple. It is independent of the node's own `corner_radius`.
 - `{"path": data, "view_box": (x, y, w, h)}` fits the path into the box the way a path node's
-  `view_box` does (scaled evenly and centred). `get("mask")` returns path data in tre's own
+  `view_box` does (scaled evenly and centred). `get("mask")` returns path data in tess_re's own
   syntax (`M0,0 L10,0`), not the spelling you gave.
 - The mask is in the node's own coordinates, so it follows the node's `translate_*`, `scale`
   and `rotation_deg`. It is antialiased at the edge.

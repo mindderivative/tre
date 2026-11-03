@@ -12,7 +12,7 @@ import textwrap
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 STAGES = {"tick", "layout", "configure", "prepare", "acquire", "draw", "present"}
 
@@ -40,7 +40,7 @@ def test_reset_is_accepted_and_the_frame_event_is_a_valid_name():
 
 LIVE = """
 import json, sys
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=200, height=120)
 box = window.create("box", width=60, height=40, fill=(255, 0, 0, 255))

@@ -2,6 +2,10 @@
 
 ## Status
 
+**0.6.0 in progress (#257, branch `0.6.0`, not pushed):** the Python package is `tess_re` (was `tre`) and the
+environment variables are `TESS_RE_*` (were `TRE_*`). Breaking, clean cutover, no alias; the PyPI name stays
+`tesserae-engine`. Not done yet: the GitHub repo rename, the repo and docs URLs, and the PyPI trusted-publisher
+update (all owner actions, see #257); no tag before they are confirmed. Notes: `docs/migrating-0.6.md`.
 **0.5.10 released (2026-11-03, tag `v0.5.10` on `4870d3d`, PyPI `tesserae-engine==0.5.10`; a first tag was withdrawn before PyPI to add #253):** batch and tree building (`Window.build`, `Window.apply`, `Node.set_children`, constant-time append, #253), SMIL animation in `svg` nodes (`svg_time`, `svg_duration`, #245) and
 occlusion handling (a hidden Wayland window no longer freezes the app, `occluded`, `pause_when_occluded`, #246);
 notes in `docs/migrating-0.5.md`. CI note: the Linux jobs are pinned to `ubuntu-24.04` (PR #251), not `ubuntu-latest`:
@@ -30,6 +34,34 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 `BUILD_TRACKER_ARCHIVE_*.md` files are the pre-GitHub trackers). Open
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
+
+## After 0.5.10 (unreleased)
+
+### #257, the namespace `tre` becomes `tess_re` (2026-11-03)
+
+The Tesserae projects share one prefix so their names cannot collide: `tess_re` (this engine), `tess_ui`,
+`tess_el`, `tess_dl`, `tess_shell`. Decisions (user): clean cutover in 0.6.0 (no alias, no fallback to the old
+names), `TRE_*` to `TESS_RE_*`, thread names unchanged (`tre-gpu-wake`, `tre-timer-wake`, `tre-appearance`,
+`tre-layer`), PyPI name unchanged. What changed: `python/tre/` is `python/tess_re/`; `module-name` is
+`tess_re._core`; the exception module in `create_exception!` is `tess_re`; imports and names in tests, examples,
+tools, docs and CI; 18 environment variables (`TRE_GPU_MEMORY` and the rest, listed in
+`docs/migrating-0.6.md`); the engine's own message text and GPU debug labels say `tess_re`; the default window
+title is `tess_re v2`. Version 0.6.0 in `Cargo.toml`, `pyproject.toml` and `Cargo.lock`. Left alone on purpose:
+`archive/` (frozen v1), this file's history, the `BUILD_TRACKER_ARCHIVE_*` files, `docs/migrating-0.3.x` to `0.5`,
+`AGENTS.md` and `.claude/` prose, thread names, and every `mindderivative/tre` URL (the repo is not renamed yet).
+One wording change beyond the rename: `RemovedError` now says "is removed in 0.3.5" without the package name, because
+the package had another name at 0.3.5. The 0.3.5 migration gate in `_removed.py` checks the module's own name, so it
+cannot be copied into a project still on `tre`.
+
+Checked: `maturin develop --release`; `import tess_re` works and `import tre` raises `ModuleNotFoundError`; a wheel
+installed into a fresh venv imports from site-packages, `TESS_RE_FORBID_REMOVED=1` raises `RemovedError`, a bad shader
+raises `tess_re.ShaderError`, `Window().get("title")` is `tess_re v2`; mypy strict and stubtest clean;
+`mkdocs build --strict`; `cargo fmt --check` (after `cargo fmt`, the longer name moved a few lines), clippy
+`-D warnings` on the four crates; `cargo test -p engine-core --lib shader` (13) and `-p engine-py --lib` (62); pytest
+`test_removed`, `test_tests_for`, `test_shader`, `test_keep_alive` on llvmpipe. Not run (standing rule): the full
+suite and `tools/verify.sh`, CI does it on the PR. Seen, not caused by the rename as far as I can tell:
+`test_keep_alive` failed in 2 of 3 later runs with a JSON "Extra data" error: two JSON lines on one line, from its
+`log()` printing on two threads; not run on `main`, so unconfirmed. Not verified: macOS, Windows, a real-GPU run.
 
 ## After 0.5.9 (unreleased)
 

@@ -14,9 +14,9 @@ it open. See docs/reference/window.md.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=360, height=220, title="tre -- transparent", decorations=False)
+window = Window(width=360, height=220, title="tess_re -- transparent", decorations=False)
 window.set(transparent=True)
 window.root.set(fill=(0, 0, 0, 0), padding=0)
 

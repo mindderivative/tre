@@ -16,13 +16,13 @@ See docs/guide/nodes-and-layout.md.
 
 import math
 
-from tre import App, Window
+from tess_re import App, Window
 
 SURFACE = (0xFE, 0xF7, 0xFF, 0xFF)
 OUTLINE = (0x79, 0x74, 0x7E, 0xFF)
 TILE = (0x67, 0x50, 0xA4, 0xFF)
 
-window = Window(width=480, height=360, title="tre -- grid")
+window = Window(width=480, height=360, title="tess_re -- grid")
 window.root.set(flex_direction="vertical", padding=16, gap=16, fill=SURFACE)
 
 form = window.create("box", display="grid", width="100%",

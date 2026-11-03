@@ -9,9 +9,9 @@ Headless and immediate: no `App.run()`, no frames. Where no OS clipboard
 service is reachable, the copy/cut/paste steps are reported and skipped.
 """
 
-from tre import Window
+from tess_re import Window
 
-window = Window(width=280, height=120, title="tre -- clipboard")
+window = Window(width=280, height=120, title="tess_re -- clipboard")
 field = window.create("text_input", text="hello world", width=220, height=32)
 window.root.add_child(field)
 

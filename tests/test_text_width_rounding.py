@@ -7,7 +7,7 @@ out 66 wide, and the text, which needs 66.43, wrapped onto a second line.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 STYLE = dict(font_size=14, font_weight=500)
 WHITE = (255, 255, 255, 255)

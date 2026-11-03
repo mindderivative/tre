@@ -70,7 +70,7 @@ fn main() {
 
     let result = run_windowed(
         WindowConfig {
-            title: "tre v2 -- §14 step 7 spike: one accessible button".to_string(),
+            title: "tess_re v2 -- §14 step 7 spike: one accessible button".to_string(),
             width: 160,
             height: 80,
             max_frames: Some(30),

@@ -1,7 +1,7 @@
 //! 0.4.2 M11 (issue #23): CSS Grid's track lists and placements, parsed
 //! from and formatted back to the text `node.set`/`node.get` use.
 //!
-//! The syntax is CSS's, in `tre`'s units: a plain number is pixels.
+//! The syntax is CSS's, in `tess_re`'s units: a plain number is pixels.
 //!
 //! - A track: `200` (pixels), `"25%"`, `"1fr"`, `"auto"`, `"min_content"`,
 //!   `"max_content"`, `"minmax(a, b)"`, or `"fit_content(x)"` (hyphens, as
@@ -231,7 +231,7 @@ pub(crate) fn parse_placement(text: &str) -> Result<Line<GridPlacement<String>>,
     }
 }
 
-/// A number as `tre` writes one: whole numbers without a decimal point.
+/// A number as `tess_re` writes one: whole numbers without a decimal point.
 fn num(v: f32) -> String {
     if v.fract() == 0.0 && v.abs() < 1e9 {
         format!("{}", v as i64)
@@ -247,7 +247,7 @@ fn min_text(m: MinTrackSizingFunction) -> String {
         ExpandedMinTrackSizingFunction::Auto => "auto".into(),
         ExpandedMinTrackSizingFunction::MinContent => "min_content".into(),
         ExpandedMinTrackSizingFunction::MaxContent => "max_content".into(),
-        // `tre` never sets a calc() track.
+        // `tess_re` never sets a calc() track.
         #[allow(unreachable_patterns)]
         _ => "auto".into(),
     }
@@ -319,7 +319,7 @@ fn placement_text(p: &GridPlacement<String>) -> String {
         GridPlacement::Auto => "auto".into(),
         GridPlacement::Line(l) => l.as_i16().to_string(),
         GridPlacement::Span(n) => format!("span {n}"),
-        // `tre` never sets a named line.
+        // `tess_re` never sets a named line.
         GridPlacement::NamedLine(name, _) | GridPlacement::NamedSpan(name, _) => name.clone(),
     }
 }

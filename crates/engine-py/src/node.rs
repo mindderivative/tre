@@ -1,5 +1,5 @@
 //! `Node` (§8's `PyNode`, renamed to match what Python actually sees --
-//! `tre.Node`, not `tre.PyNode`): a handle to one node in a `Window`'s
+//! `tess_re.Node`, not `tess_re.PyNode`): a handle to one node in a `Window`'s
 //! tree. `animate` lives here; properties (`set`/`get`), listeners
 //! (`on`), tree structure, and per-kind callbacks live in the sibling
 //! `node_*` modules.
@@ -757,7 +757,7 @@ fn animate_field<T: engine_core::Interpolate + Clone>(
 
 /// M82: the length check for `node.set(rgba=, pixel_width=,
 /// pixel_height=)` -- a caller-decoded, straight-alpha RGBA8 buffer
-/// with no `tre`-side decoding at all must be exactly
+/// with no `tess_re`-side decoding at all must be exactly
 /// `width * height * 4` bytes.
 pub(crate) fn validate_rgba_frame_len(
     context: &str,

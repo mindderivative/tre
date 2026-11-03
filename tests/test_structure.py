@@ -6,17 +6,17 @@ from __future__ import annotations
 
 import pytest
 
-import tre
+import tess_re
 from helpers import add
 
 BLACK = (0, 0, 0, 255)
 
 
-def window() -> tre.Window:
-    return tre.Window(300, 200, "structure")
+def window() -> tess_re.Window:
+    return tess_re.Window(300, 200, "structure")
 
 
-def parent_with(w: tre.Window, n: int) -> tuple[tre.Node, list[tre.Node]]:
+def parent_with(w: tess_re.Window, n: int) -> tuple[tess_re.Node, list[tess_re.Node]]:
     parent = w.create("box")
     kids = [w.create("box") for _ in range(n)]
     for kid in kids:
@@ -189,8 +189,8 @@ def test_destroy_unfocuses_before_freeing() -> None:
 
 # 0.5.10 (#253): a plain append keeps the checks that make it safe.
 def test_append_still_rejects_a_node_onto_itself_an_ancestor_and_a_foreign_node():
-    window = tre.Window(width=100, height=100)
-    other = tre.Window(width=100, height=100)
+    window = tess_re.Window(width=100, height=100)
+    other = tess_re.Window(width=100, height=100)
     root = window.create("box")
     with pytest.raises(ValueError):
         root.add_child(root)

@@ -12,9 +12,9 @@ object and the `shader` property; how to use it is the
     node's own rendered content; see [Effects](#effects).
 
 ```python
-import tre
+import tess_re
 
-glow = tre.Shader(
+glow = tess_re.Shader(
     """
     fn shade(p: Pixel) -> vec4<f32> {
         let d = distance(p.uv, vec2<f32>(0.5, 0.5));
@@ -58,8 +58,8 @@ updates them all.
 everything in it, so a grayscale, sepia or brightness change needs no WGSL:
 
 ```python
-card.set(shader=tre.Shader.filter(grayscale=1.0))           # disabled look
-photo.set(shader=tre.Shader.filter(sepia=0.8, contrast=1.1))
+card.set(shader=tess_re.Shader.filter(grayscale=1.0))           # disabled look
+photo.set(shader=tess_re.Shader.filter(sepia=0.8, contrast=1.1))
 ```
 
 | Filter | Value | No change |
@@ -86,15 +86,15 @@ replaces. It also stands in for the CSS filters `vello_gpu` cannot draw.
 ## Errors
 
 A mistake in the source, a missing or misshapen `shade`, or a bad name raises
-**`tre.ShaderError`**, a `ValueError`, when the shader is created — no GPU
+**`tess_re.ShaderError`**, a `ValueError`, when the shader is created — no GPU
 needed. Its `line`, `column` and `source_line` place the problem in *your*
-source, not tre's generated code; each is `None` when the compiler gives the
+source, not tess_re's generated code; each is `None` when the compiler gives the
 problem no position (a type mismatch, say). `str(error)` prints the line and a
 caret under the column.
 
 Wrong types (`uniforms={"a": "x"}`, `True`, a tuple of 5) raise `TypeError` or
-`ValueError`; a name tre provides (`Pixel`, `frame`, `u`, `content`, …) used in
-your source is reported with the list of names tre provides.
+`ValueError`; a name tess_re provides (`Pixel`, `frame`, `u`, `content`, …) used in
+your source is reported with the list of names tess_re provides.
 
 ## Effects
 
@@ -105,7 +105,7 @@ window -- at `uv` (0 to 1, from the top left), as straight-alpha RGBA. What
 over a panel's children, a colour grade.
 
 ```python
-shine = tre.Shader(
+shine = tess_re.Shader(
     """
     fn shade(p: Pixel) -> vec4<f32> {
         let c = content(p.uv);
@@ -153,7 +153,7 @@ video node, or a change anywhere upstream.
 ```python
 photo = window.create("image", rgba=pixels, pixel_width=w, pixel_height=h,
                       width=200, height=200)
-graded = window.create("box", width=200, height=200, shader=tre.Shader(
+graded = window.create("box", width=200, height=200, shader=tess_re.Shader(
     "fn shade(p: Pixel) -> vec4<f32> {"
     "    let c = input_photo(p.uv);"
     "    return vec4<f32>(1.0 - c.rgb, c.a);"

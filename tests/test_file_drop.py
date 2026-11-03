@@ -7,7 +7,7 @@ platform's `DroppedFile` events become, so none of this needs a file manager.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def scene():

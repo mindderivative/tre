@@ -17,7 +17,7 @@ import pytest
 CHILD = textwrap.dedent(
     """
     import sys, threading, time
-    from tre import App, Window
+    from tess_re import App, Window
 
     app = App()
     for title in ("hide-me", "stay"):
@@ -110,7 +110,7 @@ def test_a_hidden_window_does_not_freeze_the_other_window_or_python_threads():
 LAYER_CHILD = textwrap.dedent(
     """
     import threading, time
-    from tre import App, LayerWindow, Window
+    from tess_re import App, LayerWindow, Window
 
     app = App()
     bar = LayerWindow("probe-bar", anchor=("top", "left", "right"), size=(0, 30),

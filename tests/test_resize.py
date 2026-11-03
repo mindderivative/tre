@@ -3,7 +3,7 @@ window don't raise, and a node added before a resize still gets clicks
 after it.
 """
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

@@ -39,7 +39,7 @@ pub(crate) type SharedSize = Rc<Cell<u32>>;
 
 /// `unsendable` (owns `Rc<RefCell<Tree>>`, §9) -- named `Window` to
 /// Python, matching `Node`'s own "renamed to match what Python actually
-/// sees" precedent (`tre.Window`, not `tre.PyWindow`); kept as the
+/// sees" precedent (`tess_re.Window`, not `tess_re.PyWindow`); kept as the
 /// `PyWindow` identifier on the Rust side since that's the name §8/§11.1
 /// use throughout `ARCHITECTURE.md`.
 ///
@@ -383,7 +383,7 @@ impl PyWindow {
 #[pymethods]
 impl PyWindow {
     #[new]
-    #[pyo3(signature = (width=480, height=200, title="tre v2", decorations=true))]
+    #[pyo3(signature = (width=480, height=200, title="tess_re v2", decorations=true))]
     fn new(width: u32, height: u32, title: &str, decorations: bool) -> PyResult<Self> {
         Self::construct(width, height, title, decorations, PADDING, GAP)
     }

@@ -2,7 +2,7 @@
 
 **A GPU-rendered retained-mode UI engine for Python, written in Rust.**
 
-Tesserae Engine (imported as `tre`) gives Python the building blocks of a desktop UI — nodes, flexbox
+Tesserae Engine (imported as `tess_re`) gives Python the building blocks of a desktop UI — nodes, flexbox
 and grid layout, paint, animation, input and events, text, accessibility, layers,
 and threading — and, on Wayland, bars, panels and menus placed by the compositor — and renders them on the GPU, redrawing only what changed, with
 [`vello_gpu`](https://github.com/linebender/vello), laid out by
@@ -14,7 +14,7 @@ It has no widgets and no theme of its own. A UI library or application built on 
 the blocks into buttons, dialogs, and design systems.
 
 ```python
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=320, height=120, title="Hello")
 button = window.create("box", width=120, height=40, corner_radius=20,
@@ -34,8 +34,8 @@ app.run()
 pip install tesserae-engine
 ```
 
-On PyPI it's **`tesserae-engine`** (the name `tre` there is another
-project's); you still `import tre`. Wheels cover CPython 3.12+ on Linux
+On PyPI it's **`tesserae-engine`** (the name `tess_re` there is another
+project's); you still `import tess_re`. Wheels cover CPython 3.12+ on Linux
 (x86_64), macOS (arm64), and Windows (x64); other platforms build from
 source. See
 [Installation](https://mindderivative.github.io/tre/installation/) for the
@@ -79,8 +79,8 @@ cargo clippy --workspace --all-targets --release -- -D warnings
 cargo fmt --all --check
 pytest tests/
 mkdocs build --strict
-mypy --strict python/tre
-python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
+mypy --strict python/tess_re
+python -m mypy.stubtest tess_re --allowlist tools/stubtest_allowlist.txt
 cargo +1.90 check --workspace --all-targets   # MSRV
 ```
 

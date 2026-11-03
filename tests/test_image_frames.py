@@ -1,11 +1,11 @@
 """Streaming frames into an image node: `node.set(rgba=..., pixel_width=...,
 pixel_height=...)` replaces its pixels, checks the buffer length, may change
-the resolution, and applies only to an image. The app decodes; `tre` shows.
+the resolution, and applies only to an image. The app decodes; `tess_re` shows.
 """
 
 import pytest
 
-from tre import Node, Window
+from tess_re import Node, Window
 from helpers import add
 
 

@@ -2,11 +2,11 @@
 """A scripted X11 drag source: drags files onto a window the way a file manager does (0.5.8, #133).
 
 It speaks XDND (version 5) through libX11 with ctypes, so it needs only an X server
-(XWayland counts) and no toolkit. It is how tre's file drag and drop is exercised on
+(XWayland counts) and no toolkit. It is how tess_re's file drag and drop is exercised on
 X11 without anyone holding the mouse.
 
-    python tools/xdnd_source.py --title "tre -- file drop" --at 200,150 /tmp/a.txt /tmp/b.txt
-    python tools/xdnd_source.py --title "tre -- file drop" --cancel /tmp/a.txt
+    python tools/xdnd_source.py --title "tess_re -- file drop" --at 200,150 /tmp/a.txt /tmp/b.txt
+    python tools/xdnd_source.py --title "tess_re -- file drop" --cancel /tmp/a.txt
 
 `--at x,y` is where the drag points, in the target window's own pixels (repeat it to
 move the drag); `--cancel` leaves instead of dropping; `--hold SECONDS` waits between

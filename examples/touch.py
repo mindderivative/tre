@@ -13,9 +13,9 @@ See docs/guide/events-and-input.md.
 import math
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=360, height=240, title="tre -- touch")
+window = Window(width=360, height=240, title="tess_re -- touch")
 card = window.create("box", width=200, height=140, x=80, y=50, position="absolute",
                      fill=(0x67, 0x50, 0xA4, 0xFF), corner_radius=16)
 window.root.add_child(card)

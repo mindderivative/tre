@@ -10,8 +10,8 @@ import sys
 
 import pytest
 
-import tre
-from tre import LayerWindow, UnsupportedPlatform, Window
+import tess_re
+from tess_re import LayerWindow, UnsupportedPlatform, Window
 
 pytestmark = pytest.mark.skipif(
     not sys.platform.startswith("linux"), reason="layer surfaces are a Linux (Wayland) feature"
@@ -273,9 +273,9 @@ def test_resize_changes_the_headless_size_for_tests():
 
 
 def test_supports_says_what_this_process_can_do():
-    assert tre.supports("no_such_feature") is False
+    assert tess_re.supports("no_such_feature") is False
     # No display in this environment (the fixture): no layer shell to offer.
-    assert tre.supports("layer_shell") is False
+    assert tess_re.supports("layer_shell") is False
 
 
 @pytest.mark.parametrize(
@@ -285,7 +285,7 @@ def test_supports_says_what_this_process_can_do():
     ],
 )
 def test_without_a_layer_shell_the_constructor_raises(env, expect):
-    code = "import tre\ntry:\n    tre.LayerWindow('x', anchor='top', size=(10, 10))\nexcept tre.UnsupportedPlatform as e:\n    print('UNSUPPORTED', e)\n"
+    code = "import tess_re\ntry:\n    tess_re.LayerWindow('x', anchor='top', size=(10, 10))\nexcept tess_re.UnsupportedPlatform as e:\n    print('UNSUPPORTED', e)\n"
     import os
 
     clean = {k: v for k, v in os.environ.items() if k not in ("WAYLAND_DISPLAY", "DISPLAY")}

@@ -6,7 +6,7 @@ image paints is covered by `engine-render`'s `image_paint.rs`.
 
 import pytest
 
-from tre import Node, Window
+from tess_re import Node, Window
 from helpers import add
 
 

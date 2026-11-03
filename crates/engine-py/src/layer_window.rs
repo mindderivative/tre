@@ -25,7 +25,7 @@ use engine_core::{Animated, CompletionHandle, MotionCurve};
 use std::time::{Duration, Instant};
 
 pyo3::create_exception!(
-    tre,
+    tess_re,
     UnsupportedPlatform,
     PyRuntimeError,
     "A feature this platform does not have: `LayerWindow` needs a Wayland compositor with the \
@@ -787,7 +787,7 @@ impl PyLayerWindow {
     }
 }
 
-/// `tre.supports(feature)`: whether this process can use an optional feature. Only
+/// `tess_re.supports(feature)`: whether this process can use an optional feature. Only
 /// `"layer_shell"` so far; an unknown name is `False`.
 #[pyfunction]
 pub(crate) fn supports(feature: &str) -> bool {

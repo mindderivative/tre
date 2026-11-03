@@ -7,7 +7,7 @@ default to zero; a text node takes `line_height` and rejects the removed
 
 import pytest
 
-from tre import Node, Window
+from tess_re import Node, Window
 from helpers import add
 
 

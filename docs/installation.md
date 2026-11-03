@@ -1,8 +1,8 @@
 # Installation
 
-Tesserae Engine ships as a compiled Python extension module (`tre._core`, built with
+Tesserae Engine ships as a compiled Python extension module (`tess_re._core`, built with
 [PyO3](https://pyo3.rs/)/[maturin](https://www.maturin.rs/)) plus a thin
-pure-Python package (`tre`) on top of it. There are two ways to get it:
+pure-Python package (`tess_re`) on top of it. There are two ways to get it:
 install a pre-built wheel, or build one yourself from source.
 
 ## Requirements
@@ -16,7 +16,7 @@ install a pre-built wheel, or build one yourself from source.
     `LayerWindow` and `PopupWindow` need a Linux Wayland session whose compositor has the
     layer shell: KDE's KWin and the wlroots compositors do (tested on KWin 6.8 and sway 1.12).
     GNOME's Mutter does not, and neither do X11, Windows or macOS; there `LayerWindow(...)`
-    raises `tre.UnsupportedPlatform`, and `tre.supports("layer_shell")` is `False`. Nothing
+    raises `tess_re.UnsupportedPlatform`, and `tess_re.supports("layer_shell")` is `False`. Nothing
     extra is installed with the wheel: it loads the system's `libwayland-client` and
     `libxkbcommon` at run time, which a Wayland desktop already has. Pasting on Wayland works
     without XWayland (0.5.8).
@@ -28,24 +28,24 @@ pip install tesserae-engine
 ```
 
 Tesserae Engine is published on PyPI as **`tesserae-engine`** — the name
-`tre` there belongs to an unrelated project. The import name is `tre`:
+`tess_re` there belongs to an unrelated project. The import name is `tess_re`:
 
 ```python
-import tre
+import tess_re
 ```
 
 A dependency on it is written the same way, for example
 `dependencies = ["tesserae-engine>=0.4.2"]` in a `pyproject.toml`.
 
 !!! warning "Upgrading from a `tre-...` wheel"
-    Releases up to `v0.3.5.1` installed a distribution named `tre`. pip
+    Releases up to `v0.3.5.1` installed a distribution named `tess_re`. pip
     treats `tesserae-engine` as a different project, so it leaves the old
-    one in place, and both then own the `tre` package — a later
-    `pip uninstall tre` would delete files `tesserae-engine` needs. Remove
+    one in place, and both then own the `tess_re` package — a later
+    `pip uninstall tess_re` would delete files `tesserae-engine` needs. Remove
     the old one first:
 
     ```bash
-    pip uninstall tre
+    pip uninstall tess_re
     pip install tesserae-engine
     ```
 
@@ -84,10 +84,10 @@ pip install ./tesserae_engine-0.5.10-cp312-cp312-manylinux_2_17_x86_64.manylinux
 ```
 
 Releases up to `v0.3.5.1` name their files `tre-<version>-...`; they
-install the same `tre` package.
+install the same `tess_re` package.
 
 !!! note
-    `pip install tre` installs the unrelated `tre` project from PyPI, not
+    `pip install tess_re` installs the unrelated `tess_re` project from PyPI, not
     this one.
 
 ## Option 3: build from source
@@ -110,7 +110,7 @@ Then:
 
 ```bash
 git clone https://github.com/mindderivative/tre.git
-cd tre
+cd tess_re
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 pip install maturin
@@ -156,8 +156,8 @@ portable `manylinux` wheel from an ordinary Linux dev host needs either:
 ## Verifying the install
 
 ```python
-import tre
-print(tre.App, tre.Window, tre.Node)
+import tess_re
+print(tess_re.App, tess_re.Window, tess_re.Node)
 ```
 
 If that import succeeds, you're ready for [Getting Started](getting-started.md).

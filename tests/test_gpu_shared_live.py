@@ -4,7 +4,7 @@ A window used to make its own `wgpu` instance, adapter and device; after the sma
 (#219) every further window still held about 13 MiB of video memory and 11 MiB of mappable memory,
 plus the time to create them. Now the first window's handles are shared with the others
 (`crates/engine-py/src/gpu_share.rs`), so five windows hold about what one does.
-`TRE_GPU_DEVICES=per-window` gives each window its own again.
+`TESS_RE_GPU_DEVICES=per-window` gives each window its own again.
 
 Each case runs the app in a child process and reads that process's own GPU memory from
 `/proc/self/fdinfo` (`drm-total-vram`, which amdgpu and a few other drivers report per client). The
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(
 
 MEMORY = r"""
 import json, os, re, threading, time
-from tre import App, Window
+from tess_re import App, Window
 
 def mib(text):
     m = re.match(r"\s*([\d.]+)\s*(KiB|MiB|GiB|B)?", text)
@@ -53,7 +53,7 @@ def vram():
 
 app = App()
 windows = []
-for _ in range(int(os.environ["TRE_TEST_WINDOWS"])):
+for _ in range(int(os.environ["TESS_RE_TEST_WINDOWS"])):
     w = Window(width=200, height=100)
     w.root.set(fill=(200, 60, 60, 255))
     app.add_window(w)
@@ -82,7 +82,7 @@ app.run()
 def run_memory(windows, **env):
     out = subprocess.run(
         [sys.executable, "-I", "-c", MEMORY], capture_output=True, text=True, timeout=90,
-        env=dict(os.environ, TRE_TEST_WINDOWS=str(windows), **env),
+        env=dict(os.environ, TESS_RE_TEST_WINDOWS=str(windows), **env),
     ).stdout.strip().splitlines()
     lines = [line for line in out if line.startswith("{")]
     assert lines, "the windows printed nothing"
@@ -105,7 +105,7 @@ def test_five_windows_hold_about_what_one_window_does(reading):
 
 
 def test_a_window_each_is_one_environment_variable_away(reading):
-    five = run_memory(5, TRE_GPU_DEVICES="per-window")
+    five = run_memory(5, TESS_RE_GPU_DEVICES="per-window")
     assert five["vram"] - reading["vram"] > 30, f"one {reading['vram']} MiB, five {five['vram']} MiB"
 
 
@@ -116,7 +116,7 @@ def test_every_window_draws_and_reads_the_devices_memory(reading):
     memories = [s["memory"] for s in five["stats"]]
     assert all(m is not None and m["shared_device"] is True for m in memories)
     assert len({m["reserved_bytes"] for m in memories}) == 1, "one device: every window reads the same reserved bytes"
-    own = run_memory(2, TRE_GPU_DEVICES="per-window")
+    own = run_memory(2, TESS_RE_GPU_DEVICES="per-window")
     assert all(s["memory"]["shared_device"] is False for s in own["stats"])
 
 
@@ -140,13 +140,13 @@ def test_a_renderer_each_is_one_environment_variable_away():
     one = allocated_mib(run_memory(1))
     if one is None:
         pytest.skip("this backend has no allocator report")
-    thirty = allocated_mib(run_memory(30, TRE_GPU_RENDERERS="per-window"))
+    thirty = allocated_mib(run_memory(30, TESS_RE_GPU_RENDERERS="per-window"))
     assert thirty - one > 3, f"one {one:.2f} MiB, thirty {thirty:.2f} MiB: windows still share a renderer"
 
 
 LOSS = r"""
 import json, os, threading, time
-from tre import App, Window
+from tess_re import App, Window
 
 app = App()
 heard = {}

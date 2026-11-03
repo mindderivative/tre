@@ -11,11 +11,11 @@ Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
 without a display.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 FRUIT = {"fig": 3, "apple": 5, "kiwi": 1, "pear": 4, "date": 2}
 
-window = Window(width=260, height=260, title="tre -- keyed reorder")
+window = Window(width=260, height=260, title="tess_re -- keyed reorder")
 column = window.create("box", flex_direction="vertical", gap=4, width=200)
 window.root.add_child(column)
 

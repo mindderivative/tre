@@ -3,7 +3,7 @@ each frame."""
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def scene(**first):
@@ -185,7 +185,7 @@ def test_an_animation_that_fails_registers_nothing():
 
 LIVE = """
 import json
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=300, height=150)
 a = window.create("box", width=60, height=40, fill=(255, 0, 0, 255))

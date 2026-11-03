@@ -1,9 +1,9 @@
-//! M86: the process-global font registry -- how a caller hands `tre`
+//! M86: the process-global font registry -- how a caller hands `tess_re`
 //! font data it loaded itself.
 //!
 //! `TextRenderer` deliberately never discovers system fonts
 //! (`system_fonts: false`, see its own doc comment), so before this
-//! module a node's `font_family` could name a family `tre` had no way
+//! module a node's `font_family` could name a family `tess_re` had no way
 //! to receive -- it silently fell
 //! back. The caller (a framework like Tesserae) owns reading the file;
 //! `register_font` takes the bytes.

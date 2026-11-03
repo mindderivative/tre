@@ -3,7 +3,7 @@ circle, a rounded box or a path. Pixels come from `Window.snapshot()`."""
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 BACK = (0x10, 0x20, 0x30, 255)
 RED = (255, 0, 0, 255)

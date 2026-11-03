@@ -9,7 +9,7 @@ import textwrap
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 def test_the_defaults_are_opaque_and_unknown_until_open():
@@ -55,7 +55,7 @@ def test_a_snapshot_is_straight_alpha_so_translucent_pixels_keep_their_colour():
 
 LIVE = """
 import threading, time
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=120, height=80)
 window.set(transparent=True)
@@ -102,7 +102,7 @@ def test_click_through_defaults_off_and_can_be_set_before_opening():
 
 CLICK_THROUGH = """
 import threading, time
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=120, height=80)
 app = App()

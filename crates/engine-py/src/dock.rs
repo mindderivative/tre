@@ -1,7 +1,7 @@
 //! M4 Phase 9 (§11.4), reduced to D10's bare bones in M99: docking's
 //! mechanism, with its presentation left to the framework. A zone is an
 //! ordinary node the framework builds and registers (`add_dock_zone`);
-//! `DockLayout` is pure bookkeeping `Tree` never stores; `tre` docks
+//! `DockLayout` is pure bookkeeping `Tree` never stores; `tess_re` docks
 //! panels into zones, shows each zone's active panel, and moves a dragged
 //! panel to the zone it's dropped on. What a drag looks like -- the
 //! handle, the highlight over a target zone -- is the framework's: it

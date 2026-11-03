@@ -100,7 +100,7 @@ throwaway edit, reverted; it is not in the code.) The code's own comment says "i
 wait for the display is what paces the loop"; with `Mailbox` it does not.
 
 Startup, from the start of a Python process to the first frame callback, was
-130 to 165 ms; `import tre` itself is 2.5 ms.
+130 to 165 ms; `import tess_re` itself is 2.5 ms.
 
 ## Memory
 

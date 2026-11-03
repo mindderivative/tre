@@ -42,7 +42,7 @@ currently always empty (`TextState` has no `Animated` fields, §14 step
 
 **Built and ran it for real, not just `cargo build`:** `maturin develop`
 installed the compiled extension into a local `.venv`; `python -c
-"import tre"` succeeded; the real pytest suite (`tests/test_engine_py.py`,
+"import tess_re"` succeeded; the real pytest suite (`tests/test_engine_py.py`,
 6 tests: node creation, all four animatable properties, the instant-snap
 default, both `EngineError` paths with their exact messages) passed
 against the actual extension. `examples/animate_rect.py` -- two rects
@@ -66,7 +66,7 @@ rendering).
 CI starts as soon as `engine-py` exists, this step, not deferred.**
 Added to the existing job (not a second Rust build): `actions/
 setup-python@v5`, `pip install maturin pytest`, `maturin develop`,
-`import tre`, the pytest suite, and the real demo script.
+`import tess_re`, the pytest suite, and the real demo script.
 
 ## Verification
 
@@ -82,7 +82,7 @@ $ cargo fmt --check          # clean
 
 $ source .venv/bin/activate && maturin develop
 🛠 Installed tre-0.1.0
-$ python -c "import tre; print(tre.App, tre.Node)"
+$ python -c "import tess_re; print(tess_re.App, tess_re.Node)"
 <class 'builtins.App'> <class 'builtins.Node'>
 $ python -m pytest tests/test_engine_py.py -v
 6 passed in 0.02s

@@ -61,15 +61,15 @@ does the same, after any `a11y_action` listener.
 ## Cursors
 
 A node's `cursor` is the pointer shape over it, inherited by its descendants: one of the
-named shapes in the table above, `None`, or (0.5.4) a `tre.CursorImage`, a shape drawn
+named shapes in the table above, `None`, or (0.5.4) a `tess_re.CursorImage`, a shape drawn
 from pixels:
 
 ```python
-import tre
+import tess_re
 
 rgba = bytearray(32 * 32 * 4)             # straight-alpha RGBA8, drawn however you like
 ...                                       # (decode a PNG with your imaging library)
-reticle = tre.CursorImage(bytes(rgba), 32, 32, hotspot=(16, 16))
+reticle = tess_re.CursorImage(bytes(rgba), 32, 32, hotspot=(16, 16))
 canvas.set(cursor=reticle)
 ```
 

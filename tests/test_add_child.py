@@ -5,7 +5,7 @@ window with `ValueError`.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""How much GPU memory does a tre window hold? (0.5.8, #207)
+"""How much GPU memory does a tess_re window hold? (0.5.8, #207)
 
     python tools/vram_probe.py                 # a window, two, five, a bar, a full-screen overlay
     python tools/vram_probe.py --output DP-1   # the output the layer windows use (default: the first)
@@ -21,7 +21,7 @@ import sys
 
 CHILD = r'''
 import json, os, re, sys, threading, time
-from tre import App, LayerWindow, Window
+from tess_re import App, LayerWindow, Window
 
 def kib(text):
     m = re.match(r"\s*([\d.]+)\s*(KiB|MiB|GiB|B)?", text)
@@ -80,9 +80,9 @@ def main():
     args = parser.parse_args()
     output = args.output
     if output is None:
-        import tre
+        import tess_re
 
-        names = [o.name for o in tre.App().outputs()]
+        names = [o.name for o in tess_re.App().outputs()]
         output = names[0] if names else ""
     print(f"{'scenario':<14}{'VRAM MiB':>10}{'GTT MiB':>10}   (output {output or 'none'})")
     for scenario in ("window", "two windows", "five windows", "bar", "overlay"):

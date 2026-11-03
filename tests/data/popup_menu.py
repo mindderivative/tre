@@ -6,7 +6,7 @@ submenu, a popup parented to the first. Driven by `test_layer_window_live.py` (`
 where the bar goes and how long to run).
 """
 import json, os, sys, threading, time
-from tre import App, LayerWindow, PopupWindow, Window
+from tess_re import App, LayerWindow, PopupWindow, Window
 
 args = json.loads(os.environ["MENU_ARGS"])
 app = App()

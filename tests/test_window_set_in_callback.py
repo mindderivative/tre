@@ -2,7 +2,7 @@
 runs under `Window.advance` or `Window.simulate` (they used to raise
 `RuntimeError: Already borrowed`)."""
 
-from tre import Window
+from tess_re import Window
 
 
 def test_set_from_an_animation_callback_during_advance():

@@ -1,6 +1,6 @@
 //! `PyWindow`'s docking methods -- thin wrappers over `dock.rs`, which
 //! does the work. M99 reduced docking to D10's bare bones: the framework
-//! draws the handle and the target highlight; `tre` docks, drags, and
+//! draws the handle and the target highlight; `tess_re` docks, drags, and
 //! reports (`dock_target`/`dock_drop` window events, delivered from
 //! `dispatch::process_input`).
 

@@ -138,11 +138,11 @@ would, for tests with no display.
 ## GPU memory
 
 Windows share one GPU device (0.5.9, #220), and a device asks the driver's allocator for memory in
-blocks. tre asks for small blocks (8 to 64 MiB, 4 to 32 MiB for host-visible ones), so a small
+blocks. tess_re asks for small blocks (8 to 64 MiB, 4 to 32 MiB for host-visible ones), so a small
 window holds a few tens of MiB of video memory (31 MiB for a 200 x 100 window on the machine it
 was measured on). `wgpu`'s own default reserves 192 MiB the moment a device exists, whatever is
-then put in it, and that was tre's behaviour before 0.5.8's follow-up (#219): **set
-`TRE_GPU_MEMORY=performance` in the environment before the app starts to get it back** (any other
+then put in it, and that was tess_re's behaviour before 0.5.8's follow-up (#219): **set
+`TESS_RE_GPU_MEMORY=performance` in the environment before the app starts to get it back** (any other
 value keeps the small blocks). A large image or a big window still gets the memory it needs
 either way; the setting only changes how much is reserved in advance. See
 [GPU memory per window](../design/vram-per-window.md) for the measurements.
@@ -154,7 +154,7 @@ only its own swapchain, render target and renderer: five 200 x 100 windows hold 
 window on the device, once each, because `wgpu` does not say which window's draw caused it; and a
 lost device is lost for all of them, so every window's `gpu_lost` listener hears it before the run
 ends. A window whose surface the shared adapter cannot present to (a second GPU) gets a device of its
-own. **Set `TRE_GPU_DEVICES=per-window` before the app starts for a device per window again** (`shared`,
+own. **Set `TESS_RE_GPU_DEVICES=per-window` before the app starts for a device per window again** (`shared`,
 or anything else, is the default).
 
 **One renderer too (0.5.9, #235).** Windows on a shared device also share one `vello_gpu` renderer
@@ -163,7 +163,7 @@ copied for each window. A renderer cost about 4 MiB and 9 ms to make, and the fo
 every window. On the machine measured, 50 small windows hold 98 MiB of process memory (they held 310
 with a renderer each, and 532 with a device each), and a window adds about 0.14 MiB, not 4.3. A
 window's own text layouts, images, shader passes, kept frame and damage stay its own. **Set
-`TRE_GPU_RENDERERS=per-window` for a renderer per window again** (the device stays shared). `frame_stats()["memory"]` reports the device, so with a shared device
+`TESS_RE_GPU_RENDERERS=per-window` for a renderer per window again** (the device stays shared). `frame_stats()["memory"]` reports the device, so with a shared device
 every window reads the same numbers (`shared_device` says which case it is).
 
 ## `thread_handle`
@@ -199,7 +199,7 @@ returns normally.
 - Returns `True` if a loop was running and has been asked to end, `False` if none was (before `run()`
   or after it returned). Nothing is remembered: a `stop()` called early never ends a later run.
 - Works with or without `keep_alive`, with or without windows open.
-- Safe from any thread. Like `call_soon`, it is the one `tre` call a worker thread may make.
+- Safe from any thread. Like `call_soon`, it is the one `tess_re` call a worker thread may make.
 
 ### `call_soon`
 

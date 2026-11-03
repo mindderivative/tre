@@ -5175,7 +5175,7 @@ fn select_all_text_field_on_a_non_text_field_is_a_true_no_op() {
 }
 
 /// M32 Phase 6 (§4, §5, §8): a real 3-row terminal seeded with
-/// distinct real per-row content ("hello"/"world"/"tre!!"), padded
+/// distinct real per-row content ("hello"/"world"/"tess_re!!"), padded
 /// to `cols` with real blank cells -- mirrors `text_field_scene`'s
 /// own role for the new `Terminal` selection tests below.
 fn terminal_scene(rows: &[&str]) -> (Tree, NodeId) {
@@ -5259,7 +5259,7 @@ fn terminal_selected_text_reads_a_real_single_row_range() {
 
 #[test]
 fn terminal_selected_text_reads_real_linear_selection_across_multiple_rows() {
-    let (mut tree, term) = terminal_scene(&["hello", "world", "tre!!"]);
+    let (mut tree, term) = terminal_scene(&["hello", "world", "tess_re!!"]);
     tree.set_terminal_selection_start(term, 0, 3);
     tree.extend_terminal_selection(term, 2, 2);
     assert_eq!(

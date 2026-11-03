@@ -6,9 +6,9 @@ several amortized together -- and times the warmed-up steady state of each
 step (wheel, `advance(0)`, one callback). If per-call GIL overhead dominated,
 the fix would be to batch the callback.
 
-Skipped unless `TRE_RUN_BENCHMARK` is set (a bare `skip` marker has no flag
+Skipped unless `TESS_RE_RUN_BENCHMARK` is set (a bare `skip` marker has no flag
 to lift it):
-    TRE_RUN_BENCHMARK=1 pytest tests/test_virtual_list_benchmark.py -v -s
+    TESS_RE_RUN_BENCHMARK=1 pytest tests/test_virtual_list_benchmark.py -v -s
 """
 
 import os
@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 ROW_COUNT = 100_000
 ROW_EXTENT = 20.0
@@ -29,9 +29,9 @@ MAX_MICROS_PER_CALL = 200.0
 
 
 @pytest.mark.skipif(
-    not os.environ.get("TRE_RUN_BENCHMARK"),
+    not os.environ.get("TESS_RE_RUN_BENCHMARK"),
     reason="perf benchmark -- run explicitly with: "
-    "TRE_RUN_BENCHMARK=1 pytest tests/test_virtual_list_benchmark.py -v -s",
+    "TESS_RE_RUN_BENCHMARK=1 pytest tests/test_virtual_list_benchmark.py -v -s",
 )
 def test_materialize_callback_gil_overhead_scales_to_100k_rows():
     window = Window(width=200, height=200)

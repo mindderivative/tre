@@ -62,7 +62,7 @@ proxy, so a layer surface is drawn, laid out, animated and made accessible by th
 as any window (`WindowRenderer` does not know which kind of window it draws into). The thread
 owns what the protocol makes it own: the surface's configure and close, outputs and their
 hot-plug, the keyboard (through `xkbcommon-dl`, loaded at run time), input methods
-(`zwp_text_input_v3`) and a per-surface AccessKit adapter. tre binds the layer shell itself,
+(`zwp_text_input_v3`) and a per-surface AccessKit adapter. tess_re binds the layer shell itself,
 at the highest version the compositor offers. The design and what was measured are in
 [the LayerWindow design note](design/layer-window.md) and the
 [spike findings](design/layer-surface-spike.md).

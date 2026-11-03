@@ -3,7 +3,7 @@
 Owns one node tree and the OS window it's painted into. Add windows to an
 [`App`](app.md), then call `App.run()`.
 
-**`Window(width=480, height=200, title="tre v2", decorations=True)`** —
+**`Window(width=480, height=200, title="tess_re v2", decorations=True)`** —
 raises `ValueError` for a zero width or height. `decorations=False` (0.5.0)
 opens the window without the OS's title bar and borders, for the framework
 to draw its own; see [Window controls and state](#window-controls-and-state).
@@ -191,7 +191,7 @@ double-click timing (with `advance`), and the border — without one.
 
 ## GPU health
 
-Since 0.5.1, tre listens to the GPU, and three window events report what it
+Since 0.5.1, tess_re listens to the GPU, and three window events report what it
 says. The device is polled each loop turn, and while GPU work is still running
 an otherwise idle loop wakes about every 100 ms to poll; with the GPU idle it
 costs nothing.
@@ -205,18 +205,18 @@ window.on("gpu_stalled", lambda e: log.warning("a frame has run %.0f s", e.secon
 
 - **A lost GPU ends the run.** A driver fault, or a hang the driver's own
   timeout caught (TDR on Windows, with Linux's and Metal's own timeouts),
-  reaches tre as a lost device, and a lost device can't be restored. `gpu_lost`
+  reaches tess_re as a lost device, and a lost device can't be restored. `gpu_lost`
   fires with `reason` (`"unknown"` for a fault, `"destroyed"` for a destroyed
   device) and the driver's `message`; then every window closes — a
   `close_requested` listener can't keep one open — and `App.run()` raises
   `RuntimeError("the GPU was lost: …; the run has ended")` instead of
   panicking or freezing. Nothing is rebuilt.
 - **A GPU error doesn't panic.** `wgpu`'s default handler panics the process on
-  any GPU error; tre replaces it. Each distinct error is logged once and fires
+  any GPU error; tess_re replaces it. Each distinct error is logged once and fires
   `gpu_error` once, the draw that caused it is skipped, and the loop carries on.
 - **The stall watchdog is off.** `window.set(gpu_watchdog=seconds)` turns it
   on (`None`, the default, turns it off): if a submitted frame hasn't completed
-  after that many seconds, tre logs once and fires `gpu_stalled`. It only
+  after that many seconds, tess_re logs once and fires `gpu_stalled`. It only
   reports; stuck GPU work can't be cancelled. It matters most on a software
   adapter (the one CI uses), which has no driver timeout at all: a shader that
   never ends there is never reported lost.
@@ -273,7 +273,7 @@ by the copy can differ from a fresh draw by one level in a pixel or two, because
 is rasterised from where it sits in the window; nothing else differs, and a later full
 redraw re-draws them. How much it saves depends on the machine and the content: it
 removes the redraw of the view, but not the walk over its nodes. Set the environment
-variable `TRE_SCROLL_BLIT_OFF=1` to turn it off while measuring or chasing a rendering bug.
+variable `TESS_RE_SCROLL_BLIT_OFF=1` to turn it off while measuring or chasing a rendering bug.
 **`set(transparent=True)`** (0.5.4) opens the window see-through: the OS gives it an alpha
 channel, so a root `fill` with alpha below 255, or `(0, 0, 0, 0)`, shows the desktop
 through it. With `decorations=False` that is a window of any shape: a rounded card,
@@ -453,7 +453,7 @@ when you call `frame_stats()` (not every frame): `allocated_bytes` (buffers and 
 use), `reserved_bytes` (blocks taken from the driver, which is what the process holds),
 `blocks`, `largest`, the five biggest allocations as `{"name", "bytes"}`, and `shared_device`
 (0.5.9, #220): windows share one GPU device, so these numbers are the whole device's and every
-window reads the same ones (`TRE_GPU_DEVICES=per-window` gives each window its own). It is `None`
+window reads the same ones (`TESS_RE_GPU_DEVICES=per-window` gives each window its own). It is `None`
 before `App.run()` opens the window and on a backend that cannot report. A `reserved_bytes`
 far above `allocated_bytes` is the allocator's block size, not a leak
 ([VRAM per window](../design/vram-per-window.md)).
@@ -541,17 +541,17 @@ are drawn at their current values; they are not advanced. A size or scale
 that isn't greater than 0 raises `ValueError`; no GPU, or a size the GPU
 can't render, raises `RuntimeError`.
 
-`tre.write_png(path, rgba, width, height)` saves the pixels as a PNG, and
-`tre.png_bytes(rgba, width, height)` returns the file's bytes, both with the
+`tess_re.write_png(path, rgba, width, height)` saves the pixels as a PNG, and
+`tess_re.png_bytes(rgba, width, height)` returns the file's bytes, both with the
 standard library alone:
 
 ```python
-import tre
+import tess_re
 
 window = Window(width=320, height=200)
 ...  # build the tree
-tre.write_png("home.png", *window.snapshot())
-tre.write_png("home@2x.png", *window.snapshot(scale=2))
+tess_re.write_png("home.png", *window.snapshot())
+tess_re.write_png("home@2x.png", *window.snapshot(scale=2))
 ```
 
 What it returns is what the window shows: the same renderer draws both, and
@@ -641,7 +641,7 @@ See [Docking](../guide/docking.md) for a walkthrough.
 ## Hidden windows
 
 **Wayland (0.5.10, #246).** The compositor says nothing about a hidden window, but it stops sending
-the *frame callbacks* a surface draws on, and tre now draws a window only after the callback for its
+the *frame callbacks* a surface draws on, and tess_re now draws a window only after the callback for its
 last frame. A window on another workspace or minimized therefore stops drawing and costs nothing
 (sway: 0 CPU ticks in 5 s with a looping animation, against 129 in 4 s visible; KWin 6.8: a minimized window drew 23
 frames in 8 s against 255 before, one on another virtual desktop used about 0.5% of a core against 3.1%). A

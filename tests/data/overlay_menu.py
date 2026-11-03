@@ -6,7 +6,7 @@ shows the menu in it with `show_layer`. The overlay exists only while the menu i
 Driven by `test_layer_window_live.py` (`MENU_ARGS` says what to do and where).
 """
 import json, os, sys, threading, time
-from tre import App, LayerWindow, Window
+from tess_re import App, LayerWindow, Window
 
 args = json.loads(os.environ["MENU_ARGS"])
 app = App()

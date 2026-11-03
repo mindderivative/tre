@@ -5,7 +5,7 @@ screen the pointer is on, an app remembers which screen a window was on: all sta
 of outputs and from being told when it changes.
 
 ```python
-from tre import App, LayerWindow
+from tess_re import App, LayerWindow
 
 app = App()
 for out in app.outputs():          # before run(): the screens as they are now

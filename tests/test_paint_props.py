@@ -10,14 +10,14 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 from helpers import add
 
 RED = (255, 0, 0, 255)
 
 
-def window() -> tre.Window:
-    return tre.Window(300, 200, "paint")
+def window() -> tess_re.Window:
+    return tess_re.Window(300, 200, "paint")
 
 
 def test_paint_props_read_back_exactly() -> None:

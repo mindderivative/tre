@@ -1,4 +1,4 @@
-# Python tools for developing tre (not needed to *use* it: `pip install tesserae-engine`).
+# Python tools for developing tess_re (not needed to *use* it: `pip install tesserae-engine`).
 # `pip install -r requirements-dev.txt` in a venv, then `maturin develop --release`.
 # The ranges match what CI installs (.github/workflows/ci.yml, docs.yml); the versions
 # the 0.5.6 work was last verified with are in comments.

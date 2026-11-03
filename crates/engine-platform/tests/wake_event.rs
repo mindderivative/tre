@@ -52,7 +52,7 @@ fn main() {
         |opener, waker| {
             opener.open_window(WindowRequest {
                 config: WindowConfig {
-                    title: "tre v2 -- M31 Phase 6 wake spike".to_string(),
+                    title: "tess_re v2 -- M31 Phase 6 wake spike".to_string(),
                     width: 200,
                     height: 150,
                     max_frames: Some(10),

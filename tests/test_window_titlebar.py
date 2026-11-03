@@ -13,7 +13,7 @@ import textwrap
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 MACOS = Window().get("platform") == "macos"
 
@@ -69,7 +69,7 @@ def test_simulating_the_inset_needs_both_edges():
 def test_live_decorations_and_inset():
     done = subprocess.run(
         [sys.executable, "-c", textwrap.dedent("""
-            from tre import App, Window
+            from tess_re import App, Window
             w = Window(width=300, height=200)
             box = w.create("box", width=20, height=20)
             w.root.add_child(box)

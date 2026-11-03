@@ -1,4 +1,4 @@
-//! M87 (tre issue #6): running a Python callable on a live `App`'s
+//! M87 (tess_re issue #6): running a Python callable on a live `App`'s
 //! event-loop thread, queued from any other thread.
 //!
 //! `App`/`Window`/`Node` are all thread-bound (`thread_bound`), so a
@@ -122,7 +122,7 @@ impl CallQueue {
 }
 
 /// A thread-safe handle to a running `App`'s event loop, from
-/// `App.thread_handle()`. The one `tre` object a background thread may
+/// `App.thread_handle()`. The one `tess_re` object a background thread may
 /// use.
 #[pyclass(frozen, name = "LoopHandle")]
 pub struct LoopHandle {

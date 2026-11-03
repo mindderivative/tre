@@ -6,7 +6,7 @@ a snapshot shows where the header really is.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 WHITE = (255, 255, 255, 255)
 BODY = (60, 60, 200, 255)

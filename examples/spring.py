@@ -13,9 +13,9 @@ See docs/guide/animation.md.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=520, height=240, title="tre -- springs")
+window = Window(width=520, height=240, title="tess_re -- springs")
 window.root.set(padding=0)
 cards = []
 for i, bounce in enumerate((0.0, 0.35, 0.7)):

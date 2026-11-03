@@ -8,7 +8,7 @@ changes, and paints it every frame.
 ## Windows and the app
 
 ```python
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=640, height=400, title="Inbox")
 # ... build the tree under window.root ...

@@ -1,9 +1,9 @@
-"""0.5.4 (#109): gradient fills -- `tre.Gradient` as a box's `fill`."""
+"""0.5.4 (#109): gradient fills -- `tess_re.Gradient` as a box's `fill`."""
 
 import pytest
 
-import tre
-from tre import Gradient, Window
+import tess_re
+from tess_re import Gradient, Window
 
 BLACK = (0, 0, 0, 255)
 RED = (255, 0, 0, 255)
@@ -137,9 +137,9 @@ def test_an_animation_between_unlike_gradients_is_refused():
 
 
 def test_the_gradient_is_exported_and_the_pixels_can_be_saved(tmp_path):
-    assert tre.Gradient is Gradient
+    assert tess_re.Gradient is Gradient
     window, _ = boxed(Gradient.sweep([RED, BLUE, RED]))
-    tre.write_png(tmp_path / "sweep.png", *window.snapshot())
+    tess_re.write_png(tmp_path / "sweep.png", *window.snapshot())
     assert (tmp_path / "sweep.png").stat().st_size > 100
 
 

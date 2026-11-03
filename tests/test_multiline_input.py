@@ -7,7 +7,7 @@ lands is the probe for the caret. The pixels are `text_field_paint.rs`'s job.
 
 import pytest
 
-from tre import Node, Window
+from tess_re import Node, Window
 from helpers import CODE_EDITOR, add
 
 

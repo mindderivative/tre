@@ -2,9 +2,9 @@
 
 - A node made by `window.create` (or detached by `remove()`) is freed, with
   its listeners, once no Python handle points anywhere into its subtree. A
-  listener's liveness is how these tests see it: `tre` drops a freed node's
+  listener's liveness is how these tests see it: `tess_re` drops a freed node's
   listeners, and a weak reference to the listener then goes dead.
-- Issue #10: a `tre` object whose last reference sits in a cycle can be freed
+- Issue #10: a `tess_re` object whose last reference sits in a cycle can be freed
   by Python's cyclic collector on whichever thread runs it. That must neither
   panic nor leak: the drop is finished on the owning thread.
 """
@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 
 
 class Listener:
@@ -28,14 +28,14 @@ class Listener:
         pass
 
 
-def listening(node: tre.Node) -> weakref.ref[Listener]:
+def listening(node: tess_re.Node) -> weakref.ref[Listener]:
     listener = Listener()
     node.on("click", listener)
     return weakref.ref(listener)
 
 
 def test_a_created_node_with_no_handle_is_freed() -> None:
-    w = tre.Window(200, 100, "lifetime")
+    w = tess_re.Window(200, 100, "lifetime")
     box = w.create("box")
     ref = listening(box)
     assert ref() is not None
@@ -44,7 +44,7 @@ def test_a_created_node_with_no_handle_is_freed() -> None:
 
 
 def test_a_handle_anywhere_in_the_subtree_keeps_it_alive() -> None:
-    w = tre.Window(200, 100, "lifetime")
+    w = tess_re.Window(200, 100, "lifetime")
     box = w.create("box")
     child = w.create("box")
     box.add_child(child)
@@ -58,7 +58,7 @@ def test_a_handle_anywhere_in_the_subtree_keeps_it_alive() -> None:
 
 
 def test_an_attached_node_is_never_freed() -> None:
-    w = tre.Window(200, 100, "lifetime")
+    w = tess_re.Window(200, 100, "lifetime")
     box = w.create("box")
     w.root.add_child(box)
     ref = listening(box)
@@ -68,7 +68,7 @@ def test_an_attached_node_is_never_freed() -> None:
 
 
 def test_a_removed_node_is_freed_with_its_last_handle() -> None:
-    w = tre.Window(200, 100, "lifetime")
+    w = tess_re.Window(200, 100, "lifetime")
     box = w.create("box")
     w.root.add_child(box)
     ref = listening(box)
@@ -117,13 +117,13 @@ def collect_on_another_thread(make: Callable[[], object]) -> None:
 def test_a_window_and_node_freed_off_thread_neither_panic_nor_leak(
     unraisable: list[str],
 ) -> None:
-    w = tre.Window(200, 100, "lifetime")
+    w = tess_re.Window(200, 100, "lifetime")
     refs: list[weakref.ref[Listener]] = []
 
     def make() -> object:
         box = w.create("box")
         refs.append(listening(box))
-        return (tre.Window(100, 100, "other"), box)
+        return (tess_re.Window(100, 100, "other"), box)
 
     collect_on_another_thread(make)
     assert refs[0]() is not None, "not freed on the collector's thread"
@@ -133,7 +133,7 @@ def test_a_window_and_node_freed_off_thread_neither_panic_nor_leak(
 
 
 def test_using_a_node_from_another_thread_still_raises() -> None:
-    w = tre.Window(200, 100, "lifetime")
+    w = tess_re.Window(200, 100, "lifetime")
     box = w.create("box")
     errors: list[BaseException] = []
 

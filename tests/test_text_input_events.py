@@ -4,7 +4,7 @@ caret's style and blink, `caret_rect()`, `text_rects()` and `caret_move`."""
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 
@@ -362,7 +362,7 @@ def test_caret_move_fires_for_a_click_that_places_the_caret():
 
 LIVE = """
 import json
-from tre import App, Window
+from tess_re import App, Window
 
 window = Window(width=300, height=120)
 field = window.create("text_input", width=240, height=28, text="hello", caret_blink=200)

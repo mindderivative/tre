@@ -13,13 +13,13 @@ of these before opening the window. Headless-CI-safe: `App.run()` renders
 docs/guide/animation.md.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 PURPLE = (0x67, 0x50, 0xA4, 0xFF)
 TEAL = (0x03, 0xDA, 0xC6, 0xFF)
 STANDARD = (0.2, 0.0, 0.0, 1.0)
 
-window = Window(width=420, height=160, title="tre -- animation")
+window = Window(width=420, height=160, title="tess_re -- animation")
 cards = [window.create("box", width=100, height=100, fill=PURPLE) for _ in range(3)]
 for card in cards:
     window.root.add_child(card)

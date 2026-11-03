@@ -8,7 +8,7 @@ whitespace.
 
 from typing import Any
 
-from tre import MONOSPACE_FONT_FAMILY, Node, Window
+from tess_re import MONOSPACE_FONT_FAMILY, Node, Window
 
 #: Props for a code-editor-style text input.
 CODE_EDITOR: dict[str, Any] = {

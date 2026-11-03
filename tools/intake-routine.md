@@ -1,7 +1,7 @@
 # The intake routine
 
 How new requests from the Tesserae project (and anyone else) are picked up while a
-`tre` minor version is open, written down so it survives a lost session or a new
+`tess_re` minor version is open, written down so it survives a lost session or a new
 machine. It is a prompt for Claude Code that is run on a timer; nothing in the repo
 runs it by itself.
 
@@ -45,7 +45,7 @@ For every new request in the open version:
 ## The prompt
 
 ```text
-tre 0.5.6 intake routine (runs every 10 minutes until the user says to release 0.5.6).
+tess_re 0.5.6 intake routine (runs every 10 minutes until the user says to release 0.5.6).
 Standing process set by the user: for every new Tesserae request in 0.5.6, scope it, ask
 the Tesserae session to approve the scope, iterate until it approves, then move to Ready
 and start work, AND directly tell the Tesserae session (SendMessage to 'Tesserae') when
@@ -56,7 +56,7 @@ the ones already handled: #47 #48 #91 #118 #132 #133 #134 (hardware, held), #158
 (Backlog), #159-#166 (Done, on branch 0.5.6), #157 (closed). Also check new comments on
 the 0.5.6 issues and any PR for Tesserae test results (gh issue view / gh api), and read
 the Tesserae session's recent transcript (mcp__ccd_session_mgmt__list_events, session
-local_358bec3a-8694-4eb6-8e20-bd4ab9d686a9) for newly filed tre requests or replies about
+local_358bec3a-8694-4eb6-8e20-bd4ab9d686a9) for newly filed tess_re requests or replies about
 a scope.
 
 2) NEW request: read it, check the code it touches, write a scope comment on the issue
@@ -70,8 +70,8 @@ asks for changes, revise the scope comment, re-send, repeat until it approves. W
 approves: comment the approval on the issue, move to Ready then In progress, SendMessage
 Tesserae that work has started and on which request, then implement on branch 0.5.6 with
 the standing verification chain (tools/verify.sh --cross: fmt, clippy -D warnings, cargo
-test --workspace --release incl. TRE_DAMAGE_VERIFY=1 for engine-render, maturin develop
---release, pytest incl. TRE_DAMAGE_VERIFY=1, mypy --strict, stubtest,
+test --workspace --release incl. TESS_RE_DAMAGE_VERIFY=1 for engine-render, maturin develop
+--release, pytest incl. TESS_RE_DAMAGE_VERIFY=1, mypy --strict, stubtest,
 tools/gen_python_api.py, mkdocs build --strict, cross clippy windows/mac, cargo +1.90
 check), docs and stub updates, a local commit per finished item ('0.5.6: ... (#N)' with
 the Co-Authored-By trailer), an issue comment on what was checked and what was not, move

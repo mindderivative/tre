@@ -10,11 +10,11 @@ so you can type for real. Headless-CI-safe: `App.run()` renders
 docs/guide/text.md.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 OUTLINE, ACCENT = (0x79, 0x74, 0x7E, 0xFF), (0x67, 0x50, 0xA4, 0xFF)
 
-window = Window(width=300, height=140, title="tre -- text field")
+window = Window(width=300, height=140, title="tess_re -- text field")
 window.root.set(flex_direction="vertical", gap=12)
 
 box = window.create("box", width=240, height=40, padding=8, corner_radius=4,

@@ -8,7 +8,7 @@ tests); these check the node events, headless.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 # A 100 x 100 frame: the outer square, and an inner square wound the other way, so it is a hole.
 RING = "M0,0 H100 V100 H0 Z M25,25 V75 H75 V25 Z"

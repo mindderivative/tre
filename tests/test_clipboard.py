@@ -9,7 +9,7 @@ one skip (`needs_clipboard`). Select-all and typed input need none.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 from helpers import add
 
 

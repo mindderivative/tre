@@ -14,7 +14,7 @@ window. Headless-CI-safe: `App.run()` renders `max_frames=60` and returns
 quietly without a display. See docs/guide/accessibility.md.
 """
 
-from tre import App, Event, Window
+from tess_re import App, Event, Window
 
 WIDTH, THUMB = 240.0, 20.0
 STEP = 0.1
@@ -88,7 +88,7 @@ class Slider:
 
 
 def main():
-    window = Window(width=320, height=120, title="tre -- slider")
+    window = Window(width=320, height=120, title="tess_re -- slider")
     window.root.set(align_items="center")
     volume = Slider(window, "Volume", value=0.5)
     window.root.add_child(volume.node)

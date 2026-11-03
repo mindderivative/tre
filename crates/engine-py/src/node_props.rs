@@ -1258,7 +1258,7 @@ fn parse_callback(
     })
 }
 
-/// 0.5.1 (#66): `shader` takes a `tre.Shader` or `None`. Its input nodes
+/// 0.5.1 (#66): `shader` takes a `tess_re.Shader` or `None`. Its input nodes
 /// must live in the same window as the node it is set on.
 fn parse_shader(value: &Bound<'_, PyAny>, tree: &Rc<RefCell<Tree>>) -> PyResult<Change> {
     if value.is_none() {
@@ -1266,7 +1266,7 @@ fn parse_shader(value: &Bound<'_, PyAny>, tree: &Rc<RefCell<Tree>>) -> PyResult<
     }
     let shader = value
         .cast::<crate::shader::Shader>()
-        .map_err(|_| invalid("shader", "a tre.Shader or None"))?
+        .map_err(|_| invalid("shader", "a tess_re.Shader or None"))?
         .get();
     if !shader.inputs_in(value.py(), tree) {
         return Err(PyValueError::new_err(

@@ -8,13 +8,13 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 
 RED = (255, 0, 0, 255)
 
 
-def window() -> tre.Window:
-    return tre.Window(400, 300, "kinds")
+def window() -> tess_re.Window:
+    return tess_re.Window(400, 300, "kinds")
 
 
 def test_create_lists_its_kinds_and_required_props() -> None:
@@ -165,11 +165,11 @@ def test_a_canvas_draws_when_created_and_on_redraw() -> None:
         w.create("box").set(draw=draw)
 
 
-def list_window(**props: Any) -> tuple[tre.Window, tre.Node, list[int]]:
+def list_window(**props: Any) -> tuple[tess_re.Window, tess_re.Node, list[int]]:
     w = window()
     built: list[int] = []
 
-    def materialize(index: int) -> tre.Node:
+    def materialize(index: int) -> tess_re.Node:
         built.append(index)
         return w.create("text", text=f"row {index}")
 

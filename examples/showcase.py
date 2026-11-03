@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The showcase: a settings window built only from `tre`'s building blocks.
+"""The showcase: a settings window built only from `tess_re`'s building blocks.
 
 - Switches and a volume slider -- the widgets from `switch.py` and
   `slider.py`, imported from them -- with the slider's value shown live.
@@ -17,7 +17,7 @@ from anywhere: `python examples/showcase.py`.
 
 from slider import Slider
 from switch import Switch
-from tre import App, Event, Window
+from tess_re import App, Event, Window
 
 SURFACE = (0xFE, 0xF7, 0xFF, 0xFF)
 CONTAINER = (0xF3, 0xED, 0xF7, 0xFF)
@@ -28,7 +28,7 @@ TEXT = (0x1D, 0x1B, 0x20, 0xFF)
 RAISED = [((0, 0, 0, 77), 0, 1, 2, 0), ((0, 0, 0, 38), 0, 2, 6, 2)]
 EASE = (0.2, 0.0, 0.0, 1.0)
 
-window = Window(width=520, height=380, title="tre -- showcase")
+window = Window(width=520, height=380, title="tess_re -- showcase")
 window.root.set(flex_direction="vertical", padding=20, gap=14, fill=SURFACE)
 
 

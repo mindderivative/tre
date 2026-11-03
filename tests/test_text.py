@@ -10,13 +10,13 @@ from typing import Any
 
 import pytest
 
-import tre
+import tess_re
 
 SENTENCE = "the quick brown fox jumps over the lazy dog " * 4
 
 
 def measure(**kwargs: Any) -> tuple[float, float]:
-    return tre.Window(100, 100, "text").measure_text(**kwargs)
+    return tess_re.Window(100, 100, "text").measure_text(**kwargs)
 
 
 def test_measure_one_line() -> None:
@@ -85,7 +85,7 @@ def test_measure_rejects_bad_values(kwargs: dict[str, Any], message: str) -> Non
 
 
 def test_text_layout_props_read_back() -> None:
-    w = tre.Window(100, 100, "text")
+    w = tess_re.Window(100, 100, "text")
     values: dict[str, Any] = {
         "font_style": "italic",
         "letter_spacing": 1.5,
@@ -102,7 +102,7 @@ def test_text_layout_props_read_back() -> None:
 def test_proof_ellipsized_list_item() -> None:
     """A list row's title, one line, cut with an ellipsis -- sized by the
     framework from `measure_text`, the way a content-sized widget is."""
-    w = tre.Window(300, 200, "text")
+    w = tess_re.Window(300, 200, "text")
     style: dict[str, Any] = {"font_size": 14, "max_lines": 1, "overflow": "ellipsis"}
     width, height = w.measure_text(text=SENTENCE, max_width=180, **style)
     title = w.create("text", text=SENTENCE, width=180, height=height, **style)

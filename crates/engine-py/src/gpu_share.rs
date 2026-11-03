@@ -12,13 +12,13 @@
 //! reported lost is never handed out again. A window whose surface the shared adapter cannot
 //! present to (a second GPU, say) gets a device of its own, as before.
 //!
-//! `TRE_GPU_DEVICES=per-window` restores one device per window (`shared`, or nothing, is the
-//! default; `TRE_GPU_RENDERERS=per-window` keeps the device shared but gives each window a
+//! `TESS_RE_GPU_DEVICES=per-window` restores one device per window (`shared`, or nothing, is the
+//! default; `TESS_RE_GPU_RENDERERS=per-window` keeps the device shared but gives each window a
 //! renderer of its own). With one device, `frame_stats()["memory"]` is the whole device's: every window
 //! reads the same totals.
 //!
 //! 0.5.9 (#235): the windows on a shared device also share one `vello_gpu` renderer per surface
-//! format (`renderer_for`): it costs about 4 MiB of memory and 9 ms to make, and tre's windows
+//! format (`renderer_for`): it costs about 4 MiB of memory and 9 ms to make, and tess_re's windows
 //! used to make one each.
 
 use std::cell::RefCell;
@@ -39,15 +39,15 @@ pub(crate) struct SharedGpu {
 
 static CURRENT: Mutex<Weak<SharedGpu>> = Mutex::new(Weak::new());
 
-/// Whether windows share a device: yes, unless `TRE_GPU_DEVICES` says `per-window`.
+/// Whether windows share a device: yes, unless `TESS_RE_GPU_DEVICES` says `per-window`.
 pub(crate) fn sharing_enabled() -> bool {
-    let setting = std::env::var("TRE_GPU_DEVICES").ok();
+    let setting = std::env::var("TESS_RE_GPU_DEVICES").ok();
     if let Some(value) = setting.as_deref()
         && !matches!(value, "shared" | "per-window")
     {
         tracing::warn!(
             value,
-            "TRE_GPU_DEVICES is \"shared\" or \"per-window\"; using \"shared\""
+            "TESS_RE_GPU_DEVICES is \"shared\" or \"per-window\"; using \"shared\""
         );
     }
     sharing_for(setting.as_deref())
@@ -58,15 +58,15 @@ fn sharing_for(setting: Option<&str>) -> bool {
 }
 
 /// Whether windows on a shared device also share one `vello_gpu` renderer: yes, unless
-/// `TRE_GPU_RENDERERS` says `per-window` (0.5.9, #235). A way back if a drawing problem shows up.
+/// `TESS_RE_GPU_RENDERERS` says `per-window` (0.5.9, #235). A way back if a drawing problem shows up.
 pub(crate) fn renderer_sharing_enabled() -> bool {
-    let setting = std::env::var("TRE_GPU_RENDERERS").ok();
+    let setting = std::env::var("TESS_RE_GPU_RENDERERS").ok();
     if let Some(value) = setting.as_deref()
         && !matches!(value, "shared" | "per-window")
     {
         tracing::warn!(
             value,
-            "TRE_GPU_RENDERERS is \"shared\" or \"per-window\"; using \"shared\""
+            "TESS_RE_GPU_RENDERERS is \"shared\" or \"per-window\"; using \"shared\""
         );
     }
     sharing_for(setting.as_deref())

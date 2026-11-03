@@ -20,7 +20,7 @@ tre has no separate benchmark crate. Its measurements are `#[ignore]`d tests tha
 | A timeline of every frame, with GPU time on its own track | `window.start_trace(path)` ... `stop_trace()`, opened at ui.perfetto.dev | |
 | Idle CPU and wake-ups on a real window | `/proc` sampling, method in `docs/design/performance-baseline.md` | |
 
-Switches: `TRE_DAMAGE_FULL=1` turns the damage shortcut off (to compare timings); `TRE_GPU_MEMORY=performance` brings back the old, larger GPU memory blocks (a setting to compare against, not a measurement: the default is small blocks, #219); `TRE_DAMAGE_VERIFY=1` makes it check itself and is **slow, never use it when timing**; `TRE_TEST_FORCE_FALLBACK=1` selects the software adapter.
+Switches: `TESS_RE_DAMAGE_FULL=1` turns the damage shortcut off (to compare timings); `TESS_RE_GPU_MEMORY=performance` brings back the old, larger GPU memory blocks (a setting to compare against, not a measurement: the default is small blocks, #219); `TESS_RE_DAMAGE_VERIFY=1` makes it check itself and is **slow, never use it when timing**; `TESS_RE_TEST_FORCE_FALLBACK=1` selects the software adapter.
 
 ## Method
 

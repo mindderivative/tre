@@ -17,7 +17,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # 3. The code, a venv with the Python tools, and the extension built into it.
 git clone https://github.com/mindderivative/tre.git
-cd tre
+cd tess_re
 git checkout 0.5.6                 # or main; see "Branches and releases" below
 python3 -m venv .venv
 source .venv/bin/activate
@@ -67,7 +67,7 @@ what was checked and what was not; Done when the work is approved. Findings,
 failures and fixes go in the issue's comments.
 
 [Tesserae](https://github.com/mindderivative/tesserae) (the UI framework built on
-`tre`) files its requests as issues here. For each one, the scope is agreed with
+`tess_re`) files its requests as issues here. For each one, the scope is agreed with
 the Tesserae side before the work starts, and a local wheel is handed over for it
 to test before anything is published.
 
@@ -121,18 +121,18 @@ cargo clippy --workspace --all-targets --release -- -D warnings
 cargo fmt --all --check
 cargo +1.90 check --workspace --all-targets   # MSRV
 python -m pytest tests/
-mypy --strict python/tre
-python -m mypy.stubtest tre --allowlist tools/stubtest_allowlist.txt
+mypy --strict python/tess_re
+python -m mypy.stubtest tess_re --allowlist tools/stubtest_allowlist.txt
 mkdocs build --strict
 ```
 
 The damage tracker walks only the nodes that changed (see
-`crates/engine-render/src/damage.rs`). `TRE_DAMAGE_VERIFY=1` makes every
+`crates/engine-render/src/damage.rs`). `TESS_RE_DAMAGE_VERIFY=1` makes every
 tracker also walk the whole tree and panic if the two disagree, so run the
 suites that way after touching anything that writes to a node, the layout or
-the tracker, and CI does: `TRE_DAMAGE_VERIFY=1 cargo test --workspace`. The
+the tracker, and CI does: `TESS_RE_DAMAGE_VERIFY=1 cargo test --workspace`. The
 randomised `damage_incremental` tests drive it with thousands of edits.
-`TRE_DAMAGE_FULL=1` turns the shortcut off, to compare timings.
+`TESS_RE_DAMAGE_FULL=1` turns the shortcut off, to compare timings.
 
 `stubtest` compares the type stub with the built extension, so run it after
 `maturin develop`; CI runs it and `mypy --strict` on Linux.
@@ -161,11 +161,11 @@ claims to, not just that the code compiles.
 ## Live tests that touch the desktop
 
 Tests marked live open real windows on the compositor you are running, and skip without one. Two kinds
-need to be asked for, because they act on the real session: `TRE_LIVE_INPUT=1` (a virtual pointer or
-keyboard from `/dev/uinput`, which moves the real pointer) and `TRE_LIVE_CLIPBOARD=1`
+need to be asked for, because they act on the real session: `TESS_RE_LIVE_INPUT=1` (a virtual pointer or
+keyboard from `/dev/uinput`, which moves the real pointer) and `TESS_RE_LIVE_CLIPBOARD=1`
 (`tests/test_clipboard_layer_live.py` overwrites the clipboard, saving the previous text in memory and
 putting it back; with no clipboard manager that text is lost when the test ends). Under
-`tools/sway_live.sh` the compositor is private, so `TRE_PRIVATE_COMPOSITOR=1` is set and the clipboard
+`tools/sway_live.sh` the compositor is private, so `TESS_RE_PRIVATE_COMPOSITOR=1` is set and the clipboard
 test runs without being asked.
 
 ## Runners
@@ -199,7 +199,7 @@ they write, and the ones that change something (`pr_chain.py`, `board.py move`/`
 | `tools/check_shaders_live.py` | A live check of the shader pipeline on the machine it runs on (#91): a video-style input repainting every frame, an effect across real resizes, and idle and animated CPU; prints PASS/FAIL. |
 | `tools/check_agent_docs.py` | `CLAUDE.md` only imports `AGENTS.md` (`--fix` restores it); a `verify.sh` step. |
 | `tools/graphify_agents.py`, `tools/graphify_refresh.sh` | Write the graphify section of `AGENTS.md` after a graphify upgrade; refresh the code graph when sources are newer (the `Stop` hook). |
-| `tools/gen_python_api.py`, `tools/gen_rust_api.py` | Regenerate `docs/api/python.md` (from `python/tre/_core.pyi`) and `docs/api/rust.md` (from rustdoc JSON); the CI docs job fails when either page is stale. |
+| `tools/gen_python_api.py`, `tools/gen_rust_api.py` | Regenerate `docs/api/python.md` (from `python/tess_re/_core.pyi`) and `docs/api/rust.md` (from rustdoc JSON); the CI docs job fails when either page is stale. |
 
 ## Checking transparent windows on a new platform
 
@@ -223,7 +223,7 @@ mkdocs build   # static site in site/
     local `pyproject.toml` always builds the base package too (Tesserae Engine's
     real Rust extension), which needs a full Rust toolchain and
     `fontconfig` dev headers you don't need just to build docs. The
-    plain install above only ever runs `mkdocs`, never imports `tre`.
+    plain install above only ever runs `mkdocs`, never imports `tess_re`.
 
 ## Project discipline
 
@@ -254,7 +254,7 @@ for c in engine-core engine-render engine-platform; do
 done
 python tools/gen_rust_api.py
 
-# Python: from python/tre/_core.pyi (the Node and Window property and event
+# Python: from python/tess_re/_core.pyi (the Node and Window property and event
 # tables are at the top of the script)
 python tools/gen_python_api.py
 ```

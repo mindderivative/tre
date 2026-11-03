@@ -7,9 +7,9 @@ Headless-CI-safe: `App.run()` renders `max_frames=60` and returns quietly
 without a display.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
-window = Window(width=200, height=200, title="tre -- variable-height list")
+window = Window(width=200, height=200, title="tess_re -- variable-height list")
 
 ROW_COUNT = 500
 ROW_HEIGHTS = [16.0, 32.0, 48.0, 24.0, 40.0]  # a repeating, non-uniform pattern

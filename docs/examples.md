@@ -21,7 +21,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `shadows.py` | Layered shadows easing between elevation levels |
 | `show_damage.py` | What partial redraw repaints each frame, tinted; `--watch` keeps the window open for checking on a real desktop |
 | `hidpi.py` | `dpi_scaling`: a card laid out in logical pixels and drawn sharp at the display's scale; `--watch` keeps the window open to drag between monitors |
-| `snapshot.py` | `window.snapshot()` and `tre.write_png`: a window's pixels at 1x and 2x, with no display |
+| `snapshot.py` | `window.snapshot()` and `tess_re.write_png`: a window's pixels at 1x and 2x, with no display |
 | `svg_smil.py` | SMIL animation in an `svg` node: `animate("svg_time", ...)` plays a looping spinner and a draw-on check from the document's own timeline (0.5.10) |
 | `build_tree.py` | `window.build(spec)` makes a subtree from one nested dict, `window.apply(changes)` changes many nodes in one checked call; a typo makes nothing (0.5.10) |
 | `svg_document.py` | An `svg` node painting a document with gradients, a clip, dashes and group opacity, at two aspect ratios |
@@ -36,7 +36,7 @@ what should happen before opening a window for a few seconds. Run one with
 | `transparent_window.py` | `transparent=True`: a rounded, undecorated card on the desktop, with a close button |
 | `spring.py` | `easing=("spring", bounce)`: overshoot, and a retarget that keeps its speed |
 | `sticky_headers.py` | `sticky=0`: section headers that hold the top of a scroll view |
-| `custom_cursor.py` | `tre.CursorImage`: a reticle cursor drawn in Python, on a card |
+| `custom_cursor.py` | `tess_re.CursorImage`: a reticle cursor drawn in Python, on a card |
 | `path_morph.py` | One path morphing into another |
 | `canvas.py` | A chart drawn with a `Painter`, with a precise hit test |
 | `node_graph.py` | Absolutely placed nodes over a canvas of edges, selected by click, zoomed by transform |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Custom cursors: a pointer shape drawn from pixels.
 
-`tre.CursorImage(rgba, width, height, hotspot)` is a cursor you draw: here a
+`tess_re.CursorImage(rgba, width, height, hotspot)` is a cursor you draw: here a
 reticle (a ring with a dot, drawn in Python from distances, no imaging library) over a
 canvas card, while the rest of the window keeps the arrow. The engine decodes no image
 format; for a PNG, decode it with your imaging library and pass the RGBA bytes.
@@ -14,13 +14,13 @@ See docs/reference/node.md.
 import math
 import sys
 
-import tre
-from tre import App, Window
+import tess_re
+from tess_re import App, Window
 
 SIZE = 32
 
 
-def reticle() -> tre.CursorImage:
+def reticle() -> tess_re.CursorImage:
     """A ring and a centre dot, anti-aliased by distance, in the accent colour."""
     rgba = bytearray(SIZE * SIZE * 4)
     centre = (SIZE - 1) / 2
@@ -32,10 +32,10 @@ def reticle() -> tre.CursorImage:
             alpha = min(1.0, ring + dot)
             i = (y * SIZE + x) * 4
             rgba[i : i + 4] = bytes((0x67, 0x50, 0xA4, round(alpha * 255)))
-    return tre.CursorImage(bytes(rgba), SIZE, SIZE, hotspot=(SIZE // 2, SIZE // 2))
+    return tess_re.CursorImage(bytes(rgba), SIZE, SIZE, hotspot=(SIZE // 2, SIZE // 2))
 
 
-window = Window(width=360, height=220, title="tre -- custom cursor")
+window = Window(width=360, height=220, title="tess_re -- custom cursor")
 card = window.create("box", width=300, height=140, x=30, y=40, position="absolute",
                      corner_radius=16, fill=(0xF3, 0xED, 0xF7, 0xFF))
 card.add_child(window.create("text", text="Aim here", font_size=20, width=200, height=30,

@@ -34,7 +34,7 @@ impl PersistentTarget {
     ) -> Self {
         let (width, height) = (width.max(1), height.max(1));
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("tre persistent target"),
+            label: Some("tess_re persistent target"),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -120,7 +120,7 @@ impl PersistentTarget {
         let (format, (w, h)) = (self.format, (self.width, self.height));
         let scratch = self.scratch.get_or_insert_with(|| {
             device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("tre persistent target scratch"),
+                label: Some("tess_re persistent target scratch"),
                 size: wgpu::Extent3d {
                     width: w,
                     height: h,

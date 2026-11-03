@@ -1,5 +1,5 @@
-"""M97: the migration gate's switch. With `TRE_FORBID_REMOVED=1` in the
-environment when `tre` is imported -- or after `install()` -- every public
+"""M97: the migration gate's switch. With `TESS_RE_FORBID_REMOVED=1` in the
+environment when `tess_re` is imported -- or after `install()` -- every public
 name 0.3.5 removes or renames raises `RemovedError`, naming what replaces
 it, so a codebase can prove it no longer uses any of them by running its
 tests with the switch on.
@@ -7,13 +7,13 @@ tests with the switch on.
 `RemovedError` is an `AttributeError`, so `hasattr` reports a removed name
 as gone. Old property names are caught by value, in `Node.animate`, `get`,
 `get_target`, and `stop_animation`, as is `animate`'s old positional
-`on_complete`. `from tre import View` fails with Python's own `ImportError`,
-which drops the replacement; `REMOVED["tre"]` has it.
+`on_complete`. `from tess_re import View` fails with Python's own `ImportError`,
+which drops the replacement; `REMOVED["tess_re"]` has it.
 
 The tables below are the migration table in `docs/design/target-api.md`,
 as data; `tests/test_removed.py` keeps the two in step. This file only
-uses names 0.3.4 already has, so it can be copied into a project pinned to
-0.3.4 and installed from there.
+uses names 0.3.4 already has. (It checks the module's own name, which is
+`tess_re` from 0.6.0; a project still on `tre` cannot import it.)
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import types
 from collections.abc import Callable
 from typing import Any
 
-from tre import _core
+from tess_re import _core
 
 FRAMEWORK = "the framework's own"
 
@@ -65,7 +65,7 @@ _STATE = "the framework's own state"
 
 #: Removed or renamed members, by owner: `{owner: {name: replacement}}`.
 REMOVED: dict[str, dict[str, str]] = {
-    "tre": {
+    "tess_re": {
         "Signal": _REACTIVITY,
         "Computed": _REACTIVITY,
         "Effect": _REACTIVITY,
@@ -121,7 +121,7 @@ REMOVED: dict[str, dict[str, str]] = {
         "set_drop_zone_highlight": _DOCKING,
         "drag_panel_over": f"{_DOCKING}, and {_SIMULATE}",
         "drop_panel_at": f"{_DOCKING}, and {_SIMULATE}",
-        "set_virtual_list_window": "nothing: tre keeps a virtual list's visible rows built",
+        "set_virtual_list_window": "nothing: tess_re keeps a virtual list's visible rows built",
         "redraw_canvas": "canvas.redraw()",
     },
     "Node": {
@@ -192,8 +192,8 @@ class RemovedError(AttributeError):
     """A name 0.3.5 removes or renames, used while the switch is on."""
 
     def __init__(self, owner: str, name: str, replacement: str) -> None:
-        subject = name if owner == "tre" else f"{owner}.{name}"
-        super().__init__(f"{subject} is removed in tre 0.3.5 -- use {replacement}")
+        subject = name if owner == "tess_re" else f"{owner}.{name}"
+        super().__init__(f"{subject} is removed in 0.3.5 -- use {replacement}")
 
 
 class _Forbidden:
@@ -207,14 +207,14 @@ class _Forbidden:
 
 
 class _GuardedModule(types.ModuleType):
-    """`tre`'s module type while the switch is on: a removed module-level
-    name raises on access -- `tre.View` and `from tre import View` alike --
-    while `tre`'s own code, which reads its globals directly, is unaffected."""
+    """`tess_re`'s module type while the switch is on: a removed module-level
+    name raises on access -- `tess_re.View` and `from tess_re import View` alike --
+    while `tess_re`'s own code, which reads its globals directly, is unaffected."""
 
     def __getattribute__(self, name: str) -> Any:
-        replacement = REMOVED["tre"].get(name)
+        replacement = REMOVED["tess_re"].get(name)
         if replacement is not None:
-            raise RemovedError("tre", name, replacement)
+            raise RemovedError("tess_re", name, replacement)
         return super().__getattribute__(name)
 
 
@@ -257,7 +257,7 @@ def install() -> None:
     node.animate = _checked(node.animate, positional_on_complete=True)
     for name in ("get", "get_target", "stop_animation"):
         setattr(node, name, _checked(getattr(node, name)))
-    module = sys.modules["tre"]
+    module = sys.modules["tess_re"]
     exported = module.__dict__["__all__"]
-    setattr(module, "__all__", [n for n in exported if n not in REMOVED["tre"]])
+    setattr(module, "__all__", [n for n in exported if n not in REMOVED["tess_re"]])
     module.__class__ = _GuardedModule

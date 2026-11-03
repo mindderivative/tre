@@ -47,7 +47,7 @@ actual offending widget `id`.
 
 **A real, standalone `view.yaml`** (`crates/engine-spec/examples/
 view.yaml`, not just an inline Rust string) -- a `Container` row with a
-`#6750A4` `Rect` swatch and a "tre v2" `Text` label -- proven to render
+`#6750A4` `Rect` swatch and a "tess_re v2" `Text` label -- proven to render
 through the real Phase 2 pipeline by a new `engine-render` integration
 test (`tests/spec_view.rs`, `engine-spec` added as a dev-dependency):
 parses the file, builds a `Tree`, computes layout, renders headlessly,

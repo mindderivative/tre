@@ -1,4 +1,4 @@
-//! 0.5.4 (#140): `tre.CursorImage`, a pointer shape drawn from pixels.
+//! 0.5.4 (#140): `tess_re.CursorImage`, a pointer shape drawn from pixels.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;

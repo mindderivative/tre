@@ -1,6 +1,6 @@
 """0.5.6 (#161): the `animation_end` node event."""
 
-from tre import Window
+from tess_re import Window
 
 
 def scene():

@@ -11,13 +11,13 @@ and returns quietly without a display. See
 docs/guide/painting.md.
 """
 
-from tre import App, Window
+from tess_re import App, Window
 
 W, H, R = 240, 120, 5
 BACKGROUND = (0xF7, 0xF2, 0xFA, 0xFF)
 LINE = (0x67, 0x50, 0xA4, 0xFF)
 
-window = Window(width=280, height=160, title="tre -- canvas")
+window = Window(width=280, height=160, title="tess_re -- canvas")
 samples = [30, 55, 40, 80, 65, 90]
 draws = []
 

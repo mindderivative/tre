@@ -8,7 +8,7 @@ real values are whatever the machine running the tests has set.
 
 import pytest
 
-from tre import Window
+from tess_re import Window
 
 
 @pytest.mark.parametrize("name", ["reduced_motion", "high_contrast"])

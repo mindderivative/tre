@@ -4,23 +4,23 @@ the node's own rendered pixels as `content(uv)` and returns what is drawn in
 their place; here, a band of light that sweeps across the glyphs.
 
 The WGSL lives in `shaders/shine.wgsl` -- where a shader's source comes from
-is the app's business, not `tre`'s. `animated=True` redraws the node every
+is the app's business, not `tess_re`'s. `animated=True` redraws the node every
 frame (`frame.time` changes); a shader that doesn't read the time would
 leave `animated` off and cost nothing while the window is still.
 
 Self-checking: the shader is validated when it is created (a mistake would
-raise `tre.ShaderError` here, with the line and column in the .wgsl file),
+raise `tess_re.ShaderError` here, with the line and column in the .wgsl file),
 and the checks below run before the window opens. Headless-CI-safe: it
 renders `max_frames=180` and exits.
 """
 
 from pathlib import Path
 
-from tre import App, Shader, Window
+from tess_re import App, Shader, Window
 
 SOURCE = (Path(__file__).parent / "shaders" / "shine.wgsl").read_text()
 
-window = Window(width=520, height=200, title="tre -- shader shine")
+window = Window(width=520, height=200, title="tess_re -- shader shine")
 window.root.set(fill=(0x16, 0x18, 0x24, 0xFF), align_items="center", justify_content="center")
 
 title = window.create(

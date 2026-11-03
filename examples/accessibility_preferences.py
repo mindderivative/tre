@@ -14,12 +14,12 @@ settings. See docs/reference/events.md.
 
 import sys
 
-from tre import App, Window
+from tess_re import App, Window
 
 NORMAL = {"fill": (0xF3, 0xED, 0xF7, 0xFF), "ink": (0x1C, 0x1B, 0x1F, 0xFF), "accent": (0x67, 0x50, 0xA4, 0xFF)}
 CONTRAST = {"fill": (0xFF, 0xFF, 0xFF, 0xFF), "ink": (0x00, 0x00, 0x00, 0xFF), "accent": (0x00, 0x00, 0xC8, 0xFF)}
 
-window = Window(width=420, height=200, title="tre -- preferences")
+window = Window(width=420, height=200, title="tess_re -- preferences")
 card = window.create("box", width=360, height=120, x=30, y=40, position="absolute", corner_radius=16)
 label = window.create("text", text="", font_size=18, width=320, height=80, x=20, y=20, position="absolute")
 card.add_child(label)

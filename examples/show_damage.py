@@ -16,12 +16,12 @@ way to check partial redraw on a real desktop. See docs/api/python/window.md.
 
 import sys
 
-from tre import App, Node, Window
+from tess_re import App, Node, Window
 
 PURPLE = (0x67, 0x50, 0xA4, 0xFF)
 TEAL = (0x03, 0xDA, 0xC6, 0xFF)
 
-window = Window(width=520, height=240, title="tre -- show_damage")
+window = Window(width=520, height=240, title="tess_re -- show_damage")
 window.set(show_damage=True)
 assert window.get("show_damage") is True
 

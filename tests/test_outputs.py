@@ -6,8 +6,8 @@ compared with `wayland-info` in `test_layer_window_live.py`.
 
 import pytest
 
-import tre
-from tre import App, LayerWindow, Output
+import tess_re
+from tess_re import App, LayerWindow, Output
 
 
 @pytest.fixture

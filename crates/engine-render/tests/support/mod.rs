@@ -26,13 +26,13 @@ pub const CLEAR: Color = Color::from_rgba8(0, 0, 0, 0);
 ///
 /// 0.5.7 (#91): the adapter's name, backend and type go to stderr, once per
 /// test process (`cargo test -- --nocapture` shows them), so a pixel test's
-/// result can be tied to the GPU it ran on. `TRE_TEST_FORCE_FALLBACK=1` asks
+/// result can be tied to the GPU it ran on. `TESS_RE_TEST_FORCE_FALLBACK=1` asks
 /// for the software adapter instead (lavapipe on Linux), to compare the two.
 pub async fn device(label: &str) -> (wgpu::Device, wgpu::Queue) {
     let adapter = wgpu::Instance::default()
         .request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::default(),
-            force_fallback_adapter: std::env::var_os("TRE_TEST_FORCE_FALLBACK").is_some(),
+            force_fallback_adapter: std::env::var_os("TESS_RE_TEST_FORCE_FALLBACK").is_some(),
             apply_limit_buckets: false,
             compatible_surface: None,
         })
