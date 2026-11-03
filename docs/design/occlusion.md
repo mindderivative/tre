@@ -34,8 +34,11 @@ compositor withholds frame callbacks, so tre kept drawing into a swapchain that 
 | KWin + RADV, window on another virtual desktop | 0.4-0.6% of a core against 3.1% |
 | KWin + RADV, a bar under a fullscreen window | KWin keeps showing it, so it keeps drawing (498 frames in 8 s, as visible) |
 
-The freeze itself **reproduces on sway/wlroots only**: KWin keeps sending frame callbacks to hidden windows, so
-`main` did not freeze there. Counting `frame_stats()["frames"]` per phase settled what CPU% alone got wrong.
+The freeze itself **reproduces on sway/wlroots only**. On KWin, `main` did not stall: a minimized or other-desktop
+window's present did not block, so it kept drawing (255 frames in 8 s for the minimized one) instead of freezing the
+app, and a bar under a fullscreen window is still shown and still gets frame callbacks. With the change a minimized window
+there drops to 23 frames, so KWin does stop calling back once tre waits for the callback; why `main`'s present did not block
+there was not investigated. Counting `frame_stats()["frames"]` per phase settled what CPU% alone got wrong.
 
 ## Known gaps
 
