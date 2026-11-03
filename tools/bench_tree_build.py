@@ -34,7 +34,9 @@ for n in (1000, 5000, 20000):
         t = pc()
         for k in kids:
             p.add_child(k)
-        return (pc() - t) / n * 1e6
+        dt = pc() - t
+        assert len(p.children()) == n and kids[-1].parent() is not None, "the appends did not all land"
+        return dt / n * 1e6
 
     print(f"add_child, {n:5d} siblings: {st.median(run() for _ in range(5)):6.2f} us/call")
 
