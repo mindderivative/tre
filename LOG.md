@@ -63,7 +63,7 @@ suite and `tools/verify.sh`, CI does it on the PR. Seen, not caused by the renam
 `test_keep_alive` failed in 2 of 3 later runs with a JSON "Extra data" error: two JSON lines on one line, from its
 `log()` printing on two threads; not run on `main`, so unconfirmed. Not verified: macOS, Windows, a real-GPU run.
 
-## After 0.5.9 (unreleased)
+## 0.5.10 (released 2026-11-03)
 
 ### #253, batch and tree building: `Window.build`, `Window.apply`, `Node.set_children`, O(1) append (2026-11-02)
 
