@@ -141,8 +141,11 @@ reference and `examples/custom_titlebar.py` for all of it in one window.
   document without animation, or with SMIL outside the supported subset, is drawn as before. See
   [SMIL animation](reference/paint.md#smil-animation-0510).
 
+- **`Window.build`, `Window.apply`, `Node.set_children`** (#253): build a whole detached subtree from one nested description, change many nodes in one checked call, and replace a node's children in one call; all check everything first and change nothing on a bad one. See [Building many nodes](reference/properties.md#building-many-nodes-0510).
+
 ### Behavior changes
 
+- `add_child` of a new child is now constant time in the sibling count (it walked the child list three times: 10.9 µs a call at 20,000 siblings, now 0.12).
 - On X11 and macOS an occluded window no longer draws until it shows again
   (`pause_when_occluded=False` restores the old behaviour).
 - On Wayland a window that is not shown no longer runs frames, so while every window is hidden timers and

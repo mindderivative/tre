@@ -131,6 +131,7 @@ the button is released or **`release_pointer()`** is called — for drags.
 | --- | --- |
 | `add_child(child)` | Appends `child`, moving it if it's attached elsewhere |
 | `insert_child(index, child)` | Attaches `child` so it ends up at `index` — afterwards `children()[index] == child` — moving it if it's attached anywhere. `index` counts the children once `child` has left its old place; past the end raises `IndexError` |
+| `set_children(children)` | (0.5.10) Makes `children` this node's whole content, in that order, in one call: a listed node that is elsewhere moves here, a child no longer listed is detached as `remove()` detaches it, open layers stay last. A duplicate, this node, an ancestor or a node of another window raises `ValueError` and changes nothing |
 | `children()` | This node's children, in order |
 | `parent()` | Its parent, or `None` for the root or a detached node |
 | `remove()` | Detaches this node from its parent; it stays alive and can be attached again |

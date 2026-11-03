@@ -144,6 +144,8 @@ Owns a node tree and its size and title; creates nodes, shows layers, docks pane
 | `add_dock_zone(side: str, container: Node, size: float) -> None` | Registers `container` as the dock zone for `side`. |
 | `advance(ms: float) -> None` | Moves the window's clock forward by `ms`, running animations, callbacks and layout. |
 | `after(ms: float, fn: Callable[[], object]) -> TimerHandle` | Calls `fn` once, `ms` milliseconds from now, on the loop's thread. |
+| `apply(changes: Sequence[tuple[Node, dict[str, Any]]]) -> None` | Changes properties on many nodes in one call: a sequence of `(node, props)` pairs, each `props` what `node.set(**props)` takes. |
+| `build(spec: dict[str, Any]) -> tuple[Node, dict[str, Node]]` | Makes a whole detached subtree from one nested description and returns `(root, nodes)`: the root and a dict of every node that… |
 | `center() -> bool` | Centres the open window on its monitor. |
 | `close() -> None` | Closes the window as if the user had: `close_requested` fires first, and a listener that cancels it keeps the window open. |
 | `create(kind: str, **props: Any) -> Node` | Makes a detached node of a kind; attach it with `add_child`. |
@@ -395,6 +397,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | `remove() -> None` | Detaches this node from its parent. |
 | `scroll_into_view() -> None` | Scrolls every scroll view around this node just enough to show it, innermost first, at once. |
 | `set(**props: Any) -> None` | Sets properties atomically: every value is checked first, and a bad one raises `ValueError` without changing anything. |
+| `set_children(children: Sequence[Node]) -> None` | Makes `children` this node's whole content, in that order, in one call. |
 | `stop_animation(name: str) -> None` | Stops `name`'s running animation where it is. |
 | `text_rects(start: int, end: int) -> list[tuple[float, float, float, float]]` | The rectangles covering bytes `start..end` of a text input's text, one per line, as `(x, y, width, height)` in the node's… |
 

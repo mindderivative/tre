@@ -43,6 +43,7 @@ mod timers;
 mod touch;
 mod trace;
 mod window;
+mod window_build;
 mod window_docking;
 mod window_events;
 mod window_input;

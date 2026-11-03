@@ -2,7 +2,7 @@
 
 ## Status
 
-**0.5.10 (prepared 2026-11-02, branch `0.5.10`):** SMIL animation in `svg` nodes (`svg_time`, `svg_duration`, #245) and
+**0.5.10 (prepared 2026-11-02, then WITHDRAWN before PyPI to add #253; re-release after it):** SMIL animation in `svg` nodes (`svg_time`, `svg_duration`, #245) and
 occlusion handling (a hidden Wayland window no longer freezes the app, `occluded`, `pause_when_occluded`, #246);
 notes in `docs/migrating-0.5.md`. CI note: the Linux jobs are pinned to `ubuntu-24.04` (PR #251), not `ubuntu-latest`:
 on 26.04 the `engine-render` GPU tests (llvmpipe) segfaulted and a restored cargo cache pinned pyo3 to the old
@@ -30,6 +30,26 @@ issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 fi
 position).
 
 ## After 0.5.9 (unreleased)
+
+### #253, batch and tree building: `Window.build`, `Window.apply`, `Node.set_children`, O(1) append (2026-11-02)
+
+From the shell's TRE-REQ-009. Measured first (medians, release, llvmpipe, detached): create 0.68 us, `set` 0.33 us,
+`add_child` 0.63 / 2.76 / 10.93 us a call at 1k / 5k / 20k siblings: linear in the sibling count, so N appends were
+quadratic (`content_len` walked every child, `try_add_child` scanned `contains`, `insert_child` walked again).
+Stage 0 fixed it: `content_len` is the child count minus the open layers that are this parent's children (layers sit
+last), no `contains` scan for a child with another parent: 0.13 / 0.09 / 0.12 us. The cycle check and `check_pair`
+stay. Finding that shaped the rest: layout already runs once per frame, not once per `set` (1,000 sets + one frame
+0.42 ms), so no `batch()` was built. `Window.create` was split into `prepare_node` (every check and parse, no side
+effect) and `make_node` (spawn, insert, apply); `Node.set` into `prepare_set`/`run_set`. `build` (new
+`window_build.rs`) reads the nested dict iteratively (depth cap 256), prepares every node, then makes them (terminals
+last; a failing spawn or a canvas `draw` that raises destroys what was made) and attaches in spec order: a bad spec
+makes nothing, spawns nothing, calls no `draw`. `apply` prepares every `(node, props)` pair, then applies in order.
+`set_children` validates, detaches dropped children as `remove()` does, moves listed ones in place. **Honest speed:**
+`build` of 3,100 nodes 5.3 ms against 4.9 ms per-node, `apply` of 1,000 entries 0.33 ms against 0.33 ms: they save
+calls, not time; the reason to use them is the all-or-nothing check. `tools/bench_tree_build.py` is the by-hand
+benchmark (no CI assertion). Tests: `tests/test_build.py`, additions to `tests/test_structure.py`, a Rust unit test
+for the append. Example `examples/build_tree.py`. Not run: Windows, macOS, a terminal in `build` (the terminal path
+is by reading).
 
 ### #245, SMIL animation in svg nodes: `svg_time` and `svg_duration` (2026-11-01)
 

@@ -1458,13 +1458,17 @@ pub(crate) fn parse_all(
     Ok(changes)
 }
 
-#[pymethods]
+/// 0.5.10 (#253): a `set` call checked and parsed, not yet applied. `Node.set` is `prepare_set`
+/// then `run_set`; `Window.apply` prepares every entry first, so one bad entry changes nothing.
+pub(crate) struct PreparedSet {
+    changes: Vec<Change>,
+    stopped: Vec<engine_core::LayoutProp>,
+    scroll_offset: bool,
+}
+
 impl Node {
-    /// Sets any number of properties at once, atomically: every value is
-    /// checked first, and a bad one raises `ValueError` without changing
-    /// anything. An optional property takes `None` to clear it.
-    #[pyo3(signature = (**props))]
-    fn set(&self, props: Option<&Bound<'_, PyDict>>, py: Python<'_>) -> PyResult<()> {
+    /// Parses and checks `props` for this node, with no change to anything.
+    pub(crate) fn prepare_set(&self, props: Option<&Bound<'_, PyDict>>) -> PyResult<PreparedSet> {
         let changes = {
             let tree = self.tree.borrow();
             let node = tree
@@ -1484,20 +1488,37 @@ impl Node {
             }
             changes
         };
+        // 0.5.6 (#161): setting a layout property outright ends its animation.
+        let stopped = props
+            .map(|props| {
+                props
+                    .keys()
+                    .iter()
+                    .filter_map(|name| name.extract::<String>().ok())
+                    .flat_map(|name| engine_core::LayoutProp::from_name(&name))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let scroll_offset = props.is_some_and(|p| p.contains("scroll_offset").unwrap_or(false));
+        Ok(PreparedSet {
+            changes,
+            stopped,
+            scroll_offset,
+        })
+    }
+
+    /// Applies what `prepare_set` parsed.
+    pub(crate) fn run_set(&self, prepared: PreparedSet, py: Python<'_>) -> PyResult<()> {
+        let PreparedSet {
+            changes,
+            stopped,
+            scroll_offset,
+        } = prepared;
         let redraw = changes
             .iter()
             .any(|change| matches!(change, Change::Callback(HandlerKey::Draw, _)));
-        // 0.5.6 (#161): setting a layout property outright ends its animation.
-        if let Some(props) = props {
-            let stopped: Vec<engine_core::LayoutProp> = props
-                .keys()
-                .iter()
-                .filter_map(|name| name.extract::<String>().ok())
-                .flat_map(|name| engine_core::LayoutProp::from_name(&name))
-                .collect();
-            if !stopped.is_empty() {
-                self.tree.borrow_mut().stop_layout_anims(self.id, &stopped);
-            }
+        if !stopped.is_empty() {
+            self.tree.borrow_mut().stop_layout_anims(self.id, &stopped);
         }
         self.apply(changes);
         if redraw {
@@ -1506,11 +1527,23 @@ impl Node {
         // 0.4.3 M15: a new offset is clamped to the view's range before it's
         // reported -- layout does the clamping -- so it reads back right at
         // once and fires one `scroll`, not a second when the frame lays out.
-        if props.is_some_and(|p| p.contains("scroll_offset").unwrap_or(false)) {
+        if scroll_offset {
             self.layout_box(py);
         }
         self.fire_scroll_changes(py);
         Ok(())
+    }
+}
+
+#[pymethods]
+impl Node {
+    /// Sets any number of properties at once, atomically: every value is
+    /// checked first, and a bad one raises `ValueError` without changing
+    /// anything. An optional property takes `None` to clear it.
+    #[pyo3(signature = (**props))]
+    fn set(&self, props: Option<&Bound<'_, PyDict>>, py: Python<'_>) -> PyResult<()> {
+        let prepared = self.prepare_set(props)?;
+        self.run_set(prepared, py)
     }
 
     /// Reads one property: any `set` property, `focused`, or -- for the

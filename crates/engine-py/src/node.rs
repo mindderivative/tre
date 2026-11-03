@@ -568,6 +568,57 @@ impl Node {
         }
     }
 
+    /// 0.5.10 (#253): makes `children` (a sequence of nodes of this window) this node's whole
+    /// content in one call, in that order. A listed node that is elsewhere moves here (as
+    /// `insert_child` moves it); a child no longer listed is detached as `remove()` detaches it.
+    /// Open layers stay last. A node of another window, a duplicate, this node itself, or one of
+    /// its ancestors raises `ValueError` and changes nothing.
+    fn set_children(&self, children: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<()> {
+        self.check_alive()?;
+        let mut wanted: Vec<NodeId> = Vec::new();
+        for (i, item) in children.try_iter()?.enumerate() {
+            let node: PyRef<'_, Node> = item?.extract().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "set_children: children[{i}] must be a node"
+                ))
+            })?;
+            self.check_pair(&node)?;
+            if node.id == self.id {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "set_children: children[{i}] is this node itself"
+                )));
+            }
+            if wanted.contains(&node.id) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "set_children: children[{i}] is listed twice"
+                )));
+            }
+            wanted.push(node.id);
+        }
+        {
+            let tree = self.tree.borrow();
+            if tree.ancestors(self.id).any(|id| wanted.contains(&id)) {
+                return Err(EngineError::CycleRejected.into());
+            }
+        }
+        let current = self.tree.borrow().content_children(self.id).to_vec();
+        let keep: std::collections::HashSet<NodeId> = wanted.iter().copied().collect();
+        for id in current.into_iter().filter(|id| !keep.contains(id)) {
+            self.handle_to(id).remove(py)?;
+        }
+        let mut tree = self.tree.borrow_mut();
+        for (index, id) in wanted.into_iter().enumerate() {
+            // Already in place: no move (a move is a scan of the child list).
+            if tree.content_children(self.id).get(index) == Some(&id) {
+                continue;
+            }
+            if !tree.insert_child(self.id, index, id) {
+                return Err(EngineError::CycleRejected.into());
+            }
+        }
+        Ok(())
+    }
+
     /// M96: this node's children, in order -- open layers aren't among
     /// the root's.
     fn children(&self) -> PyResult<Vec<Node>> {
