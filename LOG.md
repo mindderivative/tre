@@ -50,6 +50,12 @@ calls, not time; the reason to use them is the all-or-nothing check. `tools/benc
 benchmark (no CI assertion). Tests: `tests/test_build.py`, additions to `tests/test_structure.py`, a Rust unit test
 for the append. Example `examples/build_tree.py`. Not run: Windows, macOS, a terminal in `build` (the terminal path
 is by reading).
+Review fixes (independent reviewer agent): `apply` allows one `shader` entry (the cycle check reads the tree as it is,
+two shaders in one batch could read each other); `set_children` moves the listed nodes before detaching dropped ones
+(a dropped child holding a kept one was never collected), refuses open layers, checks liveness between detaches and is
+no longer quadratic in its checks; `build` returns a phase-2 error as `create` raises it (a failed shell is an
+`OSError`, a `draw` that raises keeps its type), caps a call at 1,000,000 nodes and builds error paths lazily. Not
+fixed (older, not this issue): `add_child`/`insert_child` do not refuse a node that is an open layer.
 
 ### #245, SMIL animation in svg nodes: `svg_time` and `svg_duration` (2026-11-01)
 

@@ -247,7 +247,6 @@ fn try_add_child_moves_an_already_attached_node_instead_of_duplicating_it() {
     );
 }
 
-/// M96: `insert_child` reorders siblings by final index, and a move
 /// 0.5.10 (#253): a plain append lands after the content and before the open layers whatever
 /// the sibling count, and the content length counts only a parent's own layers.
 #[test]
@@ -289,6 +288,7 @@ fn appending_counts_content_without_the_open_layers_and_moves_a_present_child_co
     assert!(!tree.content_children(root).contains(&content[1]));
 }
 
+/// M96: `insert_child` reorders siblings by final index, and a move
 /// within one tree keeps the node's identity and focus.
 #[test]
 fn insert_child_reorders_and_keeps_focus_within_a_tree() {

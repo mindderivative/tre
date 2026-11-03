@@ -576,6 +576,7 @@ impl Node {
     fn set_children(&self, children: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<()> {
         self.check_alive()?;
         let mut wanted: Vec<NodeId> = Vec::new();
+        let mut keep: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
         for (i, item) in children.try_iter()?.enumerate() {
             let node: PyRef<'_, Node> = item?.extract().map_err(|_| {
                 pyo3::exceptions::PyValueError::new_err(format!(
@@ -588,7 +589,12 @@ impl Node {
                     "set_children: children[{i}] is this node itself"
                 )));
             }
-            if wanted.contains(&node.id) {
+            if self.tree.borrow().is_layer(node.id) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "set_children: children[{i}] is an open layer, which is not content"
+                )));
+            }
+            if !keep.insert(node.id) {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "set_children: children[{i}] is listed twice"
                 )));
@@ -597,23 +603,37 @@ impl Node {
         }
         {
             let tree = self.tree.borrow();
-            if tree.ancestors(self.id).any(|id| wanted.contains(&id)) {
+            if tree.ancestors(self.id).any(|id| keep.contains(&id)) {
                 return Err(EngineError::CycleRejected.into());
             }
         }
-        let current = self.tree.borrow().content_children(self.id).to_vec();
-        let keep: std::collections::HashSet<NodeId> = wanted.iter().copied().collect();
-        for id in current.into_iter().filter(|id| !keep.contains(id)) {
-            self.handle_to(id).remove(py)?;
-        }
-        let mut tree = self.tree.borrow_mut();
-        for (index, id) in wanted.into_iter().enumerate() {
-            // Already in place: no move (a move is a scan of the child list).
-            if tree.content_children(self.id).get(index) == Some(&id) {
-                continue;
+        let dropped: Vec<NodeId> = self
+            .tree
+            .borrow()
+            .content_children(self.id)
+            .iter()
+            .copied()
+            .filter(|id| !keep.contains(id))
+            .collect();
+        // The listed nodes move first, so a dropped child that holds one of them is empty of it
+        // when it is detached (and freed if nothing refers to it): the other way round, it would
+        // be kept alive by the node on its way out and never collected.
+        {
+            let mut tree = self.tree.borrow_mut();
+            for (index, id) in wanted.into_iter().enumerate() {
+                // Already in place: no move (a move is a scan of the child list).
+                if tree.content_children(self.id).get(index) == Some(&id) {
+                    continue;
+                }
+                if !tree.insert_child(self.id, index, id) {
+                    return Err(EngineError::CycleRejected.into());
+                }
             }
-            if !tree.insert_child(self.id, index, id) {
-                return Err(EngineError::CycleRejected.into());
+        }
+        for id in dropped {
+            // A `unfocus` handler may have destroyed a later one meanwhile.
+            if self.tree.borrow().get(id).is_some() {
+                self.handle_to(id).remove(py)?;
             }
         }
         Ok(())

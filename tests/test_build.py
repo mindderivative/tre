@@ -107,7 +107,7 @@ def test_apply_changes_many_nodes_or_none():
     with pytest.raises(ValueError, match="another window"):
         w.apply([(window().create("box"), {"opacity": 0.5})])
     with pytest.raises(ValueError, match=r"changes\[0\]"):
-        w.apply([a])
+        w.apply([a])  # type: ignore[list-item]
 
 
 def test_set_children_replaces_orders_and_detaches():
@@ -145,3 +145,64 @@ def test_set_children_rejects_bad_lists_without_changing_anything():
         child.set_children([root])
     assert [c.get("kind") for c in root.children()] == ["box", "box"]
     assert len(root.children()) == 2 and len(a.children()) == 1
+
+
+def test_the_depth_limit_is_exact_and_children_may_be_a_tuple():
+    w = window()
+
+    def nest(levels):
+        node = {"kind": "box"}
+        for _ in range(levels):
+            node = {"kind": "box", "children": (node,)}
+        return node
+
+    root, _ = w.build(nest(256))
+    assert root.get("kind") == "box"
+    with pytest.raises(ValueError, match="deep"):
+        w.build(nest(257))
+
+
+def test_a_draw_that_raises_while_building_keeps_its_own_error():
+    w = window()
+
+    def boom(painter):
+        raise ZeroDivisionError("draw")
+
+    with pytest.raises(ZeroDivisionError):
+        w.build(
+            {
+                "kind": "box",
+                "children": [
+                    {"kind": "box"},
+                    {"kind": "canvas", "props": {"draw": boom}},
+                ],
+            }
+        )
+
+
+def test_apply_allows_one_shader_entry_only():
+    w = window()
+    a, b = w.create("box"), w.create("box")
+    shader = __import__("tre").Shader(
+        "fn shade(p: Pixel) -> vec4<f32> { return vec4<f32>(1.0, 0.0, 0.0, 1.0); }"
+    )
+    with pytest.raises(ValueError, match="only one entry"):
+        w.apply([(a, {"shader": shader}), (b, {"shader": shader})])
+    w.apply([(a, {"shader": shader}), (b, {"opacity": 0.5})])
+
+
+def test_set_children_frees_a_dropped_child_whose_child_it_keeps_and_refuses_layers():
+    w = window()
+    root = w.create("box")
+    dropped = w.create("box")
+    kept = w.create("box", width=7)
+    root.add_child(dropped)
+    dropped.add_child(kept)
+    del dropped
+    root.set_children([kept])
+    assert [c.get("width") for c in root.children()] == [7]
+    menu = w.create("box")
+    w.root.add_child(root)
+    w.show_layer(menu, root)
+    with pytest.raises(ValueError, match="open layer"):
+        w.root.set_children([menu])

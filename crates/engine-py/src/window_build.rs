@@ -13,8 +13,9 @@ use crate::node::Node;
 use crate::node_handles;
 use crate::window::PyWindow;
 
-/// The deepest nesting `build` accepts.
+/// The deepest nesting `build` accepts, and the most nodes one call makes.
 const MAX_DEPTH: usize = 256;
+const MAX_NODES: usize = 1_000_000;
 
 /// One node of a description, read and checked but not yet prepared.
 struct SpecNode<'py> {
@@ -22,7 +23,22 @@ struct SpecNode<'py> {
     props: Bound<'py, PyDict>,
     id: Option<String>,
     parent: Option<usize>,
-    path: String,
+    /// Which child of its parent it is.
+    position: usize,
+}
+
+/// `spec.children[2].children[0]`, built from the parent chain only when an error needs it.
+fn path_of(nodes: &[SpecNode<'_>], parent: Option<usize>, position: usize) -> String {
+    let mut parts = Vec::new();
+    let (mut at, mut pos) = (parent, position);
+    while let Some(index) = at {
+        parts.push(format!(".children[{pos}]"));
+        pos = nodes[index].position;
+        at = nodes[index].parent;
+    }
+    parts.push("spec".to_string());
+    parts.reverse();
+    parts.concat()
 }
 
 fn bad(path: &str, message: impl std::fmt::Display) -> PyErr {
@@ -33,10 +49,18 @@ fn bad(path: &str, message: impl std::fmt::Display) -> PyErr {
 fn read_spec<'py>(spec: &Bound<'py, PyAny>) -> PyResult<Vec<SpecNode<'py>>> {
     let mut out: Vec<SpecNode<'py>> = Vec::new();
     let mut ids: HashSet<String> = HashSet::new();
-    // (spec, parent index, path, depth); a stack, children pushed in reverse so they come out in order.
-    let mut stack: Vec<(Bound<'py, PyAny>, Option<usize>, String, usize)> =
-        vec![(spec.clone(), None, "spec".to_string(), 0)];
-    while let Some((item, parent, path, depth)) = stack.pop() {
+    // (spec, parent index, position among its parent's children, depth); a stack, children
+    // pushed in reverse so they come out in order.
+    let mut stack: Vec<(Bound<'py, PyAny>, Option<usize>, usize, usize)> =
+        vec![(spec.clone(), None, 0, 0)];
+    while let Some((item, parent, position, depth)) = stack.pop() {
+        let path = path_of(&out, parent, position);
+        if out.len() >= MAX_NODES {
+            return Err(bad(
+                &path,
+                format!("more than {MAX_NODES} nodes in one build"),
+            ));
+        }
         if depth > MAX_DEPTH {
             return Err(bad(
                 &path,
@@ -90,7 +114,7 @@ fn read_spec<'py>(spec: &Bound<'py, PyAny>) -> PyResult<Vec<SpecNode<'py>>> {
             props,
             id,
             parent,
-            path: path.clone(),
+            position,
         });
         if let Some(children) = dict.get_item("children")?
             && !children.is_none()
@@ -103,12 +127,7 @@ fn read_spec<'py>(spec: &Bound<'py, PyAny>) -> PyResult<Vec<SpecNode<'py>>> {
                 return Err(bad(&format!("{path}.children"), "must be a list"));
             };
             for (i, child) in list.into_iter().enumerate().rev() {
-                stack.push((
-                    child,
-                    Some(index),
-                    format!("{path}.children[{i}]"),
-                    depth + 1,
-                ));
+                stack.push((child, Some(index), i, depth + 1));
             }
         }
     }
@@ -131,7 +150,7 @@ impl PyWindow {
         for node in &nodes {
             let one = self
                 .prepare_node(&node.kind, Some(&node.props), py)
-                .map_err(|err| bad(&node.path, err.value(py)))?;
+                .map_err(|err| bad(&path_of(&nodes, node.parent, node.position), err.value(py)))?;
             prepared.push(one);
         }
         // Phase 2: make them. A terminal starts a shell, so terminals go last; the order the
@@ -152,7 +171,7 @@ impl PyWindow {
                 }
             }
         }
-        if let Some((i, err)) = failure {
+        if let Some((_, err)) = failure {
             // A shell would not start (or a canvas's `draw` raised): free what was made.
             for node in made.iter().flatten() {
                 let node = node.borrow(py);
@@ -160,7 +179,9 @@ impl PyWindow {
                 node_handles::prune(&self.handles.handlers, &freed);
                 self.handles.terminals.borrow_mut().remove(&node.id);
             }
-            return Err(bad(&nodes[i].path, err.value(py)));
+            // The error as `create` raises it: a failed shell is an `OSError`, a `draw` that raises
+            // keeps its own type and traceback.
+            return Err(err);
         }
         let made: Vec<Py<Node>> = made
             .into_iter()
@@ -188,9 +209,11 @@ impl PyWindow {
     /// `(node, props)` pairs, each `props` what `node.set(**props)` takes. Every entry is checked
     /// first -- a node of another window, a destroyed one, a bad property -- and a bad one
     /// raises `ValueError` naming its index and changes nothing; then they apply in order (the
-    /// same node twice: the later wins).
+    /// same node twice: the later wins). At most one entry may set `shader`. A callback that
+    /// raises while applying (a canvas `draw`) stops the apply where it is.
     fn apply(&self, changes: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<()> {
         let mut prepared = Vec::new();
+        let mut shaders = 0;
         for (i, entry) in changes.try_iter()?.enumerate() {
             let entry = entry?;
             let at =
@@ -201,6 +224,17 @@ impl PyWindow {
             let node = node.bind(py).borrow();
             if !Rc::ptr_eq(&node.tree, &self.handles.tree) {
                 return Err(at("that node belongs to another window".into()));
+            }
+            // The shader cycle check reads the tree as it is now, which the other entries of the
+            // batch would change: two shaders in one batch could read each other.
+            if props.contains("shader")? {
+                shaders += 1;
+                if shaders > 1 {
+                    return Err(at(
+                        "only one entry of an apply can set `shader` (set shaders with Node.set)"
+                            .into(),
+                    ));
+                }
             }
             let one = node
                 .prepare_set(Some(&props))
