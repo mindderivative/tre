@@ -57,11 +57,13 @@ Checked: `maturin develop --release`; `import tess_re` works and `import tre` ra
 installed into a fresh venv imports from site-packages, `TESS_RE_FORBID_REMOVED=1` raises `RemovedError`, a bad shader
 raises `tess_re.ShaderError`, `Window().get("title")` is `tess_re v2`; mypy strict and stubtest clean;
 `mkdocs build --strict`; `cargo fmt --check` (after `cargo fmt`, the longer name moved a few lines), clippy
-`-D warnings` on the four crates; `cargo test -p engine-core --lib shader` (13) and `-p engine-py --lib` (62); pytest
+`-D warnings` on the four crates; `cargo test -p engine-core --lib shader` (13), `-p engine-py --lib` (62) and the
+`engine-render` tests `shader_fill` and `hidpi`, `engine-core` `anchored` and `node_size`; pytest
 `test_removed`, `test_tests_for`, `test_shader`, `test_keep_alive` on llvmpipe. Not run (standing rule): the full
-suite and `tools/verify.sh`, CI does it on the PR. Seen, not caused by the rename as far as I can tell:
-`test_keep_alive` failed in 2 of 3 later runs with a JSON "Extra data" error: two JSON lines on one line, from its
-`log()` printing on two threads; not run on `main`, so unconfirmed. Not verified: macOS, Windows, a real-GPU run.
+suite and `tools/verify.sh`, CI does it on the PR. Not caused by the rename: `test_keep_alive` fails intermittently
+with a JSON "Extra data" error (two JSON lines on one line, from its `log()` printing on two threads). It failed in
+2 of 3 runs here and in 3 of 4 runs on `main` at 0.5.10 (built in a separate worktree), so it is older than this
+change; not fixed here. Not verified: macOS, Windows, a real-GPU run.
 
 ## 0.5.10 (released 2026-11-03)
 
