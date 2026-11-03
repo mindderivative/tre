@@ -57,6 +57,22 @@ overlapping children don't show through each other. `translate_x`,
 about the center) move what's painted without moving any other node — the pointer
 still finds the node where it's drawn. Each animates on its own.
 
+## SVG documents
+
+An `"svg"` node paints a whole SVG file, parsed once and fitted into the node's box without stretching. It is
+what an icon set or a logo is, with gradients, clips, masks, dashes, group opacity and text:
+
+```python
+icon = window.create("svg", svg=open("battery.svg").read(), width=24, height=24,
+                     svg_color=(0xE6, 0xE1, 0xE5, 0xFF))     # what currentColor resolves to
+```
+
+`svg_color` makes a monochrome icon follow your theme. Pictures inside the document come from the framework, not
+a file the engine opens (`svg_images`). **From 0.5.10 a document's SMIL animation plays too**: `<animate>`, `<set>`
+and `<animateTransform>` are sampled at `svg_time`, a node property you animate like any other, so a loading
+spinner or a draw-on check mark needs no Python per frame. See [Animating an SVG](animation.md#animating-an-svg),
+the [reference](../reference/paint.md#svg-documents) and `examples/svg_document.py`, `examples/svg_smil.py`.
+
 ## Paths
 
 A `"path"` node draws SVG path data — the `d` attribute. With a `view_box`,

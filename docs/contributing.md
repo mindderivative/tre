@@ -96,7 +96,7 @@ The plan is also printed in the run's summary, with the reason.
 |---|---|---|
 | **docs** | Only documentation changed: `docs/`, any `*.md`, `mkdocs.yml`, `.claude/`. | `mkdocs build --strict`, the generated Python API page is current, `CLAUDE.md` still only imports `AGENTS.md`, the version agrees. No Rust, no Python tests, no examples. |
 | **partial** | Code changed: the standard run. | `cargo fmt --check`; clippy and `cargo test` for the **changed crates and every crate that depends on them** (a change to `engine-core` reaches all four, one to `engine-render` reaches `engine-render` and `engine-py`); then, when Python is reached, the extension is built, `mypy --strict`, stubtest and the API page are checked, and the **Python tests that cover the change** run, with **the examples that relate to it** (the ones that name what changed or share a word with the file's name, such as `gradient.rs` and `gradients.py`) and three broad ones (`showcase.py`, `layout.py`, `animation.py`). Linux only. |
-| **full** | A release (the workspace `version` in `Cargo.toml` moved, such as 0.5.7 to 0.5.8); a build-configuration change (`Cargo.lock`, `rust-toolchain.toml`, the root `Cargo.toml`, `ci.yml`); the `full-ci` label on the PR; or a manual run (`Actions` > `CI` > `Run workflow`). | Everything: Linux (build, test, clippy, fmt, mypy, stubtest, the whole pytest suite, **all 45 examples**), Windows, macOS and the MSRV check. |
+| **full** | A release (the workspace `version` in `Cargo.toml` moved, such as 0.5.7 to 0.5.8); a build-configuration change (`Cargo.lock`, `rust-toolchain.toml`, the root `Cargo.toml`, `ci.yml`); the `full-ci` label on the PR; or a manual run (`Actions` > `CI` > `Run workflow`). | Everything: Linux (build, test, clippy, fmt, mypy, stubtest, the whole pytest suite, **every example**), Windows, macOS and the MSRV check. |
 
 Which Python tests a partial run takes. The crates are layered: `engine-core` is under
 `engine-render` and `engine-platform`, which are under `engine-py`, the Python surface. A change to
@@ -168,6 +168,13 @@ putting it back; with no clipboard manager that text is lost when the test ends)
 `tools/sway_live.sh` the compositor is private, so `TRE_PRIVATE_COMPOSITOR=1` is set and the clipboard
 test runs without being asked.
 
+## Runners
+
+The Linux CI jobs run on `ubuntu-24.04`, not `ubuntu-latest`: on 26.04 the `engine-render` GPU tests
+(llvmpipe) segfaulted and a restored cargo cache pinned pyo3 to the old image's Python 3.12 (a
+`-lpython3.12` link error), which turned `main` red on 2026-11-02. Move the pin when 26.04 passes a full run.
+`docs.yml` and `wheels.yml` still use `ubuntu-latest` (no GPU tests there).
+
 ## Helper scripts
 
 Small scripts in `tools/` take over the routine parts of the workflow. All of them read before
@@ -186,6 +193,13 @@ they write, and the ones that change something (`pr_chain.py`, `board.py move`/`
 | `tools/check_version.py` | Every place the version lives agrees; `--expect V --pypi` before a release. |
 | `tools/restamp_version.py` | Re-stamps "X.Y.Z (#N)" notes written for a version that was released without that work. |
 | `tools/wrapup.py` | What `LOG.md`, the docs and the board still need after a piece of work. |
+| `tools/bench_tree_build.py` | Times building a tree through the Python API: `add_child` at 1k, 5k and 20k siblings, `create`, `set`, a 3,100-node tree, and `build`, `apply` and `set_children` (medians, run by hand; no CI assertion). |
+| `tools/vram_probe.py` | How much GPU memory a window holds: one, two or five windows, a bar, a full-screen overlay, each in its own process on the current Wayland session. |
+| `tools/xdnd_source.py` | A ctypes XDND drag source, to drive X11 file drops with nobody holding the mouse. |
+| `tools/check_shaders_live.py` | A live check of the shader pipeline on the machine it runs on (#91): a video-style input repainting every frame, an effect across real resizes, and idle and animated CPU; prints PASS/FAIL. |
+| `tools/check_agent_docs.py` | `CLAUDE.md` only imports `AGENTS.md` (`--fix` restores it); a `verify.sh` step. |
+| `tools/graphify_agents.py`, `tools/graphify_refresh.sh` | Write the graphify section of `AGENTS.md` after a graphify upgrade; refresh the code graph when sources are newer (the `Stop` hook). |
+| `tools/gen_python_api.py`, `tools/gen_rust_api.py` | Regenerate `docs/api/python.md` (from `python/tre/_core.pyi`) and `docs/api/rust.md` (from rustdoc JSON); the CI docs job fails when either page is stale. |
 
 ## Checking transparent windows on a new platform
 

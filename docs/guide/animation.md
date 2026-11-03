@@ -146,6 +146,26 @@ or an open path against a closed one, switch halfway instead. The last frame
 is exactly the target data, so a morphing play button ends as a crisp pause
 icon. See `examples/path_morph.py`.
 
+## Animating an SVG
+
+An `svg` node whose document carries SMIL (`<animate>`, `<set>`, `<animateTransform>`) is drawn as it looks
+`svg_time` seconds into that animation, and `svg_time` animates like any other property (0.5.10). Nothing plays by
+itself: you decide when and how fast, and it runs on tre's clock:
+
+```python
+spinner = window.create("svg", svg=spinner_svg, width=24, height=24)
+spinner.get("svg_duration")                      # None: it repeats for ever
+spinner.animate("svg_time", 3600.0, 3_600_000, easing="linear")   # an hour of turns
+
+check = window.create("svg", svg=check_svg, width=24, height=24)
+check.animate("svg_time", check.get("svg_duration"), 600, easing="linear")   # draws on once
+```
+
+`svg_duration` is the seconds until nothing changes more, or `None` when something repeats for ever (loop by
+animating `svg_time` past the period). The subset that plays, and what is ignored, is on the
+[reference page](../reference/paint.md#smil-animation-0510). In a test, `window.advance(ms)` moves the animation
+the same way. See `examples/svg_smil.py`.
+
 ## Testing animations
 
 Without a live window no frames run, so tests drive time themselves with

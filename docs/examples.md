@@ -22,6 +22,8 @@ what should happen before opening a window for a few seconds. Run one with
 | `show_damage.py` | What partial redraw repaints each frame, tinted; `--watch` keeps the window open for checking on a real desktop |
 | `hidpi.py` | `dpi_scaling`: a card laid out in logical pixels and drawn sharp at the display's scale; `--watch` keeps the window open to drag between monitors |
 | `snapshot.py` | `window.snapshot()` and `tre.write_png`: a window's pixels at 1x and 2x, with no display |
+| `svg_smil.py` | SMIL animation in an `svg` node: `animate("svg_time", ...)` plays a looping spinner and a draw-on check from the document's own timeline (0.5.10) |
+| `build_tree.py` | `window.build(spec)` makes a subtree from one nested dict, `window.apply(changes)` changes many nodes in one checked call; a typo makes nothing (0.5.10) |
 | `svg_document.py` | An `svg` node painting a document with gradients, a clip, dashes and group opacity, at two aspect ratios |
 | `gradients.py` | `Gradient.linear`, `.radial` and `.sweep` fills, one animating between two gradients |
 | `effects.py` | `blur`, `backdrop_blur` (frosted glass, animating) and `blend_mode` over a striped background |

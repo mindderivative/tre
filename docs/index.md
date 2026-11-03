@@ -37,7 +37,7 @@ app.run()
   and focus, with a `scroll` event), virtual lists, and terminals, laid out
   with flexbox or CSS Grid or placed absolutely.
 - **[Painting](guide/painting.md)** — fills, strokes, per-corner radii,
-  layered shadows, group opacity, transforms, and SVG paths, redrawing
+  layered shadows, group opacity, transforms, SVG paths and documents (with their SMIL animation), redrawing
   only what changed each frame.
 - **[Animation](guide/animation.md)** — any paint or transform property,
   eased on a cubic-bezier curve, retargetable mid-flight, with path morphing.

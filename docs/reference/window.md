@@ -24,6 +24,10 @@ atomically, as `Node.set` does: a bad property raises `ValueError` and
 nothing is created. Every kind and property is on
 [Nodes and Properties](properties.md).
 
+**`build(spec) -> (root, nodes)`** (0.5.10) makes a whole detached subtree from one nested description and
+**`apply(changes)`** changes properties on many nodes in one call. Both check everything first and change nothing
+on a bad value. See [Building many nodes](properties.md#building-many-nodes-0510).
+
 **`root`** is the tree's root node: a flex row with 16px padding and 16px
 gaps, sized to the window. Attach nodes under it with `add_child`.
 

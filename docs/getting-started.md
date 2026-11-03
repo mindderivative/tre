@@ -84,3 +84,5 @@ button.on("pointer_leave", lambda: button.animate("opacity", 1.0, 120))
 - The [Guide](guide/nodes-and-layout.md) covers each building block in turn;
   [Building a Widget](guide/building-a-widget.md) makes a complete switch.
 - [Examples](examples.md) lists a small, runnable script for each one.
+- Making many nodes at once is [`window.build`](reference/properties.md#building-many-nodes-0510); an animated icon is an
+  [`svg` node playing its SMIL](guide/animation.md#animating-an-svg).
