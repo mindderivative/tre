@@ -5,8 +5,9 @@
 **0.6.0 in progress (#257, branch `0.6.0`, not pushed):** the Python package is `tess_re` (was `tre`) and the
 environment variables are `TESS_RE_*` (were `TRE_*`). Breaking, clean cutover, no alias; the PyPI name stays
 `tesserae-engine`. The GitHub repo is renamed `mindderivative/tess-re` (done by the owner 2026-11-03; docs now at
-`mindderivative.github.io/tess-re/`) and the repo and docs URLs are updated. Not done yet: the PyPI trusted-publisher
-update (owner action, see #257); no tag before it is confirmed. Notes: `docs/migrating-0.6.md`.
+`mindderivative.github.io/tess-re/`) and the repo and docs URLs are updated. The owner updated the PyPI trusted
+publisher for `tesserae-engine` to the new repo (2026-11-03, stated in chat; not checkable from here). Not done yet:
+push, PR, merge, tag and the wheels run, each on the owner's word. Notes: `docs/migrating-0.6.md`.
 **0.5.10 released (2026-11-03, tag `v0.5.10` on `4870d3d`, PyPI `tesserae-engine==0.5.10`; a first tag was withdrawn before PyPI to add #253):** batch and tree building (`Window.build`, `Window.apply`, `Node.set_children`, constant-time append, #253), SMIL animation in `svg` nodes (`svg_time`, `svg_duration`, #245) and
 occlusion handling (a hidden Wayland window no longer freezes the app, `occluded`, `pause_when_occluded`, #246);
 notes in `docs/migrating-0.5.md`. CI note: the Linux jobs are pinned to `ubuntu-24.04` (PR #251), not `ubuntu-latest`:
