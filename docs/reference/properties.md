@@ -31,6 +31,41 @@ field = window.create("text_input", placeholder="Search", width=240)
 (see [Lifetime](node.md#lifetime)). A text's fill defaults to opaque black, and
 so does a text input's; every other color defaults to transparent.
 
+### Building many nodes (0.5.10)
+
+`window.build(spec)` makes a whole detached subtree from one nested description and returns the root and
+a dict of the nodes that have an `id`; `window.apply(changes)` changes properties on many nodes in one call.
+Both check everything first, as `create` and `Node.set` do for one node: a bad description or entry raises
+`ValueError` naming where, and nothing is made or changed. (A callback that raises while they run, such as a
+canvas `draw`, is not a bad value: it keeps its own error, `build` frees what it had made, and `apply` stops where it was.)
+
+```python
+root, nodes = window.build({
+    "kind": "box", "id": "row",
+    "props": {"flex_direction": "horizontal", "gap": 8},
+    "children": [
+        {"kind": "text", "id": "battery", "props": {"text": "Battery 87%", "font_size": 14}},
+        {"kind": "text", "props": {"text": "Charging"}},
+    ],
+})
+parent.add_child(root)
+window.apply([(nodes["battery"], {"text": "Battery 86%"}), (clock, {"text": "14:06"})])
+```
+
+A node is a dict with `kind` (required), `props` (what `create(kind, **props)` takes), `children` (a list
+of nodes) and `id` (a unique non-empty `str`); any other key, a bad kind or property, a duplicate `id` or
+nesting over 256 levels raises `ValueError` naming the path (`spec.children[2].props`). `build` parses
+every node first and makes them only when all are valid, so a spec with a `draw` canvas and a typo later
+calls no `draw` and starts no terminal shell (terminals are made last); a shell that cannot start raises the
+`OSError` `create` raises and frees the rest. A call takes at most 1,000,000 nodes. At most one entry of an `apply`
+may set `shader`. `apply` takes `(node, props)` pairs
+and applies them in order once all are checked (the same node twice: the later wins). **Speed:** these save
+Python-to-Rust calls, not time: layout already runs once per frame however many nodes change, and on a
+3,100-node tree `build` took 5.3 ms against 4.9 ms of per-node calls, `apply` of 1,000 entries 0.33 ms
+against 0.33 ms (`tools/bench_tree_build.py`; llvmpipe, medians). The reason to use them is the all-or-nothing check.
+Appending a child no longer gets slower with every sibling already there: 0.12 µs a call at 20,000
+siblings, 0.13 at 1,000 (it was 10.9 and 0.63).
+
 ## Size and position
 
 Every node.

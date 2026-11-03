@@ -568,6 +568,77 @@ impl Node {
         }
     }
 
+    /// 0.5.10 (#253): makes `children` (a sequence of nodes of this window) this node's whole
+    /// content in one call, in that order. A listed node that is elsewhere moves here (as
+    /// `insert_child` moves it); a child no longer listed is detached as `remove()` detaches it.
+    /// Open layers stay last. A node of another window, a duplicate, this node itself, or one of
+    /// its ancestors raises `ValueError` and changes nothing.
+    fn set_children(&self, children: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<()> {
+        self.check_alive()?;
+        let mut wanted: Vec<NodeId> = Vec::new();
+        let mut keep: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        for (i, item) in children.try_iter()?.enumerate() {
+            let node: PyRef<'_, Node> = item?.extract().map_err(|_| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "set_children: children[{i}] must be a node"
+                ))
+            })?;
+            self.check_pair(&node)?;
+            if node.id == self.id {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "set_children: children[{i}] is this node itself"
+                )));
+            }
+            if self.tree.borrow().is_layer(node.id) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "set_children: children[{i}] is an open layer, which is not content"
+                )));
+            }
+            if !keep.insert(node.id) {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "set_children: children[{i}] is listed twice"
+                )));
+            }
+            wanted.push(node.id);
+        }
+        {
+            let tree = self.tree.borrow();
+            if tree.ancestors(self.id).any(|id| keep.contains(&id)) {
+                return Err(EngineError::CycleRejected.into());
+            }
+        }
+        let dropped: Vec<NodeId> = self
+            .tree
+            .borrow()
+            .content_children(self.id)
+            .iter()
+            .copied()
+            .filter(|id| !keep.contains(id))
+            .collect();
+        // The listed nodes move first, so a dropped child that holds one of them is empty of it
+        // when it is detached (and freed if nothing refers to it): the other way round, it would
+        // be kept alive by the node on its way out and never collected.
+        {
+            let mut tree = self.tree.borrow_mut();
+            for (index, id) in wanted.into_iter().enumerate() {
+                // Already in place: no move (a move is a scan of the child list).
+                if tree.content_children(self.id).get(index) == Some(&id) {
+                    continue;
+                }
+                if !tree.insert_child(self.id, index, id) {
+                    return Err(EngineError::CycleRejected.into());
+                }
+            }
+        }
+        for id in dropped {
+            // A `unfocus` handler may have destroyed a later one meanwhile.
+            if self.tree.borrow().get(id).is_some() {
+                self.handle_to(id).remove(py)?;
+            }
+        }
+        Ok(())
+    }
+
     /// M96: this node's children, in order -- open layers aren't among
     /// the root's.
     fn children(&self) -> PyResult<Vec<Node>> {

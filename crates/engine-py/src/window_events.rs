@@ -238,6 +238,214 @@ fn pointer_point(
     }
 }
 
+/// 0.5.10 (#253): a node checked and parsed, not yet made. `Window.create` is `prepare_node` then
+/// `make_node`; `Window.build` prepares a whole spec first, so a bad one makes nothing.
+pub(crate) struct PreparedNode {
+    node_kind: NodeKind,
+    paint: PaintProperties,
+    changes: Vec<crate::node_props::Change>,
+    session: Option<(String, u16, u16, usize)>,
+}
+
+impl PreparedNode {
+    /// Whether making it starts a process (a terminal's shell).
+    pub(crate) fn spawns(&self) -> bool {
+        self.session.is_some()
+    }
+}
+
+impl PyWindow {
+    /// Checks `kind` and `props` exactly as `create` does and parses every property, with no
+    /// side effect: nothing is made, spawned or stored.
+    pub(crate) fn prepare_node(
+        &self,
+        kind: &str,
+        props: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<PreparedNode> {
+        const KINDS: &str =
+            "box, text, text_input, image, path, svg, canvas, scroll_view, virtual_list, terminal";
+        let props = match props {
+            Some(props) => props.copy()?,
+            None => PyDict::new(py),
+        };
+        let require = |names: &[&str]| -> PyResult<()> {
+            for name in names {
+                if !props.contains(*name)? {
+                    return Err(PyValueError::new_err(format!(
+                        "create({kind:?}) needs `{name}`"
+                    )));
+                }
+            }
+            Ok(())
+        };
+        let transparent = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
+        let mut paint = transparent;
+        let mut session = None;
+        let node_kind = match kind {
+            "box" => NodeKind::Rect,
+            "path" => {
+                require(&["data"])?;
+                NodeKind::Path(PathState::new(PathData(BezPath::new())))
+            }
+            "svg" => {
+                require(&["svg"])?;
+                NodeKind::Svg(engine_core::SvgState::empty())
+            }
+            "text" => {
+                require(&["text"])?;
+                // A text's fill is its glyph color: opaque black, like CSS.
+                paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0);
+                NodeKind::Text(TextState {
+                    content: String::new(),
+                    font_family: "Roboto".to_string(),
+                    font_weight: 400.0,
+                    font_size: 16.0,
+                    align: TextAlign::Start,
+                    line_height: None,
+                    options: Default::default(),
+                })
+            }
+            "text_input" => {
+                let mut state = TextFieldState::new("", "Roboto", 400.0, 16.0);
+                state.text_tint.set_now(Color::from_rgba8(0, 0, 0, 255));
+                NodeKind::TextField(Box::new(state))
+            }
+            "image" => {
+                require(&["rgba", "pixel_width", "pixel_height"])?;
+                NodeKind::Image(ImageState::blank())
+            }
+            "scroll_view" => NodeKind::ScrollView(ScrollViewState::new(false)),
+            "canvas" => {
+                require(&["draw"])?;
+                NodeKind::Canvas(CanvasState::new())
+            }
+            "virtual_list" => {
+                require(&["item_count", "materialize"])?;
+                if props.contains("item_extent")? == props.contains("size_hint")? {
+                    return Err(PyValueError::new_err(
+                        "create(\"virtual_list\") needs exactly one of `item_extent` or `size_hint`",
+                    ));
+                }
+                NodeKind::VirtualList(VirtualListState::new(0, ItemExtent::Fixed(1.0)))
+            }
+            "terminal" => {
+                require(&["shell", "cols", "rows"])?;
+                let shell: String = props.get_item("shell")?.map_or(Ok(String::new()), |v| {
+                    v.extract().map_err(|_| {
+                        PyValueError::new_err("create(\"terminal\"): `shell` must be a str")
+                    })
+                })?;
+                let scrollback: usize = match props.get_item("scrollback_lines")? {
+                    Some(v) => v.extract().map_err(|_| {
+                        PyValueError::new_err(
+                            "create(\"terminal\"): `scrollback_lines` must be a non-negative int",
+                        )
+                    })?,
+                    None => 1000,
+                };
+                props.del_item("shell")?;
+                if props.contains("scrollback_lines")? {
+                    props.del_item("scrollback_lines")?;
+                }
+                let cols: u16 = props
+                    .get_item("cols")?
+                    .and_then(|v| v.extract().ok())
+                    .unwrap_or(1);
+                let rows: u16 = props
+                    .get_item("rows")?
+                    .and_then(|v| v.extract().ok())
+                    .unwrap_or(1);
+                session = Some((shell, cols, rows, scrollback));
+                NodeKind::Terminal(Box::new(TerminalState::new(
+                    cols.max(1),
+                    rows.max(1),
+                    MONOSPACE_FONT_FAMILY,
+                    14.0,
+                )))
+            }
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown node kind {kind:?} -- create builds: {KINDS}"
+                )));
+            }
+        };
+        let changes = parse_all(Some(&props), &node_kind, &self.handles.tree)?;
+        // 0.5.7 (#179): `placement` and `offset` need an `anchor` in this call.
+        crate::node_props::check_anchor_changes(
+            &self.handles.tree.borrow(),
+            None,
+            false,
+            &changes,
+        )?;
+        Ok(PreparedNode {
+            node_kind,
+            paint,
+            changes,
+            session,
+        })
+    }
+
+    /// Makes the node: spawns a terminal's shell, inserts it into the tree, applies the parsed
+    /// properties. Only a terminal's spawn can fail here.
+    pub(crate) fn make_node(&self, prepared: PreparedNode, py: Python<'_>) -> PyResult<Node> {
+        let PreparedNode {
+            node_kind,
+            paint,
+            changes,
+            session,
+        } = prepared;
+        let draws = matches!(node_kind, NodeKind::Canvas(_));
+        let session = match session {
+            Some((shell, cols, rows, scrollback)) => Some(
+                TerminalSession::spawn(&shell, cols, rows, scrollback)
+                    .map_err(|reason| EngineError::TerminalSpawnFailed { shell, reason })?,
+            ),
+            None => None,
+        };
+        let interactive = matches!(node_kind, NodeKind::TextField(_) | NodeKind::Terminal(_));
+        let id = {
+            let mut tree = self.handles.tree.borrow_mut();
+            let id = tree.insert(node_kind, Style::default(), paint);
+            if interactive {
+                tree.set_access(
+                    id,
+                    AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
+                );
+            }
+            // M96: freed automatically once no handle points into it
+            // (`node_handles`), until it's attached somewhere.
+            tree.detach_collectible(id);
+            id
+        };
+        let node = Node::from(NodeState {
+            id,
+            tree: self.handles.tree.clone(),
+            handlers: self.handles.handlers.clone(),
+            completions: self.handles.completions.clone(),
+        });
+        if let Some(session) = session {
+            self.handles.terminals.borrow_mut().insert(id, session);
+        }
+        node.apply(changes);
+        // 0.4.3 M15: a scroll view starts where `create` put it, so that's
+        // what its first `scroll` event's `old_value` says, not 0.
+        if let Some(NodeKind::ScrollView(state)) = self
+            .handles
+            .tree
+            .borrow_mut()
+            .get_mut(id)
+            .map(|n| &mut n.kind)
+        {
+            state.reported = state.scroll.current;
+        }
+        if draws {
+            node_callbacks::redraw(&node.tree, &node.handlers, id, py)?;
+        }
+        Ok(node)
+    }
+}
+
 impl PyWindow {
     /// The window's size, as layout's available space.
     fn available(&self) -> Size<AvailableSpace> {
@@ -496,169 +704,8 @@ impl PyWindow {
         props: Option<&Bound<'_, PyDict>>,
         py: Python<'_>,
     ) -> PyResult<Node> {
-        const KINDS: &str =
-            "box, text, text_input, image, path, svg, canvas, scroll_view, virtual_list, terminal";
-        let props = match props {
-            Some(props) => props.copy()?,
-            None => PyDict::new(py),
-        };
-        let require = |names: &[&str]| -> PyResult<()> {
-            for name in names {
-                if !props.contains(*name)? {
-                    return Err(PyValueError::new_err(format!(
-                        "create({kind:?}) needs `{name}`"
-                    )));
-                }
-            }
-            Ok(())
-        };
-        let transparent = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 1.0);
-        let mut paint = transparent;
-        let mut session = None;
-        let node_kind = match kind {
-            "box" => NodeKind::Rect,
-            "path" => {
-                require(&["data"])?;
-                NodeKind::Path(PathState::new(PathData(BezPath::new())))
-            }
-            "svg" => {
-                require(&["svg"])?;
-                NodeKind::Svg(engine_core::SvgState::empty())
-            }
-            "text" => {
-                require(&["text"])?;
-                // A text's fill is its glyph color: opaque black, like CSS.
-                paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 1.0);
-                NodeKind::Text(TextState {
-                    content: String::new(),
-                    font_family: "Roboto".to_string(),
-                    font_weight: 400.0,
-                    font_size: 16.0,
-                    align: TextAlign::Start,
-                    line_height: None,
-                    options: Default::default(),
-                })
-            }
-            "text_input" => {
-                let mut state = TextFieldState::new("", "Roboto", 400.0, 16.0);
-                state.text_tint.set_now(Color::from_rgba8(0, 0, 0, 255));
-                NodeKind::TextField(Box::new(state))
-            }
-            "image" => {
-                require(&["rgba", "pixel_width", "pixel_height"])?;
-                NodeKind::Image(ImageState::blank())
-            }
-            "scroll_view" => NodeKind::ScrollView(ScrollViewState::new(false)),
-            "canvas" => {
-                require(&["draw"])?;
-                NodeKind::Canvas(CanvasState::new())
-            }
-            "virtual_list" => {
-                require(&["item_count", "materialize"])?;
-                if props.contains("item_extent")? == props.contains("size_hint")? {
-                    return Err(PyValueError::new_err(
-                        "create(\"virtual_list\") needs exactly one of `item_extent` or `size_hint`",
-                    ));
-                }
-                NodeKind::VirtualList(VirtualListState::new(0, ItemExtent::Fixed(1.0)))
-            }
-            "terminal" => {
-                require(&["shell", "cols", "rows"])?;
-                let shell: String = props.get_item("shell")?.map_or(Ok(String::new()), |v| {
-                    v.extract().map_err(|_| {
-                        PyValueError::new_err("create(\"terminal\"): `shell` must be a str")
-                    })
-                })?;
-                let scrollback: usize = match props.get_item("scrollback_lines")? {
-                    Some(v) => v.extract().map_err(|_| {
-                        PyValueError::new_err(
-                            "create(\"terminal\"): `scrollback_lines` must be a non-negative int",
-                        )
-                    })?,
-                    None => 1000,
-                };
-                props.del_item("shell")?;
-                if props.contains("scrollback_lines")? {
-                    props.del_item("scrollback_lines")?;
-                }
-                let cols: u16 = props
-                    .get_item("cols")?
-                    .and_then(|v| v.extract().ok())
-                    .unwrap_or(1);
-                let rows: u16 = props
-                    .get_item("rows")?
-                    .and_then(|v| v.extract().ok())
-                    .unwrap_or(1);
-                session = Some((shell, cols, rows, scrollback));
-                NodeKind::Terminal(Box::new(TerminalState::new(
-                    cols.max(1),
-                    rows.max(1),
-                    MONOSPACE_FONT_FAMILY,
-                    14.0,
-                )))
-            }
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "unknown node kind {kind:?} -- create builds: {KINDS}"
-                )));
-            }
-        };
-        let changes = parse_all(Some(&props), &node_kind, &self.handles.tree)?;
-        // 0.5.7 (#179): `placement` and `offset` need an `anchor` in this call.
-        crate::node_props::check_anchor_changes(
-            &self.handles.tree.borrow(),
-            None,
-            false,
-            &changes,
-        )?;
-        let draws = matches!(node_kind, NodeKind::Canvas(_));
-        let session = match session {
-            Some((shell, cols, rows, scrollback)) => Some(
-                TerminalSession::spawn(&shell, cols, rows, scrollback)
-                    .map_err(|reason| EngineError::TerminalSpawnFailed { shell, reason })?,
-            ),
-            None => None,
-        };
-        let interactive = matches!(node_kind, NodeKind::TextField(_) | NodeKind::Terminal(_));
-        let id = {
-            let mut tree = self.handles.tree.borrow_mut();
-            let id = tree.insert(node_kind, Style::default(), paint);
-            if interactive {
-                tree.set_access(
-                    id,
-                    AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
-                );
-            }
-            // M96: freed automatically once no handle points into it
-            // (`node_handles`), until it's attached somewhere.
-            tree.detach_collectible(id);
-            id
-        };
-        let node = Node::from(NodeState {
-            id,
-            tree: self.handles.tree.clone(),
-            handlers: self.handles.handlers.clone(),
-            completions: self.handles.completions.clone(),
-        });
-        if let Some(session) = session {
-            self.handles.terminals.borrow_mut().insert(id, session);
-        }
-        node.apply(changes);
-        // 0.4.3 M15: a scroll view starts where `create` put it, so that's
-        // what its first `scroll` event's `old_value` says, not 0.
-        if let Some(NodeKind::ScrollView(state)) = self
-            .handles
-            .tree
-            .borrow_mut()
-            .get_mut(id)
-            .map(|n| &mut n.kind)
-        {
-            state.reported = state.scroll.current;
-        }
-        if draws {
-            node_callbacks::redraw(&node.tree, &node.handlers, id, py)?;
-        }
-        Ok(node)
+        let prepared = self.prepare_node(kind, props, py)?;
+        self.make_node(prepared, py)
     }
 
     /// Registers `handler` for the window event `event` (`resize`,

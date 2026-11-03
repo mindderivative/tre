@@ -460,11 +460,19 @@ impl Tree {
     /// M96: how many of `parent`'s children come before its open
     /// overlays -- its content, which open overlays always sit above.
     fn content_len(&self, parent: NodeId) -> usize {
-        self.nodes[parent]
-            .children
+        // 0.5.10 (#253): open overlays sit last among a parent's children, so the content is
+        // everything before them. Counting them (a handful) instead of walking every child
+        // keeps an append from costing more with every sibling already there.
+        let open = self
+            .overlays
             .iter()
-            .take_while(|child| !self.is_overlay(**child))
-            .count()
+            .filter(|(content, _)| {
+                self.nodes
+                    .get(*content)
+                    .is_some_and(|node| node.parent == Some(parent))
+            })
+            .count();
+        self.nodes[parent].children.len() - open
     }
 
     /// M96: `parent`'s children other than its open overlays, in order.
@@ -503,7 +511,9 @@ impl Tree {
     /// point, and the one most likely to hit it a third time.
     pub fn try_add_child(&mut self, parent: NodeId, child: NodeId) -> bool {
         let end = self.content_len(parent);
-        let end = if self.content_children(parent).contains(&child) {
+        // A child that is already one of `parent`'s content children leaves its place first, so
+        // the end is one nearer. Only a child that has this parent can be that: no scan needed.
+        let end = if self.nodes[child].parent == Some(parent) && !self.is_overlay(child) {
             end - 1
         } else {
             end

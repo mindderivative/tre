@@ -247,6 +247,47 @@ fn try_add_child_moves_an_already_attached_node_instead_of_duplicating_it() {
     );
 }
 
+/// 0.5.10 (#253): a plain append lands after the content and before the open layers whatever
+/// the sibling count, and the content length counts only a parent's own layers.
+#[test]
+fn appending_counts_content_without_the_open_layers_and_moves_a_present_child_correctly() {
+    let mut tree = Tree::new();
+    let (k, s, p) = leaf(10.0, 10.0);
+    let root = tree.insert(k, s, p);
+    let (k, s, p) = leaf(10.0, 10.0);
+    let other = tree.insert(k, s, p);
+    let mut content = Vec::new();
+    for _ in 0..50 {
+        let (k, s, p) = leaf(1.0, 1.0);
+        let id = tree.insert(k, s, p);
+        tree.add_child(root, id);
+        content.push(id);
+    }
+    // A layer on `root` and one on another parent: only the first is subtracted for `root`.
+    for host in [root, other] {
+        let (k, s, p) = leaf(5.0, 5.0);
+        let layer = tree.insert(k, s, p);
+        assert!(tree.show_layer(host, layer, OverlayMeta::default()));
+    }
+    assert_eq!(tree.content_children(root), &content[..]);
+    assert_eq!(tree.content_children(other).len(), 0);
+    // An append goes after the content and before the layer.
+    let (k, s, p) = leaf(1.0, 1.0);
+    let late = tree.insert(k, s, p);
+    tree.add_child(root, late);
+    content.push(late);
+    assert_eq!(tree.content_children(root), &content[..]);
+    assert_eq!(tree.get(root).unwrap().children.len(), content.len() + 1);
+    // Appending a child that is already there moves it to the end.
+    tree.add_child(root, content[0]);
+    content.rotate_left(1);
+    assert_eq!(tree.content_children(root), &content[..]);
+    // And one from another parent is taken from it.
+    tree.add_child(other, content[1]);
+    assert_eq!(tree.content_children(other), &[content[1]]);
+    assert!(!tree.content_children(root).contains(&content[1]));
+}
+
 /// M96: `insert_child` reorders siblings by final index, and a move
 /// within one tree keeps the node's identity and focus.
 #[test]

@@ -1,0 +1,249 @@
+//! 0.5.10 (#253): `Window.build` makes a whole detached subtree from one nested description and
+//! `Window.apply` changes properties on many nodes at once. Both check everything first: a bad
+//! description or entry raises `ValueError` naming where, and nothing has been made or changed.
+
+use std::collections::HashSet;
+use std::rc::Rc;
+
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList, PyTuple};
+
+use crate::node::Node;
+use crate::node_handles;
+use crate::window::PyWindow;
+
+/// The deepest nesting `build` accepts, and the most nodes one call makes.
+const MAX_DEPTH: usize = 256;
+const MAX_NODES: usize = 1_000_000;
+
+/// One node of a description, read and checked but not yet prepared.
+struct SpecNode<'py> {
+    kind: String,
+    props: Bound<'py, PyDict>,
+    id: Option<String>,
+    parent: Option<usize>,
+    /// Which child of its parent it is.
+    position: usize,
+}
+
+/// `spec.children[2].children[0]`, built from the parent chain only when an error needs it.
+fn path_of(nodes: &[SpecNode<'_>], parent: Option<usize>, position: usize) -> String {
+    let mut parts = Vec::new();
+    let (mut at, mut pos) = (parent, position);
+    while let Some(index) = at {
+        parts.push(format!(".children[{pos}]"));
+        pos = nodes[index].position;
+        at = nodes[index].parent;
+    }
+    parts.push("spec".to_string());
+    parts.reverse();
+    parts.concat()
+}
+
+fn bad(path: &str, message: impl std::fmt::Display) -> PyErr {
+    PyValueError::new_err(format!("build: {path}: {message}"))
+}
+
+/// Walks the description iteratively (no recursion on Python's stack), in pre-order.
+fn read_spec<'py>(spec: &Bound<'py, PyAny>) -> PyResult<Vec<SpecNode<'py>>> {
+    let mut out: Vec<SpecNode<'py>> = Vec::new();
+    let mut ids: HashSet<String> = HashSet::new();
+    // (spec, parent index, position among its parent's children, depth); a stack, children
+    // pushed in reverse so they come out in order.
+    let mut stack: Vec<(Bound<'py, PyAny>, Option<usize>, usize, usize)> =
+        vec![(spec.clone(), None, 0, 0)];
+    while let Some((item, parent, position, depth)) = stack.pop() {
+        let path = path_of(&out, parent, position);
+        if out.len() >= MAX_NODES {
+            return Err(bad(
+                &path,
+                format!("more than {MAX_NODES} nodes in one build"),
+            ));
+        }
+        if depth > MAX_DEPTH {
+            return Err(bad(
+                &path,
+                format!("nested more than {MAX_DEPTH} levels deep"),
+            ));
+        }
+        let dict = item
+            .cast::<PyDict>()
+            .map_err(|_| bad(&path, "a node description must be a dict"))?;
+        for key in dict.keys().iter() {
+            let key: String = key.extract().map_err(|_| bad(&path, "keys must be str"))?;
+            if !matches!(key.as_str(), "kind" | "props" | "children" | "id") {
+                return Err(bad(
+                    &path,
+                    format!("unknown key {key:?} -- a node has kind, props, children and id"),
+                ));
+            }
+        }
+        let kind: String = dict
+            .get_item("kind")?
+            .ok_or_else(|| bad(&path, "needs `kind`"))?
+            .extract()
+            .map_err(|_| bad(&path, "`kind` must be a str"))?;
+        let props = match dict.get_item("props")? {
+            None => PyDict::new(spec.py()),
+            Some(p) if p.is_none() => PyDict::new(spec.py()),
+            Some(p) => p
+                .cast::<PyDict>()
+                .map_err(|_| bad(&format!("{path}.props"), "must be a dict"))?
+                .clone(),
+        };
+        let id = match dict.get_item("id")? {
+            None => None,
+            Some(v) if v.is_none() => None,
+            Some(v) => {
+                let id: String = v
+                    .extract()
+                    .map_err(|_| bad(&format!("{path}.id"), "must be a non-empty str"))?;
+                if id.is_empty() {
+                    return Err(bad(&format!("{path}.id"), "must be a non-empty str"));
+                }
+                if !ids.insert(id.clone()) {
+                    return Err(bad(&format!("{path}.id"), format!("{id:?} is used twice")));
+                }
+                Some(id)
+            }
+        };
+        let index = out.len();
+        out.push(SpecNode {
+            kind,
+            props,
+            id,
+            parent,
+            position,
+        });
+        if let Some(children) = dict.get_item("children")?
+            && !children.is_none()
+        {
+            let list: Vec<Bound<'py, PyAny>> = if let Ok(list) = children.cast::<PyList>() {
+                list.iter().collect()
+            } else if let Ok(tuple) = children.cast::<PyTuple>() {
+                tuple.iter().collect()
+            } else {
+                return Err(bad(&format!("{path}.children"), "must be a list"));
+            };
+            for (i, child) in list.into_iter().enumerate().rev() {
+                stack.push((child, Some(index), i, depth + 1));
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[pymethods]
+impl PyWindow {
+    /// Makes a whole detached subtree from one nested description and returns `(root, nodes)`:
+    /// the root node and a dict of every node that has an `id`. A node is a dict with `kind`
+    /// (required) and optionally `props` (what `create(kind, **props)` takes), `children` (a
+    /// list of nodes) and `id` (a unique non-empty str). Everything is checked first, as
+    /// `create` and `Node.set` check: a bad kind, property, key or id raises `ValueError`
+    /// naming the path (`spec.children[2].props`) and nothing is made. Attach the root with
+    /// `add_child`.
+    fn build(&self, spec: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<(Py<Node>, Py<PyDict>)> {
+        let nodes = read_spec(spec)?;
+        // Phase 1: check every node and parse every property. Nothing is made.
+        let mut prepared = Vec::with_capacity(nodes.len());
+        for node in &nodes {
+            let one = self
+                .prepare_node(&node.kind, Some(&node.props), py)
+                .map_err(|err| bad(&path_of(&nodes, node.parent, node.position), err.value(py)))?;
+            prepared.push(one);
+        }
+        // Phase 2: make them. A terminal starts a shell, so terminals go last; the order the
+        // nodes are attached in is the description's.
+        let mut order: Vec<usize> = (0..prepared.len()).collect();
+        order.sort_by_key(|&i| prepared[i].spawns());
+        let mut slots: Vec<Option<crate::window_events::PreparedNode>> =
+            prepared.into_iter().map(Some).collect();
+        let mut made: Vec<Option<Py<Node>>> = (0..slots.len()).map(|_| None).collect();
+        let mut failure = None;
+        for i in order {
+            let one = slots[i].take().expect("each node is made once");
+            match self.make_node(one, py).and_then(|node| Py::new(py, node)) {
+                Ok(node) => made[i] = Some(node),
+                Err(err) => {
+                    failure = Some((i, err));
+                    break;
+                }
+            }
+        }
+        if let Some((_, err)) = failure {
+            // A shell would not start (or a canvas's `draw` raised): free what was made.
+            for node in made.iter().flatten() {
+                let node = node.borrow(py);
+                let freed = self.handles.tree.borrow_mut().destroy(node.id);
+                node_handles::prune(&self.handles.handlers, &freed);
+                self.handles.terminals.borrow_mut().remove(&node.id);
+            }
+            // The error as `create` raises it: a failed shell is an `OSError`, a `draw` that raises
+            // keeps its own type and traceback.
+            return Err(err);
+        }
+        let made: Vec<Py<Node>> = made
+            .into_iter()
+            .map(|n| n.expect("every node is made"))
+            .collect();
+        {
+            let mut tree = self.handles.tree.borrow_mut();
+            for (i, node) in nodes.iter().enumerate() {
+                if let Some(parent) = node.parent {
+                    let (parent_id, child_id) = (made[parent].borrow(py).id, made[i].borrow(py).id);
+                    tree.add_child(parent_id, child_id);
+                }
+            }
+        }
+        let by_id = PyDict::new(py);
+        for (node, spec_node) in made.iter().zip(&nodes) {
+            if let Some(id) = &spec_node.id {
+                by_id.set_item(id, node.clone_ref(py))?;
+            }
+        }
+        Ok((made[0].clone_ref(py), by_id.unbind()))
+    }
+
+    /// Changes properties on many nodes in one call: `changes` is a sequence of
+    /// `(node, props)` pairs, each `props` what `node.set(**props)` takes. Every entry is checked
+    /// first -- a node of another window, a destroyed one, a bad property -- and a bad one
+    /// raises `ValueError` naming its index and changes nothing; then they apply in order (the
+    /// same node twice: the later wins). At most one entry may set `shader`. A callback that
+    /// raises while applying (a canvas `draw`) stops the apply where it is.
+    fn apply(&self, changes: &Bound<'_, PyAny>, py: Python<'_>) -> PyResult<()> {
+        let mut prepared = Vec::new();
+        let mut shaders = 0;
+        for (i, entry) in changes.try_iter()?.enumerate() {
+            let entry = entry?;
+            let at =
+                |message: String| PyValueError::new_err(format!("apply: changes[{i}]: {message}"));
+            let (node, props): (Py<Node>, Bound<'_, PyDict>) = entry
+                .extract()
+                .map_err(|_| at("must be a (node, props dict) pair".into()))?;
+            let node = node.bind(py).borrow();
+            if !Rc::ptr_eq(&node.tree, &self.handles.tree) {
+                return Err(at("that node belongs to another window".into()));
+            }
+            // The shader cycle check reads the tree as it is now, which the other entries of the
+            // batch would change: two shaders in one batch could read each other.
+            if props.contains("shader")? {
+                shaders += 1;
+                if shaders > 1 {
+                    return Err(at(
+                        "only one entry of an apply can set `shader` (set shaders with Node.set)"
+                            .into(),
+                    ));
+                }
+            }
+            let one = node
+                .prepare_set(Some(&props))
+                .map_err(|err| at(err.value(py).to_string()))?;
+            prepared.push((entry.get_item(0)?.extract::<Py<Node>>()?, one));
+        }
+        for (node, one) in prepared {
+            node.borrow(py).run_set(one, py)?;
+        }
+        Ok(())
+    }
+}

@@ -365,6 +365,12 @@ class Node:
         children once `child` has left its old place; past the end raises
         `IndexError`."""
         ...
+    def set_children(self, children: Sequence[Node]) -> None:
+        """(0.5.10) Makes `children` this node's whole content, in that order, in one call. A
+        listed node that is elsewhere moves here; a child no longer listed is detached as
+        `remove()` detaches it. Open layers stay last. A node of another window, a duplicate,
+        this node itself or one of its ancestors raises `ValueError` and changes nothing."""
+        ...
     def children(self) -> list[Node]:
         """M96: this node's children, in order."""
         ...
@@ -397,6 +403,21 @@ class Window:
         """Raises `ValueError` for a zero width or height. (0.5.0)
         `decorations=False` opens the window without the OS's title bar and
         borders, for the framework to draw its own."""
+        ...
+    def build(self, spec: dict[str, Any]) -> tuple[Node, dict[str, Node]]:
+        """(0.5.10) Makes a whole detached subtree from one nested description and returns
+        `(root, nodes)`: the root and a dict of every node that has an `id`. A node is a dict
+        with `kind` (required), `props` (what `create(kind, **props)` takes), `children` (a
+        list of nodes) and `id` (a unique non-empty `str`). Everything is checked first, as
+        `create` and `Node.set` check: a bad kind, property, key or id, or nesting over 256
+        levels, raises `ValueError` naming the path (`spec.children[2].props`) and nothing is
+        made. Attach the root with `add_child`."""
+        ...
+    def apply(self, changes: Sequence[tuple[Node, dict[str, Any]]]) -> None:
+        """(0.5.10) Changes properties on many nodes in one call: a sequence of `(node, props)`
+        pairs, each `props` what `node.set(**props)` takes. Every entry is checked first (a node
+        of another window, a bad property): a bad one raises `ValueError` naming its index and
+        changes nothing; then they apply in order, the later of two for one node winning."""
         ...
     def create(self, kind: str, **props: Any) -> Node:
         """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
