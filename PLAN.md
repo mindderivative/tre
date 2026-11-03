@@ -57,16 +57,14 @@ a CBDT or `sbix` emoji draws in colour, through glifo's glyph atlas whatever
 `set_glyph_cache` says; `sbix` is the same code path but unchecked without a
 Mac). These shipped in 0.5.7.
 
-Verification on hardware or other platforms (each needs a machine we do not
-have here): #47 macOS and #48 Windows title bars, #91 WGSL on real GPUs, #118
-the baseline on a Mac, a Windows PC and low-end hardware, #132 touch, #133
-OS file drag and drop, #134 reduced-motion and contrast preferences.
-
-Also open: **#158** — a burst of 12 `wp_fifo_v1` barriers within 50 ms when
-vsync is restored after a resize.
+Open verification on hardware we do not have here: **#187** (all Windows-only checks) and **#188** (all Mac-only
+checks). They absorbed the earlier per-item issues #47, #48, #91, #118, #132, #133 and #134, which are closed (the
+Linux halves were done and recorded in `LOG.md`; #158 was closed too, not a bug: swapchain frame depth).
+Also open: **#189** (X11 file drop gets the drag's own position), **#247** (timers and `call_soon` wait while every
+Wayland window is hidden) and **#248** (a KWin fullscreen window counts about 480 frames/s under vsync).
 
 ## Small follow-ups
 
-- **#171** — done: `python3-dev` is in the apt line in
-  `docs/contributing.md` (the `engine-py` tests need it to link). In review.
-- The release after 0.5.7: to be decided by the user from the Backlog.
+- **#171** — done and closed: `python3-dev` is in the apt line in
+  `docs/contributing.md` (the `engine-py` tests need it to link).
+- The release after 0.5.10: to be decided by the user from the Backlog.
