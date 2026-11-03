@@ -44,6 +44,13 @@ its Python surface is the one stability contract. `engine-platform` and
 When nothing changed and nothing animates, the loop sleeps until the next
 input or `call_soon`.
 
+**Pacing on Wayland (0.5.10).** A window is drawn only after the compositor's frame callback for its last frame
+(`pre_present_notify`; a layer surface asks for its own `wl_surface.frame`), and the loop waits for that callback
+instead of polling. A surface the compositor is not showing gets none, so it stops drawing and costs nothing: before this
+its blocked vsync present held the GIL and the one loop thread and froze every other window. On X11 and macOS the OS
+reports a fully hidden window (`occluded`) and `pause_when_occluded` stops its drawing. See
+[Occlusion](design/occlusion.md) and the [threading guide](guide/threading.md#hidden-windows-wayland).
+
 ## Layer surfaces and popups
 
 On Linux, a [`LayerWindow`](reference/layer-window.md) (a bar, panel or OSD) and a

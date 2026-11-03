@@ -97,6 +97,8 @@ nav:
       - LayerWindow hand-off to the shell: design/layer-window-shell-handoff.md
       - GPU memory per window: design/vram-per-window.md
       - Performance baseline: design/performance-baseline.md
+      - Occlusion: design/occlusion.md
+      - Building trees: design/tree-building.md
   - Contributing: contributing.md
 
 validation:
