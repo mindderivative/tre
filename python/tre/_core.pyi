@@ -246,7 +246,7 @@ class Node:
         `corner_radius` (a number or a 4-tuple), `shadows`, the transform
         parts `translate_x`/`translate_y`/`scale`/`rotation_deg`, a
         scroll view's `scroll_offset`, a path's `data`/`trim_start`/
-        `trim_end`, and (0.5.6) the layout properties that hold a length:
+        `trim_end`, an svg's `svg_time` (0.5.10), and (0.5.6) the layout properties that hold a length:
         `width`, `height`, `min_*`, `max_*`, `x`, `y`, `padding*`, `margin*`,
         `gap`/`row_gap`/`column_gap` and `flex_basis`, to a number of pixels
         (`"auto"` and percentages can't be animated to); any other name

@@ -252,6 +252,7 @@ scaling. A transform never moves any other node.
 | Method | Does |
 | --- | --- |
 | `add_child(child)` / `insert_child(index, child)` | Attach `child`, moving it if it's attached elsewhere |
+| `set_children(children)` | (0.5.10) Replace the node's children in one call: listed nodes move here, the rest are detached |
 | `children()` / `parent()` | Walk the tree |
 | `remove()` | Detach the node; it stays alive while you hold a handle to it |
 | `destroy()` | Free the node and its subtree now |
@@ -264,6 +265,11 @@ rebuilding them:
 for index, key in enumerate(new_order):
     list_box.insert_child(index, rows[key])
 ```
+
+To make many nodes at once, `window.build(spec)` makes a whole detached subtree from nested dicts and
+`window.apply([(node, props), ...])` changes many nodes in one call; both check everything first, so a typo
+makes nothing and changes nothing (0.5.10; see [Building many nodes](../reference/properties.md#building-many-nodes-0510)
+and `examples/build_tree.py`).
 
 Switching screens is `old.remove()` then `window.root.add_child(new)`. The
 removed screen keeps its scroll offsets, text, and selection, so attaching it

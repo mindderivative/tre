@@ -233,3 +233,10 @@ See [Menus from a bar](../guide/menus-from-a-bar.md).
 ## Not yet
 
 Nothing in the `LayerWindow` and `PopupWindow` plan is outstanding.
+
+## When the surface is hidden
+
+A layer surface under a fullscreen window, or on an output that is off, gets no frame callbacks from compositors
+that stop sending them (sway does; KWin keeps showing it), and draws nothing meanwhile, without stalling the app.
+`window.get("occluded")` stays `False` for a layer window (no OS signal; X11 and macOS report it for ordinary
+windows only). See [Hidden windows](window.md#hidden-windows).
