@@ -2,12 +2,21 @@
 
 ## Status
 
-**0.6.0 in progress (#257, branch `0.6.0`, not pushed):** the Python package is `tess_re` (was `tre`) and the
-environment variables are `TESS_RE_*` (were `TRE_*`). Breaking, clean cutover, no alias; the PyPI name stays
-`tesserae-engine`. The GitHub repo is renamed `mindderivative/tess-re` (done by the owner 2026-11-03; docs now at
-`mindderivative.github.io/tess-re/`) and the repo and docs URLs are updated. The owner updated the PyPI trusted
-publisher for `tesserae-engine` to the new repo (2026-11-03, stated in chat; not checkable from here). Not done yet:
-push, PR, merge, tag and the wheels run, each on the owner's word. Notes: `docs/migrating-0.6.md`.
+**0.6.1 released (2026-11-03, PR #261, tag `v0.6.1` on `f9afdf0`, PyPI `tesserae-engine==0.6.1`):** a `call_soon` callback that
+queues itself no longer runs once the loop is exiting (#260, from Tesserae's macOS hang on 0.5.9 to 0.6.0). Full-tier CI passed
+on Linux, Windows, macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI into a clean venv on Linux
+(Python 3.14): the callback ran 0 times after the window closed (2 on 0.6.0), `import tre` raises. NOT verified: macOS (the hang
+does not reproduce on Linux, and winit's part of the cause is inference); Tesserae was asked to run its macOS test without its
+workaround. #260 is In review until then. Notes: `docs/migrating-0.6.md`.
+**0.6.0 released (2026-11-03, PR #258, tag `v0.6.0` on `a7336bd`, PyPI `tesserae-engine==0.6.0`, repo `mindderivative/tess-re`):**
+the Python package is `tess_re` (was `tre`) and the environment variables are `TESS_RE_*` (were `TRE_*`). Breaking, clean
+cutover, no alias; the PyPI name stays `tesserae-engine`; notes in `docs/migrating-0.6.md`. The first CI run on the PR failed
+on one test fixture the rename had lengthened (`"tre!!"`, fixed in `810d97a`); the second, full tier, passed on Linux,
+Windows, macOS, MSRV and docs. The owner approved the `pypi` gate; the first upload under the new trusted-publisher binding
+worked. Installed from PyPI into a clean venv on Linux (Python 3.14) and smoke-tested: `import tess_re` works, `import tre`
+raises, `TESS_RE_FORBID_REMOVED=1` raises `RemovedError`, a bad shader raises `tess_re.ShaderError`, the default window title is
+`tess_re v2`. The wheels for macOS and Windows were built and tested by CI, not run by hand. Known, older than this release:
+`tests/test_keep_alive.py` is intermittent (see the #257 section). #257, #245 and #246 were approved Done by the owner.
 **0.5.10 released (2026-11-03, tag `v0.5.10` on `4870d3d`, PyPI `tesserae-engine==0.5.10`; a first tag was withdrawn before PyPI to add #253):** batch and tree building (`Window.build`, `Window.apply`, `Node.set_children`, constant-time append, #253), SMIL animation in `svg` nodes (`svg_time`, `svg_duration`, #245) and
 occlusion handling (a hidden Wayland window no longer freezes the app, `occluded`, `pause_when_occluded`, #246);
 notes in `docs/migrating-0.5.md`. CI note: the Linux jobs are pinned to `ubuntu-24.04` (PR #251), not `ubuntu-latest`:
@@ -37,7 +46,7 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
 
-## After 0.6.0 (unreleased)
+## 0.6.1 (released 2026-11-03)
 
 ### #260, a callback that queues itself no longer outlives the last window (2026-11-03)
 
@@ -51,13 +60,15 @@ makes a chain of wakes that goes on after `exit_if_empty` has asked the loop to 
 keep-alive loop with no window still runs its callbacks (it is not exiting).
 
 Measured on Linux (llvmpipe, a probe that counts a self-queuing 5 ms callback): it ran 2 more times after the
-window's `closed` event before, in 3 of 3 runs, and 0 times after, in 5 of 5. Linux returned in both cases, so
-the hang itself is not reproduced. Not verified: macOS, and that winit 0.30's macOS `exit()` really stalls while
-wakes keep arriving (the half of the cause that is inference). Tesserae has stopped its own tick at `closed`, so it
-does not depend on this. Test: `tests/test_exit_requeue.py` (fails on the old code with `2 == 0`). The existing
-`test_keep_alive.py` still has its intermittent two-thread JSON "Extra data" failure (older, see #257).
+window's `closed` event before, in 3 of 3 runs, and 0 times after, in 5 of 5; the same on 0.6.1 installed from
+PyPI into a clean venv. Linux returned in both cases, so the hang itself is not reproduced. Not verified: macOS,
+and that winit 0.30's macOS `exit()` really stalls while wakes keep arriving (the half of the cause that is
+inference). Tesserae has stopped its own tick at `closed`, so it does not depend on this; it has been asked to run
+its macOS test without that workaround and report. Test: `tests/test_exit_requeue.py` (fails on the old code with
+`2 == 0`). The existing `test_keep_alive.py` still has its intermittent two-thread JSON "Extra data" failure
+(older, see #257).
 
-## After 0.5.10 (unreleased)
+## 0.6.0 (released 2026-11-03)
 
 ### #257, the namespace `tre` becomes `tess_re` (2026-11-03)
 

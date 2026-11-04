@@ -1,4 +1,4 @@
-# PLAN — after 0.5.10
+# PLAN — after 0.6.1
 
 *(Replaces the 0.5.0 plan, custom windowing (#28), which shipped in 0.5.0
 and is recorded in `LOG.md`. From 0.5.0 every step is tracked in the GitHub
@@ -7,18 +7,14 @@ project Tesserae Rendering Engine; the old trackers are archived as
 
 ## Where we are
 
-`main` is at 0.5.10 (released 2026-11-03: tag `v0.5.10`, on PyPI as `tesserae-engine==0.5.10`; installed from
-PyPI and smoke-tested in a clean venv): `Window.build` / `apply` / `Node.set_children` (#253), SMIL `svg_time` (#245) and
-occlusion handling (#246). 0.5.9 (2026-10-27) was the shared GPU device and `keep_alive`. Open issues: #187 and #188
-(Windows and macOS hardware checks), #189 (X11 drop position), #247 (timers wait while every Wayland window is hidden),
-#248 (KWin fullscreen frame rate). Per `CLAUDE.md`, work starts
-from a scoped `Backlog` entry that the user moves to `Ready`.
-
-In progress on branch `0.6.0` (#257, not pushed): the Python package is renamed `tre` to `tess_re` and `TRE_*` to
-`TESS_RE_*`, version 0.6.0, no alias. The GitHub repo is renamed `mindderivative/tess-re` and the URLs are updated.
-Still to do before a release, each on the owner's word: push + PR, merge, the annotated tag and the wheels run (the
-owner has updated the PyPI trusted publisher). The other projects (`tess_ui`, `tess_el`, `tess_dl`, `tess_shell`)
-migrate on their own side; `docs/migrating-0.6.md` has the table.
+`main` is at 0.6.1 (released 2026-11-03: PR #261, tag `v0.6.1`, on PyPI as `tesserae-engine==0.6.1`; installed from PyPI
+and smoke-tested in a clean venv): the loop no longer runs a self-queuing `call_soon` callback once it is exiting (#260; macOS
+unverified, waiting on Tesserae's test). 0.6.0 (2026-11-03) renamed the package `tre` to `tess_re` and the variables to `TESS_RE_*`, no alias
+(#257; `docs/migrating-0.6.md`). 0.5.10 (2026-11-03) was `Window.build` / `apply` / `Node.set_children` (#253), SMIL
+`svg_time` (#245) and occlusion handling (#246). Open issues: #187 and #188 (Windows and macOS hardware checks), #189 (X11
+drop position), #247 (timers wait while every Wayland window is hidden), #248 (KWin fullscreen frame rate). The other
+projects (`tess_ui`, `tess_el`, `tess_dl`, `tess_shell`) migrate on their own side. Per `CLAUDE.md`, work starts from a
+scoped `Backlog` entry that the user moves to `Ready`.
 
 ## Backlog (not scoped)
 
@@ -62,16 +58,14 @@ a CBDT or `sbix` emoji draws in colour, through glifo's glyph atlas whatever
 `set_glyph_cache` says; `sbix` is the same code path but unchecked without a
 Mac). These shipped in 0.5.7.
 
-Verification on hardware or other platforms (each needs a machine we do not
-have here): #47 macOS and #48 Windows title bars, #91 WGSL on real GPUs, #118
-the baseline on a Mac, a Windows PC and low-end hardware, #132 touch, #133
-OS file drag and drop, #134 reduced-motion and contrast preferences.
-
-Also open: **#158** — a burst of 12 `wp_fifo_v1` barriers within 50 ms when
-vsync is restored after a resize.
+Open verification on hardware we do not have here: **#187** (all Windows-only checks) and **#188** (all Mac-only
+checks). They absorbed the earlier per-item issues #47, #48, #91, #118, #132, #133 and #134, which are closed (the
+Linux halves were done and recorded in `LOG.md`; #158 was closed too, not a bug: swapchain frame depth).
+Also open: **#189** (X11 file drop gets the drag's own position), **#247** (timers and `call_soon` wait while every
+Wayland window is hidden) and **#248** (a KWin fullscreen window counts about 480 frames/s under vsync).
 
 ## Small follow-ups
 
-- **#171** — done: `python3-dev` is in the apt line in
-  `docs/contributing.md` (the `engine-py` tests need it to link). In review.
-- The release after 0.5.7: to be decided by the user from the Backlog.
+- **#171** — done and closed: `python3-dev` is in the apt line in
+  `docs/contributing.md` (the `engine-py` tests need it to link).
+- The release after 0.6.1: to be decided by the user from the Backlog.
