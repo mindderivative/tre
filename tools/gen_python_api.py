@@ -455,6 +455,8 @@ def main() -> int:
         class_section(classes[n], lines)
     lines += ["## Module functions and constants { #module }", ""]
     rows = [[f"`{sig(f)}`", OVERRIDES.get(f.name) or first(ast.get_docstring(f))] for f in funcs]
+    rows.append(["`write_png(path, rgba, width, height) -> None`", "Saves `Window.snapshot()` pixels as a PNG file (0.5.4)."])
+    rows.append(["`png_bytes(rgba, width, height) -> bytes`", "The PNG file's bytes for straight-alpha RGBA8 pixels, for a framework that stores or sends them (0.5.4)."])
     rows.append(["`MONOSPACE_FONT_FAMILY`", "The bundled monospace family a terminal always shapes with."])
     rows.append(["`Color`", "A type alias: an `(r, g, b, a)` tuple of ints, 0–255, straight alpha."])
     lines += table(["Name", "Description"], rows)

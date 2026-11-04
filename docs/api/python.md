@@ -626,5 +626,7 @@ Raised where a feature needs a platform this process is not on (a `LayerWindow` 
 | `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded. |
 | `set_system_fonts(enabled: bool) -> None` | Lets text use the fonts installed on this machine: for the glyphs the bundled and registered fonts lack (CJK, Hebrew, Indic… |
 | `system_fonts() -> bool` | Whether system fonts are on (`set_system_fonts`). |
+| `write_png(path, rgba, width, height) -> None` | Saves `Window.snapshot()` pixels as a PNG file (0.5.4). |
+| `png_bytes(rgba, width, height) -> bytes` | The PNG file's bytes for straight-alpha RGBA8 pixels, for a framework that stores or sends them (0.5.4). |
 | `MONOSPACE_FONT_FAMILY` | The bundled monospace family a terminal always shapes with. |
 | `Color` | A type alias: an `(r, g, b, a)` tuple of ints, 0–255, straight alpha. |
