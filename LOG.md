@@ -10,7 +10,7 @@ Windows, macOS, MSRV and docs. The owner approved the `pypi` gate; the first upl
 worked. Installed from PyPI into a clean venv on Linux (Python 3.14) and smoke-tested: `import tess_re` works, `import tre`
 raises, `TESS_RE_FORBID_REMOVED=1` raises `RemovedError`, a bad shader raises `tess_re.ShaderError`, the default window title is
 `tess_re v2`. The wheels for macOS and Windows were built and tested by CI, not run by hand. Known, older than this release:
-`tests/test_keep_alive.py` is intermittent (see the #257 section). #257 is In review, waiting for the owner's approval.
+`tests/test_keep_alive.py` is intermittent (see the #257 section). #257, #245 and #246 were approved Done by the owner.
 **0.5.10 released (2026-11-03, tag `v0.5.10` on `4870d3d`, PyPI `tesserae-engine==0.5.10`; a first tag was withdrawn before PyPI to add #253):** batch and tree building (`Window.build`, `Window.apply`, `Node.set_children`, constant-time append, #253), SMIL animation in `svg` nodes (`svg_time`, `svg_duration`, #245) and
 occlusion handling (a hidden Wayland window no longer freezes the app, `occluded`, `pause_when_occluded`, #246);
 notes in `docs/migrating-0.5.md`. CI note: the Linux jobs are pinned to `ubuntu-24.04` (PR #251), not `ubuntu-latest`:
