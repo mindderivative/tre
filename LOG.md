@@ -2,6 +2,12 @@
 
 ## Status
 
+**0.6.1 released (2026-11-03, PR #261, tag `v0.6.1` on `f9afdf0`, PyPI `tesserae-engine==0.6.1`):** a `call_soon` callback that
+queues itself no longer runs once the loop is exiting (#260, from Tesserae's macOS hang on 0.5.9 to 0.6.0). Full-tier CI passed
+on Linux, Windows, macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI into a clean venv on Linux
+(Python 3.14): the callback ran 0 times after the window closed (2 on 0.6.0), `import tre` raises. NOT verified: macOS (the hang
+does not reproduce on Linux, and winit's part of the cause is inference); Tesserae was asked to run its macOS test without its
+workaround. #260 is In review until then. Notes: `docs/migrating-0.6.md`.
 **0.6.0 released (2026-11-03, PR #258, tag `v0.6.0` on `a7336bd`, PyPI `tesserae-engine==0.6.0`, repo `mindderivative/tess-re`):**
 the Python package is `tess_re` (was `tre`) and the environment variables are `TESS_RE_*` (were `TRE_*`). Breaking, clean
 cutover, no alias; the PyPI name stays `tesserae-engine`; notes in `docs/migrating-0.6.md`. The first CI run on the PR failed
@@ -39,6 +45,28 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 `BUILD_TRACKER_ARCHIVE_*.md` files are the pre-GitHub trackers). Open
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
+
+## 0.6.1 (released 2026-11-03)
+
+### #260, a callback that queues itself no longer outlives the last window (2026-11-03)
+
+From Tesserae (its #297). On macOS `App.run()` did not return after the last window closed while a
+`call_soon` callback queued itself again, on 0.5.9, 0.5.10 and 0.6.0 (0.5.8 returned). Tesserae bisected it on
+GitHub's macOS runners and a `faulthandler` dump of the hung run showed the main thread inside its tick. The
+mechanism, by reading the code: 0.5.9 (#238) runs the host's queued callbacks on every wake while no window is
+open, and `CallQueue::drain` wakes the loop once more after running anything, so a callback that queues itself
+makes a chain of wakes that goes on after `exit_if_empty` has asked the loop to exit. Fix: the `Wake` handler in
+`engine-platform` does not run `on_wake` once `event_loop.exiting()` is true, so the chain cannot start. A
+keep-alive loop with no window still runs its callbacks (it is not exiting).
+
+Measured on Linux (llvmpipe, a probe that counts a self-queuing 5 ms callback): it ran 2 more times after the
+window's `closed` event before, in 3 of 3 runs, and 0 times after, in 5 of 5; the same on 0.6.1 installed from
+PyPI into a clean venv. Linux returned in both cases, so the hang itself is not reproduced. Not verified: macOS,
+and that winit 0.30's macOS `exit()` really stalls while wakes keep arriving (the half of the cause that is
+inference). Tesserae has stopped its own tick at `closed`, so it does not depend on this; it has been asked to run
+its macOS test without that workaround and report. Test: `tests/test_exit_requeue.py` (fails on the old code with
+`2 == 0`). The existing `test_keep_alive.py` still has its intermittent two-thread JSON "Extra data" failure
+(older, see #257).
 
 ## 0.6.0 (released 2026-11-03)
 

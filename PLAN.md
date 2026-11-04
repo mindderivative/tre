@@ -1,4 +1,4 @@
-# PLAN — after 0.6.0
+# PLAN — after 0.6.1
 
 *(Replaces the 0.5.0 plan, custom windowing (#28), which shipped in 0.5.0
 and is recorded in `LOG.md`. From 0.5.0 every step is tracked in the GitHub
@@ -7,8 +7,9 @@ project Tesserae Rendering Engine; the old trackers are archived as
 
 ## Where we are
 
-`main` is at 0.6.0 (released 2026-11-03: PR #258, tag `v0.6.0`, on PyPI as `tesserae-engine==0.6.0`; installed from PyPI
-and smoke-tested in a clean venv): the Python package is `tess_re` (was `tre`) and the variables are `TESS_RE_*`, no alias
+`main` is at 0.6.1 (released 2026-11-03: PR #261, tag `v0.6.1`, on PyPI as `tesserae-engine==0.6.1`; installed from PyPI
+and smoke-tested in a clean venv): the loop no longer runs a self-queuing `call_soon` callback once it is exiting (#260; macOS
+unverified, waiting on Tesserae's test). 0.6.0 (2026-11-03) renamed the package `tre` to `tess_re` and the variables to `TESS_RE_*`, no alias
 (#257; `docs/migrating-0.6.md`). 0.5.10 (2026-11-03) was `Window.build` / `apply` / `Node.set_children` (#253), SMIL
 `svg_time` (#245) and occlusion handling (#246). Open issues: #187 and #188 (Windows and macOS hardware checks), #189 (X11
 drop position), #247 (timers wait while every Wayland window is hidden), #248 (KWin fullscreen frame rate). The other
