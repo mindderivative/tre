@@ -68,4 +68,4 @@ Wayland window is hidden) and **#248** (a KWin fullscreen window counts about 48
 
 - **#171** — done and closed: `python3-dev` is in the apt line in
   `docs/contributing.md` (the `engine-py` tests need it to link).
-- The release after 0.6.0: to be decided by the user from the Backlog.
+- The release after 0.6.1: to be decided by the user from the Backlog.
