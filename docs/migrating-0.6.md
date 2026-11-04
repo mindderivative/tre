@@ -60,3 +60,13 @@ The PyPI name does not change: `pip install tesserae-engine`.
 ```sh
 grep -rnE '\btre\b|TRE_' --include='*.py' --include='*.toml' --include='*.yml' --include='*.sh' .
 ```
+
+## 0.6.1
+
+### Changed
+
+- **A callback that queues itself stops with the loop (#260).** Once `App.run()` has decided to end (the last
+  window closed, or `LoopHandle.stop()`), queued `LoopHandle.call_soon` callbacks are no longer run, so one
+  that queues itself again cannot keep `run()` from returning. On macOS (0.5.9 to 0.6.0) such a callback kept
+  `run()` from returning after the last window closed. A callback that ran once more after the last window's
+  `closed` event now does not. A loop with `keep_alive=True` and no window still runs them.

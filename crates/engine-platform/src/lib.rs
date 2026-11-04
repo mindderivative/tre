@@ -1196,8 +1196,13 @@ where
             // already has.
             PlatformEvent::Wake => {
                 // 0.5.9 (#238): nothing open means no frame to run the host's queued work.
+                // 0.6.1 (#260): not once the loop is exiting. `CallQueue::drain` wakes the loop
+                // after running anything, so a callback that queues itself makes a chain of
+                // wakes; on macOS (winit) that chain keeps `run()` from returning after the
+                // last window closed.
                 if self.windows.is_empty()
                     && self.layers.is_empty()
+                    && !event_loop.exiting()
                     && let Some(on_wake) = &mut self.on_wake
                 {
                     on_wake();
