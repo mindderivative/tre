@@ -45,7 +45,7 @@ mod dispatch;
 mod focus;
 mod layers;
 mod layout;
-pub use layout::{LayoutChange, TextMeasure};
+pub use layout::{FIT_CONTENT_SLACK, LayoutChange, TextMeasure};
 mod nodes;
 mod region;
 mod scroll;
@@ -360,8 +360,12 @@ impl Tree {
             .new_leaf(style)
             .expect("TaffyTree::new_leaf is infallible for a leaf with no children");
         // #263: a text node measures to its content unless a size says otherwise; every other
-        // kind already fits its content, so `FitContent` stays off for them.
+        // kind already fits its content, so `FitContent` stays off for them. A side whose style
+        // already holds a length or a percentage is not fit, so the flag and the style cannot
+        // disagree for a node made with an explicit size (a Rust caller, a spec).
         let fit_text = matches!(kind, NodeKind::Text(_));
+        let fit_width = fit_text && layout_style.size.width.is_auto();
+        let fit_height = fit_text && layout_style.size.height.is_auto();
         let id = self.nodes.insert_with_key(|id| Node {
             id,
             parent: None,
@@ -380,8 +384,8 @@ impl Tree {
             visible: true,
             z_index: 0,
             fit_content: crate::node::FitContent {
-                width: fit_text,
-                height: fit_text,
+                width: fit_width,
+                height: fit_height,
             },
             calc_size: crate::node::CalcSize::default(),
             anchored: None,

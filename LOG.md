@@ -54,7 +54,9 @@ A text node had no size of its own: unset it was 0 by 0, so a centred label wrap
 over it cropped the text (#176, #177), and `"fit-content"` (0.5.7) was the opt-in. Now a text node starts with both
 sides fit, and `"auto"` means the same as `"fit-content"` on text (user decisions: both sides, `"auto"` = fit). A
 number, a percentage or a calc turns a side off; `width=0` is the old zero. Other kinds are unchanged (a box already
-fits its content), and `get` reads `"fit-content"` for a fitting text side, `"auto"` for a box.
+fits its content), and `get` reads `"fit-content"` for a fitting text side, `"auto"` for a box. The default is set at
+`Tree::insert` from the style: a side whose style already holds a length or a percentage starts off fit, so a node
+made with an explicit size (a Rust caller, `Window.build`, a spec) cannot be both sized and fit.
 
 Also (user): a fit width is the measured text plus 2 px, `FIT_CONTENT_SLACK` in `engine-core/src/tree/layout.rs`,
 added before the clamp to the space the parent offers so a tight parent wraps instead of overflowing; the height is
@@ -62,21 +64,30 @@ exact; `window.measure_text` is unchanged. Changed: `Tree::insert` (text starts 
 `node_props.rs` `apply` (an `"auto"` side on a text node stays fit), `fit_size`.
 
 Measured. Tests: of the 458 tests in the 28 pytest files that create text, 1 failed with width-only fit and 2 with
-both (the second a live-compositor flake that passes alone); the whole suite with the change: 12 failed of 1,429, 6
-of them `test_text_fit_content.py` (rewritten here), the rest not from this change: `test_gpu_shared_live`'s
-thirty-window memory test fails identically on `main` (6.3153 and 0.876 MiB, windows with no text), two
-`test_gpu_memory_live` tests need a real GPU (pass on RADV), the corner-surface reservation tests fail on KWin (it
-does not reserve for a corner), and `test_keep_alive` is the known flake. Cost: 1,000 labels, first layout 31 ms
-(30 ms for `main` with an explicit `"fit-content"`, 0.4 ms when unsized and unmeasured), one label edited 0.29 ms, so
-the default costs what the opt-in did and no cache was added. Slack: a one-line label boxed at the measured width,
-rounded up, plus 0 to 4 px, compared with a very wide box for wrapping and lost ink, over 588 combinations (7 texts,
-7 sizes, 4 weights, 3 styles) and 210 more (6 families including system fonts, fractional sizes 13.5, 15.3 and 33.3,
-Latin, accented, Greek, Cyrillic and Japanese text): **0 failures at every slack including 0**. So on Linux headless
-the 2 px is a margin the user chose for other platforms and renderers, not something this run shows is needed; the
-tests pin the literal 2, so they fail if it is taken away. Not verified: macOS, Windows, fractional display scaling,
-any renderer but this one. Docs: `docs/guide/text.md`, `nodes-and-layout.md`, `shaders.md`, `reference/properties.md`,
-`reference/window.md`, the `FitContent` and `measure_text` comments, and a new `docs/migrating-0.7.md` (stamped 0.7.0,
-provisional: the version is the user's call; `tools/restamp_version.py` moves it).
+both (the second passed alone); the whole suite with the change: 12 failed of 1,429, 6 of them
+`test_text_fit_content.py` (rewritten here). The other 6, each rerun 3 times alone on this branch and on `main`:
+`test_gpu_shared_live`'s thirty-window memory test fails 3 of 3 on both (older, windows with no text, 6.3153 and
+0.876 MiB); `test_keep_alive` fails in 1 or 2 of its 10 on both (the known two-thread JSON flake); the two
+`test_gpu_memory_live` tests failed only because I forced the software adapter, and pass 3 of 3 on the real GPU; the
+two corner-surface reservation tests pass 3 of 3 alone on this branch, so they were a failure of the long full run
+(an earlier note here, that KWin does not reserve for a corner, was not shown by this and is withdrawn). Cost, 1,000
+labels in a wrapping row: first layout 31 ms; one label edited 0.29 ms; **a parent resize, which re-measures every
+label, 8.7 ms** against 8.8 ms for `main` with an explicit `"fit-content"` and 0.3 ms for `main` unsized. So the
+default costs what the opt-in did, about half a 60 Hz frame per 1,000 labels on a resize, which is why it is worth
+a per-node measure cache if a shell with many labels shows it; none was added. Slack: a one-line label boxed at the
+measured width, rounded up, plus 0 to 4 px, compared with a very wide box for wrapping and lost ink: 798 combinations
+(bundled and system fonts, fractional sizes, five scripts) gave 0 failures at every slack including 0. A negative
+control then found the detector is not blind: at -1, -2 and -3 px, 319 to 321 of 400 labels clip. A wider run (two
+families, both alignments, letter spacing 0.3 and 1.5) found 0 wraps at slack 0 and 2, and 73 ink differences at
+both, all with `text_align="center"` (a centred label in a differently wide reference box lands on another subpixel
+offset, so its ink count differs without anything being cut), none in the left or end aligned cases. So on Linux
+headless the 2 px is a margin the user chose for other platforms and renderers, not a measured minimum; the tests pin
+the literal 2 and use `FIT_CONTENT_SLACK`, so they fail if it is removed. Not verified: macOS, Windows, a fractional
+display scale (the probe ran at 1.0), any renderer but this one. Docs: `docs/guide/text.md`, `nodes-and-layout.md`,
+`shaders.md`, `reference/properties.md`, `reference/window.md`, the `FitContent` and `measure_text` comments, and a
+new `docs/migrating-0.7.md`. Every "0.7.0" in the docs is provisional (the version is the user's call; find them
+with `git grep -n "0.7.0" docs crates`, `tools/restamp_version.py` moves them). Tesserae's schema and tests may
+expect `get("width")` to read `"auto"` for an unsized text node; it reads `"fit-content"` now.
 
 ## 0.6.1 (released 2026-11-03)
 

@@ -1789,6 +1789,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 
 | Constant | Type | Description |
 | --- | --- | --- |
+| `FIT_CONTENT_SLACK` | `f32` | Pixels added to a fit width. |
 | `FRAME_BLOCK_SIZE` | `usize` | The size in bytes of the per-frame shader uniform block. |
 | `KEY_SCROLL_LINE` | `f64` | How far an arrow key scrolls a scroll view, in pixels. |
 | `SCROLLBAR_GRAB_SLOP` | `f64` | How far either side of a scrollbar thumb still counts as grabbing it. |

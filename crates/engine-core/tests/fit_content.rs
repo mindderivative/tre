@@ -3,7 +3,9 @@
 //! zero a text node has always had. The text is measured with a stand-in (10 px a
 //! character, 20 px a line), so the layout is what is under test, not a font.
 
-use engine_core::{FitContent, NodeId, NodeKind, PaintProperties, TextAlign, TextState, Tree};
+use engine_core::{
+    FIT_CONTENT_SLACK, FitContent, NodeId, NodeKind, PaintProperties, TextAlign, TextState, Tree,
+};
 use peniko::Color;
 use taffy::prelude::{AlignItems, AvailableSpace, FlexDirection, Size, Style, length};
 
@@ -92,9 +94,8 @@ const BOTH: FitContent = FitContent {
     height: true,
 };
 
-/// #263: a fit width is the measured text plus this many pixels. A test that pins the
-/// literal number fails if the slack is taken away.
-const SLACK: f32 = 2.0;
+/// #263: a fit width is the measured text plus this many pixels.
+const SLACK: f32 = FIT_CONTENT_SLACK;
 
 #[test]
 fn fit_content_text_is_one_line_whatever_the_alignment() {
@@ -142,7 +143,7 @@ fn text_that_does_not_wrap_stays_on_one_line_even_when_it_is_too_wide() {
 }
 
 #[test]
-fn a_side_that_is_not_fit_content_is_the_zero_it_always_was() {
+fn a_side_that_is_explicitly_not_fit_content_is_zero() {
     // Unmarked: the legacy zero by zero under `center`.
     let (tree, _, label) = scene(Some(AlignItems::CENTER), 480.0, FitContent::default(), true);
     let size = tree.layout(label).size;
@@ -206,4 +207,69 @@ fn the_slack_is_capped_at_the_offered_space_and_never_overflows_the_parent() {
     let size = tree.layout(label).size;
     assert_eq!(size.width, 329.0);
     assert!(size.height > 20.0, "{} tall", size.height);
+}
+
+#[test]
+fn the_slack_is_the_two_pixels_the_owner_chose() {
+    // Pinned on purpose: a change to the number is a decision, not an edit.
+    assert_eq!(FIT_CONTENT_SLACK, 2.0);
+}
+
+#[test]
+fn a_text_node_nobody_sized_is_its_texts_size_without_any_set_fit_content_call() {
+    // #263: the behaviour that matters. The tree is built exactly as `scene` does, minus its
+    // `set_fit_content` call, so this fails if `Tree::insert` stops defaulting text to fit.
+    let mut tree = Tree::new();
+    tree.set_text_measure(Box::new(measure));
+    let panel = tree.insert(
+        NodeKind::Container,
+        Style {
+            flex_direction: FlexDirection::Column,
+            align_items: Some(AlignItems::CENTER),
+            size: Size {
+                width: length(480.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        },
+        paint(),
+    );
+    let label = tree.insert(text(LABEL, true), Style::default(), paint());
+    tree.add_child(panel, label);
+    tree.compute_layout(
+        panel,
+        Size {
+            width: AvailableSpace::Definite(480.0),
+            height: AvailableSpace::Definite(300.0),
+        },
+    );
+    let size = tree.layout(label).size;
+    assert_eq!((size.width, size.height), (330.0 + SLACK, 20.0));
+}
+
+#[test]
+fn a_text_node_made_with_a_size_in_its_style_is_not_fit_on_that_side() {
+    // The flag follows the style at insert, so a node built with a length cannot be both
+    // sized and "fit-content": width 80 is off, the unset height still fits.
+    let mut tree = Tree::new();
+    tree.set_text_measure(Box::new(measure));
+    let label = tree.insert(
+        text("Short", true),
+        Style {
+            size: Size {
+                width: length(80.0),
+                height: taffy::style::Dimension::auto(),
+            },
+            ..Default::default()
+        },
+        paint(),
+    );
+    let fit = tree.get(label).unwrap().fit_content;
+    assert_eq!(
+        fit,
+        FitContent {
+            width: false,
+            height: true
+        }
+    );
 }
