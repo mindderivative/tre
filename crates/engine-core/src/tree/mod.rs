@@ -359,6 +359,9 @@ impl Tree {
             .taffy
             .new_leaf(style)
             .expect("TaffyTree::new_leaf is infallible for a leaf with no children");
+        // #263: a text node measures to its content unless a size says otherwise; every other
+        // kind already fits its content, so `FitContent` stays off for them.
+        let fit_text = matches!(kind, NodeKind::Text(_));
         let id = self.nodes.insert_with_key(|id| Node {
             id,
             parent: None,
@@ -376,7 +379,10 @@ impl Tree {
             shader: None,
             visible: true,
             z_index: 0,
-            fit_content: crate::node::FitContent::default(),
+            fit_content: crate::node::FitContent {
+                width: fit_text,
+                height: fit_text,
+            },
             calc_size: crate::node::CalcSize::default(),
             anchored: None,
         });

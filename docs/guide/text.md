@@ -22,31 +22,38 @@ caps the lines shown, and `overflow="ellipsis"` ends a cut line with "…".
 
 ## Sizing text to its content
 
-**`"fit-content"` (0.5.7).** Set `width="fit-content"` and
-`height="fit-content"` and a text node is the size of its text, wherever it sits:
+**Default (0.7.0, #263).** A text node with no `width` or `height` is the size of
+its text, wherever it sits. `"auto"` and `"fit-content"` (0.5.7) mean the same
+thing on a text node, so these three labels are alike:
 
 ```python
-label = window.create("text", text="Julia set, drawn by a fill shader",
-                      font_size=22, width="fit-content", height="fit-content")
+label = window.create("text", text="Julia set, drawn by a fill shader", font_size=22)
+label = window.create("text", text="Julia set, drawn by a fill shader", font_size=22,
+                      width="auto", height="auto")
+label = window.create("text", text="Julia set, drawn by a fill shader", font_size=22,
+                      width="fit-content", height="fit-content")
 ```
 
-The width is the text on one line, narrowed to the space the parent offers when
-the text wraps (so a long label wraps instead of overflowing, and `height` is
-then the wrapped height). In a box that centres or start-aligns its children it
-is as wide as the text; a stretched child still fills the box, as in CSS. It is
+The width is the text on one line plus 2 pixels, narrowed to the space the parent
+offers when the text wraps (so a long label wraps instead of overflowing, and
+`height` is then the wrapped height). The 2 pixels are there because a box
+exactly as wide as the measured text can cut it off or wrap its last word; the
+height is exact. In a box that centres or start-aligns its children the label is
+as wide as the text; a stretched child still fills the box, as in CSS. It is
 measured by the same shaper as `measure_text`, rounded up to a whole pixel, and
 laid out again when the text, font size, family, weight or wrapping changes.
-Either side can be `"fit-content"` on its own; `get("width")` reads it back,
-and any other value (`80`, `"auto"`, `"50%"`) takes the side off it. On a box or
-any other node it means what `"auto"` does, since those already fit their
-content.
+Either side can be set on its own: any value other than `"auto"` or
+`"fit-content"` (a number such as `80` or `0`, `"50%"`, `"calc(100% - 16)"`)
+takes that side off fit, and `get("width")` reads `"fit-content"` back for a
+side that fits. On a box or any other node `"auto"` stays `"auto"`, since those
+already fit their content.
 
-Without it, a text node has no size of its own — without a `width` it's zero
-wide, which is what you get by default. That includes the box an effect shader
-paints into, so an effect over an unsized text node with padding crops the text
-to the padding. Size it with `"fit-content"`, or with `window.measure_text`,
-which lays the text out exactly as a text node with the same properties paints
-it:
+Before 0.7.0 an unsized text node was zero wide and zero tall, and
+`"fit-content"` was the opt-in: the box an effect shader paints into was only as
+big as the padding, so an effect over unsized text cropped it. Now the box is the
+text. To size text by hand, give it a number, or use
+`window.measure_text`, which lays the text out exactly as a text node with the
+same properties paints it and returns exact numbers, with no extra pixels:
 
 ```python
 style = dict(font_size=14, max_lines=1, overflow="ellipsis")

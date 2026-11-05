@@ -90,6 +90,12 @@ fn same_length(a: taffy::style::Dimension, b: taffy::style::Dimension) -> bool {
 /// `Send` so a `Tree` stays one.
 pub type TextMeasure = Box<dyn FnMut(&crate::node::TextState, Option<f32>) -> (f32, f32) + Send>;
 
+/// #263: pixels added to a fit width. A box exactly as wide as the measured text either
+/// cuts the text off or wraps its last word, because the shaper measures one way and the
+/// painter lays out another and the box is rounded. Chosen by the user (2 px); height
+/// stays exact. `window.measure_text` is unchanged and still returns exact numbers.
+pub const FIT_CONTENT_SLACK: f32 = 2.0;
+
 /// The size taffy gets for a text leaf (`id`) whose sides are `FitContent`: the
 /// text's own width and wrapped height, or zero on a side that doesn't fit (a
 /// text node has no size of its own). `known` is a side the layout has already
@@ -119,11 +125,13 @@ fn fit_size(
     } else {
         // One line (or one per paragraph), then narrowed to the offered space
         // when the text wraps. Min-content is the longest word: a width of
-        // zero breaks at every opportunity.
-        let widest = measure(state, None).0.ceil();
+        // zero breaks at every opportunity. `FIT_CONTENT_SLACK` goes on before the
+        // narrowing, so in a tight parent the node is capped at the space and the
+        // text wraps instead of overflowing by the slack.
+        let widest = measure(state, None).0.ceil() + FIT_CONTENT_SLACK;
         match available.width {
             _ if !state.options.wrap => widest,
-            AvailableSpace::MinContent => measure(state, Some(0.0)).0.ceil(),
+            AvailableSpace::MinContent => measure(state, Some(0.0)).0.ceil() + FIT_CONTENT_SLACK,
             AvailableSpace::MaxContent => widest,
             AvailableSpace::Definite(space) => widest.min(space.max(0.0)),
         }

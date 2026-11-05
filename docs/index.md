@@ -83,6 +83,8 @@ complete switch.
 - **[Python API](api/python.md)** and **[Rust API](api/rust.md)** — every
   class or type with its properties, methods and events, on one page each,
   for quick reference. The [Reference](reference/app.md) pages go deeper.
+- **[Upgrading to 0.7.x](migrating-0.7.md)** — from 0.6.x: no renames, but a
+  text node with no size is now the size of its text.
 - **[Upgrading to 0.6.x](migrating-0.6.md)** — from 0.5.x: the package is
   `tess_re` now (was `tre`) and the variables are `TESS_RE_*`.
 - **[Upgrading to 0.5.x](migrating-0.5.md)** — from 0.4.x: no renames,

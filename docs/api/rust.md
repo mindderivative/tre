@@ -250,7 +250,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 
 ### FitContent { #fitcontent }
 
-*struct.* `width="fit-content"` and `height="fit-content"` on a text node.
+*struct.* Which sides of a text node are the size of its text, written `width="fit-content"` and `height="fit-content"`.
 
 **Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
 
@@ -539,7 +539,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | Method | Description |
 | --- | --- |
 | `fn animated(&self) -> bool` | Whether the shader changes with time and needs a redraw every frame. |
-| `fn assembled(&self) -> Arc<str>` | The complete WGSL module for the renderer: tre's prelude, then the app's source. |
+| `fn assembled(&self) -> Arc<str>` | The complete WGSL module for the renderer: tess_re's prelude, then the app's source. |
 | `fn inputs(&self) -> &[(String, NodeId)]` | The named inputs, in the order their bindings are numbered. |
 | `fn mode(&self) -> ShaderMode` | Whether the shader fills the node or is an effect on its content. |
 | `fn new(wgsl: String, uniforms: Vec<(String, UniformValue)>, inputs: Vec<(String, NodeId)>, mode: ShaderMode, animated: bool) -> Result<Arc<Self>, ShaderError>` | Validates `wgsl` and builds the shader. |
@@ -876,7 +876,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `max_length` | `Option<usize>` | The most characters the field holds; typing, paste and IME commits that would pass it are cut short. |
 | `read_only` | `bool` | The text can be selected and copied but not edited. |
 | `input_mode` | `InputMode` | What kind of text the field takes, for a keyboard that can adapt to it. |
-| `caret_visible` | `bool` | Whether tre draws the caret; `false` leaves it to a framework that draws its own. |
+| `caret_visible` | `bool` | Whether tess_re draws the caret; `false` leaves it to a framework that draws its own. |
 | `caret_width` | `f32` | The bar's width in pixels (the thickness of an underline). |
 | `caret_shape` | `CaretShape` |  |
 | `caret_blink_ms` | `u32` | Milliseconds between the caret going off and on; `0` keeps it steady. |

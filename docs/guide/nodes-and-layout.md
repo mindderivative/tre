@@ -71,7 +71,7 @@ toolbar = window.create("box", width="100%", height=48, padding=8, gap=8,
 ```
 
 Sizes are pixels, `"auto"`, or a percentage of the parent: `width="50%"`. A text
-node can also be `"fit-content"`: the size of its text (see
+node with no size (or `"auto"`, or `"fit-content"`) is the size of its text (see
 [Sizing text to its content](text.md#sizing-text-to-its-content)).
 
 **Mixed units (0.5.7).** `width` and `height` also take a percentage plus

@@ -15,6 +15,7 @@ from tess_re import Shader, Window
 
 LABEL = "Julia set, drawn by a fill shader"
 STYLE = dict(font_size=22)
+SLACK = 2  # #263: a fit width is the measured text plus 2 px
 WHITE = (255, 255, 255, 255)
 PASSTHROUGH = "fn shade(p: Pixel) -> vec4<f32> { return content(p.uv); }"
 
@@ -45,7 +46,7 @@ def test_a_centred_or_start_aligned_label_is_one_line_of_its_own_width(align):
     # The table in #177: these two used to be 0 wide and wrapped.
     window, label = label_in_box(align)
     width, line = window.measure_text(LABEL, **STYLE)
-    assert label.get("layout_width") == math.ceil(width)
+    assert label.get("layout_width") == math.ceil(width) + SLACK
     assert label.get("layout_height") == line
 
 
@@ -69,7 +70,7 @@ def test_a_label_wraps_within_the_space_it_is_offered(align):
 def test_text_that_does_not_wrap_stays_one_line():
     window, label = label_in_box("center", box_width=200, wrap="none")
     width, line = window.measure_text(LABEL, wrap="none", **STYLE)
-    assert label.get("layout_width") == math.ceil(width)
+    assert label.get("layout_width") == math.ceil(width) + SLACK
     assert label.get("layout_height") == line
 
 
@@ -78,7 +79,7 @@ def test_changing_the_text_lays_the_label_out_again():
     before = label.get("layout_width")
     label.set(text="Short")
     window.advance(16)
-    assert label.get("layout_width") == math.ceil(window.measure_text("Short", **STYLE)[0])
+    assert label.get("layout_width") == math.ceil(window.measure_text("Short", **STYLE)[0]) + SLACK
     assert label.get("layout_width") < before
 
 
@@ -97,21 +98,38 @@ def test_get_reads_fit_content_back_and_any_other_width_clears_it():
     label.set(width=80)
     assert label.get("width") == 80 and label.get("height") == "fit-content"
     label.set(height="auto")
-    assert label.get("height") == "auto"
+    assert label.get("height") == "fit-content"  # #263: auto is fit-content on text
+    label.set(height=30)
+    assert label.get("height") == 30
     label.set(width="fit-content")
     label.set(width="50%")
     assert label.get("width") == "50%"
 
 
-def test_an_unsized_label_is_still_the_zero_it_always_was():
+def test_an_unsized_label_is_its_text_wide_and_tall():
+    # #263: unset, `"auto"` and `"fit-content"` are the same on a text node. This used to be
+    # the zero a text node had always had.
+    for given in (None, "auto", "fit-content"):
+        window = Window(width=560, height=360)
+        box = window.create("box", width=480, height=300, flex_direction="vertical", align_items="center")
+        window.root.add_child(box)
+        extra = {} if given is None else dict(width=given, height=given)
+        label = window.create("text", text=LABEL, fill=WHITE, **STYLE, **extra)
+        box.add_child(label)
+        window.advance(16)
+        width, line = window.measure_text(LABEL, **STYLE)
+        assert label.get("width") == "fit-content" and label.get("height") == "fit-content", given
+        assert label.get("layout_width") == math.ceil(width) + SLACK, given
+        assert label.get("layout_height") == line, given
+
+
+def test_a_size_other_than_auto_takes_the_side_off_fit_and_a_box_keeps_auto():
     window = Window(width=560, height=360)
-    box = window.create("box", width=480, height=300, flex_direction="vertical", align_items="center")
-    window.root.add_child(box)
-    label = window.create("text", text=LABEL, fill=WHITE, **STYLE)
-    box.add_child(label)
-    window.advance(16)
-    assert label.get("width") == "auto"
-    assert label.get("layout_width") == 0
+    for value in (0, 80, "50%", "calc(100% - 16)"):
+        label = window.create("text", text=LABEL, **STYLE, width=value)
+        assert label.get("width") != "fit-content", value
+    box = window.create("box")
+    assert box.get("width") == "auto"  # only text reads fit-content for an unset side
 
 
 def test_a_box_accepts_fit_content_and_is_sized_to_its_content_as_with_auto():

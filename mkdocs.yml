@@ -82,6 +82,7 @@ nav:
       - Shader: reference/shader.md
   - Architecture: architecture.md
   - Upgrading:
+      - To 0.7.x: migrating-0.7.md
       - To 0.6.x: migrating-0.6.md
       - To 0.5.x: migrating-0.5.md
       - To 0.4.x: migrating-0.4.md

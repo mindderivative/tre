@@ -568,9 +568,10 @@ wrap="word", max_lines=None, overflow="clip") -> (width, height)`**
 The size `text` takes, laid out exactly as a text node with those properties
 paints it: wrapped within `max_width` when given, cut to `max_lines`, ended
 with an ellipsis for `overflow="ellipsis"`. The width is the widest shown
-line without its trailing whitespace. A text node has no size of its own —
-this is how a content-sized widget gets one. See
-[Text](../guide/text.md#sizing-text-to-its-content).
+line without its trailing whitespace. The numbers are exact: a text node that is
+unsized (0.7.0) is this width plus 2 pixels, so give a hand-sized node a little
+more than this if it must never wrap. This is how a widget sized by hand gets
+its size. See [Text](../guide/text.md#sizing-text-to-its-content).
 
 ## Clipboard
 

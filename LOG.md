@@ -46,6 +46,38 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
 
+## After 0.6.1 (unreleased)
+
+### #263, a text node with no size measures to its content (2026-11-03)
+
+A text node had no size of its own: unset it was 0 by 0, so a centred label wrapped a word to a line and an effect
+over it cropped the text (#176, #177), and `"fit-content"` (0.5.7) was the opt-in. Now a text node starts with both
+sides fit, and `"auto"` means the same as `"fit-content"` on text (user decisions: both sides, `"auto"` = fit). A
+number, a percentage or a calc turns a side off; `width=0` is the old zero. Other kinds are unchanged (a box already
+fits its content), and `get` reads `"fit-content"` for a fitting text side, `"auto"` for a box.
+
+Also (user): a fit width is the measured text plus 2 px, `FIT_CONTENT_SLACK` in `engine-core/src/tree/layout.rs`,
+added before the clamp to the space the parent offers so a tight parent wraps instead of overflowing; the height is
+exact; `window.measure_text` is unchanged. Changed: `Tree::insert` (text starts `FitContent { true, true }`),
+`node_props.rs` `apply` (an `"auto"` side on a text node stays fit), `fit_size`.
+
+Measured. Tests: of the 458 tests in the 28 pytest files that create text, 1 failed with width-only fit and 2 with
+both (the second a live-compositor flake that passes alone); the whole suite with the change: 12 failed of 1,429, 6
+of them `test_text_fit_content.py` (rewritten here), the rest not from this change: `test_gpu_shared_live`'s
+thirty-window memory test fails identically on `main` (6.3153 and 0.876 MiB, windows with no text), two
+`test_gpu_memory_live` tests need a real GPU (pass on RADV), the corner-surface reservation tests fail on KWin (it
+does not reserve for a corner), and `test_keep_alive` is the known flake. Cost: 1,000 labels, first layout 31 ms
+(30 ms for `main` with an explicit `"fit-content"`, 0.4 ms when unsized and unmeasured), one label edited 0.29 ms, so
+the default costs what the opt-in did and no cache was added. Slack: a one-line label boxed at the measured width,
+rounded up, plus 0 to 4 px, compared with a very wide box for wrapping and lost ink, over 588 combinations (7 texts,
+7 sizes, 4 weights, 3 styles) and 210 more (6 families including system fonts, fractional sizes 13.5, 15.3 and 33.3,
+Latin, accented, Greek, Cyrillic and Japanese text): **0 failures at every slack including 0**. So on Linux headless
+the 2 px is a margin the user chose for other platforms and renderers, not something this run shows is needed; the
+tests pin the literal 2, so they fail if it is taken away. Not verified: macOS, Windows, fractional display scaling,
+any renderer but this one. Docs: `docs/guide/text.md`, `nodes-and-layout.md`, `shaders.md`, `reference/properties.md`,
+`reference/window.md`, the `FitContent` and `measure_text` comments, and a new `docs/migrating-0.7.md` (stamped 0.7.0,
+provisional: the version is the user's call; `tools/restamp_version.py` moves it).
+
 ## 0.6.1 (released 2026-11-03)
 
 ### #260, a callback that queues itself no longer outlives the last window (2026-11-03)
