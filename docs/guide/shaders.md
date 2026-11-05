@@ -101,7 +101,7 @@ tidy, but not for a window left open for weeks.
 
 An effect's content is the node's **box**: a shadow or children that overflow
 it are not part of the content or the result. A text node is the size of its text
-unless you size it (0.7.0, #263; before that it had no size of its own and needed
+unless you size it (0.6.2, #263; before that it had no size of its own and needed
 `width="fit-content"` and `height="fit-content"`), so an effect over text covers the
 text; a text node given a number size is that box, and the effect crops the text to it.
 The result replaces the node and

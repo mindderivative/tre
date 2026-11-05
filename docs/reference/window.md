@@ -569,7 +569,7 @@ The size `text` takes, laid out exactly as a text node with those properties
 paints it: wrapped within `max_width` when given, cut to `max_lines`, ended
 with an ellipsis for `overflow="ellipsis"`. The width is the widest shown
 line without its trailing whitespace. The numbers are exact: a text node that is
-unsized (0.7.0) is this width plus 2 pixels, so give a hand-sized node a little
+unsized (0.6.2) is this width plus 2 pixels, so give a hand-sized node a little
 more than this if it must never wrap. This is how a widget sized by hand gets
 its size. See [Text](../guide/text.md#sizing-text-to-its-content).
 

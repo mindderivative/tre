@@ -85,9 +85,9 @@ headless the 2 px is a margin the user chose for other platforms and renderers, 
 the literal 2 and use `FIT_CONTENT_SLACK`, so they fail if it is removed. Not verified: macOS, Windows, a fractional
 display scale (the probe ran at 1.0), any renderer but this one. Docs: `docs/guide/text.md`, `nodes-and-layout.md`,
 `shaders.md`, `reference/properties.md`, `reference/window.md`, the `FitContent` and `measure_text` comments, and a
-new `docs/migrating-0.7.md`. Every "0.7.0" in the docs is provisional (the version is the user's call; find them
-with `git grep -n "0.7.0" docs crates`, `tools/restamp_version.py` moves them). Tesserae's schema and tests may
-expect `get("width")` to read `"auto"` for an unsized text node; it reads `"fit-content"` now.
+0.6.2 section in `docs/migrating-0.6.md`. The owner said this is a patch release at most, so the stamps read 0.6.2
+(0.6.1 is already on PyPI); the version files are not bumped, that is the release step. Tesserae's schema and tests
+may expect `get("width")` to read `"auto"` for an unsized text node; it reads `"fit-content"` now.
 
 ## 0.6.1 (released 2026-11-03)
 

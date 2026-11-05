@@ -1620,7 +1620,7 @@ pub struct Anchored {
 }
 
 /// 0.5.7 (#176, #177): which sides of a text node are the size of its text, written
-/// `width="fit-content"` and `height="fit-content"`. Since 0.7.0 (#263) a text node
+/// `width="fit-content"` and `height="fit-content"`. Since 0.6.2 (#263) a text node
 /// starts with both sides on, and `"auto"` is the same as `"fit-content"` on text; a
 /// number, a percentage or a calc turns a side off, and an off side is zero (a text
 /// node has no size of its own). A fit side is measured through the `Tree`'s text

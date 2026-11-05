@@ -171,7 +171,7 @@ On `text` and `text_input` unless noted.
 | `selectable` | (0.5.4) `True` lets a press and drag select the text and Copy take it (`text` only; default `False`) |
 | `fill` | The glyph color (animatable) |
 
-A text node with no `width` or `height` is the size of its text (0.7.0, #263; `"auto"`
+A text node with no `width` or `height` is the size of its text (0.6.2, #263; `"auto"`
 and `"fit-content"` mean the same). To size it by hand, give it a number; or use
 [`window.measure_text`](window.md#measure_text), which lays text out exactly as
 a text node with the same properties paints it, with no extra pixels:

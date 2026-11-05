@@ -22,7 +22,7 @@ caps the lines shown, and `overflow="ellipsis"` ends a cut line with "…".
 
 ## Sizing text to its content
 
-**Default (0.7.0, #263).** A text node with no `width` or `height` is the size of
+**Default (0.6.2, #263).** A text node with no `width` or `height` is the size of
 its text, wherever it sits. `"auto"` and `"fit-content"` (0.5.7) mean the same
 thing on a text node, so these three labels are alike:
 
@@ -48,7 +48,7 @@ takes that side off fit, and `get("width")` reads `"fit-content"` back for a
 side that fits. On a box or any other node `"auto"` stays `"auto"`, since those
 already fit their content.
 
-Before 0.7.0 an unsized text node was zero wide and zero tall, and
+Before 0.6.2 an unsized text node was zero wide and zero tall, and
 `"fit-content"` was the opt-in: the box an effect shader paints into was only as
 big as the padding, so an effect over unsized text cropped it. Now the box is the
 text. To size text by hand, give it a number, or use
