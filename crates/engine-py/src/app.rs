@@ -785,6 +785,40 @@ impl Drop for GpuWake {
     }
 }
 
+/// #264: at the end of a window's frame, wakes the loop once if that frame left another window's
+/// tree newly changed. A frame runs listeners, timers and queued calls that may set a node in
+/// another window; that window may already have been drawn this turn, or never asked for a
+/// frame, so without a wake the change waits for the next unrelated one. `CallQueue::drain`
+/// does the same for a `call_soon` it ran. It is edge-triggered (`WindowRuntime::wake_sent`): a
+/// window that is occluded or hidden stays changed without drawing, and waking for it every
+/// frame would spin the loop.
+struct CrossWindowWake<'a> {
+    runtimes: &'a RefCell<HashMap<WindowId, WindowRuntime>>,
+    calls: &'a crate::thread_handle::CallQueue,
+}
+
+impl Drop for CrossWindowWake<'_> {
+    fn drop(&mut self) {
+        let Ok(runtimes) = self.runtimes.try_borrow() else {
+            return;
+        };
+        let mut wanted = false;
+        for runtime in runtimes.values() {
+            let changed = runtime
+                .handles
+                .tree
+                .try_borrow()
+                .is_ok_and(|tree| tree.is_dirty());
+            if changed && !runtime.wake_sent.replace(true) {
+                wanted = true;
+            }
+        }
+        if wanted {
+            self.calls.wake();
+        }
+    }
+}
+
 struct WindowRuntime {
     /// 0.4.0 M6: the window's shared handles (`WindowHandles`).
     handles: WindowHandles,
@@ -799,6 +833,8 @@ struct WindowRuntime {
     /// (where its caret is, whether it is a password), so it is told on a change.
     ime: Option<crate::caret::ImeState>,
     ime_cache: Option<(crate::caret::ImeKey, Option<crate::caret::ImeState>)>,
+    /// #264: a wake has been asked for this window's changed tree and it has not drawn since.
+    wake_sent: std::cell::Cell<bool>,
 }
 
 #[pymethods]
@@ -1172,6 +1208,7 @@ impl App {
                                     cursor: Cursor::Default,
                                     ime: None,
                                     ime_cache: None,
+                                    wake_sent: std::cell::Cell::new(false),
                                 },
                             );
                             // The size the compositor gave, in the logical pixels the app lays out in.
@@ -1411,6 +1448,7 @@ impl App {
                         cursor: Cursor::Default,
                         ime: None,
                         ime_cache: None,
+                        wake_sent: std::cell::Cell::new(false),
                     },
                 );
                 true
@@ -1422,6 +1460,12 @@ impl App {
                 // `runtimes` or any tree is held here, so the callable
                 // is free to touch any window's tree.
                 calls_for_frame.drain(py);
+                // #264: after this frame, a wake if it left another window's tree changed.
+                // Declared before `runtimes` below so it drops after that borrow is released.
+                let _cross_window = CrossWindowWake {
+                    runtimes: &runtimes_for_frame,
+                    calls: &calls_for_frame,
+                };
                 // M96: finish drops other threads handed back, and free
                 // any detached subtree that lost its last handle.
                 crate::node_handles::reclaim();
@@ -1797,6 +1841,8 @@ impl App {
                     runtime.handles.tree.borrow_mut().mark_dirty();
                     return false;
                 }
+                // #264: this window is drawing, so a wake asked for its changes is answered.
+                runtime.wake_sent.set(false);
                 let damage = {
                     let tree_ref = runtime.handles.tree.borrow();
                     let gpu = &mut runtime.gpu;

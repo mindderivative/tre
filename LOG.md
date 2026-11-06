@@ -89,6 +89,38 @@ display scale (the probe ran at 1.0), any renderer but this one. Docs: `docs/gui
 (0.6.1 is already on PyPI); the version files are not bumped, that is the release step. Tesserae's schema and tests
 may expect `get("width")` to read `"auto"` for an unsized text node; it reads `"fit-content"` now.
 
+### #264, a change to one window made in another window's callback is drawn (TRE-REQ-012, 2026-11-06)
+
+From the `tess-shell` code session (mailbox, write-up and repro in its `tests/kwin/`): a node set in window B during a
+timer or listener of window A was not drawn until something else woke the loop; its workaround was a queued no-op
+`call_soon` after every change. Reproduced first on headless sway (llvmpipe) on unmodified `main`, with the shell's repro
+and then with my own probe over 12 processes (a timer of A sets B's fill 8 times, 250 ms apart): **5 of 12 processes drew
+none of the changes at once** (each waited for the next timer, 250 ms, the last 950 ms), the other 7 drew every one in
+1 ms. One run of the shell's repro showed `1501, 1, 1, ...`: its first change sets a colour B already has (no change, no
+frame), so that number is the script's, not the engine's; the failure is the per-process pattern above.
+
+Cause: `run_layer_frames` draws each layer whose `needs_frame` is set, in `HashMap` order, which differs per process, and
+clears the flag; a change made to B inside A's frame (a timer, a listener) sets nothing for B. If B was already handled in
+that pass it waits for the next unrelated wake. `CallQueue::drain` already wakes the loop after it runs a `call_soon`, for
+exactly this reason; timers and listeners had no such wake. Ordinary windows have the same hole. Fix: `Tree::is_dirty`
+(a read that does not take the flag) and, in `engine-py`'s frame callback, a guard (`CrossWindowWake`) that at the end of
+every window's frame wakes the loop once if another window's tree is dirty and no wake has been sent for it since it last
+drew (`WindowRuntime::wake_sent`, cleared where a window really draws, after the occluded early return). Edge-triggered
+on purpose: a window that is changed but cannot draw (occluded, or a surface the compositor withholds frame callbacks
+from) stays dirty, and waking for it every frame would spin the loop.
+
+Measured after: 16 of 16 processes drew all 8 changes in 1 to 2 ms (the same probe). A surface under a fullscreen window
+changed 90 times in 3 s: 0 frames drawn, 0.01 s of CPU, the same as `main`. Two layers idle: 0.000 s of CPU in 3 s on
+both. Test: `tests/test_cross_window_redraw_live.py` (6 processes, 5 changes each; fails on the old code, passes with the
+fix) on headless sway and on this machine's KWin session (real RADV): on KWin the old code fails it and the fix passes.
+Also run: the hidden-window and occlusion live tests, `test_thread_handle`, `test_exit_requeue`, `test_timers` (27 pass),
+`engine-py` lib tests (62), `engine-core` tests, fmt, clippy `-D warnings`, and 24 window, layer, popup, timer, listener
+and keep-alive test files under sway: 358 passed, 5 failed, none from this change: `test_window_controls` and
+`test_window_titlebar` live (sway tiles the windows; they pass on KWin), and three `test_keep_alive` tests, which fail
+2 to 3 of 10 in each of 3 runs on `main` as well, with a different set each time (the older two-thread JSON print
+flake). Not run: the full suite, macOS, Windows, KWin with the shell's own panels (its test is the shell's). The shell
+can drop its `SurfaceManager.wake` workaround once it has a build with this change.
+
 ## 0.6.1 (released 2026-11-03)
 
 ### #260, a callback that queues itself no longer outlives the last window (2026-11-03)
