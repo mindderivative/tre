@@ -28,6 +28,11 @@ def open_menu(e=None):
   to the app.
 - It costs a bar's worth of memory (tens of MiB with the default small GPU blocks, #219), not an
   output's. `examples/popup_menu.py` is a complete bar with a menu and a submenu.
+- **A shadow without the space (0.6.3, #266).** A shadow has to be drawn inside the popup's own
+  surface, in a transparent margin. Make the surface bigger by the margin on every side and say where
+  the body is with `geometry=(m, m, width, height)`: the compositor then places, flips and slides the
+  body, not the margin, so the menu lands where `anchor_rect` says and does not flip early near a
+  screen edge.
 
 See the [`PopupWindow` reference](../reference/layer-window.md#popupwindow) for every argument.
 

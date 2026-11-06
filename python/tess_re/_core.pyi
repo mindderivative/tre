@@ -978,6 +978,13 @@ class PopupWindow(Window):
     it or Escape ends it with `closed`, reason `"dismissed"`; the click is the popup's, not the
     window's below.
 
+    `geometry=(x, y, width, height)` (0.6.3, #266) is the popup proper, in the popup's own pixels, when
+    the surface is bigger: a transparent margin that holds a shadow. The compositor places and keeps
+    on screen that rectangle and ignores the rest, so `anchor_rect`, `anchor`, `gravity`, `offset` and
+    the flip and slide refer to the body, and `configure`'s `x` and `y` are the body's. It must lie
+    inside `size`; the default is the whole surface. A compositor that resizes the popup resizes the
+    body: the surface follows with the same margins.
+
     The popup is a window like any other: its nodes, events, listeners, animation and input method
     work as in a `LayerWindow`. `configure` reports `width`, `height` and, for a popup, `x` and `y`:
     where the compositor put it, in its parent's coordinates, after any flip or slide. Errors raise
@@ -995,6 +1002,7 @@ class PopupWindow(Window):
         constraint_adjustment: str | Sequence[str] | None = ...,
         offset: tuple[int, int] | None = ...,
         grab: bool = ...,
+        geometry: tuple[int, int, int, int] | None = ...,
     ) -> PopupWindow: ...
     def set(self, **props: Any) -> None:
         """Sets the window keys a popup shares (`touch_slop`, `partial_redraw`, ...). The popup's own
@@ -1003,7 +1011,8 @@ class PopupWindow(Window):
         ...
     def get(self, name: str) -> Any:
         """Reads `size`, `anchor_rect`, `anchor`, `gravity`, `constraint_adjustment`, `offset`,
-        `grab`, `position` (where the compositor placed it, in the parent's coordinates, or `None`
+        `grab`, `geometry` (the body; the whole surface when none was given), `position` (where the
+        compositor placed the body, in the parent's coordinates, or `None`
         until it has) or anything `Window.get` reads."""
         ...
     def close(self) -> None:

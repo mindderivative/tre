@@ -1015,6 +1015,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `fn input_region(&self, root: NodeId, bounds: (f64, f64), max_rects: usize) -> Vec<(i32, i32, i32, i32)>` | The rectangles, in logical pixels inside `bounds` (the surface's `(width, height)`), where a click lands on something drawn: every visible… |
 | `fn insert(&mut self, kind: NodeKind, layout_style: Style, paint: PaintProperties) -> NodeId` | Creates a new parentless node and returns its id. |
 | `fn insert_child(&mut self, parent: NodeId, index: usize, child: NodeId) -> bool` | Attaches a child under a parent at a given position in its child list. |
+| `fn is_dirty(&self) -> bool` | Whether a frame is owed, without taking the flag. |
 | `fn is_layer(&self, id: NodeId) -> bool` | Returns whether a node is an open layer or overlay. |
 | `fn layout(&self, id: NodeId) -> &Layout` | Returns a node's computed layout box from the last layout pass. |
 | `fn layout_epoch(&self) -> u64` | How many times a layout has been computed. |
@@ -2440,6 +2441,7 @@ The `winit` event loop, window creation, platform input translation and the acce
 | `adjustments` | `u32` | What the compositor may do to keep it on screen (`adjust` bits). |
 | `offset` | `(i32, i32)` | A fixed shift after placement, in logical pixels. |
 | `grab` | `bool` | Whether the popup grabs the keyboard and pointer, so an outside click or Escape ends it. |
+| `geometry` | `Option<Rect>` | The popup's body, `(x, y, width, height)` in the popup's own pixels, inside `size`. |
 
 | Method | Description |
 | --- | --- |

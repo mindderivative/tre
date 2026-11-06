@@ -122,3 +122,13 @@ label = window.create("text", text="Hi", width=0, height=0)   # the old unsized 
 Search for text nodes you create without a size and look at the ones inside a
 `Row`, a centring box or an anchored layer. The tests that pinned the old zero
 (for example a label asserted to be `layout_width == 0`) need the new rule.
+
+## 0.6.3
+
+### Added
+
+- **`PopupWindow(geometry=...)` (#266).** `geometry=(x, y, width, height)` names the popup proper inside a
+  larger surface, so a transparent margin that holds a shadow is not placed, flipped or slid by the
+  compositor. Nothing changes without it. See the
+  [reference](reference/layer-window.md#popupwindow) and
+  [Menus from a bar](guide/menus-from-a-bar.md).

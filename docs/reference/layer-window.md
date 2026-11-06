@@ -212,10 +212,30 @@ app.add_window(menu)                           # from a click handler, with `bar
 | `constraint_adjustment` | What the compositor may do to keep it on screen: `"slide_x"`, `"slide_y"`, `"flip_x"`, `"flip_y"`, `"resize_x"`, `"resize_y"`. A name or a sequence; the default is `("flip_y", "slide_x")`, and `()` asks for none. |
 | `offset` | A fixed `(x, y)` shift after placement. |
 | `grab` | `True` (the default) gives the popup the pointer and keyboard. |
+| `geometry` | (0.6.3) `(x, y, width, height)` in the popup's own pixels: the popup proper, when the surface is bigger. The compositor places and constrains this rectangle and ignores the rest. Default: the whole surface. Must lie inside `size`. |
 
 **Where it landed.** `configure` carries `width`, `height` and, for a popup, `x` and `y`: where the
 compositor put it, in its parent's coordinates, after any flip or slide (`y` is negative when a
-bottom bar's menu flipped above it). `popup.get("position")` reads the same, or `None` until placed.
+bottom bar's menu flipped above it). `popup.get("position")` reads the same, or `None` until placed. With a `geometry` the position is the body's.
+
+**A shadow without the space (0.6.3, #266).** A shadow is drawn inside the popup's own surface, in a
+transparent margin, because a surface cannot draw outside itself. Left to itself the compositor places
+that whole surface, so the body lands a margin off the anchor and a popup near a screen edge flips a
+margin early. Give the body as `geometry` and the compositor places, flips and slides the body alone:
+
+```python
+m = 20                                   # the shadow's reach
+menu = PopupWindow(bar, size=(180 + 2 * m, 120 + 2 * m), geometry=(m, m, 180, 120),
+                   anchor_rect=(100, 0, 60, 32))
+body = menu.create("box", width=180, height=120, position="absolute", x=m, y=m,
+                   fill=(0x2B, 0x29, 0x30, 0xFF), corner_radius=8,
+                   shadows=[((0, 0, 0, 90), 0, 4, 16, 0)])
+```
+
+`anchor`, `gravity`, `offset` and `constraint_adjustment` then refer to the body, and `configure`'s
+`x` and `y` are the body's. `width` and `height` in `configure` are the surface's (body plus margins).
+If a compositor resizes the popup (`resize_x`, `resize_y`) it resizes the body, and the surface follows
+with the same margins.
 
 **Dismissal.** With `grab=True`, a click outside the application, or Escape, ends the popup:
 `closed` with reason `"dismissed"`, and the click is the popup's. A click on **another window of

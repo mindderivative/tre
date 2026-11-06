@@ -2,15 +2,18 @@
 
 ## Status
 
-**0.6.2 in release (2026-11-06, branch `0.6.2`):** an unsized text node measures to its content, a fit width is the text
-plus 2 px (#263), and a change to another window made in a timer or listener is drawn at once (#264, TRE-REQ-012).
-Notes in `docs/migrating-0.6.md`. Not verified: macOS, Windows, the shell's own panels.
+**0.6.2 released (2026-11-06, PR #265, tag `v0.6.2` on `84d28fd`, PyPI `tesserae-engine==0.6.2`):** an unsized text node
+measures to its content, a fit width is the text plus 2 px (#263), and a change to another window made in a timer or
+listener is drawn at once (#264, TRE-REQ-012). Full-tier CI passed on Linux, Windows, macOS, MSRV and docs; the owner
+approved the `pypi` gate. Installed from PyPI into a clean venv on Linux (Python 3.14): an unsized text node has a size
+(`get("width")` reads `"fit-content"`), `import tre` raises. Not run from the PyPI install: the cross-window draw. Not
+verified: macOS, Windows, the shell's own panels. Notes in `docs/migrating-0.6.md`.
 **0.6.1 released (2026-11-03, PR #261, tag `v0.6.1` on `f9afdf0`, PyPI `tesserae-engine==0.6.1`):** a `call_soon` callback that
 queues itself no longer runs once the loop is exiting (#260, from Tesserae's macOS hang on 0.5.9 to 0.6.0). Full-tier CI passed
 on Linux, Windows, macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI into a clean venv on Linux
 (Python 3.14): the callback ran 0 times after the window closed (2 on 0.6.0), `import tre` raises. NOT verified: macOS (the hang
-does not reproduce on Linux, and winit's part of the cause is inference); Tesserae was asked to run its macOS test without its
-workaround. #260 is In review until then. Notes: `docs/migrating-0.6.md`.
+does not reproduce on Linux, and winit's part of the cause is inference). #260 was closed and approved Done by the owner as
+verified on Linux only; Tesserae stays on 0.6.0 (with its own stop-at-closed fix) and will not run its macOS test on 0.6.1 for now. Reopen if the hang is seen on macOS. Notes: `docs/migrating-0.6.md`.
 **0.6.0 released (2026-11-03, PR #258, tag `v0.6.0` on `a7336bd`, PyPI `tesserae-engine==0.6.0`, repo `mindderivative/tess-re`):**
 the Python package is `tess_re` (was `tre`) and the environment variables are `TESS_RE_*` (were `TRE_*`). Breaking, clean
 cutover, no alias; the PyPI name stays `tesserae-engine`; notes in `docs/migrating-0.6.md`. The first CI run on the PR failed
@@ -49,7 +52,33 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
 
-## After 0.6.1 (unreleased)
+## After 0.6.2 (unreleased)
+
+### #266, a popup is placed by its body, not by its shadow margin (TRE-REQ-007, 2026-11-06)
+
+From the Tesserae Shell vault's `TRE-REQ-007 Popup Body Geometry` (draft since 2026-10-28; the maintainer said on
+2026-11-06 it is needed). A shadow is drawn in a transparent margin inside the popup's own surface, and tre set the
+positioner size and `set_window_geometry` to the whole surface, so xdg-shell placed, flipped and slid the margin too.
+New `PopupWindow(..., geometry=(x, y, width, height))`, the body in the popup's own pixels, inside `size` (default the
+whole surface: nothing changes; a bad one raises `ValueError` naming `geometry`). `get("geometry")` reads it (the whole
+surface when none). In `engine-platform` the positioner size and `set_window_geometry` take the body (in xdg-shell the
+positioner size IS the window-geometry size), and `PopupHandler::configure` adds the margins back to the compositor's
+size (it is the body's), re-sending the geometry for a body the compositor resized; `PopupConfig` gained `geometry` and
+validation. `configure`'s `x`, `y` are the body's position; its `width`, `height` stay the surface's.
+
+Checked on headless sway by a screenshot (grim) of a red body inside a 20 px transparent margin, bar at (40, 50), anchor
+point (140, 82): with a geometry the body's corner is at (140, 82) and it is 120 by 60; without one it is at (160, 102),
+a margin off (the old behaviour, so the harness tells them apart); and with a bar 94 px above the screen's bottom edge
+and `flip_y` allowed, the 60 px body stays below the anchor while the same popup without a geometry is flipped above
+the bar because the compositor judged the margin too. On this machine's KWin session: `configure` reports the body at
+(100, 32) and the surface at 160 by 100 (no pixels read: KWin has no screencopy for grim). Tests:
+`tests/test_popup_geometry_live.py` (3, sway with grim), `tests/test_popup_window.py` (headless: default, read-back,
+bad geometries), `layer_config` unit test; the 43 existing popup and menu tests pass on sway. Not verified: the
+flip on KWin by pixels, a compositor that resizes a popup (`resize_x`, `resize_y`: the margin arithmetic is by
+reading), submenus with a geometry (a child's `anchor_rect` is in the parent's surface coordinates, so it includes the
+parent's margin: the shell computes it), macOS and Windows (no popups).
+
+## 0.6.2 (released 2026-11-06)
 
 ### #263, a text node with no size measures to its content (2026-11-03)
 
@@ -141,8 +170,9 @@ Measured on Linux (llvmpipe, a probe that counts a self-queuing 5 ms callback): 
 window's `closed` event before, in 3 of 3 runs, and 0 times after, in 5 of 5; the same on 0.6.1 installed from
 PyPI into a clean venv. Linux returned in both cases, so the hang itself is not reproduced. Not verified: macOS,
 and that winit 0.30's macOS `exit()` really stalls while wakes keep arriving (the half of the cause that is
-inference). Tesserae has stopped its own tick at `closed`, so it does not depend on this; it has been asked to run
-its macOS test without that workaround and report. Test: `tests/test_exit_requeue.py` (fails on the old code with
+inference). Tesserae has stopped its own tick at `closed`, so it does not depend on this; it stays on 0.6.0 and will
+not run its macOS test without that workaround on 0.6.1 soon. #260 was closed Done as verified on Linux only
+(2026-11-03); reopen it if the hang is seen on macOS. Test: `tests/test_exit_requeue.py` (fails on the old code with
 `2 == 0`). The existing `test_keep_alive.py` still has its intermittent two-thread JSON "Extra data" failure
 (older, see #257).
 
