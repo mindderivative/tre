@@ -2119,8 +2119,20 @@ impl Node {
                 Change::Shader(shader) => node.shader = shader,
                 Change::Style(edit) => edit(style.get_or_insert_with(|| node.layout_style.clone())),
                 Change::Size { height, mode, edit } => {
-                    edit(style.get_or_insert_with(|| node.layout_style.clone()));
-                    let on = matches!(mode, SizeMode::Fit);
+                    let style = style.get_or_insert_with(|| node.layout_style.clone());
+                    edit(style);
+                    // #263: a text node's `"auto"` is the same as `"fit-content"` (and as
+                    // unset): its text's size. Any other plain value, a percentage or a
+                    // calc takes the side off fit.
+                    let auto = if height {
+                        style.size.height.is_auto()
+                    } else {
+                        style.size.width.is_auto()
+                    };
+                    let on = matches!(mode, SizeMode::Fit)
+                        || (matches!(mode, SizeMode::Plain)
+                            && auto
+                            && matches!(node.kind, NodeKind::Text(_)));
                     let mixed = match mode {
                         SizeMode::Calc(len) => Some(len),
                         _ => None,

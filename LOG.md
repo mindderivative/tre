@@ -2,6 +2,9 @@
 
 ## Status
 
+**0.6.2 in release (2026-11-06, branch `0.6.2`):** an unsized text node measures to its content, a fit width is the text
+plus 2 px (#263), and a change to another window made in a timer or listener is drawn at once (#264, TRE-REQ-012).
+Notes in `docs/migrating-0.6.md`. Not verified: macOS, Windows, the shell's own panels.
 **0.6.1 released (2026-11-03, PR #261, tag `v0.6.1` on `f9afdf0`, PyPI `tesserae-engine==0.6.1`):** a `call_soon` callback that
 queues itself no longer runs once the loop is exiting (#260, from Tesserae's macOS hang on 0.5.9 to 0.6.0). Full-tier CI passed
 on Linux, Windows, macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI into a clean venv on Linux
@@ -45,6 +48,81 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 `BUILD_TRACKER_ARCHIVE_*.md` files are the pre-GitHub trackers). Open
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
+
+## After 0.6.1 (unreleased)
+
+### #263, a text node with no size measures to its content (2026-11-03)
+
+A text node had no size of its own: unset it was 0 by 0, so a centred label wrapped a word to a line and an effect
+over it cropped the text (#176, #177), and `"fit-content"` (0.5.7) was the opt-in. Now a text node starts with both
+sides fit, and `"auto"` means the same as `"fit-content"` on text (user decisions: both sides, `"auto"` = fit). A
+number, a percentage or a calc turns a side off; `width=0` is the old zero. Other kinds are unchanged (a box already
+fits its content), and `get` reads `"fit-content"` for a fitting text side, `"auto"` for a box. The default is set at
+`Tree::insert` from the style: a side whose style already holds a length or a percentage starts off fit, so a node
+made with an explicit size (a Rust caller, `Window.build`, a spec) cannot be both sized and fit.
+
+Also (user): a fit width is the measured text plus 2 px, `FIT_CONTENT_SLACK` in `engine-core/src/tree/layout.rs`,
+added before the clamp to the space the parent offers so a tight parent wraps instead of overflowing; the height is
+exact; `window.measure_text` is unchanged. Changed: `Tree::insert` (text starts `FitContent { true, true }`),
+`node_props.rs` `apply` (an `"auto"` side on a text node stays fit), `fit_size`.
+
+Measured. Tests: of the 458 tests in the 28 pytest files that create text, 1 failed with width-only fit and 2 with
+both (the second passed alone); the whole suite with the change: 12 failed of 1,429, 6 of them
+`test_text_fit_content.py` (rewritten here). The other 6, each rerun 3 times alone on this branch and on `main`:
+`test_gpu_shared_live`'s thirty-window memory test fails 3 of 3 on both (older, windows with no text, 6.3153 and
+0.876 MiB); `test_keep_alive` fails in 1 or 2 of its 10 on both (the known two-thread JSON flake); the two
+`test_gpu_memory_live` tests failed only because I forced the software adapter, and pass 3 of 3 on the real GPU; the
+two corner-surface reservation tests pass 3 of 3 alone on this branch, so they were a failure of the long full run
+(an earlier note here, that KWin does not reserve for a corner, was not shown by this and is withdrawn). Cost, 1,000
+labels in a wrapping row: first layout 31 ms; one label edited 0.29 ms; **a parent resize, which re-measures every
+label, 8.7 ms** against 8.8 ms for `main` with an explicit `"fit-content"` and 0.3 ms for `main` unsized. So the
+default costs what the opt-in did, about half a 60 Hz frame per 1,000 labels on a resize, which is why it is worth
+a per-node measure cache if a shell with many labels shows it; none was added. Slack: a one-line label boxed at the
+measured width, rounded up, plus 0 to 4 px, compared with a very wide box for wrapping and lost ink: 798 combinations
+(bundled and system fonts, fractional sizes, five scripts) gave 0 failures at every slack including 0. A negative
+control then found the detector is not blind: at -1, -2 and -3 px, 319 to 321 of 400 labels clip. A wider run (two
+families, both alignments, letter spacing 0.3 and 1.5) found 0 wraps at slack 0 and 2, and 73 ink differences at
+both, all with `text_align="center"` (a centred label in a differently wide reference box lands on another subpixel
+offset, so its ink count differs without anything being cut), none in the left or end aligned cases. So on Linux
+headless the 2 px is a margin the user chose for other platforms and renderers, not a measured minimum; the tests pin
+the literal 2 and use `FIT_CONTENT_SLACK`, so they fail if it is removed. Not verified: macOS, Windows, a fractional
+display scale (the probe ran at 1.0), any renderer but this one. Docs: `docs/guide/text.md`, `nodes-and-layout.md`,
+`shaders.md`, `reference/properties.md`, `reference/window.md`, the `FitContent` and `measure_text` comments, and a
+0.6.2 section in `docs/migrating-0.6.md`. The owner said this is a patch release at most, so the stamps read 0.6.2
+(0.6.1 is already on PyPI); the version files are not bumped, that is the release step. Tesserae's schema and tests
+may expect `get("width")` to read `"auto"` for an unsized text node; it reads `"fit-content"` now.
+
+### #264, a change to one window made in another window's callback is drawn (TRE-REQ-012, 2026-11-06)
+
+From the `tess-shell` code session (mailbox, write-up and repro in its `tests/kwin/`): a node set in window B during a
+timer or listener of window A was not drawn until something else woke the loop; its workaround was a queued no-op
+`call_soon` after every change. Reproduced first on headless sway (llvmpipe) on unmodified `main`, with the shell's repro
+and then with my own probe over 12 processes (a timer of A sets B's fill 8 times, 250 ms apart): **5 of 12 processes drew
+none of the changes at once** (each waited for the next timer, 250 ms, the last 950 ms), the other 7 drew every one in
+1 ms. One run of the shell's repro showed `1501, 1, 1, ...`: its first change sets a colour B already has (no change, no
+frame), so that number is the script's, not the engine's; the failure is the per-process pattern above.
+
+Cause: `run_layer_frames` draws each layer whose `needs_frame` is set, in `HashMap` order, which differs per process, and
+clears the flag; a change made to B inside A's frame (a timer, a listener) sets nothing for B. If B was already handled in
+that pass it waits for the next unrelated wake. `CallQueue::drain` already wakes the loop after it runs a `call_soon`, for
+exactly this reason; timers and listeners had no such wake. Ordinary windows have the same hole. Fix: `Tree::is_dirty`
+(a read that does not take the flag) and, in `engine-py`'s frame callback, a guard (`CrossWindowWake`) that at the end of
+every window's frame wakes the loop once if another window's tree is dirty and no wake has been sent for it since it last
+drew (`WindowRuntime::wake_sent`, cleared where a window really draws, after the occluded early return). Edge-triggered
+on purpose: a window that is changed but cannot draw (occluded, or a surface the compositor withholds frame callbacks
+from) stays dirty, and waking for it every frame would spin the loop.
+
+Measured after: 16 of 16 processes drew all 8 changes in 1 to 2 ms (the same probe). A surface under a fullscreen window
+changed 90 times in 3 s: 0 frames drawn, 0.01 s of CPU, the same as `main`. Two layers idle: 0.000 s of CPU in 3 s on
+both. Test: `tests/test_cross_window_redraw_live.py` (6 processes, 5 changes each; fails on the old code, passes with the
+fix) on headless sway and on this machine's KWin session (real RADV): on KWin the old code fails it and the fix passes.
+Also run: the hidden-window and occlusion live tests, `test_thread_handle`, `test_exit_requeue`, `test_timers` (27 pass),
+`engine-py` lib tests (62), `engine-core` tests, fmt, clippy `-D warnings`, and 24 window, layer, popup, timer, listener
+and keep-alive test files under sway: 358 passed, 5 failed, none from this change: `test_window_controls` and
+`test_window_titlebar` live (sway tiles the windows; they pass on KWin), and three `test_keep_alive` tests, which fail
+2 to 3 of 10 in each of 3 runs on `main` as well, with a different set each time (the older two-thread JSON print
+flake). Not run: the full suite, macOS, Windows, KWin with the shell's own panels (its test is the shell's). The shell
+can drop its `SurfaceManager.wake` workaround once it has a build with this change.
 
 ## 0.6.1 (released 2026-11-03)
 

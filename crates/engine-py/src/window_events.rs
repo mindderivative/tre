@@ -1519,8 +1519,8 @@ impl PyWindow {
 
     /// M96: the size `text` takes, as `(width, height)`, laid out exactly
     /// as a text node with these properties paints it -- wrapped within
-    /// `max_width` when given, cut to `max_lines`. For sizing a widget to
-    /// its content; a text node has no size of its own.
+    /// `max_width` when given, cut to `max_lines`. For sizing a widget by hand: the numbers
+    /// are exact, and an unsized text node is this width plus 2 px (`FIT_CONTENT_SLACK`).
     #[pyo3(signature = (
         text, font_family="Roboto", font_size=16.0, font_weight=400.0, font_style="normal",
         letter_spacing=0.0, line_height=None, max_width=None, wrap="word", max_lines=None,

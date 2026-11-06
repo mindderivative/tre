@@ -1619,14 +1619,15 @@ pub struct Anchored {
     pub offset: (f64, f64),
 }
 
-/// 0.5.7 (#176, #177): `width="fit-content"` and `height="fit-content"` on a
-/// text node. A text node has no size of its own: unsized it is zero wide, which
-/// is why a centred label wrapped one word to a line and an effect over it cropped
-/// the text. A side marked here takes the text's own size instead, measured through
-/// the `Tree`'s text measure (`Tree::set_text_measure`): the width is the text on one
-/// line, narrowed to the space the parent offers when the text wraps, and the height
-/// is the wrapped text's. A side left `false` keeps today's behaviour, and a node
-/// that is not text is unaffected (a box already fits its content).
+/// 0.5.7 (#176, #177): which sides of a text node are the size of its text, written
+/// `width="fit-content"` and `height="fit-content"`. Since 0.6.2 (#263) a text node
+/// starts with both sides on, and `"auto"` is the same as `"fit-content"` on text; a
+/// number, a percentage or a calc turns a side off, and an off side is zero (a text
+/// node has no size of its own). A fit side is measured through the `Tree`'s text
+/// measure (`Tree::set_text_measure`): the width is the text on one line plus
+/// `FIT_CONTENT_SLACK` pixels, narrowed to the space the parent offers when the text
+/// wraps, and the height is the wrapped text's. A node that is not text is unaffected
+/// (a box already fits its content).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FitContent {
     pub width: bool,
