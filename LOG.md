@@ -73,9 +73,12 @@ changed 90 times in 3 s: 0 frames drawn, 0.01 s of CPU, the same as `main`. Two 
 both. Test: `tests/test_cross_window_redraw_live.py` (6 processes, 5 changes each; fails on the old code, passes with the
 fix) on headless sway and on this machine's KWin session (real RADV): on KWin the old code fails it and the fix passes.
 Also run: the hidden-window and occlusion live tests, `test_thread_handle`, `test_exit_requeue`, `test_timers` (27 pass),
-`engine-py` lib tests (62), `engine-core` tests, fmt, clippy `-D warnings`. Not run: the full suite, macOS, Windows, KWin
-with the shell's own panels (its test is the shell's). The shell can drop its `SurfaceManager.wake` workaround once it
-has a build with this change.
+`engine-py` lib tests (62), `engine-core` tests, fmt, clippy `-D warnings`, and 24 window, layer, popup, timer, listener
+and keep-alive test files under sway: 358 passed, 5 failed, none from this change: `test_window_controls` and
+`test_window_titlebar` live (sway tiles the windows; they pass on KWin), and three `test_keep_alive` tests, which fail
+2 to 3 of 10 in each of 3 runs on `main` as well, with a different set each time (the older two-thread JSON print
+flake). Not run: the full suite, macOS, Windows, KWin with the shell's own panels (its test is the shell's). The shell
+can drop its `SurfaceManager.wake` workaround once it has a build with this change.
 
 ## 0.6.1 (released 2026-11-03)
 
