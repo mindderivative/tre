@@ -2,6 +2,9 @@
 
 ## Status
 
+**0.6.2 in release (2026-11-06, branch `0.6.2`):** an unsized text node measures to its content, a fit width is the text
+plus 2 px (#263), and a change to another window made in a timer or listener is drawn at once (#264, TRE-REQ-012).
+Notes in `docs/migrating-0.6.md`. Not verified: macOS, Windows, the shell's own panels.
 **0.6.1 released (2026-11-03, PR #261, tag `v0.6.1` on `f9afdf0`, PyPI `tesserae-engine==0.6.1`):** a `call_soon` callback that
 queues itself no longer runs once the loop is exiting (#260, from Tesserae's macOS hang on 0.5.9 to 0.6.0). Full-tier CI passed
 on Linux, Windows, macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI into a clean venv on Linux

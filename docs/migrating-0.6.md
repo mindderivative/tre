@@ -93,6 +93,13 @@ grep -rnE '\btre\b|TRE_' --include='*.py' --include='*.toml' --include='*.yml' -
 - **`window.measure_text` is unchanged.** It returns the exact size with no extra
   pixels, so code that sizes text by hand from it keeps its numbers.
 
+### Fixed
+
+- **A change to one window made in another window's callback is drawn (#264).** A node set in window B from a
+  timer or listener of window A could wait for the next unrelated wake of the loop before it was drawn, in about
+  half of all processes with two layer surfaces (the draw order differs per process). It is drawn at once now, so a
+  queued no-op `call_soon` after every cross-window change is no longer needed. Nothing to change in your code.
+
 ### What may move
 
 - A text node in a `Row` takes its text's width instead of 0. Its height is still
