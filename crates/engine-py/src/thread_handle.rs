@@ -85,7 +85,7 @@ impl CallQueue {
         self.lock().stopping
     }
 
-    fn wake(&self) {
+    pub(crate) fn wake(&self) {
         let waker = self.lock().waker.clone();
         if let Some(waker) = waker {
             waker.wake();

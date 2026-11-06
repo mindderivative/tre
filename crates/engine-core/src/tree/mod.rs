@@ -326,6 +326,13 @@ impl Tree {
         std::mem::replace(&mut self.dirty, false)
     }
 
+    /// #264: whether a frame is owed, without taking the flag. `take_dirty` is the frame's
+    /// own read; this is for a caller that only wants to know (another window's frame
+    /// asking whether it left this tree changed).
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
     /// Marks the tree as needing a frame -- for a caller that took the
     /// flag but couldn't draw that frame (0.4.0 review: a surface that
     /// had to be reconfigured first), so the next one does.
