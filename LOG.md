@@ -2,6 +2,14 @@
 
 ## Status
 
+**0.6.4 (2026-11-07, PRs #275-#278 merged, PR for the release below):** TRE-REQ-013, four ways to build a join that grows out of a
+shape. `transform_origin` and `corner_style="concave"` (#269); `Shader.animate`, `hit_path`, the `sd_*` shader helpers and
+`frame.scale` (#270); `morph="structure"|"strict"` on a path (#271); path templates with `params` and `animate_param`
+(#272). Also fixed: an animation started by a timer drew no frames on a live window (found in #272, older than 0.6.4).
+One breaking change: a shader may not declare a function named like a helper (`docs/migrating-0.6.md`, `## 0.6.4`).
+Verified on Linux headless only (Window pixels, private headless sway frame counts); KWin, the real GPU and a 1.5 scale
+on a compositor are the maintainer's and the shell session's. #269-#272 are Done.
+
 **0.6.3 released (2026-11-06, PR #267, tag `v0.6.3` on `6747f257`, PyPI `tesserae-engine==0.6.3`):** `PopupWindow(geometry=)`,
 the compositor places a popup's body and not its shadow margin (#266, TRE-REQ-007). Full-tier CI passed on Linux, Windows,
 macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI into a clean venv on Linux (Python 3.14):
@@ -63,7 +71,7 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
 
-## After 0.6.3 (unreleased)
+## 0.6.4 (released 2026-11-07)
 
 ### #269, `transform_origin` (TRE-REQ-013 step 1, part A, 2026-11-06)
 
