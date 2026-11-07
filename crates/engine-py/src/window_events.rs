@@ -286,7 +286,7 @@ impl PyWindow {
             "box" => NodeKind::Rect,
             "path" => {
                 require(&["data"])?;
-                NodeKind::Path(PathState::new(PathData(BezPath::new())))
+                NodeKind::Path(PathState::new(PathData(BezPath::new(), engine_core::MorphMode::Resample)))
             }
             "svg" => {
                 require(&["svg"])?;

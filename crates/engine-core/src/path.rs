@@ -55,17 +55,64 @@ impl HitShape {
     }
 }
 
-/// A path's data -- the value an `Animated<PathData>` interpolates.
+/// #271: how a path's data morphs into other data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MorphMode {
+    /// Both paths are resampled by arc length: any two paths morph, and mid-frames are polygons.
+    /// The default.
+    #[default]
+    Resample,
+    /// Two paths with the same sequence of commands morph number by number, so lines, curves and
+    /// arcs stay what they are and every mid-frame is exact; any other pair resamples.
+    Structure,
+    /// As `Structure`, but a pair with different command sequences is an error, not a resample.
+    Strict,
+}
+
+impl MorphMode {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "resample" => Some(Self::Resample),
+            "structure" => Some(Self::Structure),
+            "strict" => Some(Self::Strict),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Resample => "resample",
+            Self::Structure => "structure",
+            Self::Strict => "strict",
+        }
+    }
+}
+
+/// A path's data -- the value an `Animated<PathData>` interpolates. The mode is how a morph
+/// *into* this data is made (the target's, as an animation's `to` carries it); it is no part of
+/// the shape.
 #[derive(Clone, Debug, PartialEq)]
-pub struct PathData(pub BezPath);
+pub struct PathData(pub BezPath, pub MorphMode);
 
 impl PathData {
     /// Parses SVG path data -- the `d` attribute's syntax: `M`, `L`, `H`,
     /// `V`, `C`, `S`, `Q`, `T`, `A`, `Z`, absolute and relative.
     pub fn from_svg(data: &str) -> Result<Self, String> {
         BezPath::from_svg(data)
-            .map(Self)
+            .map(|path| Self(path, MorphMode::Resample))
             .map_err(|err| err.to_string())
+    }
+
+    /// The same data, morphed into by `mode`.
+    pub fn with_mode(mut self, mode: MorphMode) -> Self {
+        self.1 = mode;
+        self
+    }
+
+    /// Whether the two paths have the same sequence of commands (each `M`, `L`, `Q`, `C`, `Z` in
+    /// the same place; an arc is already curves), so a structure morph can pair their numbers.
+    pub fn same_structure(&self, other: &Self) -> bool {
+        same_structure(&self.0, &other.0)
     }
 
     /// The path as SVG `d` data.
@@ -82,12 +129,52 @@ impl Interpolate for PathData {
         if t >= 1.0 {
             return other.clone();
         }
+        if other.1 != MorphMode::Resample
+            && let Some(path) = morph_structure(&self.0, &other.0, t)
+        {
+            return Self(path, other.1);
+        }
         match morph(&self.0, &other.0, t) {
-            Some(path) => Self(path),
+            Some(path) => Self(path, other.1),
             None if t < 0.5 => self.clone(),
             None => other.clone(),
         }
     }
+}
+
+fn same_structure(a: &BezPath, b: &BezPath) -> bool {
+    let (a, b) = (a.elements(), b.elements());
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(x, y)| std::mem::discriminant(x) == std::mem::discriminant(y))
+}
+
+/// The `t` frame of morphing `from` into `to` number by number, or `None` when their commands
+/// differ. Every point moves in a straight line, so a curve stays a curve of the same kind, and a
+/// quarter-circle cubic whose radius changes stays a quarter circle.
+fn morph_structure(from: &BezPath, to: &BezPath, t: f64) -> Option<BezPath> {
+    if !same_structure(from, to) {
+        return None;
+    }
+    let mix = |a: Point, b: Point| a.lerp(b, t);
+    let elements = from
+        .elements()
+        .iter()
+        .zip(to.elements())
+        .map(|pair| match pair {
+            (PathEl::MoveTo(a), PathEl::MoveTo(b)) => PathEl::MoveTo(mix(*a, *b)),
+            (PathEl::LineTo(a), PathEl::LineTo(b)) => PathEl::LineTo(mix(*a, *b)),
+            (PathEl::QuadTo(a1, a2), PathEl::QuadTo(b1, b2)) => {
+                PathEl::QuadTo(mix(*a1, *b1), mix(*a2, *b2))
+            }
+            (PathEl::CurveTo(a1, a2, a3), PathEl::CurveTo(b1, b2, b3)) => {
+                PathEl::CurveTo(mix(*a1, *b1), mix(*a2, *b2), mix(*a3, *b3))
+            }
+            _ => PathEl::ClosePath,
+        })
+        .collect::<Vec<_>>();
+    Some(BezPath::from_vec(elements))
 }
 
 /// One subpath: its segments and whether it closes.
@@ -305,6 +392,8 @@ pub struct PathState {
     /// 0.5.9 (#236): which part of the node takes pointer events and counts in an
     /// `input_region="auto"`.
     pub hit_shape: HitShape,
+    /// #271: how an animation of `data` morphs (`morph`).
+    pub morph: MorphMode,
     /// The `(min_x, min_y, width, height)` region `data` is drawn in,
     /// fitted into the node's box; `None` draws `data` in node-local
     /// pixels.
@@ -319,6 +408,7 @@ impl PathState {
         Self {
             data: Animated::new(data),
             hit_shape: HitShape::Box,
+            morph: MorphMode::Resample,
             view_box: None,
             trim_start: Animated::new(0.0),
             trim_end: Animated::new(1.0),
@@ -362,6 +452,64 @@ mod tests {
         assert!(PathData::from_svg("M0,0 X10").is_err());
         // Arcs parse too.
         assert!(PathData::from_svg("M0,12 A12,12 0 1 1 24,12").is_ok());
+    }
+
+    /// A `w` by `h` rectangle with corners of radius `r`, as SVG arcs.
+    fn rounded(w: f64, h: f64, r: f64) -> PathData {
+        PathData::from_svg(&format!(
+            "M{r},0 H{} A{r},{r} 0 0 1 {w},{r} V{} A{r},{r} 0 0 1 {},{h} H{r} \
+             A{r},{r} 0 0 1 0,{} V{r} A{r},{r} 0 0 1 {r},0 Z",
+            w - r,
+            h - r,
+            w - r,
+            h - r
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_structure_morph_keeps_every_command_and_ends_exactly() {
+        let a = rounded(100.0, 60.0, 4.0);
+        let b = rounded(100.0, 60.0, 20.0).with_mode(MorphMode::Structure);
+        assert!(a.same_structure(&b));
+        assert_eq!(a.interpolate(&b, 0.0), a);
+        assert_eq!(a.interpolate(&b, 1.0), b);
+        let mid = a.interpolate(&b, 0.5);
+        let kinds = |p: &PathData| {
+            p.0.elements()
+                .iter()
+                .map(std::mem::discriminant)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(kinds(&mid), kinds(&a), "the arcs are still four cubics, not a polygon");
+        // Midway the corner is the radius 12 arc: its cubic's far end is at (12, 0) from the corner.
+        let want = rounded(100.0, 60.0, 12.0);
+        for (x, y) in mid.0.elements().iter().zip(want.0.elements()) {
+            let close = |p: Point, q: Point| p.distance(q) < 1e-9;
+            match (x, y) {
+                (PathEl::MoveTo(p), PathEl::MoveTo(q)) | (PathEl::LineTo(p), PathEl::LineTo(q)) => {
+                    assert!(close(*p, *q))
+                }
+                (PathEl::CurveTo(a1, a2, a3), PathEl::CurveTo(b1, b2, b3)) => {
+                    assert!(close(*a1, *b1) && close(*a2, *b2) && close(*a3, *b3))
+                }
+                (PathEl::ClosePath, PathEl::ClosePath) => {}
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_structure_morph_of_different_commands_resamples_and_the_default_always_does() {
+        let a = rounded(100.0, 60.0, 4.0);
+        let line = PathData::from_svg("M0,0 L100,0 L100,60 L0,60 Z").unwrap();
+        assert!(!a.same_structure(&line));
+        let structured = line.clone().with_mode(MorphMode::Structure);
+        let mid = a.interpolate(&structured, 0.5);
+        assert_eq!(mid.0.elements().len(), MORPH_SAMPLES + 1, "resampled");
+        // The default never pairs numbers, even for equal commands.
+        let plain = rounded(100.0, 60.0, 20.0);
+        assert_eq!(a.interpolate(&plain, 0.5).0.elements().len(), MORPH_SAMPLES + 1);
     }
 
     #[test]

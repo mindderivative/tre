@@ -8524,7 +8524,7 @@ fn over_many_random_rounded_rings_the_region_never_loses_a_painted_pixel() {
             (RED, 0.0),
         );
         if let NodeKind::Path(state) = &mut tree.get_mut(node).unwrap().kind {
-            state.data = crate::animation::Animated::new(crate::PathData(both.clone()));
+            state.data = crate::animation::Animated::new(crate::PathData(both.clone(), crate::MorphMode::Resample));
         }
         set_painted(&mut tree, node);
         laid_out(&mut tree, root, 260.0);

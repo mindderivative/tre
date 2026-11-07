@@ -103,6 +103,18 @@ empty, notch open, and at scale 1.5), `tests/test_hit_path.py` (7), engine-core:
 draw the shader is not woken, helpers (1), region (1). Not checked: a window on a real compositor going idle after the
 animation (frames drawn 0), the cost per frame of a join shader, KWin.
 
+### #271, `morph="structure"` (TRE-REQ-013 step 3, 2026-11-06)
+
+Branch `path-morph-271`, off `shader-joins-270`. `PathData` gained a second field, `MorphMode` (`Resample`, the default,
+`Structure`, `Strict`), which is how a morph *into* that data is made, so an animation's `to` carries it and
+`Interpolate::interpolate` needs no context. `PathState::morph` (the `morph` property, path nodes only) is stamped on the
+`to` by `Node.animate`. With equal command sequences (`std::mem::discriminant` per element; SVG arcs are already cubics)
+`morph_structure` lerps every point, so an arc between two radii is exactly the arc of the lerped radius (a unit test
+compares the radius 4 to 20 midpoint to a radius 12 rounded rectangle point for point). Different commands: `Structure`
+resamples, `Strict` raises from `animate` before anything changes. Not paired beyond order: a different start point or
+winding is the caller's. Tests: 2 in `path.rs`, `tests/test_path_morph_structure.py` (5). Not done: interpolation of the
+SMIL `d` morph is unchanged (it was already structural); no morph between a structured and a resampled mid-frame.
+
 ## After 0.6.2 (unreleased)
 
 ### #266, a popup is placed by its body, not by its shadow margin (TRE-REQ-007, 2026-11-06)
