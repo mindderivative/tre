@@ -2,6 +2,12 @@
 
 ## Status
 
+**0.6.3 released (2026-11-06, PR #267, tag `v0.6.3` on `6747f257`, PyPI `tesserae-engine==0.6.3`):** `PopupWindow(geometry=)`,
+the compositor places a popup's body and not its shadow margin (#266, TRE-REQ-007). Full-tier CI passed on Linux, Windows,
+macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI into a clean venv on Linux (Python 3.14):
+`geometry` reads back, defaults to the whole surface, a geometry outside `size` raises `ValueError`, `import tre` raises. Not
+run from the PyPI install: a compositor placement. Not verified: the flip on KWin by pixels, compositors that resize a
+popup, macOS and Windows (no popups). #263, #264 and #266 are Done. Notes in `docs/migrating-0.6.md`.
 **0.6.2 released (2026-11-06, PR #265, tag `v0.6.2` on `84d28fd`, PyPI `tesserae-engine==0.6.2`):** an unsized text node
 measures to its content, a fit width is the text plus 2 px (#263), and a change to another window made in a timer or
 listener is drawn at once (#264, TRE-REQ-012). Full-tier CI passed on Linux, Windows, macOS, MSRV and docs; the owner
@@ -115,7 +121,7 @@ resamples, `Strict` raises from `animate` before anything changes. Not paired be
 winding is the caller's. Tests: 2 in `path.rs`, `tests/test_path_morph_structure.py` (5). Not done: interpolation of the
 SMIL `d` morph is unchanged (it was already structural); no morph between a structured and a resampled mid-frame.
 
-## After 0.6.2 (unreleased)
+## 0.6.3 (released 2026-11-06)
 
 ### #266, a popup is placed by its body, not by its shadow margin (TRE-REQ-007, 2026-11-06)
 
