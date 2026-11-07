@@ -601,14 +601,26 @@ pub(crate) fn animatable_to_py(
             None => py.None(),
         },
         "corner_style" => {
-            let names = node.paint.corner_concave.map(|c| if c { "concave" } else { "round" });
+            let names = node
+                .paint
+                .corner_concave
+                .map(|c| if c { "concave" } else { "round" });
             if names.iter().all(|n| *n == names[0]) {
                 names[0].into_pyobject(py)?.into_any().unbind()
             } else {
-                (names[0], names[1], names[2], names[3]).into_pyobject(py)?.into_any().unbind()
+                (names[0], names[1], names[2], names[3])
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
             }
         }
-        "transform_origin" => node.paint.node_transform.origin.into_pyobject(py)?.into_any().unbind(),
+        "transform_origin" => node
+            .paint
+            .node_transform
+            .origin
+            .into_pyobject(py)?
+            .into_any()
+            .unbind(),
         "opacity" => number(*pick(&node.paint.opacity, target))?,
         "blur" => number(*pick(&node.paint.blur, target))?,
         "backdrop_blur" => number(*pick(&node.paint.backdrop_blur, target))?,

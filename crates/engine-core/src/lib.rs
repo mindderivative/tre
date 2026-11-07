@@ -18,8 +18,8 @@
 //! instead, so the dead trait was removed.
 
 mod access;
-mod box_shape;
 mod animation;
+mod box_shape;
 mod canvas;
 mod dock;
 mod gesture;
@@ -39,11 +39,11 @@ pub use access::{
     AccessExtra, AccessNodeData, AccessStates, AccessValue, Action, ActionData, AriaCurrent, Live,
     Role, Toggled,
 };
-pub use box_shape::box_outline;
 pub use animation::{
     ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve, animations_started,
     take_cancelled,
 };
+pub use box_shape::box_outline;
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
 pub use gesture::{

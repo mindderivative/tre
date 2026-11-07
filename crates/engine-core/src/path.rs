@@ -533,7 +533,11 @@ mod tests {
                 .map(std::mem::discriminant)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(kinds(&mid), kinds(&a), "the arcs are still four cubics, not a polygon");
+        assert_eq!(
+            kinds(&mid),
+            kinds(&a),
+            "the arcs are still four cubics, not a polygon"
+        );
         // Midway the corner is the radius 12 arc: its cubic's far end is at (12, 0) from the corner.
         let want = rounded(100.0, 60.0, 12.0);
         for (x, y) in mid.0.elements().iter().zip(want.0.elements()) {
@@ -561,7 +565,10 @@ mod tests {
         assert_eq!(mid.0.elements().len(), MORPH_SAMPLES + 1, "resampled");
         // The default never pairs numbers, even for equal commands.
         let plain = rounded(100.0, 60.0, 20.0);
-        assert_eq!(a.interpolate(&plain, 0.5).0.elements().len(), MORPH_SAMPLES + 1);
+        assert_eq!(
+            a.interpolate(&plain, 0.5).0.elements().len(),
+            MORPH_SAMPLES + 1
+        );
     }
 
     #[test]
