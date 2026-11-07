@@ -46,6 +46,7 @@ const FIXED: &[&str] = &[
     "constraint_adjustment",
     "offset",
     "grab",
+    "geometry",
 ];
 
 fn bad(key: &str, what: &str) -> PyErr {
@@ -100,7 +101,8 @@ impl PyPopupWindow {
         gravity = "bottom_right",
         constraint_adjustment = None,
         offset = None,
-        grab = true
+        grab = true,
+        geometry = None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -112,6 +114,7 @@ impl PyPopupWindow {
         constraint_adjustment: Option<&Bound<'_, PyAny>>,
         offset: Option<&Bound<'_, PyAny>>,
         grab: bool,
+        geometry: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyClassInitializer<Self>> {
         match availability() {
             Availability::Unsupported(why) => return Err(UnsupportedPlatform::new_err(why)),
@@ -171,6 +174,17 @@ impl PyPopupWindow {
                 .transpose()?
                 .unwrap_or((0, 0)),
             grab,
+            geometry: match geometry {
+                Some(value) if !value.is_none() => {
+                    Some(value.extract::<(i32, i32, i32, i32)>().map_err(|_| {
+                        bad(
+                            "geometry",
+                            "must be (x, y, width, height), whole numbers of pixels",
+                        )
+                    })?)
+                }
+                _ => None,
+            },
         };
         config
             .validate()
@@ -240,6 +254,12 @@ impl PyPopupWindow {
                 .unbind(),
             "offset" => c.offset.into_pyobject(py)?.into_any().unbind(),
             "grab" => c.grab.into_pyobject(py)?.to_owned().into_any().unbind(),
+            "geometry" => c
+                .geometry
+                .unwrap_or((0, 0, c.size.0 as i32, c.size.1 as i32))
+                .into_pyobject(py)?
+                .into_any()
+                .unbind(),
             "position" => state
                 .popup_position
                 .get()

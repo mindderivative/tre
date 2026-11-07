@@ -312,6 +312,10 @@ pub struct PopupConfig {
     pub offset: (i32, i32),
     /// Whether the popup grabs the keyboard and pointer, so an outside click or Escape ends it.
     pub grab: bool,
+    /// #266: the popup's body, `(x, y, width, height)` in the popup's own pixels, inside `size`.
+    /// The compositor places and constrains this rectangle and ignores the rest of the surface
+    /// (a transparent shadow margin). `None` is the whole surface.
+    pub geometry: Option<Rect>,
 }
 
 impl PopupConfig {
@@ -326,6 +330,21 @@ impl PopupConfig {
                 "anchor_rect",
                 "needs a width and a height of 0 or more",
             ));
+        }
+        if let Some((x, y, w, h)) = self.geometry {
+            let (sw, sh) = (i64::from(self.size.0), i64::from(self.size.1));
+            let inside = w > 0
+                && h > 0
+                && x >= 0
+                && y >= 0
+                && i64::from(x) + i64::from(w) <= sw
+                && i64::from(y) + i64::from(h) <= sh;
+            if !inside {
+                return Err(error(
+                    "geometry",
+                    "must be (x, y, width, height) with a width and height above 0, inside the popup's size",
+                ));
+            }
         }
         Ok(())
     }
@@ -639,6 +658,7 @@ mod tests {
             adjustments: adjust::FLIP_Y,
             offset: (0, 0),
             grab: true,
+            geometry: None,
         };
         assert!(ok.validate().is_ok());
         assert!(
@@ -652,10 +672,34 @@ mod tests {
         assert!(
             PopupConfig {
                 anchor_rect: (0, 0, -1, 4),
-                ..ok
+                ..ok.clone()
             }
             .validate()
             .is_err()
         );
+        assert!(
+            PopupConfig {
+                geometry: Some((10, 8, 80, 34)),
+                ..ok.clone()
+            }
+            .validate()
+            .is_ok()
+        );
+        for bad in [
+            (0, 0, 0, 10),
+            (-1, 0, 10, 10),
+            (10, 0, 91, 10),
+            (0, 45, 10, 6),
+        ] {
+            assert!(
+                PopupConfig {
+                    geometry: Some(bad),
+                    ..ok.clone()
+                }
+                .validate()
+                .is_err(),
+                "{bad:?}"
+            );
+        }
     }
 }

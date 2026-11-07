@@ -591,6 +591,9 @@ enum Role {
         popup: Popup,
         /// The surface this popup hangs off.
         parent: u64,
+        /// #266: the body `(x, y, width, height)` the compositor places, when it is not the
+        /// whole surface; the rest is a transparent margin.
+        geometry: Option<crate::layer_config::Rect>,
     },
 }
 
@@ -931,7 +934,10 @@ impl State {
             return fail(self, "this compositor would not make an xdg_positioner");
         };
         let (width, height) = (config.size.0 as i32, config.size.1 as i32);
-        positioner.set_size(width, height);
+        // #266: the positioner's size is the window geometry's, so a popup with a shadow margin
+        // is placed by its body.
+        let (gx, gy, gw, gh) = config.geometry.unwrap_or((0, 0, width, height));
+        positioner.set_size(gw, gh);
         let (x, y, w, h) = config.anchor_rect;
         positioner.set_anchor_rect(x, y, w, h);
         positioner.set_anchor(positioner_anchor(config.anchor));
@@ -976,7 +982,7 @@ impl State {
         {
             popup.xdg_popup().grab(&seat, self.last_serial);
         }
-        popup.xdg_surface().set_window_geometry(0, 0, width, height);
+        popup.xdg_surface().set_window_geometry(gx, gy, gw, gh);
         let fractional = self
             .fractional_manager
             .as_ref()
@@ -993,6 +999,7 @@ impl State {
                 role: Role::Popup {
                     popup,
                     parent: config.parent,
+                    geometry: config.geometry,
                 },
                 config: LayerConfig {
                     size: config.size,
@@ -1608,7 +1615,23 @@ impl PopupHandler for State {
             return;
         };
         if let Some(surf) = self.surfaces.get_mut(&id) {
-            surf.size = (config.width.max(1) as u32, config.height.max(1) as u32);
+            let (w, h) = (config.width.max(1), config.height.max(1));
+            surf.size = (w as u32, h as u32);
+            // #266: the compositor's size is the body's (it may have resized it); the surface is
+            // the body plus the same margins it was made with, and the geometry follows.
+            if let Role::Popup {
+                popup,
+                geometry: Some((gx, gy, gw, gh)),
+                ..
+            } = &surf.role
+            {
+                let margin = (
+                    surf.config.size.0 as i32 - gw,
+                    surf.config.size.1 as i32 - gh,
+                );
+                popup.xdg_surface().set_window_geometry(*gx, *gy, w, h);
+                surf.size = ((w + margin.0).max(1) as u32, (h + margin.1).max(1) as u32);
+            }
         }
         // Where the compositor put it, in the parent's coordinates: before the size, so the
         // app hears both together.

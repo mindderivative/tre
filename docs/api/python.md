@@ -219,14 +219,14 @@ A menu or flyout the compositor places beside a rectangle of its parent (a Wayla
 
 **Inherits:** [`Window`](#window) → [`object`](https://docs.python.org/3/library/functions.html#object)  ·  **Details:** [PopupWindow reference](../reference/layer-window.md#popupwindow)
 
-**Constructor:** `PopupWindow(parent: LayerWindow | PopupWindow, *, size: tuple[int, int], anchor_rect: tuple[int, int, int, int], anchor: Literal['none', 'top', 'bottom', 'left', 'right', 'top_left', 'bottom_left', 'top_right', 'bottom_right']=..., gravity: Literal['none', 'top', 'bottom', 'left', 'right', 'top_left', 'bottom_left', 'top_right', 'bottom_right']=..., constraint_adjustment: str | Sequence[str] | None=..., offset: tuple[int, int] | None=..., grab: bool=...)`
+**Constructor:** `PopupWindow(parent: LayerWindow | PopupWindow, *, size: tuple[int, int], anchor_rect: tuple[int, int, int, int], anchor: Literal['none', 'top', 'bottom', 'left', 'right', 'top_left', 'bottom_left', 'top_right', 'bottom_right']=..., gravity: Literal['none', 'top', 'bottom', 'left', 'right', 'top_left', 'bottom_left', 'top_right', 'bottom_right']=..., constraint_adjustment: str | Sequence[str] | None=..., offset: tuple[int, int] | None=..., grab: bool=..., geometry: tuple[int, int, int, int] | None=...)`
 
 **Methods:**
 
 | Method | Description |
 | --- | --- |
 | `close() -> None` | Closes the popup on the loop's next turn: `close_requested` first, then `closed` with reason `"app"`. |
-| `get(name: str) -> Any` | Reads `size`, `anchor_rect`, `anchor`, `gravity`, `constraint_adjustment`, `offset`, `grab`, `position` (where the compositor… |
+| `get(name: str) -> Any` | Reads `size`, `anchor_rect`, `anchor`, `gravity`, `constraint_adjustment`, `offset`, `grab`, `geometry` (the body; the whole… |
 | `set(**props: Any) -> None` | Sets the window keys a popup shares (`touch_slop`, `partial_redraw`, ...). |
 
 **Events:** none.

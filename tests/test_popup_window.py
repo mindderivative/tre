@@ -134,3 +134,21 @@ def test_without_a_layer_shell_the_constructor_raises(monkeypatch):
     monkeypatch.setenv("DISPLAY", ":99")  # X11 only: no layer shell
     with pytest.raises(UnsupportedPlatform):
         popup(parent)
+
+
+def test_geometry_is_the_body_and_defaults_to_the_whole_surface():
+    # 0.6.2 (#266): the popup proper inside a transparent margin.
+    assert popup().get("geometry") == (0, 0, 160, 90)
+    p = popup(size=(200, 130), geometry=(20, 20, 160, 90))
+    assert p.get("geometry") == (20, 20, 160, 90)
+    assert p.get("size") == (200, 130)
+    assert popup(geometry=None).get("geometry") == (0, 0, 160, 90)
+
+
+@pytest.mark.parametrize(
+    "geometry",
+    [(0, 0, 0, 10), (-1, 0, 10, 10), (0, 0, 161, 10), (10, 85, 10, 10), (1, 2, 3), "box", (1.5, 0, 10, 10)],
+)
+def test_a_geometry_outside_the_surface_or_malformed_raises(geometry):
+    with pytest.raises(ValueError, match="geometry"):
+        popup(geometry=geometry)
