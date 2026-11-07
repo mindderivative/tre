@@ -294,7 +294,13 @@ mod tests {
 
     #[test]
     fn only_sums_products_numbers_and_names_are_evaluated() {
-        for bad in ["M0,0 H {a / 2}", "M0,0 H {sqrt(a)}", "M0,0 H {a ? 1}", "M0,0 H {}", "M0,0 H {(a}"] {
+        for bad in [
+            "M0,0 H {a / 2}",
+            "M0,0 H {sqrt(a)}",
+            "M0,0 H {a ? 1}",
+            "M0,0 H {}",
+            "M0,0 H {(a}",
+        ] {
             assert!(PathTemplate::parse(bad).is_err(), "{bad}");
         }
         assert!(PathTemplate::parse("M0,0 H {a").is_err());
@@ -305,7 +311,11 @@ mod tests {
     #[test]
     fn a_missing_name_or_a_nonfinite_value_or_bad_data_is_an_error() {
         let t = PathTemplate::parse("M0,0 H {a}").unwrap();
-        assert!(t.evaluate(&lookup(&[])).unwrap_err().contains("no parameter `a`"));
+        assert!(
+            t.evaluate(&lookup(&[]))
+                .unwrap_err()
+                .contains("no parameter `a`")
+        );
         assert!(t.evaluate(&lookup(&[("a", f64::INFINITY)])).is_err());
         let bad = PathTemplate::parse("X {a}").unwrap();
         assert!(bad.evaluate(&lookup(&[("a", 1.0)])).is_err());
