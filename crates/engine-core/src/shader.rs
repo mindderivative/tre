@@ -661,7 +661,10 @@ impl Shader {
         });
         drop(state);
         let mut registry = ANIMATING.lock().unwrap();
-        if !registry.iter().any(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(self))) {
+        if !registry
+            .iter()
+            .any(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(self)))
+        {
             registry.push(Arc::downgrade(self));
         }
         Ok(())
@@ -696,7 +699,9 @@ impl Shader {
             .iter()
             .map(|a| a.progress.as_ref().is_some_and(|p| p.active.is_some()))
             .collect::<Vec<_>>();
-        let State { anims, uniforms, .. } = &mut *state;
+        let State {
+            anims, uniforms, ..
+        } = &mut *state;
         for (anim, value) in anims.iter().zip(values) {
             if let Some(slot) = uniforms.iter_mut().find(|(n, _)| *n == anim.name) {
                 slot.1 = value;
@@ -814,7 +819,10 @@ mod tests {
         let clash = format!("{GOOD}fn sd_box(a: f32) -> f32 {{\n    return a;\n}}\n");
         let error = make(&clash).unwrap_err();
         assert_eq!(error.line, Some(4), "{error}");
-        assert_eq!(error.source_line.as_deref(), Some("fn sd_box(a: f32) -> f32 {"));
+        assert_eq!(
+            error.source_line.as_deref(),
+            Some("fn sd_box(a: f32) -> f32 {")
+        );
     }
 
     #[test]
