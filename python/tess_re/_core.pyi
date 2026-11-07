@@ -1340,7 +1340,21 @@ class Shader:
     def inputs(self) -> dict[str, Node]: ...
     def set(self, *, uniforms: dict[str, float | tuple[float, ...]]) -> None:
         """Replaces the uniforms, all at once: a mistake raises and changes
-        nothing."""
+        nothing. It also stops any `animate` running on this shader."""
+    def animate(
+        self,
+        name: str,
+        to: float | tuple[float, ...],
+        duration_ms: int = 0,
+        easing: str | tuple[float, float, float, float] | tuple[str, float] | None = None,
+    ) -> None:
+        """(0.6.4) Moves uniform `name` to `to` over `duration_ms`, from where it is now,
+        like `Node.animate`: a number for a number uniform, 2 to 4 numbers for a
+        vector one, `easing` as `Node.animate` takes it. It starts on the next frame
+        of a window that draws this shader, every node using the shader follows,
+        and a window draws only while it runs. Asking again retargets from the
+        current value; `set` stops it. An unknown name or a `to` of another type
+        raises `ValueError` or `TypeError`, and changes nothing."""
     def __eq__(self, other: object, /) -> bool: ...
     def __hash__(self) -> int: ...
 

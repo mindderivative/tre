@@ -321,6 +321,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | `cursor` | cursor name or `None` | Pointer shape over the node. |
 | `hit_testable` | `bool` | Whether the node can be a pointer target. |
 | `hit_shape` | `"box"`, `"painted"` (path only) | Whether a path is hit by its box or by what it paints. |
+| `hit_path` | SVG path data, or `None` | The shape, in the node's own pixels, that clicks and an auto input region follow in place of the box (0.6.4). |
 | `window_region` | `"drag"`, `"none"`, `None` | Makes a node a title bar that moves the window. |
 
 *Paint (every kind)*
@@ -591,6 +592,7 @@ WGSL that paints a node (a fill) or transforms its rendered content (an effect).
 
 | Method | Description |
 | --- | --- |
+| `animate(name, to, duration_ms, easing) -> None` | Moves uniform `name` to `to` over `duration_ms`, from where it is now, like `Node.animate`: a number for a number uniform, 2 to… |
 | `filter(*, saturate, brightness, contrast, grayscale, hue_rotate, invert, sepia) -> Shader` | A ready-made effect shader that applies CSS colour filters to a node and its subtree… |
 | `set(*, uniforms: dict[str, float \| tuple[float, ...]]) -> None` | Replaces the uniforms all at once; a mistake raises and changes nothing. |
 

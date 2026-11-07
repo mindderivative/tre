@@ -464,6 +464,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `border_width` | `Animated<f64>` | The border thickness in pixels. |
 | `corner_radii_override` | `Option<Animated<CornerRadii>>` | Per-corner radii that replace the single corner radius when set. |
 | `corner_concave` | `[bool; 4]` | Which corners curve inward (`corner_style`), in the order top-left, top-right, bottom-right, bottom-left. |
+| `hit_outline` | `Option<Arc<BezPath>>` | A shape, in the node's own pixels, that pointer hits and a layer window's input region follow in place of the box (`hit_path`). |
 | `shadows` | `Animated<Shadows>` | The node's drop shadows, animatable. |
 | `node_transform` | `NodeTransform` | Translate, scale and rotate applied about the box center. |
 | `clip_children` | `bool` | Whether children are clipped to this node's box. |
@@ -540,6 +541,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 
 | Method | Description |
 | --- | --- |
+| `fn animate_uniform(self, name: &str, to: UniformValue, duration: Duration, curve: MotionCurve) -> Result<(), ShaderError>` | Moves uniform `name` to `to` over `duration` along `curve`, from where it is now, like a node's `animate`: asking again retargets from the current… |
 | `fn animated(&self) -> bool` | Whether the shader changes with time and needs a redraw every frame. |
 | `fn assembled(&self) -> Arc<str>` | The complete WGSL module for the renderer: tess_re's prelude, then the app's source. |
 | `fn inputs(&self) -> &[(String, NodeId)]` | The named inputs, in the order their bindings are numbered. |
@@ -1782,9 +1784,10 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `fn box_outline(w: f64, h: f64, radii: [f64; 4], concave: [bool; 4], inset: f64) -> BezPath` | The outline of a `w` by `h` box, drawn `inset` inside its edges (a border's path is inset by half its width), with corner `radii` in the order… |
 | `fn ctrl_shortcut(letter: char, shift: bool) -> Option<InputEvent>` | Maps Ctrl plus a letter to the input event it means, if any. |
 | `fn fit_transform(view_box: Option<Rect>, width: f64, height: f64) -> Affine` | Returns the transform that scales and centers a view box into a width and height. |
-| `fn frame_block(size: (f32, f32), time: f32) -> [u8; 16]` | Returns the bytes of the per-frame shader uniform block for a size and time. |
+| `fn frame_block(size: (f32, f32), time: f32, scale: f32) -> [u8; 16]` | Returns the bytes of the per-frame shader uniform block for a size and time. |
 | `fn from_access_id(id: NodeId) -> NodeId` | Converts an accessibility node id back into a tree node id. |
 | `fn node_id_as_u64(id: NodeId) -> u64` | Returns a stable u64 for a node id. |
+| `fn shader_animations_pending() -> bool` | Whether any shader has a uniform animation running or waiting to start. |
 | `fn take_cancelled(owned: impl Fn(CompletionHandle) -> bool) -> Vec<CompletionHandle>` | Takes the cancelled-animation handles `owned` claims; the rest stay for their own window. |
 | `fn to_access_id(id: NodeId) -> NodeId` | Converts a tree node id into a stable accessibility node id. |
 | `fn trim(path: &BezPath, start: f64, end: f64) -> BezPath` | Returns the part of a path between two fractions of its length. |

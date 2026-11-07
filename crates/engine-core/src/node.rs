@@ -1384,6 +1384,10 @@ pub struct PaintProperties {
     /// top-right, bottom-right, bottom-left. All `false` by default, a plain
     /// rounded box. The radius of a concave corner is the one `corner_radius` gives it.
     pub corner_concave: [bool; 4],
+    /// #270: a shape, in the node's own pixels, that pointer hits and a layer window's input
+    /// region follow in place of the box (`hit_path`). A shader paints where the CPU cannot
+    /// see, so this is how it says where it is. `None`, the default, is the box.
+    pub hit_outline: Option<std::sync::Arc<peniko::kurbo::BezPath>>,
     /// M95: drop shadows (`Shadows`).
     pub shadows: Animated<Shadows>,
     /// M96: the target API's `translate_x`/`translate_y`/`scale`/
@@ -1492,6 +1496,7 @@ impl PaintProperties {
             border_width: Animated::new(0.0),
             corner_radii_override: None,
             corner_concave: [false; 4],
+            hit_outline: None,
             shadows: Animated::new(Shadows::default()),
             node_transform: NodeTransform::default(),
             clip_children: false,

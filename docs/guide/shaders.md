@@ -57,7 +57,9 @@ change how it runs shaders without breaking yours.
 `uniforms={"zoom": 1.5, "tint": (1.0, 0.5, 0.2, 1.0)}`: a number is an `f32`,
 and a tuple of 2, 3 or 4 numbers is a `vec2`, `vec3` or `vec4`. Change values
 with `shader.set(uniforms=...)`: every node using the shader updates, and only
-the node's box is repainted. Changing a name or a type (or removing a uniform
+the node's box is repainted. `shader.animate("name", to, duration_ms)` (0.6.4) eases a
+uniform to a value with the engine's own clock, see
+[Animating a uniform](../reference/shader.md#animating-a-uniform). Changing a name or a type (or removing a uniform
 the source still uses) is checked against the source first, and a mistake
 raises and changes nothing.
 

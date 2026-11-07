@@ -8296,6 +8296,33 @@ fn a_concave_notch_stays_a_notch() {
     );
 }
 
+/// #270: a box given a `hit_outline` is hit, and holds a layer window's input region, inside
+/// that shape only.
+#[test]
+fn a_hit_outline_is_what_a_box_is_hit_by_and_the_input_region_follows_it() {
+    let (mut tree, root) = region_scene(200.0);
+    let (kind, mut style, mut paint) = leaf(100.0, 100.0);
+    style.position = Position::Absolute;
+    style.inset = TaffyRect {
+        left: length(50.0),
+        top: length(50.0),
+        right: auto(),
+        bottom: auto(),
+    };
+    paint.background = crate::animation::Animated::new(RED);
+    let boxed = tree.insert(kind, style, paint);
+    tree.add_child(root, boxed);
+    let l = crate::PathData::from_svg("M0,0 H100 V50 H50 V100 H0 Z").unwrap();
+    tree.get_mut(boxed).unwrap().paint.hit_outline = Some(std::sync::Arc::new(l.0));
+    laid_out(&mut tree, root, 200.0);
+    assert_eq!(tree.hit_test(root, Point::new(60.0, 140.0)), Some(boxed));
+    assert_eq!(tree.hit_test(root, Point::new(140.0, 60.0)), Some(boxed));
+    assert_eq!(tree.hit_test(root, Point::new(130.0, 130.0)), Some(root));
+    let rects = tree.input_region(root, (200.0, 200.0), 256);
+    assert!(covered(&rects, 60, 140) && covered(&rects, 140, 60));
+    assert!(!covered(&rects, 130, 130) && !covered(&rects, 145, 145));
+}
+
 #[test]
 fn a_stroke_only_path_is_hit_on_the_line_and_the_region_follows_it() {
     let (mut tree, root) = region_scene(200.0);
@@ -8528,4 +8555,151 @@ fn over_many_random_rounded_rings_the_region_never_loses_a_painted_pixel() {
         );
         assert!(open > 0, "ring {ring} has no open pixels at all");
     }
+}
+
+/// #270: a shader's uniform animation runs on the tree's tick, keeps the tree active and dirty
+/// while it runs, draws its last frame, and leaves the tree idle afterwards.
+#[test]
+fn a_shader_uniform_animation_keeps_the_tree_active_until_it_ends() {
+    use crate::{Shader, ShaderMode, UniformValue};
+    let source =
+        "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
+    let shader = Shader::new(
+        source.into(),
+        vec![("level".into(), UniformValue::F32(0.0))],
+        vec![],
+        ShaderMode::Fill,
+        false,
+    )
+    .unwrap();
+    let mut tree = Tree::new();
+    let (kind, style, paint) = leaf(10.0, 10.0);
+    let id = tree.insert(kind, style, paint);
+    tree.get_mut(id).unwrap().shader = Some(shader.clone());
+    let _ = tree.tick_all(Instant::now());
+    let _ = tree.take_dirty();
+    shader
+        .animate_uniform(
+            "level",
+            UniformValue::F32(1.0),
+            Duration::from_millis(100),
+            MotionCurve::Linear,
+        )
+        .unwrap();
+    assert!(crate::shader_animations_pending());
+
+    let t0 = Instant::now();
+    let (active, _) = tree.tick_all(t0);
+    assert!(active && tree.take_dirty(), "it starts on this tick");
+    let (active, _) = tree.tick_all(t0 + Duration::from_millis(50));
+    assert!(active && tree.take_dirty());
+    let UniformValue::F32(mid) = shader.uniforms()[0].1 else {
+        panic!("a number")
+    };
+    assert!((0.2..0.8).contains(&mid), "{mid}");
+
+    let (active, _) = tree.tick_all(t0 + Duration::from_millis(300));
+    assert!(!active, "finished: nothing more to schedule");
+    assert!(
+        tree.take_dirty(),
+        "but the last value still needs its frame"
+    );
+    assert_eq!(shader.uniforms()[0].1, UniformValue::F32(1.0));
+
+    let (active, _) = tree.tick_all(t0 + Duration::from_millis(400));
+    assert!(!active && !tree.take_dirty(), "idle again: no frames");
+}
+
+/// #270: a tree that does not draw the shader is not kept awake by its animation.
+#[test]
+fn a_shader_animation_does_not_wake_a_tree_that_does_not_draw_it() {
+    use crate::{Shader, ShaderMode, UniformValue};
+    let source =
+        "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
+    let shader = Shader::new(
+        source.into(),
+        vec![("level".into(), UniformValue::F32(0.0))],
+        vec![],
+        ShaderMode::Fill,
+        false,
+    )
+    .unwrap();
+    let mut other = Tree::new();
+    let (kind, style, paint) = leaf(10.0, 10.0);
+    other.insert(kind, style, paint);
+    let _ = other.tick_all(Instant::now());
+    let _ = other.take_dirty();
+    shader
+        .animate_uniform(
+            "level",
+            UniformValue::F32(1.0),
+            Duration::from_millis(100),
+            MotionCurve::Linear,
+        )
+        .unwrap();
+    let (active, _) = other.tick_all(Instant::now());
+    assert!(!active && !other.take_dirty());
+}
+
+/// #270: two trees draw one shader. Whichever ticks the last step first, the other still sees the
+/// shader moved and draws its last value, and a tree that does not draw it never drives it.
+#[test]
+fn two_trees_sharing_an_animating_shader_both_draw_the_last_value() {
+    use crate::{Shader, ShaderMode, UniformValue};
+    let source =
+        "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
+    let shader = Shader::new(
+        source.into(),
+        vec![("level".into(), UniformValue::F32(0.0))],
+        vec![],
+        ShaderMode::Fill,
+        false,
+    )
+    .unwrap();
+    let draws = |shader: &std::sync::Arc<Shader>| {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let id = tree.insert(kind, style, paint);
+        tree.get_mut(id).unwrap().shader = Some(shader.clone());
+        let _ = tree.tick_all(Instant::now());
+        let _ = tree.take_dirty();
+        tree
+    };
+    let mut a = draws(&shader);
+    let mut b = draws(&shader);
+    let mut bystander = Tree::new();
+    let _ = bystander.tick_all(Instant::now());
+    let _ = bystander.take_dirty();
+
+    shader
+        .animate_uniform(
+            "level",
+            UniformValue::F32(1.0),
+            Duration::from_millis(100),
+            MotionCurve::Linear,
+        )
+        .unwrap();
+    let t0 = Instant::now();
+    let (bystander_active, _) = bystander.tick_all(t0);
+    assert!(!bystander_active && !bystander.take_dirty());
+    assert!(
+        shader.is_animating(),
+        "a tree that does not draw it cannot start it"
+    );
+
+    assert!(a.tick_all(t0).0 && b.tick_all(t0).0);
+    let _ = (a.take_dirty(), b.take_dirty());
+    // A takes the last step. B has not ticked since, and must still draw it.
+    let (a_active, _) = a.tick_all(t0 + Duration::from_millis(300));
+    assert!(!a_active && a.take_dirty());
+    assert!(!shader.is_animating());
+    assert!(
+        b.shader_frame_owed(),
+        "B is owed a frame it did nothing to ask for"
+    );
+    let (b_active, _) = b.tick_all(t0 + Duration::from_millis(310));
+    assert!(!b_active);
+    assert!(b.take_dirty(), "B draws the last value");
+    assert!(!b.shader_frame_owed());
+    assert!(!b.tick_all(t0 + Duration::from_millis(400)).0 && !b.take_dirty());
 }

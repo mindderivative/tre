@@ -143,3 +143,10 @@ Search for text nodes you create without a size and look at the ones inside a
   `"concave"`, ordered as `corner_radius`) makes a box corner curve inward about the box's corner, so a
   small box is the fillet between two shapes. The default `"round"` is a plain rounded box, as before.
   See [Painting](guide/painting.md).
+- **Shader joins (#270, TRE-REQ-013 step 2).** `shader.animate(name, to, duration_ms, easing)` eases a
+  uniform with the engine's clock (no Python per frame); `hit_path` gives any node the shape a click
+  hits, in the node's own pixels, so a shader's notches let clicks through; a shader may call the
+  helpers `sd_circle`, `sd_box`, `sd_round_box`, `sd_round_union`, `sd_smooth_union` and `sd_coverage`; and
+  `frame.scale` is the display scale. **One thing can break:** a shader that declares a function with one
+  of the helper names is rejected, as for any other name tess_re's prelude takes; rename it. Nothing else
+  changes. See [Shaders](reference/shader.md).

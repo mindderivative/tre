@@ -593,7 +593,7 @@ impl ShaderPasses {
             f.queue.write_buffer(
                 &target.frame,
                 0,
-                &frame_block((size.0 as f32, size.1 as f32), f.time),
+                &frame_block((size.0 as f32, size.1 as f32), f.time, f.scale as f32),
             );
             f.queue.write_buffer(&target.uniforms, 0, &uniform_bytes);
             let mut entries = vec![
