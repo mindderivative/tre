@@ -1380,6 +1380,10 @@ pub struct PaintProperties {
     /// `corner_radius` scalar," the same true no-op contract
     /// `border_width: 0.0` already establishes.
     pub corner_radii_override: Option<Animated<CornerRadii>>,
+    /// #269: which corners curve inward (`corner_style`), in the order top-left,
+    /// top-right, bottom-right, bottom-left. All `false` by default, a plain
+    /// rounded box. The radius of a concave corner is the one `corner_radius` gives it.
+    pub corner_concave: [bool; 4],
     /// M95: drop shadows (`Shadows`).
     pub shadows: Animated<Shadows>,
     /// M96: the target API's `translate_x`/`translate_y`/`scale`/
@@ -1487,6 +1491,7 @@ impl PaintProperties {
             border_color: Animated::new(Color::from_rgba8(0, 0, 0, 0)),
             border_width: Animated::new(0.0),
             corner_radii_override: None,
+            corner_concave: [false; 4],
             shadows: Animated::new(Shadows::default()),
             node_transform: NodeTransform::default(),
             clip_children: false,

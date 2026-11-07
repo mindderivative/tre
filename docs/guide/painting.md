@@ -32,6 +32,21 @@ card = window.create("box", width=240, height=120,
 sheet.set(corner_radius=(28, 28, 0, 0))  # rounded top, square bottom
 ```
 
+- `corner_style` (0.6.4) — `"round"` (the default) or `"concave"`, or four of them in the
+  same order as `corner_radius`. A concave corner curves inward: the box with a quarter
+  disc about its own corner cut away, of the corner's `corner_radius`. A small box with one
+  concave corner is the fillet that fills the inside corner where two shapes meet, and its
+  `corner_radius` animates like any other. The fill, the border, the clip of an image or a
+  shader, and the pointer's hit test and a layer window's input region all follow the notch;
+  a click in it falls through. A shadow still takes its shape from the rounded corners
+  alone, as it does for corners of differing radii.
+
+```python
+fillet = window.create("box", width=12, height=12, fill=ink,
+                       corner_radius=(0, 0, 12, 0),
+                       corner_style=("round", "round", "concave", "round"))
+```
+
 ## Shadows
 
 `shadows` is a list of `(color, offset_x, offset_y, blur, spread)` —

@@ -26,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 71] = [
+const SETTABLE: [&str; 72] = [
     // 0.5.7 (#179): placed against another node.
     "anchor",
     "placement",
@@ -47,6 +47,7 @@ const SETTABLE: [&str; 71] = [
     "stroke_width",
     "opacity",
     "corner_radius",
+    "corner_style",
     "shadows",
     "blur",
     "backdrop_blur",
@@ -227,6 +228,7 @@ pub(crate) enum Change {
     Scale(f64),
     RotationDeg(f64),
     TransformOrigin((f64, f64)),
+    CornerStyle([bool; 4]),
     Data(PathData),
     ViewBox(Option<Rect>),
     /// 0.5.9 (#236).
@@ -585,6 +587,14 @@ pub(crate) fn animatable_to_py(
         "translate_y" => number(*pick(&node.paint.node_transform.translate_y, target))?,
         "scale" => number(*pick(&node.paint.node_transform.scale, target))?,
         "rotation_deg" => number(*pick(&node.paint.node_transform.rotation_deg, target))?,
+        "corner_style" => {
+            let names = node.paint.corner_concave.map(|c| if c { "concave" } else { "round" });
+            if names.iter().all(|n| *n == names[0]) {
+                names[0].into_pyobject(py)?.into_any().unbind()
+            } else {
+                (names[0], names[1], names[2], names[3]).into_pyobject(py)?.into_any().unbind()
+            }
+        }
         "transform_origin" => node.paint.node_transform.origin.into_pyobject(py)?.into_any().unbind(),
         "opacity" => number(*pick(&node.paint.opacity, target))?,
         "blur" => number(*pick(&node.paint.blur, target))?,
@@ -969,6 +979,23 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "translate_y" => Change::TranslateY(number("a number")?),
         "scale" => Change::Scale(parse_non_negative(value, name)?),
         "rotation_deg" => Change::RotationDeg(number("a number")?),
+        "corner_style" => {
+            let expected = "\"round\" or \"concave\", or four of them (top-left, top-right, bottom-right, bottom-left)";
+            let one = |text: &str| match text {
+                "round" => Some(false),
+                "concave" => Some(true),
+                _ => None,
+            };
+            let styles = if let Ok(text) = value.extract::<String>() {
+                one(&text).map(|c| [c; 4])
+            } else {
+                value
+                    .extract::<(String, String, String, String)>()
+                    .ok()
+                    .and_then(|(a, b, c, d)| Some([one(&a)?, one(&b)?, one(&c)?, one(&d)?]))
+            };
+            Change::CornerStyle(styles.ok_or_else(|| invalid(name, expected))?)
+        }
         "transform_origin" => {
             let pair: (f64, f64) = value
                 .extract()
@@ -2236,6 +2263,7 @@ impl Node {
                 Change::RotationDeg(v) => {
                     node.paint.node_transform.rotation_deg.set_now(v);
                 }
+                Change::CornerStyle(style) => node.paint.corner_concave = style,
                 Change::TransformOrigin(origin) => node.paint.node_transform.origin = origin,
                 Change::Data(data) => {
                     if let NodeKind::Path(state) = &mut node.kind {

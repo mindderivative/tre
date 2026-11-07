@@ -76,6 +76,14 @@ enum RectPathParams {
         radii: [f64; 4],
         inset: f64,
     },
+    /// #269: a box with a corner that curves inward, as a fill (`inset` 0) or a border.
+    Concave {
+        w: f64,
+        h: f64,
+        radii: [f64; 4],
+        concave: [bool; 4],
+        inset: f64,
+    },
 }
 
 /// Owns every real, currently-cached tessellated `BezPath` across
@@ -177,6 +185,36 @@ impl GeometryCache {
         Self::get_or_build(&mut self.border_paths, id, params, || {
             let [tl, tr, br, bl] = radii.map(|r| (r - inset).max(0.0));
             RoundedRect::new(inset, inset, w - inset, h - inset, (tl, tr, br, bl)).to_path(0.1)
+        })
+    }
+
+    /// #269: the outline of a box with a concave corner, for a fill (`border` false) or
+    /// a border stroke inset by `inset` (`border` true).
+    #[allow(clippy::too_many_arguments)]
+    pub fn concave_box(
+        &mut self,
+        id: NodeId,
+        w: f64,
+        h: f64,
+        radii: [f64; 4],
+        concave: [bool; 4],
+        inset: f64,
+        border: bool,
+    ) -> &BezPath {
+        let params = RectPathParams::Concave {
+            w,
+            h,
+            radii,
+            concave,
+            inset,
+        };
+        let cache = if border {
+            &mut self.border_paths
+        } else {
+            &mut self.fill_paths
+        };
+        Self::get_or_build(cache, id, params, || {
+            engine_core::box_outline(w, h, radii, concave, inset)
         })
     }
 

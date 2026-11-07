@@ -130,6 +130,7 @@ NODE_PROPERTIES = [
         ("`fill`", "`(r, g, b, a)` (animatable)", "Background; glyph color on text; a path's fill."),
         ("`stroke_color`, `stroke_width`", "color / pixels (animatable)", "Border inside the box; a path's outline."),
         ("`corner_radius`", "number or 4-tuple (animatable)", "Rounds background, border and image."),
+        ("`corner_style`", "`\"round\"` or `\"concave\"`, or a 4-tuple of them", "A concave corner curves inward about the box's corner, with the corner's radius (0.6.4)."),
         ("`opacity`", "`0.0`–`1.0` (animatable)", "Group opacity of the node and its subtree."),
         ("`shadows`", "list of `(color, dx, dy, blur, spread)`", "CSS `box-shadow` model."),
         ("`shader`", "`Shader` or `None`", "WGSL that paints or transforms the node."),
