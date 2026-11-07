@@ -22,7 +22,11 @@ pub fn box_outline(w: f64, h: f64, radii: [f64; 4], concave: [bool; 4], inset: f
     // Per corner: the box corner, the direction the path arrives along, and the point
     // where it leaves the corner (a unit step toward the next corner).
     let corners = [
-        (Point::new(0.0, 0.0), Point::new(x0, y0), Vec2::new(1.0, 1.0)),
+        (
+            Point::new(0.0, 0.0),
+            Point::new(x0, y0),
+            Vec2::new(1.0, 1.0),
+        ),
         (Point::new(w, 0.0), Point::new(x1, y0), Vec2::new(-1.0, 1.0)),
         (Point::new(w, h), Point::new(x1, y1), Vec2::new(-1.0, -1.0)),
         (Point::new(0.0, h), Point::new(x0, y1), Vec2::new(1.0, -1.0)),
@@ -94,11 +98,7 @@ pub fn box_outline(w: f64, h: f64, radii: [f64; 4], concave: [bool; 4], inset: f
 /// An angle difference folded into `(-PI, PI]`.
 fn shortest(angle: f64) -> f64 {
     let a = angle.rem_euclid(TAU);
-    if a > PI {
-        a - TAU
-    } else {
-        a
-    }
+    if a > PI { a - TAU } else { a }
 }
 
 #[cfg(test)]
@@ -113,7 +113,13 @@ mod tests {
     #[test]
     fn a_concave_corner_removes_a_quarter_disc_about_the_box_corner() {
         // A 12 by 12 fillet: concave bottom-right of radius 12 keeps the top-left area.
-        let p = box_outline(12.0, 12.0, [0.0, 0.0, 12.0, 0.0], [false, false, true, false], 0.0);
+        let p = box_outline(
+            12.0,
+            12.0,
+            [0.0, 0.0, 12.0, 0.0],
+            [false, false, true, false],
+            0.0,
+        );
         assert!(covers(&p, 1.0, 1.0));
         assert!(covers(&p, 2.0, 1.0));
         assert!(covers(&p, 1.0, 2.0));
@@ -122,7 +128,11 @@ mod tests {
         assert!(!covers(&p, 11.0, 11.0));
         // Area is the square minus a quarter disc.
         let want = 144.0 - 0.25 * PI * 144.0;
-        assert!((p.area().abs() - want).abs() < 0.3, "{} vs {want}", p.area());
+        assert!(
+            (p.area().abs() - want).abs() < 0.3,
+            "{} vs {want}",
+            p.area()
+        );
     }
 
     #[test]

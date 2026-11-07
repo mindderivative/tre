@@ -8562,7 +8562,8 @@ fn over_many_random_rounded_rings_the_region_never_loses_a_painted_pixel() {
 #[test]
 fn a_shader_uniform_animation_keeps_the_tree_active_until_it_ends() {
     use crate::{Shader, ShaderMode, UniformValue};
-    let source = "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
+    let source =
+        "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
     let shader = Shader::new(
         source.into(),
         vec![("level".into(), UniformValue::F32(0.0))],
@@ -8599,7 +8600,10 @@ fn a_shader_uniform_animation_keeps_the_tree_active_until_it_ends() {
 
     let (active, _) = tree.tick_all(t0 + Duration::from_millis(300));
     assert!(!active, "finished: nothing more to schedule");
-    assert!(tree.take_dirty(), "but the last value still needs its frame");
+    assert!(
+        tree.take_dirty(),
+        "but the last value still needs its frame"
+    );
     assert_eq!(shader.uniforms()[0].1, UniformValue::F32(1.0));
 
     let (active, _) = tree.tick_all(t0 + Duration::from_millis(400));
@@ -8610,7 +8614,8 @@ fn a_shader_uniform_animation_keeps_the_tree_active_until_it_ends() {
 #[test]
 fn a_shader_animation_does_not_wake_a_tree_that_does_not_draw_it() {
     use crate::{Shader, ShaderMode, UniformValue};
-    let source = "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
+    let source =
+        "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
     let shader = Shader::new(
         source.into(),
         vec![("level".into(), UniformValue::F32(0.0))],
@@ -8641,7 +8646,8 @@ fn a_shader_animation_does_not_wake_a_tree_that_does_not_draw_it() {
 #[test]
 fn two_trees_sharing_an_animating_shader_both_draw_the_last_value() {
     use crate::{Shader, ShaderMode, UniformValue};
-    let source = "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
+    let source =
+        "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
     let shader = Shader::new(
         source.into(),
         vec![("level".into(), UniformValue::F32(0.0))],
@@ -8676,7 +8682,10 @@ fn two_trees_sharing_an_animating_shader_both_draw_the_last_value() {
     let t0 = Instant::now();
     let (bystander_active, _) = bystander.tick_all(t0);
     assert!(!bystander_active && !bystander.take_dirty());
-    assert!(shader.is_animating(), "a tree that does not draw it cannot start it");
+    assert!(
+        shader.is_animating(),
+        "a tree that does not draw it cannot start it"
+    );
 
     assert!(a.tick_all(t0).0 && b.tick_all(t0).0);
     let _ = (a.take_dirty(), b.take_dirty());
@@ -8684,7 +8693,10 @@ fn two_trees_sharing_an_animating_shader_both_draw_the_last_value() {
     let (a_active, _) = a.tick_all(t0 + Duration::from_millis(300));
     assert!(!a_active && a.take_dirty());
     assert!(!shader.is_animating());
-    assert!(b.shader_frame_owed(), "B is owed a frame it did nothing to ask for");
+    assert!(
+        b.shader_frame_owed(),
+        "B is owed a frame it did nothing to ask for"
+    );
     let (b_active, _) = b.tick_all(t0 + Duration::from_millis(310));
     assert!(!b_active);
     assert!(b.take_dirty(), "B draws the last value");

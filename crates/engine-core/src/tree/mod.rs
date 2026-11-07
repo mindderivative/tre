@@ -1044,7 +1044,11 @@ impl Tree {
             }
             let version = shader.versions().0;
             // A shader seen for the first time is already painted as it is.
-            if self.shader_versions.get(&key).is_some_and(|v| *v != version) {
+            if self
+                .shader_versions
+                .get(&key)
+                .is_some_and(|v| *v != version)
+            {
                 moved = true;
             }
             seen.insert(key, version);
