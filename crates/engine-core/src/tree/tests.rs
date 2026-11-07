@@ -8635,3 +8635,59 @@ fn a_shader_animation_does_not_wake_a_tree_that_does_not_draw_it() {
     let (active, _) = other.tick_all(Instant::now());
     assert!(!active && !other.take_dirty());
 }
+
+/// #270: two trees draw one shader. Whichever ticks the last step first, the other still sees the
+/// shader moved and draws its last value, and a tree that does not draw it never drives it.
+#[test]
+fn two_trees_sharing_an_animating_shader_both_draw_the_last_value() {
+    use crate::{Shader, ShaderMode, UniformValue};
+    let source = "fn shade(p: Pixel) -> vec4<f32> {\n    return vec4<f32>(u.level, 0.0, 0.0, 1.0);\n}\n";
+    let shader = Shader::new(
+        source.into(),
+        vec![("level".into(), UniformValue::F32(0.0))],
+        vec![],
+        ShaderMode::Fill,
+        false,
+    )
+    .unwrap();
+    let draws = |shader: &std::sync::Arc<Shader>| {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let id = tree.insert(kind, style, paint);
+        tree.get_mut(id).unwrap().shader = Some(shader.clone());
+        let _ = tree.tick_all(Instant::now());
+        let _ = tree.take_dirty();
+        tree
+    };
+    let mut a = draws(&shader);
+    let mut b = draws(&shader);
+    let mut bystander = Tree::new();
+    let _ = bystander.tick_all(Instant::now());
+    let _ = bystander.take_dirty();
+
+    shader
+        .animate_uniform(
+            "level",
+            UniformValue::F32(1.0),
+            Duration::from_millis(100),
+            MotionCurve::Linear,
+        )
+        .unwrap();
+    let t0 = Instant::now();
+    let (bystander_active, _) = bystander.tick_all(t0);
+    assert!(!bystander_active && !bystander.take_dirty());
+    assert!(shader.is_animating(), "a tree that does not draw it cannot start it");
+
+    assert!(a.tick_all(t0).0 && b.tick_all(t0).0);
+    let _ = (a.take_dirty(), b.take_dirty());
+    // A takes the last step. B has not ticked since, and must still draw it.
+    let (a_active, _) = a.tick_all(t0 + Duration::from_millis(300));
+    assert!(!a_active && a.take_dirty());
+    assert!(!shader.is_animating());
+    assert!(b.shader_frame_owed(), "B is owed a frame it did nothing to ask for");
+    let (b_active, _) = b.tick_all(t0 + Duration::from_millis(310));
+    assert!(!b_active);
+    assert!(b.take_dirty(), "B draws the last value");
+    assert!(!b.shader_frame_owed());
+    assert!(!b.tick_all(t0 + Duration::from_millis(400)).0 && !b.take_dirty());
+}

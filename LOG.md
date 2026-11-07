@@ -85,8 +85,11 @@ Branch `shader-joins-270`, off `transform-origin-269`. Three parts, as the reque
 **A, `Shader.animate(name, to, duration_ms, easing)`.** The uniform animation lives on the `Shader` (shared by its
 nodes), as a 0 to 1 `Animated<f64>` progress per uniform, so every easing, springs included, is the nodes' own. A shader
 has no window and so no clock: the animation starts at the first `Tree::tick_all` after it was asked for, on that tick's
-`now`. A process-wide registry (`ANIMATING`, weak) lists the shaders with one; `tick_all` ticks them, keeps the tree active
-and dirty only if a node of that tree draws a moved shader, and draws the last value once. `set_uniforms` stops them.
+`now`. Each tree ticks the animations of the shaders it draws, on its own clock (a tree that does not draw
+one never starts it). A process-wide registry (`ANIMATING`, weak) only says one is pending, and a counter (`EPOCH`) says a
+value moved: a tree remembers the version of each shader it drew and marks itself dirty when one differs, whoever
+moved it, so two windows sharing a shader both draw the last value (`two_trees_sharing_an_animating_shader_...`, and the
+two-Window pytest; from a review note). `set_uniforms` stops them.
 `CrossWindowWake` also wakes an idle window that draws a shader with an animation pending (a shader call touches no tree,
 so nothing else would). **B, `hit_path`.** The request asked for `hit_shape="painted"` by alpha on a shader node; alpha
 is on the GPU and reading it back each pointer move is no option, so a node takes a path (`PaintProperties::hit_outline`,

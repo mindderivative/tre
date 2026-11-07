@@ -158,6 +158,10 @@ pub struct Tree {
     /// answered, to skip a repeat of the same question.
     last_layout: Option<(NodeId, Size<AvailableSpace>)>,
     scanned_at: Option<u64>,
+    /// #270: the shader animation count this tree last looked at, and the value version of each
+    /// shader it drew then (by address), to see what moved since.
+    shader_epoch_seen: u64,
+    shader_versions: std::collections::HashMap<usize, u64>,
     /// 0.5.6 (#165): text fields whose caret moved or text changed, until
     /// `take_caret_changes` reports them.
     caret_changes: Vec<(NodeId, Option<std::ops::Range<usize>>)>,
@@ -234,6 +238,8 @@ impl Tree {
             text_lines: Default::default(),
             last_layout: None,
             scanned_at: None,
+            shader_epoch_seen: 0,
+            shader_versions: std::collections::HashMap::new(),
             caret_changes: Vec::new(),
             snap_pending: Vec::new(),
             taffy_nodes: SecondaryMap::new(),
@@ -993,31 +999,14 @@ impl Tree {
                 self.set_layout_style(id, style);
             }
         }
-        // #270: shader uniforms on their way somewhere. A shader belongs to no tree, so each
-        // tree ticks them all and acts on the ones it draws.
-        let mut shader_active = false;
-        let mut shader_changed = false;
-        if crate::shader::shader_animations_pending() {
-            let moved = crate::shader::tick_shader_animations(now);
-            if !moved.is_empty() {
-                for node in self.nodes.values() {
-                    if let Some(shader) = &node.shader
-                        && let Some((_, running)) =
-                            moved.iter().find(|(s, _)| std::sync::Arc::ptr_eq(s, shader))
-                    {
-                        shader_changed = true;
-                        shader_active |= *running;
-                    }
-                }
-            }
-        }
+        // #270: shader uniforms on their way somewhere. A shader belongs to no tree, so each tree
+        // ticks the ones it draws, on its own clock, and decides for itself whether it must draw:
+        // another tree may have taken the last step already.
+        let shader_active = self.tick_shaders(now);
         let any_active = !self.animating.is_empty()
             || settling
             || !self.snap_pending.is_empty()
             || shader_active;
-        if shader_changed {
-            self.dirty = true;
-        }
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the
         // exact signal this needs, just never fed into a redraw
@@ -1026,6 +1015,53 @@ impl Tree {
             self.dirty = true;
         }
         (any_active, completed)
+    }
+
+    /// #270: ticks the uniform animations of the shaders this tree draws, marks the tree dirty
+    /// when one of them has moved since this tree last drew it (whoever moved it), and returns
+    /// whether any is still running. Costs a pass over the nodes only while an animation is
+    /// pending or a shader moved since the last pass.
+    fn tick_shaders(&mut self, now: Instant) -> bool {
+        let epoch = crate::shader::shader_epoch();
+        if !crate::shader::shader_animations_pending() && epoch == self.shader_epoch_seen {
+            return false;
+        }
+        self.shader_epoch_seen = epoch;
+        let mut running = false;
+        let mut seen = std::collections::HashMap::new();
+        let mut moved = false;
+        for node in self.nodes.values() {
+            let Some(shader) = &node.shader else {
+                continue;
+            };
+            let key = std::sync::Arc::as_ptr(shader) as usize;
+            if seen.contains_key(&key) {
+                continue;
+            }
+            if shader.is_animating() {
+                let (_, still) = shader.tick(now);
+                running |= still;
+            }
+            let version = shader.versions().0;
+            // A shader seen for the first time is already painted as it is.
+            if self.shader_versions.get(&key).is_some_and(|v| *v != version) {
+                moved = true;
+            }
+            seen.insert(key, version);
+        }
+        self.shader_versions = seen;
+        if moved {
+            self.dirty = true;
+        }
+        running
+    }
+
+    /// #270: whether a shader this tree draws has moved, or is moving, since the tree last
+    /// looked: a frame is owed that nothing in the tree itself asked for.
+    pub fn shader_frame_owed(&self) -> bool {
+        self.has_shaders()
+            && (crate::shader::shader_animations_pending()
+                || crate::shader::shader_epoch() != self.shader_epoch_seen)
     }
 
     /// Opts one node into accessibility -- every node defaults to

@@ -180,3 +180,16 @@ def test_the_fillet_is_smooth_at_one_and_a_half_times_the_scale():
     # corner's side, (44.5, 14.5) is 10.6 away.
     assert at(42.5, 12.5) > 200 and at(44.5, 14.5) == 0
     assert at(20, 40) > 230 and at(70, 30) == 0
+
+
+def test_two_windows_sharing_a_shader_each_end_on_the_last_value():
+    shader = Shader(LEVEL, uniforms={"level": 0.0})
+    first, _ = scene(shader)
+    second, _ = scene(shader)
+    shader.animate("level", 1.0, 100, easing="linear")
+    first.advance(1)
+    second.advance(1)
+    first.advance(500)  # the first window takes the last step
+    assert shader.uniforms["level"] == 1.0
+    second.advance(1)  # the second has not looked since
+    assert red_at(first) == 255 and red_at(second) == 255

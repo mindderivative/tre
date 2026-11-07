@@ -516,27 +516,21 @@ impl State {
 /// The shaders with a uniform animation running or waiting to start, for `Tree::tick_all`.
 static ANIMATING: Mutex<Vec<Weak<Shader>>> = Mutex::new(Vec::new());
 
-/// Whether any shader has a uniform animation running or waiting to start.
-pub fn shader_animations_pending() -> bool {
-    !ANIMATING.lock().unwrap().is_empty()
+/// Bumped whenever a shader's uniform animation moves a value. A tree compares it with the
+/// count it last saw, to find out cheaply that some shader changed since it looked.
+static EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// How many times a uniform animation has moved a value, in the whole process.
+pub(crate) fn shader_epoch() -> u64 {
+    EPOCH.load(Ordering::Relaxed)
 }
 
-/// Advances every shader's uniform animations to `now`, and returns those that changed with
-/// whether each is still running. Finished and dropped shaders leave the list.
-pub(crate) fn tick_shader_animations(now: Instant) -> Vec<(Arc<Shader>, bool)> {
+/// Whether any shader has a uniform animation running or waiting to start. Finished and dropped
+/// shaders leave the list here.
+pub fn shader_animations_pending() -> bool {
     let mut registry = ANIMATING.lock().unwrap();
-    let mut out = Vec::new();
-    registry.retain(|weak| {
-        let Some(shader) = weak.upgrade() else {
-            return false;
-        };
-        let (changed, running) = shader.tick(now);
-        if changed {
-            out.push((shader, running));
-        }
-        running
-    });
-    out
+    registry.retain(|weak| weak.upgrade().is_some_and(|shader| shader.is_animating()));
+    !registry.is_empty()
 }
 
 /// A validated shader. Shared (`Arc`) between the nodes it is set on, so
@@ -673,9 +667,15 @@ impl Shader {
         Ok(())
     }
 
-    /// Advances this shader's uniform animations to `now`: `(changed, running)`, whether a
-    /// value moved, and whether any animation is still going.
-    fn tick(&self, now: Instant) -> (bool, bool) {
+    /// Whether a uniform animation is running or waiting to start.
+    pub fn is_animating(&self) -> bool {
+        !self.state.lock().unwrap().anims.is_empty()
+    }
+
+    /// Advances this shader's uniform animations to `now` (a tree calls it for the shaders it
+    /// draws, on its own clock): `(changed, running)`, whether a value moved, and whether any
+    /// animation is still going.
+    pub(crate) fn tick(&self, now: Instant) -> (bool, bool) {
         let mut state = self.state.lock().unwrap();
         if state.anims.is_empty() {
             return (false, false);
@@ -707,6 +707,7 @@ impl Shader {
         let still = !anims.is_empty();
         drop(state);
         self.value_version.fetch_add(1, Ordering::Relaxed);
+        EPOCH.fetch_add(1, Ordering::Relaxed);
         (true, still)
     }
 

@@ -808,9 +808,7 @@ impl Drop for CrossWindowWake<'_> {
                 .handles
                 .tree
                 .try_borrow()
-                .is_ok_and(|tree| {
-                    tree.is_dirty() || (engine_core::shader_animations_pending() && tree.has_shaders())
-                });
+                .is_ok_and(|tree| tree.is_dirty() || tree.shader_frame_owed());
             if changed && !runtime.wake_sent.replace(true) {
                 wanted = true;
             }
