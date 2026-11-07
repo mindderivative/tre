@@ -37,6 +37,9 @@ pub(super) fn shape_contains(paint: &PaintProperties, layout: &Layout, point: Po
     if !rect_contains(layout, point) {
         return false;
     }
+    if let Some(outline) = &paint.hit_outline {
+        return outline.contains(point);
+    }
     let r = corner_radii(paint);
     if r.iter().all(|v| *v <= 0.0) {
         return true;
@@ -376,6 +379,11 @@ impl Tree {
                         );
                         out.push(contours(outline.elements().iter().copied(), origin));
                     }
+                }
+            }
+            _ if node.paint.hit_outline.is_some() => {
+                if let Some(outline) = &node.paint.hit_outline {
+                    out.push(contours(outline.elements().iter().copied(), composed));
                 }
             }
             _ => {

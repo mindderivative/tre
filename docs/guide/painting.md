@@ -47,6 +47,13 @@ fillet = window.create("box", width=12, height=12, fill=ink,
                        corner_style=("round", "round", "concave", "round"))
 ```
 
+- `hit_path` (0.6.4) — SVG path data in the node's own pixels, or `None` (the default: the
+  box). Pointer events, and an `input_region="auto"`, follow that shape in place of the box and
+  let clicks through everywhere else, inside the node's box. A shader paints where the engine
+  cannot see, so this is how a shader node says where it is:
+  `join.set(shader=shape, hit_path="M0,0 H100 V30 H30 V100 H0 Z")`. It is set, not animated; a
+  `path` node uses `hit_shape` instead.
+
 ## Shadows
 
 `shadows` is a list of `(color, offset_x, offset_y, blur, spread)` —

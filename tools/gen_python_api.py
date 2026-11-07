@@ -124,6 +124,7 @@ NODE_PROPERTIES = [
         ("`cursor`", "cursor name or `None`", "Pointer shape over the node."),
         ("`hit_testable`", "`bool`", "Whether the node can be a pointer target."),
         ("`hit_shape`", "`\"box\"`, `\"painted\"` (path only)", "Whether a path is hit by its box or by what it paints."),
+        ("`hit_path`", "SVG path data, or `None`", "The shape, in the node's own pixels, that clicks and an auto input region follow in place of the box (0.6.4)."),
         ("`window_region`", "`\"drag\"`, `\"none\"`, `None`", "Makes a node a title bar that moves the window."),
     ]),
     ("Paint (every kind)", [

@@ -32,6 +32,11 @@ same in pixels. Your uniforms are the fields of `u`, and `frame.size` and
 `frame.time` are the node's size in pixels and the seconds since the window
 opened. The result is straight-alpha RGBA.
 
+`frame.size` and `p.px` are in physical pixels. `frame.scale` (0.6.4) is the display scale,
+physical pixels per logical pixel (1 on an ordinary display, 1.5 at 150%), so
+`p.px / frame.scale` is a position in the logical pixels the rest of the app uses, and a shape
+sized in them looks the same at any scale.
+
 ## `Shader(wgsl, uniforms=None, inputs=None, mode="fill", animated=False)`
 
 | Argument | |
@@ -82,6 +87,52 @@ filter, or a value out of range, raises `ValueError`.
 It is an ordinary effect shader (see [Effects](#effects)): the node renders to a
 texture, so it costs what any effect does, and a node has one shader, which this
 replaces. It also stands in for the CSS filters `vello_gpu` cannot draw.
+
+## Animating a uniform
+
+`shader.animate(name, to, duration_ms=0, easing=None)` (0.6.4) moves one uniform to a value
+from where it is now, as `Node.animate` does a property, so a shape in a shader can grow
+with no Python per frame:
+
+```python
+join.animate("radius", 12.0, 200, easing=(0.2, 0.0, 0.0, 1.0))
+```
+
+`to` is a number for a number uniform and 2 to 4 numbers for a vector one. `easing` takes the
+same values as `Node.animate`. It starts on the next frame of a window that draws the shader,
+every node using the shader follows, and the window draws only while it runs: when it ends
+the last value is drawn and an idle window draws nothing. Asking again retargets from the
+current value; `set(uniforms=...)` stops every animation on the shader. An unknown name
+raises `ValueError`, and a value of another type raises `ValueError` or `TypeError`; neither
+changes anything. There is no `on_complete`.
+
+## Shape helpers
+
+Every shader may call these signed-distance functions (0.6.4), so a shape is written once and
+rounded or joined without writing the maths. A distance is in the unit of the arguments
+(`p.px` gives pixels), negative inside the shape. The names are taken: a shader that declares
+one of them is rejected.
+
+| Function | Returns |
+| --- | --- |
+| `sd_circle(p, radius)` | distance to a circle centred on the origin |
+| `sd_box(p, half_size)` | distance to a box centred on the origin |
+| `sd_round_box(p, half_size, radius)` | the same with rounded corners; `radius` is limited to the smaller half size |
+| `sd_round_union(a, b, radius)` | the union of two distances with an exact circular fillet of `radius` where they meet at a corner |
+| `sd_smooth_union(a, b, k)` | a smooth blend of two distances over about `k`; softer than the fillet, not circular |
+| `sd_coverage(d)` | 1 inside, 0 outside, with a one-pixel anti-aliased edge: use it as the alpha |
+
+A body joined to a band, its fillet growing with the animated `radius`:
+
+```wgsl
+fn shade(p: Pixel) -> vec4<f32> {
+    let q = p.px / frame.scale;                      // logical pixels
+    let band = sd_box(q - vec2<f32>(50.0, 5.0), vec2<f32>(50.0, 5.0));
+    let body = sd_box(q - vec2<f32>(20.0, 35.0), vec2<f32>(20.0, 25.0));
+    let d = sd_round_union(band, body, u.radius);
+    return vec4<f32>(u.tint.rgb, sd_coverage(d * frame.scale));
+}
+```
 
 ## Errors
 

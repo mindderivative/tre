@@ -993,7 +993,31 @@ impl Tree {
                 self.set_layout_style(id, style);
             }
         }
-        let any_active = !self.animating.is_empty() || settling || !self.snap_pending.is_empty();
+        // #270: shader uniforms on their way somewhere. A shader belongs to no tree, so each
+        // tree ticks them all and acts on the ones it draws.
+        let mut shader_active = false;
+        let mut shader_changed = false;
+        if crate::shader::shader_animations_pending() {
+            let moved = crate::shader::tick_shader_animations(now);
+            if !moved.is_empty() {
+                for node in self.nodes.values() {
+                    if let Some(shader) = &node.shader
+                        && let Some((_, running)) =
+                            moved.iter().find(|(s, _)| std::sync::Arc::ptr_eq(s, shader))
+                    {
+                        shader_changed = true;
+                        shader_active |= *running;
+                    }
+                }
+            }
+        }
+        let any_active = !self.animating.is_empty()
+            || settling
+            || !self.snap_pending.is_empty()
+            || shader_active;
+        if shader_changed {
+            self.dirty = true;
+        }
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the
         // exact signal this needs, just never fed into a redraw

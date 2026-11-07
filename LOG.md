@@ -79,6 +79,27 @@ concave corner on a layer window's input region on a real compositor.
 Answers to the request's open questions, from the source: `MORPH_SAMPLES` is 96; the SMIL `d` morph (#245) interpolates the
 numbers of equal command sequences, so an svg node keeps its arcs.
 
+### #270, shader joins (TRE-REQ-013 step 2, 2026-11-06)
+
+Branch `shader-joins-270`, off `transform-origin-269`. Three parts, as the request has them.
+**A, `Shader.animate(name, to, duration_ms, easing)`.** The uniform animation lives on the `Shader` (shared by its
+nodes), as a 0 to 1 `Animated<f64>` progress per uniform, so every easing, springs included, is the nodes' own. A shader
+has no window and so no clock: the animation starts at the first `Tree::tick_all` after it was asked for, on that tick's
+`now`. A process-wide registry (`ANIMATING`, weak) lists the shaders with one; `tick_all` ticks them, keeps the tree active
+and dirty only if a node of that tree draws a moved shader, and draws the last value once. `set_uniforms` stops them.
+`CrossWindowWake` also wakes an idle window that draws a shader with an animation pending (a shader call touches no tree,
+so nothing else would). **B, `hit_path`.** The request asked for `hit_shape="painted"` by alpha on a shader node; alpha
+is on the GPU and reading it back each pointer move is no option, so a node takes a path (`PaintProperties::hit_outline`,
+in its own pixels) that the hit test and the input region follow. Not animated: a join whose body slides must set it again.
+**C, helpers.** `sd_circle`, `sd_box`, `sd_round_box`, `sd_round_union` (an exact circular fillet), `sd_smooth_union`,
+`sd_coverage` in the prelude, their names taken (a shader with one of them is rejected: the one breaking change, in
+`docs/migrating-0.6.md`). Also `frame.scale` (was the padding field of the `frame` block): `p.px` is physical pixels, so a
+shape in logical pixels needs it to look the same at 1.5. `frame_block` gains a `scale` argument.
+Tests: `tests/test_shader_animate.py` (13, including the acceptance join: radius 0 to 12, corner filled, circle middle
+empty, notch open, and at scale 1.5), `tests/test_hit_path.py` (7), engine-core: tick/dirty/idle (2), a tree that does not
+draw the shader is not woken, helpers (1), region (1). Not checked: a window on a real compositor going idle after the
+animation (frames drawn 0), the cost per frame of a join shader, KWin.
+
 ## After 0.6.2 (unreleased)
 
 ### #266, a popup is placed by its body, not by its shadow margin (TRE-REQ-007, 2026-11-06)

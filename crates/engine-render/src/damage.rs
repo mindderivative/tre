@@ -1786,6 +1786,8 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         border_width,
         corner_radii_override,
         corner_concave,
+        // Where a click lands is not what is drawn.
+        hit_outline: _,
         shadows,
         node_transform,
         clip_children,

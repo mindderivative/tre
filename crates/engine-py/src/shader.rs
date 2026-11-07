@@ -362,6 +362,25 @@ impl Shader {
             .map_err(|e| raise(&e))
     }
 
+    /// Moves one uniform to a value over `duration_ms`, from where it is now, like a node's
+    /// `animate`; asking again retargets it, and `set` stops it. Every node using this shader
+    /// updates, and a window draws only while it runs.
+    #[pyo3(signature = (name, to, duration_ms = 0, easing = None))]
+    fn animate(
+        &self,
+        name: &str,
+        to: &Bound<'_, PyAny>,
+        duration_ms: u64,
+        easing: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let duration = std::time::Duration::from_millis(duration_ms);
+        let curve = crate::node::parse_easing(easing.as_ref(), duration)?;
+        let to = uniform_value(name, to)?;
+        self.core
+            .animate_uniform(name, to, duration, curve)
+            .map_err(|e| raise(&e))
+    }
+
     fn __eq__(&self, other: &Bound<'_, PyAny>) -> bool {
         other
             .cast::<Shader>()
