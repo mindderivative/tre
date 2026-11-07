@@ -26,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 70] = [
+const SETTABLE: [&str; 71] = [
     // 0.5.7 (#179): placed against another node.
     "anchor",
     "placement",
@@ -41,6 +41,7 @@ const SETTABLE: [&str; 70] = [
     "translate_y",
     "scale",
     "rotation_deg",
+    "transform_origin",
     "fill",
     "stroke_color",
     "stroke_width",
@@ -225,6 +226,7 @@ pub(crate) enum Change {
     TranslateY(f64),
     Scale(f64),
     RotationDeg(f64),
+    TransformOrigin((f64, f64)),
     Data(PathData),
     ViewBox(Option<Rect>),
     /// 0.5.9 (#236).
@@ -583,6 +585,7 @@ pub(crate) fn animatable_to_py(
         "translate_y" => number(*pick(&node.paint.node_transform.translate_y, target))?,
         "scale" => number(*pick(&node.paint.node_transform.scale, target))?,
         "rotation_deg" => number(*pick(&node.paint.node_transform.rotation_deg, target))?,
+        "transform_origin" => node.paint.node_transform.origin.into_pyobject(py)?.into_any().unbind(),
         "opacity" => number(*pick(&node.paint.opacity, target))?,
         "blur" => number(*pick(&node.paint.blur, target))?,
         "backdrop_blur" => number(*pick(&node.paint.backdrop_blur, target))?,
@@ -966,6 +969,16 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "translate_y" => Change::TranslateY(number("a number")?),
         "scale" => Change::Scale(parse_non_negative(value, name)?),
         "rotation_deg" => Change::RotationDeg(number("a number")?),
+        "transform_origin" => {
+            let pair: (f64, f64) = value
+                .extract()
+                .ok()
+                .filter(|(x, y): &(f64, f64)| {
+                    x.is_finite() && y.is_finite() && !value.is_instance_of::<pyo3::types::PyBool>()
+                })
+                .ok_or_else(|| invalid(name, "a pair of numbers (x, y), fractions of the box"))?;
+            Change::TransformOrigin(pair)
+        }
         "role" => {
             let role: String = required(value, name, "a str")?;
             let role = ROLES
@@ -2223,6 +2236,7 @@ impl Node {
                 Change::RotationDeg(v) => {
                     node.paint.node_transform.rotation_deg.set_now(v);
                 }
+                Change::TransformOrigin(origin) => node.paint.node_transform.origin = origin,
                 Change::Data(data) => {
                     if let NodeKind::Path(state) = &mut node.kind {
                         state.data.set_now(data);

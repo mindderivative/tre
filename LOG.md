@@ -52,6 +52,21 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
 
+## After 0.6.3 (unreleased)
+
+### #269, `transform_origin` (TRE-REQ-013 step 1, part A, 2026-11-06)
+
+From the Tesserae Shell vault's `TRE-REQ-013 Structure-Preserving Path Morph`, approved by the maintainer; filed as four
+issues, #269 (transform origin and concave corners), #270 (shader joins), #271 (corner-preserving path morph), #272
+(parametric path), built in that order. `NodeTransform::to_affine` always turned about the box centre. It now turns about
+`NodeTransform::origin`, a pair of fractions of the box, default `(0.5, 0.5)`; `Node.set(transform_origin=(x, y))`, readable
+with `get`, not animated, a bad value is a `ValueError`. The damage hash includes it. Tests: `tests/test_transform_origin.py`
+(11, real Window pixels: default centre unchanged, scale about each corner, a quarter turn about a corner, a change after
+creation, bad values); `engine-core` and `engine-render` lib tests pass. Part B (concave corners) is next.
+
+Answers to the request's open questions, from the source: `MORPH_SAMPLES` is 96; the SMIL `d` morph (#245) interpolates the
+numbers of equal command sequences, so an svg node keeps its arcs.
+
 ## After 0.6.2 (unreleased)
 
 ### #266, a popup is placed by its body, not by its shadow margin (TRE-REQ-007, 2026-11-06)

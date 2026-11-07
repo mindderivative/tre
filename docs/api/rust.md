@@ -424,6 +424,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `translate_y` | `Animated<f64>` | Vertical shift in pixels. |
 | `scale` | `Animated<f64>` | Uniform scale factor; 1.0 is unscaled. |
 | `rotation_deg` | `Animated<f64>` | Rotation in degrees. |
+| `origin` | `(f64, f64)` | The point scale and rotation turn about, as fractions of the box (`(0.5, 0.5)`, the centre, by default). |
 
 | Method | Description |
 | --- | --- |

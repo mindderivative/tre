@@ -244,7 +244,7 @@ class Node:
         carrying the speed of a number's animation it interrupts. Animatable:
         `fill`, `stroke_color`, `stroke_width`, `opacity`, `blur`, `backdrop_blur`,
         `corner_radius` (a number or a 4-tuple), `shadows`, the transform
-        parts `translate_x`/`translate_y`/`scale`/`rotation_deg`, a
+        parts `translate_x`/`translate_y`/`scale`/`rotation_deg` (about `transform_origin`), a
         scroll view's `scroll_offset`, a path's `data`/`trim_start`/
         `trim_end`, an svg's `svg_time` (0.5.10), and (0.5.6) the layout properties that hold a length:
         `width`, `height`, `min_*`, `max_*`, `x`, `y`, `padding*`, `margin*`,

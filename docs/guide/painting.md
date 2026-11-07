@@ -55,7 +55,12 @@ button.set(shadows=[((0x67, 0x50, 0xA4, 0xFF), 0, 0, 0, 3)])
 overlapping children don't show through each other. `translate_x`,
 `translate_y`, `scale` (about the center), and `rotation_deg` (clockwise
 about the center) move what's painted without moving any other node — the pointer
-still finds the node where it's drawn. Each animates on its own.
+still finds the node where it's drawn. Each animates on its own. `transform_origin`
+(0.6.4) moves the point `scale` and `rotation_deg` turn about: a pair of fractions of
+the node's box, `(0.5, 0.5)` (the center) by default, `(0, 0)` its top-left corner,
+`(1, 1)` its bottom-right. A piece that grows from the corner it touches is
+`scale=0.0` animated to `1.0` with `transform_origin=(0, 0)`. It is set, not
+animated, and a pair outside 0 to 1 is a point outside the box.
 
 ## SVG documents
 

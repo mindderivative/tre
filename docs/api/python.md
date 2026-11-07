@@ -313,7 +313,8 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | Property | Value | Description |
 | --- | --- | --- |
 | `translate_x`, `translate_y` | pixels (animatable) | Offset from the laid-out position. |
-| `scale`, `rotation_deg` | number (animatable) | Scale and clockwise rotation about the center. |
+| `scale`, `rotation_deg` | number (animatable) | Scale and clockwise rotation about `transform_origin` (the center by default). |
+| `transform_origin` | (x, y) | The point `scale` and `rotation_deg` turn about, as fractions of the box; default `(0.5, 0.5)`. Not animatable (0.6.4). |
 | `visible` | `bool` | `False` hides the node and its subtree. |
 | `z_index` | `int` | Paint and hit order among siblings. |
 | `clip_children` | `bool` | Clips children to the rounded box. |

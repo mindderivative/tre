@@ -1815,10 +1815,13 @@ fn paint_fingerprint(h: &mut impl Hasher, paint: &PaintProperties) {
         translate_y,
         scale,
         rotation_deg,
+        origin,
     } = node_transform;
     for part in [translate_x, translate_y, scale, rotation_deg] {
         num(h, part.current);
     }
+    num(h, origin.0);
+    num(h, origin.1);
     clip_children.hash(h);
     // 0.5.4 (#110): blur, blend mode and backdrop blur.
     num(h, blur.current);
