@@ -1,4 +1,4 @@
-# PLAN — after 0.6.2
+# PLAN — after 0.6.3
 
 *(Replaces the 0.5.0 plan, custom windowing (#28), which shipped in 0.5.0
 and is recorded in `LOG.md`. From 0.5.0 every step is tracked in the GitHub
@@ -7,9 +7,9 @@ project Tesserae Rendering Engine; the old trackers are archived as
 
 ## Where we are
 
-`main` is at 0.6.2 (released 2026-11-06: PR #265, tag `v0.6.2`, on PyPI as `tesserae-engine==0.6.2`): #263 (a text node
-measures to its content) and #264 (a cross-window change is drawn at once). In progress: #266, `PopupWindow(geometry=)`
-(TRE-REQ-007), built and unpushed, the next patch. 0.6.1 (2026-11-03): the loop no longer runs a self-queuing `call_soon`
+`main` is at 0.6.3 (released 2026-11-06: PR #267, tag `v0.6.3`, on PyPI as `tesserae-engine==0.6.3`): `PopupWindow(geometry=)`
+(#266, TRE-REQ-007). 0.6.2 (2026-11-06): #263 (a text node measures to its content) and #264 (a cross-window change is
+drawn at once). 0.6.1 (2026-11-03): the loop no longer runs a self-queuing `call_soon`
 callback once it is exiting (#260; macOS unverified). 0.6.0 (2026-11-03) renamed the package `tre` to `tess_re` and the variables to `TESS_RE_*`, no alias
 (#257; `docs/migrating-0.6.md`). 0.5.10 (2026-11-03) was `Window.build` / `apply` / `Node.set_children` (#253), SMIL
 `svg_time` (#245) and occlusion handling (#246). Open issues: #187 and #188 (Windows and macOS hardware checks), #189 (X11
@@ -69,4 +69,4 @@ Wayland window is hidden) and **#248** (a KWin fullscreen window counts about 48
 
 - **#171** — done and closed: `python3-dev` is in the apt line in
   `docs/contributing.md` (the `engine-py` tests need it to link).
-- The release after 0.6.2: to be decided by the user from the Backlog.
+- The release after 0.6.3: to be decided by the user from the Backlog.

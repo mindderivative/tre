@@ -2,6 +2,13 @@
 
 ## Status
 
+**0.6.3 released (2026-11-06, PR #267, tag `v0.6.3` on `6747f257`, PyPI `tesserae-engine==0.6.3`):** `PopupWindow(geometry=)`,
+the compositor places a popup's body and not its shadow margin (#266, TRE-REQ-007). Full-tier CI passed on Linux, Windows,
+macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI into a clean venv on Linux (Python 3.14):
+`geometry` reads back, defaults to the whole surface, a geometry outside `size` raises `ValueError`, `import tre` raises. Not
+run from the PyPI install: a compositor placement. Not verified: the flip on KWin by pixels, compositors that resize a
+popup, macOS and Windows (no popups). #263, #264 and #266 are Done. Notes in `docs/migrating-0.6.md`.
+
 **Held issue #273:** `tests/test_gpu_shared_live.py`'s thirty-window memory test fails every time on the real GPU, 0.88 MiB for one
 window and 6.32 MiB for thirty (limit 1.5), identically on `main` at `6747f257` and on the 0.6.4 branches; not a flake.
 Cause undetermined. It needs the real GPU, so it is run only with the maintainer's say-so.
@@ -139,7 +146,7 @@ from `Window.after`). It now also counts an animation started since the tick (`a
 regression test `tests/test_timer_animation_live.py`: 0 frames before the fix, 26 after, 0 idle either side. Not
 checked: whether released versions before 0.6.4 had it (the code is older than this branch), KWin.
 
-## After 0.6.2 (unreleased)
+## 0.6.3 (released 2026-11-06)
 
 ### #266, a popup is placed by its body, not by its shadow margin (TRE-REQ-007, 2026-11-06)
 
