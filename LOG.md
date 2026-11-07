@@ -2,6 +2,10 @@
 
 ## Status
 
+**Held issue #273:** `tests/test_gpu_shared_live.py`'s thirty-window memory test fails every time on the real GPU, 0.88 MiB for one
+window and 6.32 MiB for thirty (limit 1.5), identically on `main` at `6747f257` and on the 0.6.4 branches; not a flake.
+Cause undetermined. It needs the real GPU, so it is run only with the maintainer's say-so.
+
 **0.6.2 released (2026-11-06, PR #265, tag `v0.6.2` on `84d28fd`, PyPI `tesserae-engine==0.6.2`):** an unsized text node
 measures to its content, a fit width is the text plus 2 px (#263), and a change to another window made in a timer or
 listener is drawn at once (#264, TRE-REQ-012). Full-tier CI passed on Linux, Windows, macOS, MSRV and docs; the owner
