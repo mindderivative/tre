@@ -489,11 +489,14 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | Field | Type | Description |
 | --- | --- | --- |
 | `0` | `BezPath` | The path's drawing segments. |
+| `1` | `MorphMode` |  |
 
 | Method | Description |
 | --- | --- |
 | `fn from_svg(data: &str) -> Result<Self, String>` | Parses SVG path data into a path, or returns an error message. |
+| `fn same_structure(&self, other: &Self) -> bool` | Whether the two paths have the same sequence of commands (each `M`, `L`, `Q`, `C`, `Z` in the same place; an arc is already curves), so a structure… |
 | `fn to_svg(&self) -> String` | Returns the path as SVG path data. |
+| `fn with_mode(self, mode: MorphMode) -> Self` | The same data, morphed into by `mode`. |
 
 ### PathState { #pathstate }
 
@@ -503,6 +506,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | --- | --- | --- |
 | `data` | `Animated<PathData>` | The path geometry, animatable. |
 | `hit_shape` | `HitShape` | Which part of the node takes pointer events and counts in an `input_region="auto"`. |
+| `morph` | `MorphMode` | How an animation of `data` morphs (`morph`). |
 | `view_box` | `Option<Rect>` | The region of path space fitted into the node's box; None uses pixels. |
 | `trim_start` | `Animated<f64>` | Where the drawn stroke starts along the path, from 0.0 to 1.0. |
 | `trim_end` | `Animated<f64>` | Where the drawn stroke ends along the path, from 0.0 to 1.0. |
@@ -545,6 +549,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `fn animated(&self) -> bool` | Whether the shader changes with time and needs a redraw every frame. |
 | `fn assembled(&self) -> Arc<str>` | The complete WGSL module for the renderer: tess_re's prelude, then the app's source. |
 | `fn inputs(&self) -> &[(String, NodeId)]` | The named inputs, in the order their bindings are numbered. |
+| `fn is_animating(&self) -> bool` | Whether a uniform animation is running or waiting to start. |
 | `fn mode(&self) -> ShaderMode` | Whether the shader fills the node or is an effect on its content. |
 | `fn new(wgsl: String, uniforms: Vec<(String, UniformValue)>, inputs: Vec<(String, NodeId)>, mode: ShaderMode, animated: bool) -> Result<Arc<Self>, ShaderError>` | Validates `wgsl` and builds the shader. |
 | `fn prelude_lines(&self) -> u32` | How many lines of generated code come before the app's first line. |
@@ -1071,6 +1076,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `fn set_virtual_list_window(&mut self, list: NodeId, visible: Range<usize>, materialize: impl FnMut(usize) -> (NodeKind, Style, PaintProperties))` | Creates and recycles a virtual list's row nodes to match the visible index range. |
 | `fn set_window_drag_allowed(&mut self, allowed: bool)` | The tree of a layer surface refuses `window_region="drag"`. |
 | `fn shader_cycle(&self, id: NodeId, shader: &Shader) -> bool` | Returns whether giving a node a shader would make a shader depend on itself. |
+| `fn shader_frame_owed(&self) -> bool` | Whether a shader this tree draws has moved, or is moving, since the tree last looked: a frame is owed that nothing in the tree itself asked for. |
 | `fn show_layer(&mut self, root: NodeId, node: NodeId, meta: OverlayMeta) -> bool` | Shows a node as a layer on top of every open layer, anchored by its settings. |
 | `fn static_selected_text(&self) -> Option<String>` | The text a Copy of the static selection would take, the nodes' pieces joined by newlines: `None` for no selection or an empty one. |
 | `fn static_selection_ends(&self) -> Option<((NodeId, usize), (NodeId, usize))>` | The selection's anchor and its moving end: a text node and a byte offset each. |
@@ -1529,6 +1535,23 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `Circle` |  | The circle inscribed in the node's box, centred; an ellipse if the box is not square would be a different shape, so this one stays round. |
 | `Rounded` | `(CornerRadii)` | The box with these corner radii (top-left, top-right, bottom-right, bottom-left), independent of the node's own `corner_radius`. |
 | `Path` | `{ data: PathData, view_box: Rect }` | Any path, fitted into the box by `view_box` like a path node's own. |
+
+### MorphMode { #morphmode }
+
+*enum.* How a path's data morphs into other data.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Copy`](https://doc.rust-lang.org/std/marker/trait.Copy.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`Default`](https://doc.rust-lang.org/std/default/trait.Default.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html), [`Eq`](https://doc.rust-lang.org/std/cmp/trait.Eq.html)
+
+| Variant | Payload | Description |
+| --- | --- | --- |
+| `Resample` |  | Both paths are resampled by arc length: any two paths morph, and mid-frames are polygons. |
+| `Structure` |  | Two paths with the same sequence of commands morph number by number, so lines, curves and arcs stay what they are and every mid-frame is exact; any… |
+| `Strict` |  | As `Structure`, but a pair with different command sequences is an error, not a resample. |
+
+| Method | Description |
+| --- | --- |
+| `fn name(self) -> &'static str` |  |
+| `fn parse(name: &str) -> Option<Self>` |  |
 
 ### MotionCurve { #motioncurve }
 

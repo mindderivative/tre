@@ -150,3 +150,7 @@ Search for text nodes you create without a size and look at the ones inside a
   `frame.scale` is the display scale. **One thing can break:** a shader that declares a function with one
   of the helper names is rejected, as for any other name tess_re's prelude takes; rename it. Nothing else
   changes. See [Shaders](reference/shader.md).
+- **`morph` on a path (#271, TRE-REQ-013 step 3).** `morph="structure"` morphs two paths with the same
+  commands number by number, so arcs stay arcs and every mid-frame is exact; `"strict"` raises for a pair
+  that differs. The default `"resample"` is the morph as it was. See
+  [Morphing paths](guide/animation.md#morphing-paths).

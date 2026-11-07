@@ -146,6 +146,22 @@ or an open path against a closed one, switch halfway instead. The last frame
 is exactly the target data, so a morphing play button ends as a crisp pause
 icon. See `examples/path_morph.py`.
 
+That resampling turns every mid-frame into a polygon and rounds off corners. When both
+paths have **the same sequence of commands** (the same `M`, `L`, `Q`, `C` and `Z` in the same
+places; an `A` arc is already curves), ask for `morph="structure"` (0.6.4) and the engine moves
+each number of the path to its partner instead, so lines stay lines and curves stay curves, every
+mid-frame is the exact shape, and nothing is smeared:
+
+```python
+box = window.create("path", data=rounded(100, 60, 4), morph="structure", ...)
+box.animate("data", rounded(100, 60, 20), 200)   # the corner radius grows, arcs stay arcs
+```
+
+A pair with different commands resamples, as before. `morph="strict"` raises `ValueError` from
+`animate` instead, so a mistake is loud. The default `morph="resample"` is today's behaviour. Both
+paths must start at the same point and wind the same way (the numbers are paired in order); the
+mode is the node's, and applies to the animations started after it is set.
+
 ## Animating an SVG
 
 An `svg` node whose document carries SMIL (`<animate>`, `<set>`, `<animateTransform>`) is drawn as it looks

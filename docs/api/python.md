@@ -351,6 +351,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | Property | Value | Description |
 | --- | --- | --- |
 | `rgba`, `pixel_width`, `pixel_height`, `fit` | bytes / ints / `"fill"`, `"contain"`, `"cover"` | Image pixels and how they fit the box. |
+| `morph` | `"resample"`, `"structure"`, `"strict"` (path only) | How an animation of `data` morphs: resample (default), by matching commands, or by matching commands or raise (0.6.4). |
 | `data`, `view_box`, `trim_start`, `trim_end` | SVG path / tuple / `0.0`–`1.0` | A path's shape, viewport and drawn part. |
 | `svg_time`, `svg_duration` | seconds / read-only seconds or `None` | An svg's position in its SMIL animation, and how long that runs (0.5.10). |
 | `draw` | `draw(painter)` | A canvas's drawing callback. |

@@ -482,6 +482,15 @@ impl Node {
                             "node property `data` isn't valid SVG path data: {err}"
                         ))
                     })?;
+                    if state.morph == engine_core::MorphMode::Strict
+                        && !state.data.current.same_structure(&value)
+                    {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "node property `data` can't animate with morph=\"strict\": the new \
+                             path has different commands than the current one",
+                        ));
+                    }
+                    let value = value.with_mode(state.morph);
                     animate_field(
                         &mut state.data,
                         value,

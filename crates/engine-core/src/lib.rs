@@ -63,7 +63,7 @@ pub use node::{
     VirtualListState, WindowRegion,
 };
 pub use overlay::{AnchorBox, OverlayMeta, Placement};
-pub use path::{HitShape, PathData, PathState, fit_transform, trim};
+pub use path::{HitShape, MorphMode, PathData, PathState, fit_transform, trim};
 pub use shader::{
     FRAME_BLOCK_SIZE, Shader, ShaderError, ShaderMode, UniformKind, UniformValue, frame_block,
     shader_animations_pending,

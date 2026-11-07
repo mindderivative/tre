@@ -26,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 73] = [
+const SETTABLE: [&str; 74] = [
     // 0.5.7 (#179): placed against another node.
     "anchor",
     "placement",
@@ -49,6 +49,7 @@ const SETTABLE: [&str; 73] = [
     "corner_radius",
     "corner_style",
     "hit_path",
+    "morph",
     "shadows",
     "blur",
     "backdrop_blur",
@@ -235,6 +236,7 @@ pub(crate) enum Change {
     ViewBox(Option<Rect>),
     /// 0.5.9 (#236).
     HitShape(engine_core::HitShape),
+    Morph(engine_core::MorphMode),
     TrimStart(f64),
     TrimEnd(f64),
     Fill(Color),
@@ -766,6 +768,7 @@ impl Change {
             Change::Data(_) => ("data", "path", path),
             Change::ViewBox(_) => ("view_box", "path", path),
             Change::HitShape(_) => ("hit_shape", "path", path),
+            Change::Morph(_) => ("morph", "path", path),
             Change::TrimStart(_) => ("trim_start", "path", path),
             Change::TrimEnd(_) => ("trim_end", "path", path),
             Change::Placeholder(_) => ("placeholder", "text_input", text_input),
@@ -1183,6 +1186,13 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             }
             Some(Rect::new(x, y, x + w, y + h))
         }),
+        "morph" => {
+            let expected = "\"resample\", \"structure\" or \"strict\"";
+            let word: String = required(value, name, expected)?;
+            Change::Morph(
+                engine_core::MorphMode::parse(&word).ok_or_else(|| invalid(name, expected))?,
+            )
+        }
         "hit_shape" => {
             let expected = "\"box\" or \"painted\"";
             let word: String = required(value, name, expected)?;
@@ -1917,6 +1927,14 @@ impl Node {
                     };
                     palette_to_py(&state.palette, py)?
                 }
+                "morph" => {
+                    let NodeKind::Path(state) = &node.kind else {
+                        return Err(PyValueError::new_err(
+                            "node property `morph` applies only to a path node",
+                        ));
+                    };
+                    state.morph.name().into_pyobject(py)?.into_any().unbind()
+                }
                 "hit_shape" => {
                     let NodeKind::Path(state) = &node.kind else {
                         return Err(PyValueError::new_err(
@@ -2301,6 +2319,11 @@ impl Node {
                 Change::ViewBox(view_box) => {
                     if let NodeKind::Path(state) = &mut node.kind {
                         state.view_box = view_box;
+                    }
+                }
+                Change::Morph(mode) => {
+                    if let NodeKind::Path(state) = &mut node.kind {
+                        state.morph = mode;
                     }
                 }
                 Change::HitShape(hit_shape) => {
