@@ -41,6 +41,10 @@ pub(super) fn shape_contains(paint: &PaintProperties, layout: &Layout, point: Po
     if r.iter().all(|v| *v <= 0.0) {
         return true;
     }
+    if paint.corner_concave.contains(&true) {
+        let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
+        return crate::box_outline(w, h, r, paint.corner_concave, 0.0).contains(point);
+    }
     RoundedRect::new(
         0.0,
         0.0,
@@ -378,6 +382,9 @@ impl Tree {
                 let r = corner_radii(&node.paint);
                 if r.iter().all(|v| *v <= 0.0) {
                     out.push(rect_shape(w, h, composed));
+                } else if node.paint.corner_concave.contains(&true) {
+                    let outline = crate::box_outline(w, h, r, node.paint.corner_concave, 0.0);
+                    out.push(contours(outline.elements().iter().copied(), composed));
                 } else {
                     out.push(contours(
                         RoundedRect::new(0.0, 0.0, w, h, (r[0], r[1], r[2], r[3]))

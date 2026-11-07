@@ -19,6 +19,7 @@
 
 mod access;
 mod animation;
+mod box_shape;
 mod canvas;
 mod dock;
 mod gesture;
@@ -40,6 +41,7 @@ pub use access::{
 pub use animation::{
     ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve, take_cancelled,
 };
+pub use box_shape::box_outline;
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
 pub use gesture::{

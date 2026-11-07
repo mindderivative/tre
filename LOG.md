@@ -58,6 +58,34 @@ Tracking lives in the GitHub project Tesserae Rendering Engine (the old
 issues: #187, #188 (everything that needs Windows or Mac hardware), #189 (X11 file drop
 position).
 
+## After 0.6.3 (unreleased)
+
+### #269, `transform_origin` (TRE-REQ-013 step 1, part A, 2026-11-06)
+
+From the Tesserae Shell vault's `TRE-REQ-013 Structure-Preserving Path Morph`, approved by the maintainer; filed as four
+issues, #269 (transform origin and concave corners), #270 (shader joins), #271 (corner-preserving path morph), #272
+(parametric path), built in that order. `NodeTransform::to_affine` always turned about the box centre. It now turns about
+`NodeTransform::origin`, a pair of fractions of the box, default `(0.5, 0.5)`; `Node.set(transform_origin=(x, y))`, readable
+with `get`, not animated, a bad value is a `ValueError`. The damage hash includes it. Tests: `tests/test_transform_origin.py`
+(11, real Window pixels: default centre unchanged, scale about each corner, a quarter turn about a corner, a change after
+creation, bad values); `engine-core` and `engine-render` lib tests pass. 
+### #269, `corner_style` (TRE-REQ-013 step 1, part B, 2026-11-06)
+
+A concave corner is the box with a quarter disc about its own corner cut away, so a small box with one concave corner is
+the fillet between two shapes. `corner_style="round"|"concave"` or a 4-tuple (top-left first, as `corner_radius`) sets
+`PaintProperties::corner_concave`; the radius is the corner's `corner_radius`, which animates as before. New
+`engine_core::box_outline(w, h, radii, concave, inset)` builds the outline (arcs, not a polygon; the border's is inset and
+its notch grows by the inset). It feeds the fill, the border, the clip of an image or shader (`box_path`), the hit test and
+the input region (`region.rs`); `GeometryCache::concave_box` caches it and the damage hash includes the flags. An all-round
+box still goes through `RoundedRect`, unchanged. A shadow still takes the rounded corners only (documented). Tests:
+5 unit tests in `box_shape.rs`; `tests/test_corner_style.py` (13: pixels per corner, a fillet, animating the radius, a
+click in the notch falling through, the border following the notch, bad values). Not checked: a 1.5 scale by pixels, a
+concave corner on a layer window's input region on a real compositor.
+
+Answers to the request's open questions, from the source: `MORPH_SAMPLES` is 96; the SMIL `d` morph (#245) interpolates the
+numbers of equal command sequences, so an svg node keeps its arcs.
+
+
 ## 0.6.3 (released 2026-11-06)
 
 ### #266, a popup is placed by its body, not by its shadow margin (TRE-REQ-007, 2026-11-06)

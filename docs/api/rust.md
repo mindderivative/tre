@@ -424,6 +424,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `translate_y` | `Animated<f64>` | Vertical shift in pixels. |
 | `scale` | `Animated<f64>` | Uniform scale factor; 1.0 is unscaled. |
 | `rotation_deg` | `Animated<f64>` | Rotation in degrees. |
+| `origin` | `(f64, f64)` | The point scale and rotation turn about, as fractions of the box (`(0.5, 0.5)`, the centre, by default). |
 
 | Method | Description |
 | --- | --- |
@@ -462,6 +463,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `border_color` | `Animated<Color>` | The border color, drawn inside the node's edge. |
 | `border_width` | `Animated<f64>` | The border thickness in pixels. |
 | `corner_radii_override` | `Option<Animated<CornerRadii>>` | Per-corner radii that replace the single corner radius when set. |
+| `corner_concave` | `[bool; 4]` | Which corners curve inward (`corner_style`), in the order top-left, top-right, bottom-right, bottom-left. |
 | `shadows` | `Animated<Shadows>` | The node's drop shadows, animatable. |
 | `node_transform` | `NodeTransform` | Translate, scale and rotate applied about the box center. |
 | `clip_children` | `bool` | Whether children are clipped to this node's box. |
@@ -1777,6 +1779,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 
 | Function | Description |
 | --- | --- |
+| `fn box_outline(w: f64, h: f64, radii: [f64; 4], concave: [bool; 4], inset: f64) -> BezPath` | The outline of a `w` by `h` box, drawn `inset` inside its edges (a border's path is inset by half its width), with corner `radii` in the order… |
 | `fn ctrl_shortcut(letter: char, shift: bool) -> Option<InputEvent>` | Maps Ctrl plus a letter to the input event it means, if any. |
 | `fn fit_transform(view_box: Option<Rect>, width: f64, height: f64) -> Affine` | Returns the transform that scales and centers a view box into a width and height. |
 | `fn frame_block(size: (f32, f32), time: f32) -> [u8; 16]` | Returns the bytes of the per-frame shader uniform block for a size and time. |
@@ -1897,6 +1900,7 @@ Scene building and GPU rendering with `vello_gpu` and `wgpu`: the paint walk, da
 
 | Method | Description |
 | --- | --- |
+| `fn concave_box(&mut self, id: NodeId, w: f64, h: f64, radii: [f64; 4], concave: [bool; 4], inset: f64, border: bool) -> &BezPath` | The outline of a box with a concave corner, for a fill (`border` false) or a border stroke inset by `inset` (`border` true). |
 | `fn evict_stale(&mut self, tree: &Tree)` | Drops cached paths belonging to nodes that no longer exist in the tree. |
 | `fn new() -> Self` | Creates an empty geometry cache. |
 | `fn rounded_rect_border(&mut self, id: NodeId, w: f64, h: f64, radius: f64, inset: f64) -> &BezPath` | Returns the cached border path for a uniform rounded rect, inset by half the stroke. |

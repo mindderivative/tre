@@ -132,3 +132,14 @@ Search for text nodes you create without a size and look at the ones inside a
   compositor. Nothing changes without it. See the
   [reference](reference/layer-window.md#popupwindow) and
   [Menus from a bar](guide/menus-from-a-bar.md).
+
+## 0.6.4
+
+- **`transform_origin` (#269, TRE-REQ-013 step 1).** `scale` and `rotation_deg` turn about a point
+  you choose: `node.set(transform_origin=(0, 0))` is the top-left corner, `(1, 1)` the bottom-right, as
+  fractions of the box. The default `(0.5, 0.5)` is the center, as before, so nothing changes
+  without it. See [Painting](guide/painting.md).
+- **`corner_style` (#269, TRE-REQ-013 step 1).** `"concave"` (or a 4-tuple of `"round"` and
+  `"concave"`, ordered as `corner_radius`) makes a box corner curve inward about the box's corner, so a
+  small box is the fillet between two shapes. The default `"round"` is a plain rounded box, as before.
+  See [Painting](guide/painting.md).

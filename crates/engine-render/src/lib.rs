@@ -1023,6 +1023,14 @@ fn set_shape_paint(
     }
 }
 
+/// A box's four corner radii, top-left first: the per-corner override, else the uniform radius.
+fn corner_radii(node: &engine_core::Node) -> [f64; 4] {
+    match &node.paint.corner_radii_override {
+        Some(radii) => radii.current.0,
+        None => [node.paint.corner_radius.current; 4],
+    }
+}
+
 /// The box's own rounded outline, for a fill or a clip.
 fn box_path<'g>(
     node: &engine_core::Node,
@@ -1031,6 +1039,17 @@ fn box_path<'g>(
     h: f64,
     geometry: &'g mut GeometryCache,
 ) -> &'g BezPath {
+    if node.paint.corner_concave.contains(&true) {
+        return geometry.concave_box(
+            id,
+            w,
+            h,
+            corner_radii(node),
+            node.paint.corner_concave,
+            0.0,
+            false,
+        );
+    }
     match node
         .paint
         .corner_radii_override
@@ -1120,12 +1139,16 @@ fn stroke_box(
         return;
     }
     let inset = border_width / 2.0;
+    let concave = node.paint.corner_concave;
     let border_path: &BezPath = match node
         .paint
         .corner_radii_override
         .as_ref()
         .map(|r| r.current.0)
     {
+        _ if concave.contains(&true) => {
+            geometry.concave_box(id, w, h, corner_radii(node), concave, inset, true)
+        }
         Some(radii) => geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
         None => {
             let radius = (node.paint.corner_radius.current - inset).max(0.0);

@@ -1257,6 +1257,9 @@ pub struct NodeTransform {
     pub translate_y: Animated<f64>,
     pub scale: Animated<f64>,
     pub rotation_deg: Animated<f64>,
+    /// The point scale and rotation turn about, as fractions of the box
+    /// (`(0.5, 0.5)`, the centre, by default). Not animated.
+    pub origin: (f64, f64),
 }
 
 impl Default for NodeTransform {
@@ -1266,6 +1269,7 @@ impl Default for NodeTransform {
             translate_y: Animated::new(0.0),
             scale: Animated::new(1.0),
             rotation_deg: Animated::new(0.0),
+            origin: (0.5, 0.5),
         }
     }
 }
@@ -1279,7 +1283,7 @@ impl NodeTransform {
         if scale == 1.0 && degrees == 0.0 {
             return Affine::translate((tx, ty));
         }
-        let center = (width / 2.0, height / 2.0);
+        let center = (width * self.origin.0, height * self.origin.1);
         Affine::translate((tx + center.0, ty + center.1))
             * Affine::rotate(degrees.to_radians())
             * Affine::scale(scale)
@@ -1376,6 +1380,10 @@ pub struct PaintProperties {
     /// `corner_radius` scalar," the same true no-op contract
     /// `border_width: 0.0` already establishes.
     pub corner_radii_override: Option<Animated<CornerRadii>>,
+    /// #269: which corners curve inward (`corner_style`), in the order top-left,
+    /// top-right, bottom-right, bottom-left. All `false` by default, a plain
+    /// rounded box. The radius of a concave corner is the one `corner_radius` gives it.
+    pub corner_concave: [bool; 4],
     /// M95: drop shadows (`Shadows`).
     pub shadows: Animated<Shadows>,
     /// M96: the target API's `translate_x`/`translate_y`/`scale`/
@@ -1483,6 +1491,7 @@ impl PaintProperties {
             border_color: Animated::new(Color::from_rgba8(0, 0, 0, 0)),
             border_width: Animated::new(0.0),
             corner_radii_override: None,
+            corner_concave: [false; 4],
             shadows: Animated::new(Shadows::default()),
             node_transform: NodeTransform::default(),
             clip_children: false,
