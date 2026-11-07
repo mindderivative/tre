@@ -162,6 +162,31 @@ A pair with different commands resamples, as before. `morph="strict"` raises `Va
 paths must start at the same point and wind the same way (the numbers are paired in order); the
 mode is the node's, and applies to the animations started after it is set.
 
+### A path with parameters
+
+When a shape is *one* shape that changes a few numbers (a ring whose fillet radius grows, a panel
+that slides out of a notch), write it once with holes and let the engine fill it in as the
+numbers animate, with no Python per frame (0.6.4):
+
+```python
+RING = ("M {r},0 H {w - r} A {r} {r} 0 0 1 {w},{r} V {h - r} A {r} {r} 0 0 1 {w - r},{h} "
+        "H {r} A {r} {r} 0 0 1 0,{h - r} V {r} A {r} {r} 0 0 1 {r},0 Z")
+ring = window.create("path", data=RING, params={"w": 100, "h": 60, "r": 0})
+ring.animate_param("r", 12, 200, easing=(0.2, 0.0, 0.0, 1.0))
+ring.animate_param("w", 60, 200)
+```
+
+A hole is `{expression}` anywhere a number may be in path data. An expression is numbers,
+parameter names, `+`, `-`, `*`, a sign and parentheses, and nothing else: no division, functions
+or conditions. Each time a parameter moves the engine fills the template in and uses the result as
+the path's data, so every frame is the exact shape (arcs are flattened to the display scale as for
+any path) and the last frame equals the same shape written as plain data. `node.get("params")`
+reads the numbers, `node.get("data")` the path as filled in, and `set(params={...})` sets numbers
+outright (ending their animations), adding any new name. `set(data=<plain data>)` ends the
+template; `animate("data", ...)` on a template raises `ValueError`. A name the template uses that
+`params` lacks, a bad hole, or data that does not parse once filled in raises `ValueError` and
+changes nothing. `animate_param` takes `easing` as `animate` does; it has no `on_complete`.
+
 ## Animating an SVG
 
 An `svg` node whose document carries SMIL (`<animate>`, `<set>`, `<animateTransform>`) is drawn as it looks

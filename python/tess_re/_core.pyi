@@ -268,6 +268,19 @@ class Node:
         text, one per line, as `(x, y, width, height)` in the node's
         coordinates. Offsets are UTF-8 byte offsets on character boundaries."""
         ...
+    def animate_param(
+        self,
+        name: str,
+        to: float,
+        duration_ms: int = 0,
+        easing: str | tuple[float, float, float, float] | tuple[str, float] | None = None,
+    ) -> None:
+        """(0.6.4) Moves one parameter of a path's template to a number over `duration_ms`, from
+        where it is now, like `animate`; `easing` as `animate` takes it. The path is filled in
+        again by the engine's own tick, so there is no Python per frame. Asking again
+        retargets; `set(params=...)` stops it. A parameter `params` does not have, or a node
+        that is not a path, raises `ValueError`. There is no `on_complete`."""
+        ...
     def get_target(self, name: str) -> Any:
         """M95: the value `name`'s running animation is heading to --
         the same as `get(name)` when nothing is animating it."""

@@ -1520,6 +1520,8 @@ impl App {
                 let frame_began = Instant::now();
                 let now = crate::clock::frame_now(&runtime.handles.tree);
                 let (any_active, mut completed) = runtime.handles.tree.borrow_mut().tick_all(now);
+                // An animation a timer or a handler starts below was not seen by that tick.
+                let started_before = engine_core::animations_started();
                 // 0.5.8 (#205): a layer surface's margins animate on the same clock. They
                 // draw nothing, so the loop is woken by the alarm at about 120 Hz, not kept
                 // spinning.
@@ -1572,7 +1574,9 @@ impl App {
                         py,
                     );
                 }
-                let any_active = any_active || runtime.handles.touch.borrow().needs_frames();
+                let any_active = any_active
+                    || engine_core::animations_started() != started_before
+                    || runtime.handles.touch.borrow().needs_frames();
                 // 0.5.5 (#155): a resized window presents without vsync until it
                 // has been still for a moment; the loop keeps running until then
                 // so it can go back (a few polls that find nothing to draw).

@@ -29,6 +29,7 @@ mod layout_anim;
 mod node;
 mod overlay;
 mod path;
+mod path_template;
 mod shader;
 mod svg;
 mod svg_smil;
@@ -40,7 +41,8 @@ pub use access::{
 };
 pub use box_shape::box_outline;
 pub use animation::{
-    ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve, take_cancelled,
+    ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve, animations_started,
+    take_cancelled,
 };
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
@@ -63,6 +65,7 @@ pub use node::{
     VirtualListState, WindowRegion,
 };
 pub use overlay::{AnchorBox, OverlayMeta, Placement};
+pub use path_template::PathTemplate;
 pub use path::{HitShape, MorphMode, PathData, PathState, fit_transform, trim};
 pub use shader::{
     FRAME_BLOCK_SIZE, Shader, ShaderError, ShaderMode, UniformKind, UniformValue, frame_block,

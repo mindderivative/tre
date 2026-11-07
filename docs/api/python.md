@@ -351,6 +351,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | Property | Value | Description |
 | --- | --- | --- |
 | `rgba`, `pixel_width`, `pixel_height`, `fit` | bytes / ints / `"fill"`, `"contain"`, `"cover"` | Image pixels and how they fit the box. |
+| `params` | dict of name to number (path only) | The numbers a path template (`data` with `{expression}` holes) reads; `animate_param(name, to, duration_ms, easing)` animates one (0.6.4). |
 | `morph` | `"resample"`, `"structure"`, `"strict"` (path only) | How an animation of `data` morphs: resample (default), by matching commands, or by matching commands or raise (0.6.4). |
 | `data`, `view_box`, `trim_start`, `trim_end` | SVG path / tuple / `0.0`–`1.0` | A path's shape, viewport and drawn part. |
 | `svg_time`, `svg_duration` | seconds / read-only seconds or `None` | An svg's position in its SMIL animation, and how long that runs (0.5.10). |
@@ -385,6 +386,7 @@ A handle to one node in a window's tree: properties, animation, events, structur
 | --- | --- |
 | `add_child(child: Node) -> None` | Appends `child` under this node, moving it if it's attached elsewhere. |
 | `animate(property, to, duration_ms, easing, on_complete) -> None` | Eases a property from its current value to a target, retargeting mid-flight. |
+| `animate_param(name, to, duration_ms, easing) -> None` | Moves one parameter of a path's template to a number over `duration_ms`, from where it is now, like `animate`; `easing` as… |
 | `capture_pointer() -> None` | Routes every later pointer event to this node until the button is released or `release_pointer()` is called. |
 | `caret_rect() -> tuple[float, float, float, float]` | A text input's caret as `(x, y, width, height)` in the node's coordinates, padding and scrolling included; at the end of the… |
 | `children() -> list[Node]` | This node's children, in order. |

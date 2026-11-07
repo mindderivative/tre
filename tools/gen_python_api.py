@@ -145,6 +145,7 @@ NODE_PROPERTIES = [
     ]),
     ("Image, path and canvas", [
         ("`rgba`, `pixel_width`, `pixel_height`, `fit`", "bytes / ints / `\"fill\"`, `\"contain\"`, `\"cover\"`", "Image pixels and how they fit the box."),
+        ("`params`", "dict of name to number (path only)", "The numbers a path template (`data` with `{expression}` holes) reads; `animate_param(name, to, duration_ms, easing)` animates one (0.6.4)."),
         ("`morph`", "`\"resample\"`, `\"structure\"`, `\"strict\"` (path only)", "How an animation of `data` morphs: resample (default), by matching commands, or by matching commands or raise (0.6.4)."),
         ("`data`, `view_box`, `trim_start`, `trim_end`", "SVG path / tuple / `0.0`–`1.0`", "A path's shape, viewport and drawn part."),
         ("`svg_time`, `svg_duration`", "seconds / read-only seconds or `None`", "An svg's position in its SMIL animation, and how long that runs (0.5.10)."),
