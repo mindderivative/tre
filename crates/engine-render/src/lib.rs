@@ -1040,7 +1040,15 @@ fn box_path<'g>(
     geometry: &'g mut GeometryCache,
 ) -> &'g BezPath {
     if node.paint.corner_concave.contains(&true) {
-        return geometry.concave_box(id, w, h, corner_radii(node), node.paint.corner_concave, 0.0, false);
+        return geometry.concave_box(
+            id,
+            w,
+            h,
+            corner_radii(node),
+            node.paint.corner_concave,
+            0.0,
+            false,
+        );
     }
     match node
         .paint
