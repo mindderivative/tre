@@ -137,6 +137,45 @@ impl Node {
     /// other name raises `ValueError`. `on_complete` is called with no
     /// arguments exactly once, the frame (or `Window.advance`) this
     /// animation finishes; one replaced or stopped first never calls it.
+    /// #272: moves one parameter of a path template to a number over `duration_ms`, from where it
+    /// is now, as `animate` does a property. The path is evaluated again from the engine's own
+    /// tick, so it takes no Python per frame. Asking again retargets; `set(params=...)` stops it.
+    /// An unknown parameter, or a node that is not a path, raises `ValueError`.
+    #[pyo3(signature = (name, to, duration_ms=0, easing=None))]
+    pub(crate) fn animate_param(
+        &self,
+        name: &str,
+        to: Bound<'_, PyAny>,
+        duration_ms: u64,
+        easing: Option<Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let duration = Duration::from_millis(duration_ms);
+        let now = crate::clock::now(&self.tree);
+        let curve = parse_easing(easing.as_ref(), duration)?;
+        let value = extract_f64(&to, name)?;
+        if !value.is_finite() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "parameter `{name}` must animate to a finite number"
+            )));
+        }
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let NodeKind::Path(state) = &mut node.kind else {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "animate_param applies only to a path node",
+            ));
+        };
+        let Some((_, param)) = state.params.iter_mut().find(|(n, _)| n == name) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "this path has no parameter `{name}`; give it in `params` first"
+            )));
+        };
+        animate_field(param, value, duration, curve, now, None);
+        Ok(())
+    }
+
     #[pyo3(signature = (property, to, duration_ms=0, easing=None, on_complete=None))]
     pub(crate) fn animate(
         &self,
@@ -471,6 +510,12 @@ impl Node {
                             .register(on_complete, self.id, property),
                     )
                 };
+                if property == "data" && state.template.is_some() {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `data` is a template: animate its parameters with \
+                         animate_param, or set(data=...) to end the template",
+                    ));
+                }
                 if property == "data" {
                     let data: String = to.extract().map_err(|_| {
                         pyo3::exceptions::PyValueError::new_err(

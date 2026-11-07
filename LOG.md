@@ -8,6 +8,11 @@ macOS, MSRV and docs; the owner approved the `pypi` gate. Installed from PyPI in
 `geometry` reads back, defaults to the whole surface, a geometry outside `size` raises `ValueError`, `import tre` raises. Not
 run from the PyPI install: a compositor placement. Not verified: the flip on KWin by pixels, compositors that resize a
 popup, macOS and Windows (no popups). #263, #264 and #266 are Done. Notes in `docs/migrating-0.6.md`.
+
+**Held issue #273:** `tests/test_gpu_shared_live.py`'s thirty-window memory test fails every time on the real GPU, 0.88 MiB for one
+window and 6.32 MiB for thirty (limit 1.5), identically on `main` at `6747f257` and on the 0.6.4 branches; not a flake.
+Cause undetermined. It needs the real GPU, so it is run only with the maintainer's say-so.
+
 **0.6.2 released (2026-11-06, PR #265, tag `v0.6.2` on `84d28fd`, PyPI `tesserae-engine==0.6.2`):** an unsized text node
 measures to its content, a fit width is the text plus 2 px (#263), and a change to another window made in a timer or
 listener is drawn at once (#264, TRE-REQ-012). Full-tier CI passed on Linux, Windows, macOS, MSRV and docs; the owner
@@ -120,6 +125,26 @@ compares the radius 4 to 20 midpoint to a radius 12 rounded rectangle point for 
 resamples, `Strict` raises from `animate` before anything changes. Not paired beyond order: a different start point or
 winding is the caller's. Tests: 2 in `path.rs`, `tests/test_path_morph_structure.py` (5). Not done: interpolation of the
 SMIL `d` morph is unchanged (it was already structural); no morph between a structured and a resampled mid-frame.
+
+### #272, parametric paths (TRE-REQ-013 step 4, 2026-11-06)
+
+Branch `parametric-path-272`, off `path-morph-271`. `PathTemplate` (`path_template.rs`): path data whose numbers may be
+`{expression}` holes (numbers, names, `+ - *`, signs, parentheses; nothing else). Evaluating substitutes the numbers into the
+text and parses it with `PathData::from_svg`, so the result is exactly the same data written out (a hole is padded with
+spaces so a negative value cannot fuse with its neighbour). `PathState` gained `template` and `params: Vec<(String,
+Animated<f64>)>`; `PathState::tick` ticks the params and, if one moved or took its last step, `reevaluate`s and `set_now`s
+`data`, so damage, hit testing and the input region need nothing. Python: `data` with a `{` is a template, `params` is a
+dict (get and set), `Node.animate_param(name, to, duration_ms, easing)` (no `on_complete`), `animate("data")` on a template
+raises, `set(data=plain)` ends it. `check_template_changes` runs in `prepare_set` and in `create`, over the state as it
+will be after the call, so a missing name or unparsable result changes nothing. Tests: 5 in `path_template.rs`,
+`tests/test_path_params.py` (16: values equal the plain path mid-animation and at the end, arcs stay four cubics, set
+ends and stops, bad input).
+**Bug found while measuring, fixed here:** on a live window, an animation started by a *timer* drew 0 frames. `app.rs` ticks
+the animations, then runs the due timers, then reports `any_active` from the tick alone, so the platform did not
+schedule the next frame; the animation sat still until another event. Plain `Node.animate` did the same (a rotation
+from `Window.after`). It now also counts an animation started since the tick (`animations_started()`, now public). Live
+regression test `tests/test_timer_animation_live.py`: 0 frames before the fix, 26 after, 0 idle either side. Not
+checked: whether released versions before 0.6.4 had it (the code is older than this branch), KWin.
 
 ## 0.6.3 (released 2026-11-06)
 

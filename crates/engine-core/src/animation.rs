@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 static STARTED: AtomicU64 = AtomicU64::new(0);
 
 /// The number of animations started so far (see `STARTED`).
-pub(crate) fn animations_started() -> u64 {
+pub fn animations_started() -> u64 {
     STARTED.load(Ordering::Relaxed)
 }
 

@@ -154,3 +154,11 @@ Search for text nodes you create without a size and look at the ones inside a
   commands number by number, so arcs stay arcs and every mid-frame is exact; `"strict"` raises for a pair
   that differs. The default `"resample"` is the morph as it was. See
   [Morphing paths](guide/animation.md#morphing-paths).
+- **Parametric paths (#272, TRE-REQ-013 step 4).** A path's `data` with `{expression}` holes and
+  `params={...}`, moved by `node.animate_param(name, to, duration_ms, easing)`, is filled in by the engine
+  each tick. Plain data is unchanged; only a `{` in `data` makes it a template (a `{` was never valid path
+  data). See [A path with parameters](guide/animation.md#a-path-with-parameters).
+- **Fixed: an animation started by a timer.** A timer that called `animate` ran after the frame's tick,
+  and the window, told nothing was animating, drew once and slept, so the animation did not move until
+  something else woke the window. It now draws every frame it runs. (Found while measuring #272; present
+  before 0.6.4.)

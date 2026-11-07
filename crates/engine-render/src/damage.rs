@@ -2056,6 +2056,8 @@ fn path_fingerprint(h: &mut impl Hasher, state: &PathState) {
         data,
         hit_shape: _, // how the node is hit, not how it looks
         morph: _,     // how the next animation morphs, not how it looks
+        template: _,  // what `data` is made from; `data` is what is drawn
+        params: _,
         view_box,
         trim_start,
         trim_end,

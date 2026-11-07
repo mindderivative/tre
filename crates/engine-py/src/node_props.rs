@@ -26,7 +26,7 @@ use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
 /// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
-const SETTABLE: [&str; 74] = [
+const SETTABLE: [&str; 75] = [
     // 0.5.7 (#179): placed against another node.
     "anchor",
     "placement",
@@ -50,6 +50,7 @@ const SETTABLE: [&str; 74] = [
     "corner_style",
     "hit_path",
     "morph",
+    "params",
     "shadows",
     "blur",
     "backdrop_blur",
@@ -237,6 +238,10 @@ pub(crate) enum Change {
     /// 0.5.9 (#236).
     HitShape(engine_core::HitShape),
     Morph(engine_core::MorphMode),
+    /// #272: `params`, name and value pairs.
+    Params(Vec<(String, f64)>),
+    /// #272: `data` given as a template.
+    Template(engine_core::PathTemplate),
     TrimStart(f64),
     TrimEnd(f64),
     Fill(Color),
@@ -769,6 +774,8 @@ impl Change {
             Change::ViewBox(_) => ("view_box", "path", path),
             Change::HitShape(_) => ("hit_shape", "path", path),
             Change::Morph(_) => ("morph", "path", path),
+            Change::Params(_) => ("params", "path", path),
+            Change::Template(_) => ("data", "path", path),
             Change::TrimStart(_) => ("trim_start", "path", path),
             Change::TrimEnd(_) => ("trim_end", "path", path),
             Change::Placeholder(_) => ("placeholder", "text_input", text_input),
@@ -1170,6 +1177,15 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         }
         "data" => {
             let data: String = required(value, name, "SVG path data (a str)")?;
+            if engine_core::PathTemplate::is_template(&data) {
+                return Ok(Change::Template(
+                    engine_core::PathTemplate::parse(&data).map_err(|err| {
+                        PyValueError::new_err(format!(
+                            "node property `data` isn't a valid path template: {err}"
+                        ))
+                    })?,
+                ));
+            }
             Change::Data(PathData::from_svg(&data).map_err(|err| {
                 PyValueError::new_err(format!(
                     "node property `data` isn't valid SVG path data: {err}"
@@ -1186,6 +1202,34 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             }
             Some(Rect::new(x, y, x + w, y + h))
         }),
+        "params" => {
+            let expected = "a dict of names to numbers";
+            let dict: Bound<'_, pyo3::types::PyDict> = required(value, name, expected)?;
+            let mut out = Vec::with_capacity(dict.len());
+            for (key, number) in dict.iter() {
+                let key: String = key
+                    .extract()
+                    .map_err(|_| invalid(name, "names must be str"))?;
+                let number: f64 = number
+                    .extract()
+                    .ok()
+                    .filter(|n: &f64| {
+                        n.is_finite() && !number.is_instance_of::<pyo3::types::PyBool>()
+                    })
+                    .ok_or_else(|| invalid(name, &format!("`{key}` must be a finite number")))?;
+                if key.is_empty()
+                    || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    || key.starts_with(|c: char| c.is_ascii_digit())
+                {
+                    return Err(invalid(
+                        name,
+                        &format!("`{key}` isn't a name (letters, digits and underscores)"),
+                    ));
+                }
+                out.push((key, number));
+            }
+            Change::Params(out)
+        }
         "morph" => {
             let expected = "\"resample\", \"structure\" or \"strict\"";
             let word: String = required(value, name, expected)?;
@@ -1486,6 +1530,57 @@ pub(crate) fn check_anchor_changes(
     Ok(())
 }
 
+/// #272: a path template, as it will be once `changes` are applied, must have every parameter it
+/// names and fill in to path data; checked before anything is changed.
+pub(crate) fn check_template_changes(kind: &NodeKind, changes: &[Change]) -> PyResult<()> {
+    let NodeKind::Path(state) = kind else {
+        return Ok(());
+    };
+    let mut template = state.template.clone();
+    let mut params: Vec<(String, f64)> = state
+        .params
+        .iter()
+        .map(|(n, p)| (n.clone(), p.current))
+        .collect();
+    for change in changes {
+        match change {
+            Change::Data(_) => template = None,
+            Change::Template(t) => template = Some(t.clone()),
+            Change::Params(set) => {
+                for (name, value) in set {
+                    match params.iter_mut().find(|(n, _)| n == name) {
+                        Some(slot) => slot.1 = *value,
+                        None => params.push((name.clone(), *value)),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(template) = template else {
+        return Ok(());
+    };
+    if !changes
+        .iter()
+        .any(|c| matches!(c, Change::Template(_) | Change::Params(_)))
+    {
+        return Ok(());
+    }
+    if let Some(missing) = template
+        .names()
+        .into_iter()
+        .find(|name| !params.iter().any(|(n, _)| n == name))
+    {
+        return Err(PyValueError::new_err(format!(
+            "node property `data` uses the parameter `{missing}`, which `params` does not give"
+        )));
+    }
+    template
+        .evaluate(&|name| params.iter().find(|(n, _)| n == name).map(|(_, v)| *v))
+        .map(|_| ())
+        .map_err(|err| PyValueError::new_err(format!("node property `data`: {err}")))
+}
+
 pub(crate) fn parse_all(
     props: Option<&Bound<'_, PyDict>>,
     kind: &NodeKind,
@@ -1553,6 +1648,7 @@ impl Node {
                 .ok_or(crate::error::EngineError::Destroyed)?;
             let changes = parse_all(props, &node.kind, &self.tree)?;
             check_anchor_changes(&tree, Some(self.id), node.anchored.is_some(), &changes)?;
+            check_template_changes(&node.kind, &changes)?;
             for change in &changes {
                 if let Change::Shader(Some(shader)) = change
                     && tree.shader_cycle(self.id, shader)
@@ -1926,6 +2022,18 @@ impl Node {
                         ));
                     };
                     palette_to_py(&state.palette, py)?
+                }
+                "params" => {
+                    let NodeKind::Path(state) = &node.kind else {
+                        return Err(PyValueError::new_err(
+                            "node property `params` applies only to a path node",
+                        ));
+                    };
+                    let dict = pyo3::types::PyDict::new(py);
+                    for (name, param) in &state.params {
+                        dict.set_item(name, param.current)?;
+                    }
+                    dict.into_any().unbind()
                 }
                 "morph" => {
                     let NodeKind::Path(state) = &node.kind else {
@@ -2313,7 +2421,22 @@ impl Node {
                 Change::TransformOrigin(origin) => node.paint.node_transform.origin = origin,
                 Change::Data(data) => {
                     if let NodeKind::Path(state) = &mut node.kind {
+                        state.template = None;
                         state.data.set_now(data);
+                    }
+                }
+                Change::Params(params) => {
+                    if let NodeKind::Path(state) = &mut node.kind {
+                        for (name, value) in params {
+                            state.set_param(&name, value);
+                        }
+                        let _ = state.reevaluate();
+                    }
+                }
+                Change::Template(template) => {
+                    if let NodeKind::Path(state) = &mut node.kind {
+                        state.template = Some(template);
+                        let _ = state.reevaluate();
                     }
                 }
                 Change::ViewBox(view_box) => {

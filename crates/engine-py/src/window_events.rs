@@ -381,6 +381,7 @@ impl PyWindow {
             false,
             &changes,
         )?;
+        crate::node_props::check_template_changes(&node_kind, &changes)?;
         Ok(PreparedNode {
             node_kind,
             paint,

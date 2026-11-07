@@ -507,6 +507,8 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | `data` | `Animated<PathData>` | The path geometry, animatable. |
 | `hit_shape` | `HitShape` | Which part of the node takes pointer events and counts in an `input_region="auto"`. |
 | `morph` | `MorphMode` | How an animation of `data` morphs (`morph`). |
+| `template` | `Option<PathTemplate>` | When set, `data` is this template filled in with `params`, and is evaluated again whenever a parameter moves. |
+| `params` | `Vec<(String, Animated<f64>)>` | The named numbers a template reads, each animatable. |
 | `view_box` | `Option<Rect>` | The region of path space fitted into the node's box; None uses pixels. |
 | `trim_start` | `Animated<f64>` | Where the drawn stroke starts along the path, from 0.0 to 1.0. |
 | `trim_end` | `Animated<f64>` | Where the drawn stroke ends along the path, from 0.0 to 1.0. |
@@ -515,7 +517,24 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 | --- | --- |
 | `fn geometry(&self, width: f64, height: f64) -> (BezPath, BezPath)` | Returns the path fitted into a box and its trimmed stroke outline. |
 | `fn new(data: PathData) -> Self` | Creates path state from path data with no view box and no trim. |
+| `fn param(&self, name: &str) -> Option<f64>` | A parameter's current value. |
+| `fn reevaluate(&mut self) -> Result<(), String>` | Fills the template in with the parameters as they are now and makes the result the node's data. |
+| `fn set_param(&mut self, name: &str, value: f64)` | Sets a parameter outright (ending its animation), adding it if new. |
 | `fn tick(&mut self, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool` | Advances every animated field; true while any is still running. |
+
+### PathTemplate { #pathtemplate }
+
+*struct.* Path data with holes.
+
+**Implements:** [`Clone`](https://doc.rust-lang.org/std/clone/trait.Clone.html), [`Debug`](https://doc.rust-lang.org/std/fmt/trait.Debug.html), [`PartialEq`](https://doc.rust-lang.org/std/cmp/trait.PartialEq.html)
+
+| Method | Description |
+| --- | --- |
+| `fn evaluate(&self, lookup: &dyn Fn(&str) -> Option<f64>) -> Result<PathData, String>` | The path data with every hole replaced by its value under `lookup`. |
+| `fn is_template(text: &str) -> bool` | Whether `text` has a hole, so is meant as a template and not as plain path data. |
+| `fn names(&self) -> Vec<&str>` | The parameter names it uses, each once, in order of first use. |
+| `fn parse(text: &str) -> Result<Self, String>` | Parses a template: every `{` closes with a `}` and holds an expression. |
+| `fn source(&self) -> &str` | The template as written. |
 
 ### ScrollViewState { #scrollviewstate }
 
@@ -1804,6 +1823,7 @@ The node tree, animation, layout, input dispatch, focus, layers and docking. Pur
 
 | Function | Description |
 | --- | --- |
+| `fn animations_started() -> u64` | The number of animations started so far (see `STARTED`). |
 | `fn box_outline(w: f64, h: f64, radii: [f64; 4], concave: [bool; 4], inset: f64) -> BezPath` | The outline of a `w` by `h` box, drawn `inset` inside its edges (a border's path is inset by half its width), with corner `radii` in the order… |
 | `fn ctrl_shortcut(letter: char, shift: bool) -> Option<InputEvent>` | Maps Ctrl plus a letter to the input event it means, if any. |
 | `fn fit_transform(view_box: Option<Rect>, width: f64, height: f64) -> Affine` | Returns the transform that scales and centers a view box into a width and height. |

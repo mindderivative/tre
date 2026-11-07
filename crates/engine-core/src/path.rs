@@ -394,6 +394,11 @@ pub struct PathState {
     pub hit_shape: HitShape,
     /// #271: how an animation of `data` morphs (`morph`).
     pub morph: MorphMode,
+    /// #272: when set, `data` is this template filled in with `params`, and is evaluated again
+    /// whenever a parameter moves.
+    pub template: Option<crate::PathTemplate>,
+    /// #272: the named numbers a template reads, each animatable.
+    pub params: Vec<(String, Animated<f64>)>,
     /// The `(min_x, min_y, width, height)` region `data` is drawn in,
     /// fitted into the node's box; `None` draws `data` in node-local
     /// pixels.
@@ -409,6 +414,8 @@ impl PathState {
             data: Animated::new(data),
             hit_shape: HitShape::Box,
             morph: MorphMode::Resample,
+            template: None,
+            params: Vec::new(),
             view_box: None,
             trim_start: Animated::new(0.0),
             trim_end: Animated::new(1.0),
@@ -422,9 +429,54 @@ impl PathState {
         completed: &mut Vec<crate::CompletionHandle>,
     ) -> bool {
         let data = self.data.tick(now, completed);
+        // A parameter that moved (or took its last step) this tick changes the shape.
+        let was_moving = self.params.iter().any(|(_, p)| p.active.is_some());
+        let mut params_moving = false;
+        for (_, param) in &mut self.params {
+            params_moving |= param.tick(now, completed);
+        }
+        if was_moving {
+            let _ = self.reevaluate();
+        }
+        let data = data || params_moving;
         let start = self.trim_start.tick(now, completed);
         let end = self.trim_end.tick(now, completed);
         data || start || end
+    }
+
+    /// #272: a parameter's current value.
+    pub fn param(&self, name: &str) -> Option<f64> {
+        self.params
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, p)| p.current)
+    }
+
+    /// #272: sets a parameter outright (ending its animation), adding it if new.
+    pub fn set_param(&mut self, name: &str, value: f64) {
+        match self.params.iter_mut().find(|(n, _)| n == name) {
+            Some((_, p)) => p.set_now(value),
+            None => self.params.push((name.to_owned(), Animated::new(value))),
+        }
+    }
+
+    /// #272: fills the template in with the parameters as they are now and makes the result
+    /// the node's data. `Ok` and nothing done when there is no template; an error (a missing
+    /// parameter, data that does not parse) leaves the data as it was.
+    pub fn reevaluate(&mut self) -> Result<(), String> {
+        let Some(template) = &self.template else {
+            return Ok(());
+        };
+        let params = &self.params;
+        let data = template.evaluate(&|name| {
+            params
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, p)| p.current)
+        })?;
+        let mode = self.data.current.1;
+        self.data.set_now(data.with_mode(mode));
+        Ok(())
     }
 
     /// The path in node-local pixels -- `data` fitted into a `width` x
